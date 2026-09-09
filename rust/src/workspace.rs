@@ -18,6 +18,7 @@ pub struct Workspace {
     pub root: PathBuf,
     pub root_package: String,
     packages: BTreeMap<String, PathBuf>,
+    package_config_identity: String,
     asset_index: Arc<Mutex<BTreeMap<String, Vec<String>>>>,
     find_assets_cache: Arc<Mutex<BTreeMap<(String, String), Vec<String>>>>,
     asset_read_cache: Arc<Mutex<BTreeMap<String, Arc<Vec<u8>>>>>,
@@ -27,6 +28,8 @@ pub struct Workspace {
 
 #[derive(Debug, Deserialize)]
 struct PackageConfigFile {
+    #[serde(rename = "configVersion")]
+    config_version: Option<u32>,
     packages: Vec<PackageConfigEntry>,
 }
 
@@ -35,6 +38,10 @@ struct PackageConfigEntry {
     name: String,
     #[serde(rename = "rootUri")]
     root_uri: String,
+    #[serde(rename = "packageUri", default)]
+    package_uri: String,
+    #[serde(rename = "languageVersion", default)]
+    language_version: String,
 }
 
 impl Workspace {
@@ -44,6 +51,7 @@ impl Workspace {
         let package_config_path = root.join(".dart_tool/package_config.json");
         let package_config = fs::read_to_string(&package_config_path)?;
         let parsed: PackageConfigFile = serde_json::from_str(&package_config).map_err(io::Error::other)?;
+        let package_config_identity = stable_package_config_identity(&parsed);
         let config_dir = package_config_path
             .parent()
             .ok_or_else(|| io::Error::other("package_config.json has no parent"))?;
@@ -59,6 +67,7 @@ impl Workspace {
             root,
             root_package,
             packages,
+            package_config_identity,
             asset_index: Arc::new(Mutex::new(BTreeMap::new())),
             find_assets_cache: Arc::new(Mutex::new(BTreeMap::new())),
             asset_read_cache: Arc::new(Mutex::new(BTreeMap::new())),
@@ -68,8 +77,13 @@ impl Workspace {
     }
 
     pub fn builder_manifest_fingerprint(&self) -> io::Result<String> {
-        let package_config_path = self.root.join(".dart_tool/package_config.json");
-        let mut bytes = fs::read(package_config_path)?;
+        let mut bytes = b"build-runner-accelerator-manifest-v2\0".to_vec();
+        bytes.extend_from_slice(self.package_config_identity.as_bytes());
+        bytes.push(0);
+        if let Ok(contents) = fs::read(self.root.join("pubspec.lock")) {
+            bytes.extend_from_slice(&normalize_text_bytes(&contents));
+            bytes.push(0xfe);
+        }
         for (package, root) in &self.packages {
             bytes.extend_from_slice(package.as_bytes());
             bytes.push(0);
@@ -77,7 +91,7 @@ impl Workspace {
             match fs::read(config_path) {
                 Ok(contents) => {
                     bytes.push(1);
-                    bytes.extend_from_slice(&contents);
+                    bytes.extend_from_slice(&normalize_text_bytes(&contents));
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => bytes.push(0),
                 Err(error) => return Err(error),
@@ -85,6 +99,53 @@ impl Workspace {
             bytes.push(0xff);
         }
         Ok(digest_bytes(&bytes))
+    }
+
+    pub(crate) fn package_config_identity(&self) -> &str {
+        &self.package_config_identity
+    }
+
+    /// Convert an absolute compiler dependency path into a machine-independent
+    /// identity so AOT metadata can be restored on another CI runner.
+    pub(crate) fn logical_dependency_key(&self, path: &Path) -> Option<String> {
+        let path = fs::canonicalize(path).ok()?;
+        if let Ok(relative) = path.strip_prefix(&self.root) {
+            return Some(format!(
+                "workspace:{}",
+                normalized_relative_path(relative)
+            ));
+        }
+
+        let mut best = None;
+        for (package, package_root) in &self.packages {
+            let Ok(package_root) = fs::canonicalize(package_root) else {
+                continue;
+            };
+            let Ok(relative) = path.strip_prefix(&package_root) else {
+                continue;
+            };
+            let depth = package_root.components().count();
+            let key = format!(
+                "package:{package}:{}",
+                normalized_relative_path(relative)
+            );
+            if best.as_ref().is_none_or(|(best_depth, _)| depth > *best_depth) {
+                best = Some((depth, key));
+            }
+        }
+        best.map(|(_, key)| key)
+    }
+
+    /// Resolve an identity emitted by [`logical_dependency_key`] against the
+    /// current workspace and package roots.
+    pub(crate) fn resolve_logical_dependency(&self, key: &str) -> Option<PathBuf> {
+        if let Some(relative) = key.strip_prefix("workspace:") {
+            return safe_relative_path(&self.root, relative);
+        }
+        let rest = key.strip_prefix("package:")?;
+        let (package, relative) = rest.split_once(':')?;
+        let root = self.packages.get(package)?;
+        safe_relative_path(root, relative)
     }
 
     pub fn package_root(&self, package: &str) -> io::Result<&Path> {
@@ -117,7 +178,7 @@ impl Workspace {
         validate_relative_path(path)?;
         Ok(self
             .root
-            .join(".dart_tool/fast_build_runner/cache")
+            .join(".dart_tool/build_runner_accelerator/cache")
             .join(package)
             .join(path))
     }
@@ -283,7 +344,7 @@ impl Workspace {
     fn list_cached_package_assets(&self, package: &str) -> io::Result<Vec<(String, PathBuf)>> {
         let cache_root = self
             .root
-            .join(".dart_tool/fast_build_runner/cache")
+            .join(".dart_tool/build_runner_accelerator/cache")
             .join(package);
         if !cache_root.is_dir() {
             return Ok(Vec::new());
@@ -295,6 +356,63 @@ impl Workspace {
             .map(|(path, absolute)| (format!("{package}|{path}"), absolute))
             .collect())
     }
+}
+
+fn stable_package_config_identity(config: &PackageConfigFile) -> String {
+    let mut entries = config
+        .packages
+        .iter()
+        .map(|entry| {
+            format!(
+                "{}\0{}\0{}\0",
+                entry.name, entry.package_uri, entry.language_version
+            )
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+
+    let mut bytes = b"package-config-v2\0".to_vec();
+    if let Some(version) = config.config_version {
+        bytes.extend_from_slice(version.to_string().as_bytes());
+    }
+    bytes.push(0);
+    for entry in entries {
+        bytes.extend_from_slice(entry.as_bytes());
+    }
+    digest_bytes(&bytes)
+}
+
+fn normalize_text_bytes(contents: &[u8]) -> Vec<u8> {
+    let mut normalized = Vec::with_capacity(contents.len());
+    let mut index = 0;
+    while index < contents.len() {
+        if contents[index] == b'\r' {
+            normalized.push(b'\n');
+            if contents.get(index + 1) == Some(&b'\n') {
+                index += 1;
+            }
+        } else {
+            normalized.push(contents[index]);
+        }
+        index += 1;
+    }
+    normalized
+}
+
+fn normalized_relative_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn safe_relative_path(root: &Path, relative: &str) -> Option<PathBuf> {
+    let relative = Path::new(relative);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| component == std::path::Component::ParentDir)
+    {
+        return None;
+    }
+    Some(root.join(relative))
 }
 
 fn package_name(path: &Path) -> io::Result<String> {

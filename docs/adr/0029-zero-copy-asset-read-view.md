@@ -5,7 +5,7 @@
 
 ## Context
 
-Rustはasset `read`成功応答をFBRB binary frameで返している。Dartのdecoderはmetadataと
+Rustはasset `read`成功応答をBRAB binary frameで返している。Dartのdecoderはmetadataと
 raw bytesを含むframe payloadを受け取った後、raw部分を`Uint8List.fromList`で別配列へ
 copyしていた。さらに`RemoteAssetReaderWriter.readAsBytes`はその配列をcache用と呼び出し
 元返却用に複製していた。
@@ -15,7 +15,7 @@ read cacheはresetまでimmutable assetを共有する内部cacheであり、bui
 
 ## Decision
 
-- FBRB decoderはraw部分を`Uint8List.sublistView`で参照し、frame payloadをviewのbacking
+- BRAB decoderはraw部分を`Uint8List.sublistView`で参照し、frame payloadをviewのbacking
   bufferとして保持する。
 - `RemoteAssetReaderWriter`はそのtyped viewを共有read cacheへ保存し、builderへ返す時に
   `List<int>.from`で防御copyする。

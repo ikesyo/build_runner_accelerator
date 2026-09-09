@@ -29,7 +29,7 @@ Riverpod併用fixtureの最初のresolver-backed actionはFreezedなので、両
 
 ## Decision
 
-- `FAST_BUILD_RUNNER_METRICS=1`のときだけ、worker起動時のpackage config読み込みとresolver
+- `BUILD_RUNNER_ACCELERATOR_METRICS=1`のときだけ、worker起動時のpackage config読み込みとresolver
   constructorを計測する。
 - `AnalyzerResolvers.custom`へ渡すSDK summary generatorを計測時だけ薄くwrapし、SDK summary
   経過時間を記録する。通常時は既定generatorをそのまま使う。

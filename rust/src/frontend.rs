@@ -1,13 +1,14 @@
 use crate::builder::{rust_build_config_from_manifest, BuilderManifestFile, RustBuildConfig};
 use crate::cli::{FrontendMode, Options};
+use crate::worker_kernel::{prewarm_worker_aot, take_background_aot_lock, worker_aot_cache_key};
 use crate::workspace::Workspace;
 use std::fs;
 use std::io;
 use std::path::Path;
 use std::process::Command;
 
-const MANIFEST_PATH: &str = ".dart_tool/fast_build_runner/builder-manifest.json";
-const WORKER_ENTRYPOINT_PATH: &str = ".dart_tool/fast_build_runner/dynamic_worker.dart";
+const MANIFEST_PATH: &str = ".dart_tool/build_runner_accelerator/builder-manifest.json";
+const WORKER_ENTRYPOINT_PATH: &str = ".dart_tool/build_runner_accelerator/dynamic_worker.dart";
 
 pub(crate) fn select_frontend(
     options: &Options,
@@ -20,7 +21,7 @@ pub(crate) fn select_frontend(
     let fingerprint = workspace.builder_manifest_fingerprint()?;
     let manifest_path = workspace.root.join(MANIFEST_PATH);
     let worker_entrypoint = workspace.root.join(WORKER_ENTRYPOINT_PATH);
-    let manifest = match read_manifest(&manifest_path, &fingerprint)? {
+    let manifest = match read_manifest(&manifest_path, &fingerprint, &worker_entrypoint)? {
         Some(manifest) => manifest,
         None => {
             // The first PackageGraph load can normalize package_config.json.
@@ -46,7 +47,7 @@ pub(crate) fn select_frontend(
                 }
                 manifest_fingerprint = refreshed;
             }
-            match read_manifest(&manifest_path, &manifest_fingerprint)? {
+            match read_manifest(&manifest_path, &manifest_fingerprint, &worker_entrypoint)? {
                 Some(manifest) => manifest,
                 None => {
                     return select_dart_fallback(
@@ -71,20 +72,32 @@ pub(crate) fn select_frontend(
     }
 }
 
-fn read_manifest(path: &Path, fingerprint: &str) -> io::Result<Option<BuilderManifestFile>> {
+fn read_manifest(
+    path: &Path,
+    fingerprint: &str,
+    expected_worker_entrypoint: &Path,
+) -> io::Result<Option<BuilderManifestFile>> {
     let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let manifest = match serde_json::from_str::<BuilderManifestFile>(&contents) {
+    let mut manifest = match serde_json::from_str::<BuilderManifestFile>(&contents) {
         Ok(manifest) => manifest,
         Err(_) => return Ok(None),
     };
-    if manifest.version != 6
-        || manifest.fingerprint != fingerprint
-        || !Path::new(&manifest.worker_entrypoint).is_file()
-    {
+    if manifest.version != 6 || manifest.fingerprint != fingerprint {
+        return Ok(None);
+    }
+    let manifest_worker_exists = Path::new(&manifest.worker_entrypoint).is_file();
+    if expected_worker_entrypoint.is_file() {
+        // The generated manifest historically stored an absolute path. Rebase
+        // it to the current workspace so the manifest and AOT cache can move
+        // between CI runners/workspaces together.
+        manifest.worker_entrypoint = expected_worker_entrypoint
+            .to_string_lossy()
+            .into_owned();
+    } else if !manifest_worker_exists {
         return Ok(None);
     }
     Ok(Some(manifest))
@@ -98,13 +111,36 @@ fn generate_manifest(
     worker_entrypoint: &Path,
 ) -> io::Result<()> {
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
-    let status = Command::new(dart_binary)
-        .args([
+    let mut command = Command::new(dart_binary);
+    if let Ok(worker_package_root) = workspace.package_root("build_runner_accelerator_worker") {
+        let generator = worker_package_root.join("bin/generate_builder_manifest.dart");
+        if generator.is_file() {
+            // Running the package entrypoint directly avoids an implicit pub
+            // resolution step in `dart run`. The workspace has already been
+            // resolved, so reuse its package config for deterministic/offline
+            // manifest generation in CI.
+            command
+                .arg(format!(
+                    "--packages={}",
+                    workspace.root.join(".dart_tool/package_config.json").display()
+                ))
+                .arg(generator);
+        } else {
+            command.args([
+                "--suppress-analytics",
+                "run",
+                "build_runner_accelerator_worker:generate_builder_manifest",
+            ]);
+        }
+    } else {
+        command.args([
             "--suppress-analytics",
             "run",
-            "fast_build_runner_worker:generate_builder_manifest",
-            "--root",
-        ])
+            "build_runner_accelerator_worker:generate_builder_manifest",
+        ]);
+    }
+    let status = command
+        .arg("--root")
         .arg(&workspace.root)
         .arg("--manifest")
         .arg(manifest_path)
@@ -134,6 +170,35 @@ pub(crate) fn worker_executable(options: &Options, config: &RustBuildConfig) -> 
                 .map(|path| path.to_string_lossy().into_owned())
         })
         .ok_or_else(|| io::Error::other("builder manifest has no worker entrypoint"))
+}
+
+pub(crate) fn run_aot_cache_key(options: &Options) -> io::Result<()> {
+    let workspace = Workspace::load(options.root.clone())?;
+    let build_config = select_frontend(options, &workspace)?.ok_or_else(|| {
+        io::Error::other("AOT cache key requires a Rust-compatible builder manifest")
+    })?;
+    let worker = worker_executable(options, &build_config)?;
+    let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
+    println!(
+        "{}",
+        worker_aot_cache_key(&workspace.root, dart_binary, &worker)?
+    );
+    Ok(())
+}
+
+pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
+    let _background_lock = take_background_aot_lock();
+    let workspace = Workspace::load(options.root.clone())?;
+    let build_config = select_frontend(options, &workspace)?.ok_or_else(|| {
+        io::Error::other("AOT prewarm requires a Rust-compatible builder manifest")
+    })?;
+    let worker = worker_executable(options, &build_config)?;
+    let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
+    let artifact = prewarm_worker_aot(&workspace.root, dart_binary, &worker)?;
+    let cache_key = worker_aot_cache_key(&workspace.root, dart_binary, &worker)?;
+    println!("AOT prewarm ready: {}", artifact.display());
+    println!("AOT cache key: {cache_key}");
+    Ok(())
 }
 
 fn select_dart_fallback(options: &Options, reason: &str) -> io::Result<Option<RustBuildConfig>> {

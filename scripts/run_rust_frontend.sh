@@ -4,8 +4,8 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
-if [[ -n "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
-  exec "$FAST_BUILD_RUNNER_BIN" "$@"
+if [[ -n "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
+  exec "$BUILD_RUNNER_ACCELERATOR_BIN" "$@"
 fi
 
 cargo_bin=${CARGO_BIN:-"$repo_root/.toolchains/cargo/bin/cargo"}

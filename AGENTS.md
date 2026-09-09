@@ -2,7 +2,7 @@
 
 ## Project overview
 
-`fast_build_runner` is a Rust frontend PoC for `build_runner`. Rust owns the
+`build_runner_accelerator` is a Rust frontend PoC for `build_runner`. Rust owns the
 filesystem snapshot, incremental action graph, phase orchestration, overlay,
 and atomic commit. A Dart worker continues to execute Dart builders,
 `BuildStep`, `AssetReader`, and Analyzer-backed resolver work.
@@ -96,7 +96,7 @@ bash scripts/benchmark_matrix.sh
 
 For performance work, record clean, no-op, one-file, and broad incremental
 cases together with the command, SDK versions, worker count, and whether
-outputs were byte-identical. Use `FAST_BUILD_RUNNER_METRICS=1` when worker or
+outputs were byte-identical. Use `BUILD_RUNNER_ACCELERATOR_METRICS=1` when worker or
 IPC behavior is part of the hypothesis.
 
 ## Repository changes

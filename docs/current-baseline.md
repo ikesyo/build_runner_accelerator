@@ -30,7 +30,7 @@ PUB_GET_OFFLINE=0 scripts/benchmark_current_baseline.sh
 TRACE_MODE=1 CASES='clean' scripts/benchmark_current_baseline.sh
 # Repeat the current watch smoke test without changing the fixture.
 for repeat in 1 2 3; do
-  FAST_BUILD_RUNNER_BIN="$PWD/rust/target/debug/fast_build_runner" \
+  BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
     scripts/watch_smoke_current_json.sh
 done
 ```
@@ -45,7 +45,7 @@ LANE=fast FAST_JOBS=1 scripts/benchmark_current_baseline.sh
 LANE=fast FAST_JOBS=2 scripts/benchmark_current_baseline.sh
 LANE=fast FAST_JOBS=4 scripts/benchmark_current_baseline.sh
 scripts/correctness_current_json.sh
-FAST_BUILD_RUNNER_BIN="$PWD/rust/target/debug/fast_build_runner" \
+BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
   scripts/watch_smoke_current_json.sh
 ```
 
@@ -82,6 +82,74 @@ The stock mode comparison also showed that `default` and `force-aot` use
 while `force-jit` was slower for incremental builds (about 2.30--2.51s).
 This keeps the default stock AOT path as the reference and makes the fast
 worker kernel cache the relevant warm-path optimization.
+
+The opt-in AOT worker experiment uses the same fixture and cache conditions:
+
+```sh
+BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 \
+  LANE=fast FAST_JOBS=1 \
+  BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
+  scripts/benchmark_current_baseline.sh
+scripts/correctness_aot_worker.sh
+BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 \
+  BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
+  scripts/watch_smoke_current_json.sh
+BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background \
+  BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
+  scripts/correctness_aot_background.sh
+```
+
+On 2026-09-06, the AOT lane's cold `clean` was `26.51s` because the
+workspace-local executable was compiled during that case. The benchmark's
+non-clean cases compile the AOT worker during their unmeasured warm-up, so
+their measured three-repeat medians were:
+
+| Case | AOT jobs=1 wall | user / sys | peak RSS |
+| --- | ---: | ---: | ---: |
+| no-op | 9.8ms | 8.4 / 4.0ms | 10.4MiB |
+| one-file | 87.7ms | 47.1 / 38.5ms | 45.6MiB |
+| broad | 101.7ms | 79.6 / 30.0ms | 45.4MiB |
+
+One broad repeat was an `865ms` outlier; all AOT cases produced the same
+`51d4d65d...` output hash as stock. A direct worker handshake on the same
+fixture measured medians of `9.49s` for the script, `0.178s` for the kernel,
+and `0.009s` for the AOT executable. AOT remains opt-in because its cold
+compile cost and cross-platform / cross-workspace memory behavior need
+broader evaluation.
+
+### CI AOT prewarm
+
+The CI lane is intentionally split into key computation, cache restore,
+synchronous prewarm, and cache save:
+
+```sh
+key=$(scripts/aot_cache_key.sh "$PWD")
+scripts/aot_prewarm.sh "$PWD"
+BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 scripts/run_rust_frontend.sh \
+  build --root "$PWD" --mode rust
+```
+
+The cache should contain `.dart_tool/build_runner_accelerator/aot-sdk/`,
+`dynamic_worker.dart`, and `builder-manifest.json`. The key includes OS/arch,
+SDK identity, stable package configuration, lockfile/manifest inputs, and the
+generated worker digest; it contains no checkout or SDK absolute path. The
+version-2 metadata sidecar records logical package/workspace dependencies and
+content digests, and the SDK facade links are rebound when a restored artifact
+is used. `scripts/correctness_aot_prewarm.sh` covers prewarm compile wait,
+relocated cache reuse, facade rebind, and worker-source invalidation. A
+provider-specific restore/save example is recorded in
+`docs/adr/0062-ci-aot-prewarm.md`.
+
+### Local background AOT
+
+For local cache misses, `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background` starts the
+script worker immediately and launches a detached `aot-prewarm` helper. The
+first build therefore does not wait for AOT compilation. Once the helper has
+published the executable, the next build reuses it; a long-running watch pool
+also switches to AOT on its next rebuild. A helper failure is isolated from
+the foreground build and leaves the script fallback available for a later
+retry. `scripts/correctness_aot_background.sh` verifies the compile gate,
+script fallback, artifact publication, and next-invocation AOT reuse.
 
 The existing `scripts/benchmark_freezed.sh` remains the legacy Freezed 3.x
 stock/fast comparison. It is intentionally not combined with this current

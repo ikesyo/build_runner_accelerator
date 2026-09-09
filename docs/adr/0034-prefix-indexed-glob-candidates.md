@@ -23,7 +23,7 @@ patternの最初のwildcardより前のliteral prefixを使えば、候補範囲
 
 ## Measurement snapshot
 
-2026-09-04、`COUNT=500 JOBS=1 FAST_BUILD_RUNNER_METRICS=1`で、build-scoped cacheとlinear
+2026-09-04、`COUNT=500 JOBS=1 BUILD_RUNNER_ACCELERATOR_METRICS=1`で、build-scoped cacheとlinear
 matcherを含む実装から比較した。全ケースで`byte-identical=yes`かつ`no-op=yes`だった。
 
 | ケース | prefix index前のglob stage | prefix index後のglob stage | Rust wall (前 → 後) |

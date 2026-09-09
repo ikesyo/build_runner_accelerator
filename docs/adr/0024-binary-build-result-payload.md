@@ -13,7 +13,7 @@ incremental判定に必要なmetadataであり、単純にinputs/outputsの名�
 
 ## Decision
 
-- 成功した`build_result`と`build_batch_result`は、`FBRR` magic、metadata length、JSON
+- 成功した`build_result`と`build_batch_result`は、`BRAR` magic、metadata length、JSON
   metadata、連結したraw output bytesからなる1つのbinary frameで返す。
 - metadataの各outputは`asset`と`length`だけを持ち、raw bytesはsingle resultでは
   outputs順、batchではresults内のoutputsをdepth-first順に連結する。

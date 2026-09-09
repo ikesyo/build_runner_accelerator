@@ -69,16 +69,16 @@ assert_no_file() {
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
   [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
   RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
     "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml" || \
     fail 'Rust frontend build failed'
-  FAST_BUILD_RUNNER_BIN="$repo_root/rust/target/debug/fast_build_runner"
-  export FAST_BUILD_RUNNER_BIN
+  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
+  export BUILD_RUNNER_ACCELERATOR_BIN
 fi
-[[ -x "$FAST_BUILD_RUNNER_BIN" ]] || \
-  fail "Rust frontend binary is not executable: $FAST_BUILD_RUNNER_BIN"
+[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
+  fail "Rust frontend binary is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
 
 (cd "$worker_dir" && \
   PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null) || \
@@ -134,7 +134,7 @@ run_required 'Rust initial build' \
 assert_same_file "$stock_dir/lib/input.summary.txt" "$rust_dir/lib/input.summary.txt"
 assert_contains "$rust_dir/lib/input.summary.txt" 'hello seed summary'
 assert_contains "$temporary_dir/rust.initial.log" 'Rust frontend: 2 build action(s)'
-rust_cache="$rust_dir/.dart_tool/fast_build_runner/cache/arbitrary_dependency_app/lib/input.seed.txt"
+rust_cache="$rust_dir/.dart_tool/build_runner_accelerator/cache/arbitrary_dependency_app/lib/input.seed.txt"
 [[ -f "$rust_cache" ]] || fail 'Rust cache output was not committed'
 
 run_required 'Rust no-op build' \

@@ -6,7 +6,7 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 dart_bin=${DART_BIN:-"$repo_root/.toolchains/dart/dart-sdk/bin/dart"}
 pub_cache=${PUB_CACHE:-"$repo_root/.pub-cache"}
 package_config="$repo_root/dart_worker/.dart_tool/package_config.json"
-worker_kernel=${FAST_BUILD_RUNNER_WORKER_KERNEL:-"$repo_root/.toolchains/fast_build_runner_worker.dill"}
+worker_kernel=${BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL:-"$repo_root/.toolchains/build_runner_accelerator_worker.dill"}
 
 fail() {
   printf 'compile-worker-kernel: FAIL: %s\n' "$*" >&2

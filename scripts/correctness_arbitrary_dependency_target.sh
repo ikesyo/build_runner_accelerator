@@ -59,7 +59,7 @@ assert_contains() {
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
   cargo_bin=${CARGO_BIN:-"$repo_root/.toolchains/cargo/bin/cargo"}
   rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
   cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
@@ -67,11 +67,11 @@ if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
   RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
     "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml" || \
     fail 'Rust frontend build failed'
-  FAST_BUILD_RUNNER_BIN="$repo_root/rust/target/debug/fast_build_runner"
-  export FAST_BUILD_RUNNER_BIN
+  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
+  export BUILD_RUNNER_ACCELERATOR_BIN
 fi
-[[ -x "$FAST_BUILD_RUNNER_BIN" ]] || \
-  fail "Rust frontend binary is not executable: $FAST_BUILD_RUNNER_BIN"
+[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
+  fail "Rust frontend binary is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
 
 (cd "$repo_root/dart_worker" && \
   PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null) || \
@@ -97,7 +97,7 @@ dependencies:
 
 dev_dependencies:
   build_runner: 2.7.2
-  fast_build_runner_worker:
+  build_runner_accelerator_worker:
     path: ../../dart_worker
 EOF
   cat >"$directory/build.yaml" <<'EOF'
@@ -194,11 +194,11 @@ fi
 
 stock_cache=$(find "$stock_dir/.dart_tool/build" -type f -name 'input.seed.txt' -print -quit)
 [[ -n "$stock_cache" ]] || fail 'stock dependency target did not produce a cache output'
-rust_cache="$rust_dir/.dart_tool/fast_build_runner/cache/dependency_target_package/lib/input.seed.txt"
+rust_cache="$rust_dir/.dart_tool/build_runner_accelerator/cache/dependency_target_package/lib/input.seed.txt"
 assert_same_file "$stock_cache" "$rust_cache"
 stock_root_cache=$(find "$stock_dir/.dart_tool/build" -type f -name 'root.seed.txt' -print -quit)
 [[ -n "$stock_root_cache" ]] || fail 'stock root target did not produce a cache output'
-rust_root_cache="$rust_dir/.dart_tool/fast_build_runner/cache/arbitrary_dependency_target_app/lib/root.seed.txt"
+rust_root_cache="$rust_dir/.dart_tool/build_runner_accelerator/cache/arbitrary_dependency_target_app/lib/root.seed.txt"
 assert_same_file "$stock_root_cache" "$rust_root_cache"
 assert_contains "$temporary_dir/rust.initial.log" 'Rust frontend: 2 build action(s)'
 

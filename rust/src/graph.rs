@@ -6,7 +6,7 @@ use std::io;
 use std::path::Path;
 
 pub const GRAPH_SCHEMA_VERSION: u32 = 3;
-const GRAPH_MAGIC: &[u8; 4] = b"FBRG";
+const GRAPH_MAGIC: &[u8; 4] = b"BRAG";
 const GRAPH_FORMAT_VERSION: u8 = 1;
 const GRAPH_HEADER_LENGTH: usize = GRAPH_MAGIC.len() + 1 + 4;
 const GRAPH_MAX_BYTES: usize = 256 * 1024 * 1024;
@@ -562,7 +562,7 @@ mod tests {
             )]),
         };
         let unique = format!(
-            "fast-build-runner-graph-{}-{}.bin",
+            "build-runner-accelerator-graph-{}-{}.bin",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -583,7 +583,7 @@ mod tests {
     #[test]
     fn graph_requires_binary_header() {
         let unique = format!(
-            "fast-build-runner-invalid-{}-{}.bin",
+            "build-runner-accelerator-invalid-{}-{}.bin",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

@@ -20,7 +20,7 @@ import 'resolver_host.dart';
 import 'resolver_reads.dart';
 
 final _metricsEnabled =
-    Platform.environment['FAST_BUILD_RUNNER_METRICS'] == '1';
+    Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1';
 
 Future<void> runWorker({
   required Map<String, BuilderFactory> catalog,

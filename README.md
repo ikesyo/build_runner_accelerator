@@ -28,7 +28,7 @@ Rust frontend は次を担当します。
 - Dart worker との length-prefixed IPC（制御はJSON、asset `read`とbuild result成功応答は単一バイナリフレーム）
 - `--jobs N` 指定時は phase の action 数に応じて worker を遅延起動・縮小し、複数worker時はready actionを連続batchへ分割してworkerあたり1回の`build_batch`で処理
 - cache/source への atomic commit と、全 action 成功後の graph 保存
-- action graphは`.dart_tool/fast_build_runner/graph-v3.bin`へ小さなversioned binary形式で保存し、内容が変わらないno-opでは再書き込みしない
+- action graphは`.dart_tool/build_runner_accelerator/graph-v3.bin`へ小さなversioned binary形式で保存し、内容が変わらないno-opでは再書き込みしない
 - `watch` の native filesystem event による変更検知と、1プロセス内で再利用する Dart worker
 
 Dart worker は次を担当します。
@@ -100,14 +100,14 @@ CARGO_HOME="$PWD/.toolchains/cargo" \
 ```
 
 workerのcold startを短縮する場合は、Dart workerをJIT kernelへ事前コンパイルし、
-`FAST_BUILD_RUNNER_WORKER_KERNEL`で指定できます。`build_runner_core`が`dart:mirrors`を
+`BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL`で指定できます。`build_runner_core`が`dart:mirrors`を
 参照するため、AOT executableではなくkernel snapshotを使用します。
 
 ```bash
 WORKER_KERNEL=$(bash scripts/compile_worker_kernel.sh)
-FAST_BUILD_RUNNER_WORKER_KERNEL="$WORKER_KERNEL" \
-  FAST_BUILD_RUNNER_BIN="$PWD/rust/target/debug/fast_build_runner" \
-  "$PWD/rust/target/debug/fast_build_runner" build \
+BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL="$WORKER_KERNEL" \
+  BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
+  "$PWD/rust/target/debug/build_runner_accelerator" build \
   --root fixtures/json_serializable_app --dart "$DART" --mode auto
 ```
 
@@ -139,7 +139,7 @@ bash scripts/correctness_arbitrary_builder.sh
 
 `verify.sh`は開始時にRust frontendを一度だけbuildし、quick・targeted・fullの子script
 から同じバイナリを直接再利用します。既に検証済みのバイナリを使う場合は
-`FAST_BUILD_RUNNER_BIN=/absolute/path/to/fast_build_runner`を指定できます。Rust unit
+`BUILD_RUNNER_ACCELERATOR_BIN=/absolute/path/to/build_runner_accelerator`を指定できます。Rust unit
 test、Dart analyze、stock/Rustの生成物比較は省略しません。benchmark単独実行も、測定区間の
 外でRust frontendを一度だけbuildします。詳細は[ADR-0035](docs/adr/0035-reuse-prebuilt-rust-binary-in-verification.md)を参照してください。
 
@@ -194,12 +194,12 @@ JOBS=2 bash scripts/benchmark_resolver_cold_path.sh
 Rust frontend内のworker lifecycleとIPC粒度を確認する場合は、stderr-onlyのruntime metricsを有効にします。
 
 ```bash
-FAST_BUILD_RUNNER_METRICS=1 COUNT=100 JOBS=2 \
+BUILD_RUNNER_ACCELERATOR_METRICS=1 COUNT=100 JOBS=2 \
   bash scripts/benchmark_json_serializable.sh
 ```
 
 `workers_active`、workerのstart/initialize/reset累積数、worker起動・initialize・reset・resolver reset・build・asset RPCの経過時間、IPC frame数/bytes、build result frame数/bytes、旧JSON換算のbuild result bytes、asset RPC、asset `read` bytes、binary read応答数を出力します。さらに`Rust filesystem metrics:`としてroot scan、generated/dependency/glob asset追加、dirty判定、build後scanの時間と初回scanのasset数/bytesを、`Rust graph metrics:`としてgraphのload/decode時間、saveのencode/write/rename時間、読み書きしたfile bytes、no-opでsaveを省略したかを、`Rust workspace metrics:`としてbuild-scoped asset read cacheのhit/missを出力します。これはprotocol payloadではなく、通常のstdoutと生成物には影響しません。`read_bytes`はRustがasset responseとして返したpayload bytes、`build_result_bytes`はRustが受信したbuild result binary frame bytes、`build_result_json_bytes`は同じ結果を旧JSON bytes配列で送った場合の想定frame bytes、`IO_METRICS=1`のread bytesはOS syscallレベルの値です。builder横断の標準計測には`benchmark_matrix.sh`を使えます。判断の履歴は [`docs/adr/`](docs/adr/README.md) にまとめています。
-`FAST_BUILD_RUNNER_METRICS=1`ではDart workerもactionごとに`Dart metrics:`をstderrへ出力し、builder factory、resolver取得（初回と累積）、`runBuilder`、resolver依存収集、結果組み立ての経過時間とoutputs/reads件数をJSONで記録します。protocol payload、通常のstdout、生成物は変更しません。
+`BUILD_RUNNER_ACCELERATOR_METRICS=1`ではDart workerもactionごとに`Dart metrics:`をstderrへ出力し、builder factory、resolver取得（初回と累積）、`runBuilder`、resolver依存収集、結果組み立ての経過時間とoutputs/reads件数をJSONで記録します。protocol payload、通常のstdout、生成物は変更しません。
 resolverを初めて取得したworkerでは、追加で一行の`Dart resolver metrics:`を出力し、
 `package_config`読み込み、resolver constructor、SDK summary、SDK summary後のAnalyzer driver
 初期化を含む残りの時間を記録します。`benchmark_resolver_cold_path.sh`はFreezed/Riverpodの
@@ -207,7 +207,7 @@ clean caseでこの一行を抽出します。SDK summary後の値はfirst resol
 差し引いた診断値であり、warm-upやresolver lifecycleの変更は行いません。SDK summaryは
 Analyzerが`dart:core`などSDKの宣言・型情報を毎回ソース解析せずに読み込むためのシリアライズ済み
 bundleで、`build_resolvers`が`.dart_tool/build_resolvers/sdk.sum`へcacheします。cacheが空または
-古い場合の生成は数秒かかるため、fast_build_runnerは`JOBS=2`以上のworker間で
+古い場合の生成は数秒かかるため、build_runner_acceleratorは`JOBS=2`以上のworker間で
 `.dart_tool/build_resolvers/sdk.sum.lock`を使って再生成を一つにまとめます。metricsの
 `resolver_sdk_summary_lock_wait_us`と`resolver_sdk_summary_after_lock_us`で待機と、lock後の
 cache hit/generationを分けて確認できます。valid cacheはworkspace単位で扱い、SDK/package
@@ -217,13 +217,13 @@ versionが異なるsummaryを別workspaceへ無条件に共有しません。
 
 positive `canRead` cache追加後の100入力・`jobs=1`では、`can_read` requestsが514から313、asset requestsが927から726、IPC framesが930から729へ減少しました。続くasset `read` binary envelopeは、readごとのframe数を増やさずJSON bytes配列をraw bytesへ置き換えます。今回の100入力runではRust→Dartの`ipc_bytes_sent=286,033`、`binary_read_responses=313`（`read_requests=313`）でした。直近のJSON配列runの722,408 bytesと比べた参考値は約60%減です。現行PoCでは非対応workerへのJSON fallbackは持たず、capability不足を初期化時にエラーにします。wall timeの改善は同一fixtureの反復benchmarkで確認します。詳細は[ADR-0015](docs/adr/0015-reset-scoped-positive-can-read-cache.md)、[ADR-0017](docs/adr/0017-binary-asset-read-response.md)、[ADR-0019](docs/adr/0019-require-binary-asset-read-capability.md)に記録しています。graph persistenceのstage計測は[ADR-0022](docs/adr/0022-graph-persistence-stage-metrics.md)、indexed/lazy化を見送る判断は[ADR-0023](docs/adr/0023-defer-indexed-asset-graph.md)に記録しています。100入力・`jobs=1`ではgraph fileが147,895 bytes、graph stageはno-opで1.341 ms、1-fileで2.119 ms、全入力変更で2.874 msでした。
 
-build resultも`FBRR` binary frameへ移行し、metadataにoutputsのasset/lengthとincremental判定用のreadsを残し、bytes本体は1フレーム内に連結します。100入力・`jobs=1`では、binary frameが194,278 bytes、旧JSON換算が417,128 bytesで、53.4%削減でした。workerは`build-result-binary-v1` capabilityを必須で広告し、JSON build resultへのfallbackは持ちません。transportはRustが所有する子workerとのstdin/stdout pipeを維持します。stdoutはログではなくlength-prefixed IPC専用、診断はstderrです。build result binary化の判断は[ADR-0024](docs/adr/0024-binary-build-result-payload.md)、transportの判断は[ADR-0025](docs/adr/0025-stdio-pipe-transport.md)に記録しています。
-FBRRのDart worker送信では、`writeAsBytes`境界で一度だけ防御copyした`Uint8List`を
+build resultも`BRAR` binary frameへ移行し、metadataにoutputsのasset/lengthとincremental判定用のreadsを残し、bytes本体は1フレーム内に連結します。100入力・`jobs=1`では、binary frameが194,278 bytes、旧JSON換算が417,128 bytesで、53.4%削減でした。workerは`build-result-binary-v1` capabilityを必須で広告し、JSON build resultへのfallbackは持ちません。transportはRustが所有する子workerとのstdin/stdout pipeを維持します。stdoutはログではなくlength-prefixed IPC専用、診断はstderrです。build result binary化の判断は[ADR-0024](docs/adr/0024-binary-build-result-payload.md)、transportの判断は[ADR-0025](docs/adr/0025-stdio-pipe-transport.md)に記録しています。
+BRARのDart worker送信では、`writeAsBytes`境界で一度だけ防御copyした`Uint8List`を
 output chunkとして保持し、batch全体を別配列へ連結せず同じ1 frameへ順番に書き込みます。
 Rust側も受信frameのraw bufferをdecode完了まで保持し、中間copyを省いています。判断は
 [ADR-0026](docs/adr/0026-retain-binary-frame-buffer.md)、[ADR-0027](docs/adr/0027-symmetric-ipc-frame-limit.md)、
 [ADR-0028](docs/adr/0028-stream-build-result-output-chunks.md)に記録しています。asset `read`の
-FBRBもDart側でraw bytes viewをcacheし、builderへ返す境界でのみ防御copyする方針にしています
+BRABもDart側でraw bytes viewをcacheし、builderへ返す境界でのみ防御copyする方針にしています
 （[ADR-0029](docs/adr/0029-zero-copy-asset-read-view.md)）。
 
 filesystem metrics導入後の100入力・`jobs=1`では、tracked glob stageが約316–331msから
@@ -277,8 +277,8 @@ watch --root . --dart ../../.toolchains/dart/dart-sdk/bin/dart --interval-ms 200
 既定workerのRust frontendは、最初にpackage_configとpackageごとの`build.yaml`から
 workspace fingerprintを作ります。manifestがない、古い、または生成workerがない場合だけ、
 Dartの`PackageGraph` / `BuildConfig`を使うgeneratorを起動し、
-`.dart_tool/fast_build_runner/builder-manifest.json`と
-`.dart_tool/fast_build_runner/dynamic_worker.dart`を生成します。dynamic workerは
+`.dart_tool/build_runner_accelerator/builder-manifest.json`と
+`.dart_tool/build_runner_accelerator/dynamic_worker.dart`を生成します。dynamic workerは
 builder packageの`package:` importとfactoryを静的importして既存のDart worker protocolを
 呼び出すため、builder packageをworker packageへ手作業登録したり、build_runnerをforkしたり
 する必要はありません。通常のno-opではmanifest generatorを再起動しません。

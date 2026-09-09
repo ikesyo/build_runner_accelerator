@@ -60,16 +60,16 @@ fail() {
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
   [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
   RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
     "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml" || \
     fail 'Rust frontend build failed'
-  FAST_BUILD_RUNNER_BIN="$repo_root/rust/target/debug/fast_build_runner"
-  export FAST_BUILD_RUNNER_BIN
+  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
+  export BUILD_RUNNER_ACCELERATOR_BIN
 fi
-[[ -x "$FAST_BUILD_RUNNER_BIN" ]] || \
-  fail "Rust frontend binary is not executable: $FAST_BUILD_RUNNER_BIN"
+[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
+  fail "Rust frontend binary is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
 
 prepare_package() {
   local directory=$1
@@ -98,7 +98,7 @@ prepare_package "$rust_dir"
 ) >"$stock_log" 2>&1 &
 stock_pid=$!
 
-setsid env FAST_BUILD_RUNNER_BIN="$FAST_BUILD_RUNNER_BIN" \
+setsid env BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
   PUB_CACHE="$pub_cache" RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
   "$script_dir/run_rust_frontend.sh" \
   watch --root "$rust_dir" --dart "$dart_bin" --interval-ms 200 \
@@ -159,7 +159,7 @@ stock_post_output() {
 rust_post_output() {
   local directory=$1
   printf '%s\n' \
-    "$directory/.dart_tool/fast_build_runner/cache/post_process_builder_app/lib/input.gen.txt.post.txt"
+    "$directory/.dart_tool/build_runner_accelerator/cache/post_process_builder_app/lib/input.gen.txt.post.txt"
 }
 
 wait_for_path "$stock_dir/lib/input.gen.txt" "$stock_pid"
@@ -186,13 +186,13 @@ wait_for_path \
   "$stock_dir/.dart_tool/build/generated/post_process_builder_app/lib/renamed.gen.txt.post.txt" \
   "$stock_pid"
 wait_for_path \
-  "$rust_dir/.dart_tool/fast_build_runner/cache/post_process_builder_app/lib/renamed.gen.txt.post.txt" \
+  "$rust_dir/.dart_tool/build_runner_accelerator/cache/post_process_builder_app/lib/renamed.gen.txt.post.txt" \
   "$rust_pid"
 sleep 1
 assert_same_file "$stock_dir/lib/renamed.gen.txt" "$rust_dir/lib/renamed.gen.txt"
 assert_same_file \
   "$stock_dir/.dart_tool/build/generated/post_process_builder_app/lib/renamed.gen.txt.post.txt" \
-  "$rust_dir/.dart_tool/fast_build_runner/cache/post_process_builder_app/lib/renamed.gen.txt.post.txt"
+  "$rust_dir/.dart_tool/build_runner_accelerator/cache/post_process_builder_app/lib/renamed.gen.txt.post.txt"
 assert_no_file "$stock_dir/lib/input.gen.txt"
 assert_no_file "$rust_dir/lib/input.gen.txt"
 assert_no_file "$(stock_post_output "$stock_dir")"

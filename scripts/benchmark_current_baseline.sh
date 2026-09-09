@@ -21,7 +21,7 @@ mode_list=${STOCK_MODES:-default}
 trace_mode=${TRACE_MODE:-0}
 lane=${LANE:-stock}
 fast_jobs=${FAST_JOBS:-1}
-fast_bin=${FAST_BUILD_RUNNER_BIN:-}
+fast_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-}
 toolchain_bin=${RUST_TOOLCHAIN_BIN:-"$repo_root/.toolchains/rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin"}
 cargo_bin=${CARGO_BIN:-"$toolchain_bin/cargo"}
 rustc_bin=${RUSTC_BIN:-"$toolchain_bin/rustc"}
@@ -44,12 +44,12 @@ fi
 
 results_dir=${RESULTS_DIR:-}
 if [[ -z "$results_dir" ]]; then
-  results_dir=$(mktemp -d "${TMPDIR:-/tmp}/fast-build-current-baseline.XXXXXX")
+  results_dir=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-current-baseline.XXXXXX")
 else
   mkdir -p "$results_dir"
   results_dir=$(cd -- "$results_dir" && pwd)
 fi
-work_root=$(mktemp -d "${TMPDIR:-/tmp}/fast-build-current-baseline-work.XXXXXX")
+work_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-current-baseline-work.XXXXXX")
 results_jsonl="$results_dir/results.jsonl"
 metadata_file="$results_dir/metadata.txt"
 
@@ -113,7 +113,7 @@ if [[ "$lane" == fast && -z "$fast_bin" ]]; then
     CARGO_HOME="$cargo_home" RUSTC="$rustc_bin" \
     "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml" || \
     fail 'Rust frontend build failed'
-  fast_bin="$repo_root/rust/target/debug/fast_build_runner"
+  fast_bin="$repo_root/rust/target/debug/build_runner_accelerator"
 fi
 if [[ "$lane" == fast ]]; then
   [[ -x "$fast_bin" ]] || fail "Rust frontend is not executable: $fast_bin"
@@ -182,7 +182,7 @@ build_command() {
     BUILD_COMMAND=(
       env
       "PUB_CACHE=$pub_cache"
-      "FAST_BUILD_RUNNER_BIN=$fast_bin"
+      "BUILD_RUNNER_ACCELERATOR_BIN=$fast_bin"
       "$script_dir/run_rust_frontend.sh"
       build
       --root

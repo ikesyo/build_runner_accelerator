@@ -9,7 +9,7 @@
 
 ## Decision
 
-- `FAST_BUILD_RUNNER_METRICS=1`のときだけRust frontendがstderrへ1行のmetricsを出力する。
+- `BUILD_RUNNER_ACCELERATOR_METRICS=1`のときだけRust frontendがstderrへ1行のmetricsを出力する。
 - 出力はworker lifecycle、IPC frame数/bytes、asset request数、`read` request数とpayload bytes、`can_read`、`find_assets`のquery/result数を含める。
 - IPC bytesはRust-Dart間のframe（4-byte length prefixを含む）の累積値とする。`read_bytes`はRustがasset responseとして返したpayload bytesであり、OS syscallのread bytesとは区別する。
 - watch sessionではmetricsを累積し、workerの縮小で終了したworkerの値も保持する。

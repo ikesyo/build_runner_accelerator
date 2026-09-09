@@ -2,7 +2,9 @@ use crate::protocol::{
     BINARY_BUILD_RESULT_MAGIC, BuildResult, IncomingFrame, decode_build_batch_result_frame,
     decode_build_result_frame, read_message_with_size, write_binary_frame, write_frame,
 };
-use crate::worker_kernel::resolve_worker_kernel;
+use crate::worker_kernel::{
+    WorkerArtifact, background_worker_aot_if_ready, resolve_worker_artifact,
+};
 use crate::workspace::{Workspace, matches_glob};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -85,25 +87,34 @@ impl WorkerClient {
         root: &Path,
         dart_binary: &str,
         worker_executable: &str,
-        worker_kernel: Option<&Path>,
+        worker_artifact: &WorkerArtifact,
     ) -> io::Result<Self> {
         let started = Instant::now();
-        let mut command = Command::new(dart_binary);
-        if let Some(worker_kernel) = worker_kernel {
-            let package_config = root.join(".dart_tool/package_config.json");
-            command
-                .arg(format!("--packages={}", package_config.display()))
-                .arg(worker_kernel);
-        } else if is_worker_script(worker_executable) {
-            command
-                .arg(format!(
-                    "--packages={}",
-                    root.join(".dart_tool/package_config.json").display()
-                ))
-                .arg(worker_executable);
-        } else {
-            command.args(["--suppress-analytics", "run", worker_executable]);
-        }
+        let mut command = match worker_artifact {
+            WorkerArtifact::Aot(executable) => Command::new(executable),
+            WorkerArtifact::Kernel(kernel) => {
+                let mut command = Command::new(dart_binary);
+                let package_config = root.join(".dart_tool/package_config.json");
+                command
+                    .arg(format!("--packages={}", package_config.display()))
+                    .arg(kernel);
+                command
+            }
+            WorkerArtifact::Script => {
+                let mut command = Command::new(dart_binary);
+                if is_worker_script(worker_executable) {
+                    command
+                        .arg(format!(
+                            "--packages={}",
+                            root.join(".dart_tool/package_config.json").display()
+                        ))
+                        .arg(worker_executable);
+                } else {
+                    command.args(["--suppress-analytics", "run", worker_executable]);
+                }
+                command
+            }
+        };
         let mut child = command
             .current_dir(root)
             .stdin(Stdio::piped())
@@ -519,8 +530,8 @@ pub struct WorkerPool {
     workers: Vec<WorkerClient>,
     dart_binary: String,
     worker_executable: String,
-    worker_kernel: Option<PathBuf>,
-    auto_worker_kernel: bool,
+    worker_artifact: WorkerArtifact,
+    auto_worker_artifact: bool,
     max_jobs: usize,
     initialized: Option<(PathBuf, String, String, usize)>,
     initialized_workers: usize,
@@ -566,15 +577,15 @@ impl WorkerPool {
         dart_binary: &str,
         worker_executable: &str,
         jobs: usize,
-        auto_worker_kernel: bool,
+        auto_worker_artifact: bool,
     ) -> io::Result<Self> {
         let dart_binary = dart_binary.to_owned();
         let worker_executable = worker_executable.to_owned();
-        let worker_kernel = resolve_worker_kernel(
+        let worker_artifact = resolve_worker_artifact(
             root,
             &dart_binary,
             &worker_executable,
-            auto_worker_kernel,
+            auto_worker_artifact,
         )?;
         let max_jobs = jobs.max(1);
         // Keep the initial pool small. Additional workers are started only when
@@ -583,14 +594,14 @@ impl WorkerPool {
             root,
             &dart_binary,
             &worker_executable,
-            worker_kernel.as_deref(),
+            &worker_artifact,
         )?];
         Ok(Self {
             workers,
             dart_binary,
             worker_executable,
-            worker_kernel,
-            auto_worker_kernel,
+            worker_artifact,
+            auto_worker_artifact,
             max_jobs,
             initialized: None,
             initialized_workers: 0,
@@ -616,6 +627,26 @@ impl WorkerPool {
             phase_count,
         );
         if self.initialized.as_ref() == Some(&signature) {
+            if self.auto_worker_artifact {
+                match background_worker_aot_if_ready(
+                    root,
+                    &self.dart_binary,
+                    &self.worker_executable,
+                ) {
+                    Ok(Some(aot)) => {
+                        let artifact = WorkerArtifact::Aot(aot);
+                        if self.worker_artifact != artifact {
+                            self.restart_workers(root, artifact)?;
+                            self.initialize_pending_workers(root, package, phase_count)?;
+                            return Ok(());
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => eprintln!(
+                        "Rust worker background AOT is not ready; keeping the current worker ({error})"
+                    ),
+                }
+            }
             let reset_count = self.initialized_workers.min(self.workers.len());
             for worker in self.workers.iter_mut().take(reset_count) {
                 worker.reset()?;
@@ -626,29 +657,36 @@ impl WorkerPool {
         }
 
         if self.initialized.is_some() {
-            self.worker_kernel = resolve_worker_kernel(
+            let worker_artifact = resolve_worker_artifact(
                 root,
                 &self.dart_binary,
                 &self.worker_executable,
-                self.auto_worker_kernel,
+                self.auto_worker_artifact,
             )?;
-            let worker_count = self.workers.len().max(1);
-            self.retire_workers(0);
-            self.workers = (0..worker_count)
-                .map(|_| {
-                    WorkerClient::start(
-                        root,
-                        &self.dart_binary,
-                        &self.worker_executable,
-                        self.worker_kernel.as_deref(),
-                    )
-                })
-                .collect::<io::Result<Vec<_>>>()?;
-            self.worker_starts += worker_count as u64;
+            self.restart_workers(root, worker_artifact)?;
         }
         self.initialized_workers = 0;
         self.initialize_pending_workers(root, package, phase_count)?;
         self.initialized = Some(signature);
+        Ok(())
+    }
+
+    fn restart_workers(&mut self, root: &Path, worker_artifact: WorkerArtifact) -> io::Result<()> {
+        let worker_count = self.workers.len().max(1);
+        self.retire_workers(0);
+        self.workers = (0..worker_count)
+            .map(|_| {
+                WorkerClient::start(
+                    root,
+                    &self.dart_binary,
+                    &self.worker_executable,
+                    &worker_artifact,
+                )
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        self.worker_starts += worker_count as u64;
+        self.worker_artifact = worker_artifact;
+        self.initialized_workers = 0;
         Ok(())
     }
 
@@ -663,7 +701,7 @@ impl WorkerPool {
                 root,
                 &self.dart_binary,
                 &self.worker_executable,
-                self.worker_kernel.as_deref(),
+                &self.worker_artifact,
             )?);
             self.worker_starts += 1;
         }
@@ -822,7 +860,7 @@ fn balanced_request_ranges(request_count: usize, worker_count: usize) -> Vec<(us
 }
 
 fn metrics_enabled() -> bool {
-    env::var("FAST_BUILD_RUNNER_METRICS")
+    env::var("BUILD_RUNNER_ACCELERATOR_METRICS")
         .map(|value| value == "1")
         .unwrap_or(false)
 }

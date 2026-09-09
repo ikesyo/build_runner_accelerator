@@ -13,7 +13,7 @@
 - action keyはbuilderとinput assetから作り、actionごとにreads、resolver reads、glob reads、outputs、output digest、statusを保存する。
 - 前回stateのschema versionとbuild config digestが一致する場合だけ、snapshotと依存記録を用いてdirty判定する。
 - 前回存在しなかったassetも`exists=false`として追跡し、後から追加されたときに無効化できるようにする。
-- graph stateは`.dart_tool/fast_build_runner/graph-v2.json`へ保存する。
+- graph stateは`.dart_tool/build_runner_accelerator/graph-v2.json`へ保存する。
 
 ## Consequences
 

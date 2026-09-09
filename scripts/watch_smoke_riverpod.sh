@@ -9,7 +9,7 @@ cargo_bin=${CARGO_BIN:-"$repo_root/.toolchains/cargo/bin/cargo"}
 rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
 cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
 fixture_dir="$repo_root/fixtures/riverpod_app"
-test_root=$(mktemp -d "${TMPDIR:-/tmp}/fast-build-riverpod-watch-root.XXXXXX")
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-riverpod-watch-root.XXXXXX")
 watch_dir="$test_root/fixtures/watch"
 results_dir=$(mktemp -d)
 log_path="$results_dir/watch.log"
@@ -40,15 +40,15 @@ fail() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
   [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
   (cd "$repo_root" && RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
     "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml") || \
     fail 'Rust frontend build failed'
-  FAST_BUILD_RUNNER_BIN="$repo_root/rust/target/debug/fast_build_runner"
-  export FAST_BUILD_RUNNER_BIN
+  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
+  export BUILD_RUNNER_ACCELERATOR_BIN
 fi
-[[ -x "$FAST_BUILD_RUNNER_BIN" ]] || fail 'Rust frontend binary is not executable'
+[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || fail 'Rust frontend binary is not executable'
 
 mkdir -p "$watch_dir/lib"
 ln -s "$repo_root/dart_worker" "$test_root/dart_worker"
@@ -58,9 +58,9 @@ cp "$fixture_dir/lib/model.dart" "$watch_dir/lib/model.dart"
 cp "$fixture_dir/lib/secondary.dart" "$watch_dir/lib/secondary.dart"
 (cd "$watch_dir" && PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get --offline >/dev/null)
 
-setsid env FAST_BUILD_RUNNER_METRICS=1 PUB_CACHE="$pub_cache" \
+setsid env BUILD_RUNNER_ACCELERATOR_METRICS=1 PUB_CACHE="$pub_cache" \
   RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-  FAST_BUILD_RUNNER_BIN="$FAST_BUILD_RUNNER_BIN" \
+  BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
   "$script_dir/run_rust_frontend.sh" watch --root "$watch_dir" --dart "$dart_bin" \
   --interval-ms 200 >"$log_path" 2>&1 &
 watch_pid=$!

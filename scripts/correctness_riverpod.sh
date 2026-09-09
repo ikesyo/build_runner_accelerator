@@ -10,7 +10,7 @@ rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
 cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
 fixture_dir="$repo_root/fixtures/riverpod_app"
 results_dir=$(mktemp -d)
-test_root=$(mktemp -d "${TMPDIR:-/tmp}/fast-build-riverpod-root.XXXXXX")
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-riverpod-root.XXXXXX")
 test_fixtures_dir="$test_root/fixtures"
 mkdir -p "$test_fixtures_dir"
 ln -s "$repo_root/dart_worker" "$test_root/dart_worker"
@@ -48,22 +48,22 @@ fail() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" && ! -x "$cargo_bin" ]]; then
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" && ! -x "$cargo_bin" ]]; then
   fail "Cargo executable not found: $cargo_bin"
 fi
 
 prepare_rust_binary() {
-  if [[ -n "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
-    [[ -x "$FAST_BUILD_RUNNER_BIN" ]] || \
-      fail "FAST_BUILD_RUNNER_BIN is not executable: $FAST_BUILD_RUNNER_BIN"
+  if [[ -n "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
+    [[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
+      fail "BUILD_RUNNER_ACCELERATOR_BIN is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
     return 0
   fi
   (cd "$repo_root" && \
     RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
       "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml")
-  FAST_BUILD_RUNNER_BIN="$repo_root/rust/target/debug/fast_build_runner"
-  export FAST_BUILD_RUNNER_BIN
-  [[ -x "$FAST_BUILD_RUNNER_BIN" ]] || fail 'Rust frontend binary was not built'
+  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
+  export BUILD_RUNNER_ACCELERATOR_BIN
+  [[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || fail 'Rust frontend binary was not built'
 }
 
 prepare_rust_binary
@@ -71,7 +71,7 @@ prepare_rust_binary
 new_package_dir() {
   local role=$1
   local directory
-  directory=$(mktemp -d "$test_fixtures_dir/fast-build-riverpod-${role}.XXXXXX")
+  directory=$(mktemp -d "$test_fixtures_dir/build-runner-accelerator-riverpod-${role}.XXXXXX")
   cleanup_paths+=("$directory")
   printf '%s\n' "$directory"
 }
@@ -102,7 +102,7 @@ run_rust() {
   local log=$2
   (cd "$repo_root" && \
     PUB_CACHE="$pub_cache" RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-      FAST_BUILD_RUNNER_BIN="$FAST_BUILD_RUNNER_BIN" \
+      BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
       "$repo_root/scripts/run_rust_frontend.sh" \
       build --root "$directory" --dart "$dart_bin" --jobs 1 >"$log" 2>&1)
 }
@@ -126,13 +126,13 @@ assert_outputs() {
   assert_same_file "$1/lib/model.g.dart" "$2/lib/model.g.dart"
   assert_same_file \
     "$1/.dart_tool/build/generated/$stock_package_name/lib/model.riverpod.g.part" \
-    "$2/.dart_tool/fast_build_runner/cache/$rust_package_name/lib/model.riverpod.g.part"
+    "$2/.dart_tool/build_runner_accelerator/cache/$rust_package_name/lib/model.riverpod.g.part"
   assert_same_file \
     "$1/.dart_tool/build/generated/$stock_package_name/lib/model.json_serializable.g.part" \
-    "$2/.dart_tool/fast_build_runner/cache/$rust_package_name/lib/model.json_serializable.g.part"
+    "$2/.dart_tool/build_runner_accelerator/cache/$rust_package_name/lib/model.json_serializable.g.part"
   assert_same_file \
     "$1/.dart_tool/build/generated/$stock_package_name/lib/secondary.riverpod.g.part" \
-    "$2/.dart_tool/fast_build_runner/cache/$rust_package_name/lib/secondary.riverpod.g.part"
+    "$2/.dart_tool/build_runner_accelerator/cache/$rust_package_name/lib/secondary.riverpod.g.part"
   assert_same_file "$1/lib/secondary.g.dart" "$2/lib/secondary.g.dart"
 }
 
@@ -153,7 +153,7 @@ setup_case() {
   run_rust "$rust_dir" "$results_dir/$name.rust.initial.log"
   assert_outputs "$stock_dir" "$rust_dir"
   assert_actions "$results_dir/$name.rust.initial.log" 7
-  cp "$rust_dir/.dart_tool/fast_build_runner/graph-v3.bin" \
+  cp "$rust_dir/.dart_tool/build_runner_accelerator/graph-v3.bin" \
     "$results_dir/$name.graph.before.bin"
   cp "$rust_dir/lib/model.g.dart" "$results_dir/$name.model.before.g.dart"
 }
@@ -186,11 +186,11 @@ run_case_generated_output_delete() {
   rm -f -- "$stock_dir/lib/model.freezed.dart" "$rust_dir/lib/model.freezed.dart" \
     "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart" \
     "$stock_dir/.dart_tool/build/generated/$stock_package_name/lib/model.riverpod.g.part" \
-    "$rust_dir/.dart_tool/fast_build_runner/cache/$rust_package_name/lib/model.riverpod.g.part" \
+    "$rust_dir/.dart_tool/build_runner_accelerator/cache/$rust_package_name/lib/model.riverpod.g.part" \
     "$stock_dir/.dart_tool/build/generated/$stock_package_name/lib/model.json_serializable.g.part" \
-    "$rust_dir/.dart_tool/fast_build_runner/cache/$rust_package_name/lib/model.json_serializable.g.part" \
+    "$rust_dir/.dart_tool/build_runner_accelerator/cache/$rust_package_name/lib/model.json_serializable.g.part" \
     "$stock_dir/.dart_tool/build/generated/$stock_package_name/lib/secondary.riverpod.g.part" \
-    "$rust_dir/.dart_tool/fast_build_runner/cache/$rust_package_name/lib/secondary.riverpod.g.part" \
+    "$rust_dir/.dart_tool/build_runner_accelerator/cache/$rust_package_name/lib/secondary.riverpod.g.part" \
     "$stock_dir/lib/secondary.g.dart" "$rust_dir/lib/secondary.g.dart"
   run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
@@ -211,7 +211,7 @@ run_case_failure() {
     fail 'Rust failure unexpectedly succeeded'
   fi
   cmp "$results_dir/$name.graph.before.bin" \
-    "$rust_dir/.dart_tool/fast_build_runner/graph-v3.bin" || \
+    "$rust_dir/.dart_tool/build_runner_accelerator/graph-v3.bin" || \
     fail 'Rust graph changed after failed Riverpod build'
   assert_same_file "$results_dir/$name.model.before.g.dart" "$rust_dir/lib/model.g.dart"
   assert_contains "$results_dir/$name.rust.change.log" 'error'

@@ -21,7 +21,7 @@ Rustの`build_us`にはDart worker内のbuilder factory、Analyzer resolver、bu
 
 ## Decision
 
-- `FAST_BUILD_RUNNER_METRICS=1`のときだけ、Dart workerが各build actionのstderrへ一行の
+- `BUILD_RUNNER_ACCELERATOR_METRICS=1`のときだけ、Dart workerが各build actionのstderrへ一行の
   `Dart metrics:` JSONを出力する。
 - JSONには`builder`、`input`、`status`、`total_us`、`factory_us`、`resolver_get_us`、
   `resolver_get_calls`、`resolver_first_get_us`、`run_builder_us`、`resolver_reads_us`、

@@ -12,7 +12,7 @@ atomic save、filesystem差をsnapshot形式へ持ち込むと、false negative�
 
 ## Measurement snapshot
 
-2026-09-04、`COUNT=500 JOBS=1 FAST_BUILD_RUNNER_METRICS=1`で計測した。root scanは
+2026-09-04、`COUNT=500 JOBS=1 BUILD_RUNNER_ACCELERATOR_METRICS=1`で計測した。root scanは
 1,003 assets / 475,158 bytesに対して、clean/no-op/1-file/allでそれぞれ約11.7/12.2/10.5/12.5ms
 だった。dirty判定は約7.9/14.0/14.5/10.9msだった。
 

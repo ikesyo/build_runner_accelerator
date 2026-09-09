@@ -18,7 +18,7 @@ read/canReadはbuilderの実行中に動的に発生するため、先読みのr
 
 - Dart workerは`initialized`で`asset-rpc-binary-read-v1` capabilityを広告する。
 - Rustはそのcapabilityを確認したworkerに対し、成功したasset `read`だけを
-  `FBRB` magic、metadata length、metadata JSON、raw bytesからなる単一のlength-prefixed
+  `BRAB` magic、metadata length、metadata JSON、raw bytesからなる単一のlength-prefixed
   binary frameで返す。
 - metadataには`type`、`id`、`ok`、`encoding=raw`、`length`を含め、Dart側は
   `length`と実payload長を検証してからbytesとしてBuildStepへ渡す。

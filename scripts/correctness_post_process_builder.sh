@@ -39,14 +39,14 @@ fail() {
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
   [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
   RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
     "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml"
-  FAST_BUILD_RUNNER_BIN="$repo_root/rust/target/debug/fast_build_runner"
-  export FAST_BUILD_RUNNER_BIN
+  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
+  export BUILD_RUNNER_ACCELERATOR_BIN
 fi
-[[ -x "$FAST_BUILD_RUNNER_BIN" ]] || fail "Rust frontend binary is not executable"
+[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || fail "Rust frontend binary is not executable"
 
 (cd "$worker_dir" && \
   PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get --offline >/dev/null)
@@ -81,7 +81,7 @@ run_stock_clean() {
 
 post_output() {
   local directory=$1
-  printf '%s\n' "$directory/.dart_tool/fast_build_runner/cache/post_process_builder_app/lib/input.gen.txt.post.txt"
+  printf '%s\n' "$directory/.dart_tool/build_runner_accelerator/cache/post_process_builder_app/lib/input.gen.txt.post.txt"
 }
 
 stock_post_output() {
@@ -175,9 +175,9 @@ run_case_rename() {
   assert_same_file "$stock_dir/lib/renamed.gen.txt" "$rust_dir/lib/renamed.gen.txt"
   assert_same_file \
     "$stock_dir/.dart_tool/build/generated/post_process_builder_app/lib/renamed.gen.txt.post.txt" \
-    "$rust_dir/.dart_tool/fast_build_runner/cache/post_process_builder_app/lib/renamed.gen.txt.post.txt"
+    "$rust_dir/.dart_tool/build_runner_accelerator/cache/post_process_builder_app/lib/renamed.gen.txt.post.txt"
   assert_no_file "$rust_dir/lib/input.gen.txt"
-  assert_no_file "$rust_dir/.dart_tool/fast_build_runner/cache/post_process_builder_app/lib/input.gen.txt.post.txt"
+  assert_no_file "$rust_dir/.dart_tool/build_runner_accelerator/cache/post_process_builder_app/lib/input.gen.txt.post.txt"
   printf 'post-process-builder: rename: pass\n'
 }
 

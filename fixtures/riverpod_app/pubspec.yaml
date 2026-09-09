@@ -12,7 +12,7 @@ dependencies:
 
 dev_dependencies:
   build_runner: 2.7.2
-  fast_build_runner_worker:
+  build_runner_accelerator_worker:
     path: ../../dart_worker
   freezed: 3.2.3
   json_serializable: 6.11.2

@@ -209,7 +209,7 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.1.3"
-  fast_build_runner_worker:
+  build_runner_accelerator_worker:
     dependency: "direct dev"
     description:
       path: "../../dart_worker"

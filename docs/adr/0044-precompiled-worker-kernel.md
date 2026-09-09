@@ -22,7 +22,7 @@ AOT compilationできない。
 
 ## Decision
 
-- `FAST_BUILD_RUNNER_WORKER_KERNEL`が指定された場合、Rust workerはDartのkernel snapshotを
+- `BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL`が指定された場合、Rust workerはDartのkernel snapshotを
   直接起動する。
 - workspaceの`.dart_tool/package_config.json`を`--packages`で明示し、workerが現在のpackage
   configを`Isolate.packageConfig`から読み取れるようにする。

@@ -9,7 +9,7 @@ cargo_bin=${CARGO_BIN:-"$repo_root/.toolchains/cargo/bin/cargo"}
 rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
 cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
 fixture_dir="$repo_root/fixtures/riverpod_app"
-test_root=$(mktemp -d "${TMPDIR:-/tmp}/fast-build-riverpod-benchmark-root.XXXXXX")
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-riverpod-benchmark-root.XXXXXX")
 results_dir=$(mktemp -d)
 metrics_path="$results_dir/metrics.txt"
 mkdir -p "$test_root/fixtures"
@@ -29,14 +29,14 @@ trap cleanup EXIT
 fail() { printf 'riverpod-benchmark: FAIL: %s\n' "$*" >&2; exit 1; }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
   [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
   (cd "$repo_root" && RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
     "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml")
-  FAST_BUILD_RUNNER_BIN="$repo_root/rust/target/debug/fast_build_runner"
-  export FAST_BUILD_RUNNER_BIN
+  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
+  export BUILD_RUNNER_ACCELERATOR_BIN
 fi
-[[ -x "$FAST_BUILD_RUNNER_BIN" ]] || fail 'Rust frontend binary is not executable'
+[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || fail 'Rust frontend binary is not executable'
 
 prepare_package() {
   local directory=$1
@@ -60,7 +60,7 @@ run_stock() {
 run_rust() {
   local directory=$1
   (cd "$repo_root" && PUB_CACHE="$pub_cache" RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-    FAST_BUILD_RUNNER_BIN="$FAST_BUILD_RUNNER_BIN" "$script_dir/run_rust_frontend.sh" \
+    BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" "$script_dir/run_rust_frontend.sh" \
     build --root "$directory" --dart "$dart_bin" --jobs "${JOBS:-1}")
 }
 measure() {
@@ -86,7 +86,7 @@ assert_same_outputs() {
   cmp "$stock_dir/lib/secondary.g.dart" "$rust_dir/lib/secondary.g.dart" || \
     fail 'secondary output differs'
   cmp "$stock_dir/.dart_tool/build/generated/riverpod_benchmark_stock/lib/secondary.riverpod.g.part" \
-    "$rust_dir/.dart_tool/fast_build_runner/cache/riverpod_benchmark_rust/lib/secondary.riverpod.g.part" || \
+    "$rust_dir/.dart_tool/build_runner_accelerator/cache/riverpod_benchmark_rust/lib/secondary.riverpod.g.part" || \
     fail 'secondary Riverpod part differs'
 }
 

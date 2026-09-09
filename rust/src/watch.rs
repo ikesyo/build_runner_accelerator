@@ -98,7 +98,7 @@ fn is_generated_output(root: &Path, path: &Path) -> bool {
     let Some(relative) = path.strip_prefix(root).ok().and_then(Path::to_str) else {
         return false;
     };
-    let manifest_path = root.join(".dart_tool/fast_build_runner/builder-manifest.json");
+    let manifest_path = root.join(".dart_tool/build_runner_accelerator/builder-manifest.json");
     let Ok(contents) = fs::read_to_string(manifest_path) else {
         return false;
     };
@@ -182,6 +182,6 @@ fn is_relevant_event(workspace: &Workspace, event: &Event) -> bool {
             // source file was removed by the user.
             return matches!(event.kind, EventKind::Remove(_));
         }
-        !name.contains(".fast-build-")
+        !name.contains(".build-runner-accelerator-")
     })
 }

@@ -219,7 +219,7 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .and_then(|name| name.to_str())
         .unwrap_or("output");
     let temporary = parent.join(format!(
-        ".{file_name}.fast-build-{}.tmp",
+        ".{file_name}.build-runner-accelerator-{}.tmp",
         std::process::id()
     ));
     fs::write(&temporary, bytes)?;

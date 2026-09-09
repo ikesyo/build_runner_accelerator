@@ -5,8 +5,8 @@ import 'dart:typed_data';
 
 typedef JsonMap = Map<String, dynamic>;
 
-const List<int> _binaryAssetResponseMagic = <int>[0x46, 0x42, 0x52, 0x42];
-const List<int> _binaryBuildResultMagic = <int>[0x46, 0x42, 0x52, 0x52];
+const List<int> _binaryAssetResponseMagic = <int>[0x42, 0x52, 0x41, 0x42];
+const List<int> _binaryBuildResultMagic = <int>[0x42, 0x52, 0x41, 0x52];
 const int _maxFrameLength = 256 * 1024 * 1024;
 
 class FrameReader {

@@ -23,9 +23,11 @@ fn main() -> io::Result<()> {
     match options.command.as_str() {
         "build" => build::run(&options, None),
         "watch" => watch::run(&options),
+        "aot-cache-key" => frontend::run_aot_cache_key(&options),
+        "aot-prewarm" => frontend::run_aot_prewarm(&options),
         command => {
             eprintln!(
-                "usage: fast_build_runner <build|watch> [--root PATH] [--dart PATH] [--worker PACKAGE:EXECUTABLE] [--jobs N] [--mode auto|rust|dart]"
+                "usage: build_runner_accelerator <build|watch|aot-cache-key|aot-prewarm> [--root PATH] [--dart PATH] [--worker PACKAGE:EXECUTABLE] [--jobs N] [--mode auto|rust|dart]"
             );
             Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

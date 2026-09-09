@@ -17,8 +17,8 @@
 ## Decision
 
 - `verify.sh`は開始時にRust frontendを一度だけ`cargo build`し、生成された
-  `FAST_BUILD_RUNNER_BIN`を子scriptへ継承する。
-- `scripts/run_rust_frontend.sh`は`FAST_BUILD_RUNNER_BIN`が指定されていればその実行
+  `BUILD_RUNNER_ACCELERATOR_BIN`を子scriptへ継承する。
+- `scripts/run_rust_frontend.sh`は`BUILD_RUNNER_ACCELERATOR_BIN`が指定されていればその実行
   ファイルを直接起動し、未指定の単独実行では従来どおり`cargo run`を使う。
 - `smoke.sh`、`watch_smoke.sh`、`correctness_json_serializable.sh`、
   `benchmark_json_serializable.sh`も、事前ビルド済みバイナリを受け取った場合は直接起動する。
@@ -27,7 +27,7 @@
 ## Consequences
 
 - 1回の検証入口でCargoによるRust実行の準備を繰り返さずに済む。
-- `FAST_BUILD_RUNNER_BIN`を明示すれば、複数のbenchmarkまたはcorrectness実行でも同じ
+- `BUILD_RUNNER_ACCELERATOR_BIN`を明示すれば、複数のbenchmarkまたはcorrectness実行でも同じ
   ソースから作ったバイナリを再利用できる。
 - `verify.sh`の単回測定では、対象2ケースが`56.8s`から`56.0s`となった。差は約1.4%で、
   このfixtureではDart/Analyzer起動が支配的であることも確認できた。したがって、この変更を

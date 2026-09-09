@@ -13,9 +13,9 @@ Rust frontendのaction graphは`graph-v2.json`へ保存していた。JSONはデ
 ## Decision
 
 - GraphStateのフィールドとdirty判定の意味は変更しない。
-- 保存先を`.dart_tool/fast_build_runner/graph-v3.bin`へ切り替え、既存のPoC JSON形式は読み取らない。
+- 保存先を`.dart_tool/build_runner_accelerator/graph-v3.bin`へ切り替え、既存のPoC JSON形式は読み取らない。
 - codecは新規依存を追加せず、固定幅整数、長さ付きUTF-8文字列、collection countで構成する。
-- ファイルheaderに`FBRG` magic、format version、payload lengthを持たせ、未知形式、切断、
+- ファイルheaderに`BRAG` magic、format version、payload lengthを持たせ、未知形式、切断、
   余分なpayload、重複map key、無効なUTF-8/booleanを拒否する。
 - saveは従来どおり一時ファイルへのwrite後にrenameする。これはbuild_runner本体の
   AssetGraph形式との互換を意図しない。

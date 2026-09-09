@@ -56,11 +56,11 @@ fail() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
-  fail 'FAST_BUILD_RUNNER_BIN is required for the Rust watch smoke test'
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
+  fail 'BUILD_RUNNER_ACCELERATOR_BIN is required for the Rust watch smoke test'
 fi
-[[ -x "$FAST_BUILD_RUNNER_BIN" ]] || \
-  fail "Rust frontend is not executable: $FAST_BUILD_RUNNER_BIN"
+[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
+  fail "Rust frontend is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
 
 prepare_package() {
   local directory=$1
@@ -86,7 +86,7 @@ prepare_package "$rust_dir"
 ) >"$stock_log" 2>&1 &
 stock_pid=$!
 
-setsid env FAST_BUILD_RUNNER_BIN="$FAST_BUILD_RUNNER_BIN" \
+setsid env BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
   PUB_CACHE="$pub_cache" \
   "$script_dir/run_rust_frontend.sh" \
   watch --root "$rust_dir" --dart "$dart_bin" --interval-ms 200 --mode rust \

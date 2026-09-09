@@ -24,7 +24,7 @@ use std::time::Instant;
 pub(crate) fn graph_path(workspace: &Workspace) -> PathBuf {
     workspace
         .root
-        .join(".dart_tool/fast_build_runner/graph-v3.bin")
+        .join(".dart_tool/build_runner_accelerator/graph-v3.bin")
 }
 pub(crate) fn run(options: &Options, pool: Option<&mut WorkerPool>) -> io::Result<()> {
     let workspace = Workspace::load(options.root.clone())?;

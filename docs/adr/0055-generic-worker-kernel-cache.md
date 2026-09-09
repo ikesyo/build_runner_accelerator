@@ -24,12 +24,12 @@ importが変わったkernelを使うと、古いfactoryを実行する危険が�
 ## Decision
 
 - `--worker`を明示していない標準manifest workerが`.dart` sourceの場合、Rustは
-  `.dart_tool/fast_build_runner/dynamic_worker.dill`を自動生成・再利用する。
+  `.dart_tool/build_runner_accelerator/dynamic_worker.dill`を自動生成・再利用する。
 - kernelは`dart compile kernel --no-embed-sources`で生成し、Dart compilerのdepfileを
   `dynamic_worker.dill.d`へ保存する。depfileの全依存pathを確認し、kernelより新しい依存が
   ある、依存が削除された、depfileが読めない場合は再コンパイルする。
 - kernelコンパイルが利用できない場合は、元のDart script起動へ戻す。明示的な
-  `FAST_BUILD_RUNNER_WORKER_KERNEL`は自動cacheより優先し、script workerにも適用する。
+  `BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL`は自動cacheより優先し、script workerにも適用する。
 - builder名・package名別のRust fast pathは追加しない。kernel cacheはmanifestから生成される
   worker全体の共通起動最適化として扱う。
 - 常駐daemon化やworker lifecycleの変更はこの決定に含めず、watchのworker再利用とは独立に

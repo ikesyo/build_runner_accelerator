@@ -1,4 +1,4 @@
-name: fast_build_runner_worker
+name: build_runner_accelerator_worker
 description: A tiny Dart worker used by the Rust build_runner frontend PoC.
 publish_to: none
 

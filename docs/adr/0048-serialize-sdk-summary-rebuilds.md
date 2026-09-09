@@ -15,7 +15,7 @@ Accepted
 `.dart_tool/build_resolvers/sdk.sum`へcacheする。summaryが既に有効なら数msで済むが、
 SDKやAnalyzerの変更後、または新しいworkspaceでの初回resolver取得では約5秒かかる。
 
-fast_build_runnerはphase内の独立actionに対して複数のDart worker processを起動できる。
+build_runner_acceleratorはphase内の独立actionに対して複数のDart worker processを起動できる。
 summary cacheが空、または古い状態で複数workerが同時にresolverを初めて取得すると、
 各processが同じSDK bundleを生成していた。これは生成物の正しさを壊さないが、CPU・I/Oを
 重複させる。

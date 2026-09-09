@@ -35,7 +35,7 @@ metricsでは1-fileのRust `worker_initialize_us`が7.932s、Freezedの
 - generic manifest経路を正しさの基準として維持する。
 - この計測だけではFreezed専用fast pathを追加しない。先にworkspace固有dynamic workerの
   起動・再利用を汎用経路として短縮し、同じfixtureで再計測する。
-- 初期計測時点では`FAST_BUILD_RUNNER_WORKER_KERNEL`はpackage worker executableに限られ、
+- 初期計測時点では`BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL`はpackage worker executableに限られ、
   生成された`dynamic_worker.dart`には適用されなかった。その後、生成workerにも適用できる
   汎用kernel cacheをADR-0055として実装した。kernelの効果はbuilder固有fast pathの根拠では
   なく、generic worker起動短縮の根拠として扱う。
@@ -58,7 +58,7 @@ metricsでは1-fileのRust `worker_initialize_us`が7.932s、Freezedの
 timingを記録する。
 
 ```bash
-FAST_BUILD_RUNNER_BIN="$PWD/rust/target/debug/fast_build_runner" \
-  FAST_BUILD_RUNNER_METRICS=1 JOBS=1 \
+BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
+  BUILD_RUNNER_ACCELERATOR_METRICS=1 JOBS=1 \
   bash scripts/benchmark_freezed.sh
 ```

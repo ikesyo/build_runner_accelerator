@@ -40,18 +40,18 @@ fail() {
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 
 prepare_rust_binary() {
-  if [[ -n "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
-    [[ -x "$FAST_BUILD_RUNNER_BIN" ]] || \
-      fail "FAST_BUILD_RUNNER_BIN is not executable: $FAST_BUILD_RUNNER_BIN"
+  if [[ -n "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
+    [[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
+      fail "BUILD_RUNNER_ACCELERATOR_BIN is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
     return 0
   fi
   [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
   (cd "$repo_root" && \
     RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
       "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml")
-  local binary="$repo_root/rust/target/debug/fast_build_runner"
+  local binary="$repo_root/rust/target/debug/build_runner_accelerator"
   [[ -x "$binary" ]] || fail "Rust frontend binary was not built: $binary"
-  export FAST_BUILD_RUNNER_BIN="$binary"
+  export BUILD_RUNNER_ACCELERATOR_BIN="$binary"
 }
 
 prepare_rust_binary

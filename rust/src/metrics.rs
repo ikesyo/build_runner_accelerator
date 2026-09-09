@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 
 pub(crate) fn runtime_metrics_enabled() -> bool {
-    env::var("FAST_BUILD_RUNNER_METRICS")
+    env::var("BUILD_RUNNER_ACCELERATOR_METRICS")
         .map(|value| value == "1")
         .unwrap_or(false)
 }

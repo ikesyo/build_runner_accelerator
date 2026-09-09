@@ -41,10 +41,10 @@ fail() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
-  fail 'FAST_BUILD_RUNNER_BIN is required; build the Rust frontend first'
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
+  fail 'BUILD_RUNNER_ACCELERATOR_BIN is required; build the Rust frontend first'
 fi
-[[ -x "$FAST_BUILD_RUNNER_BIN" ]] || fail "Rust frontend is not executable: $FAST_BUILD_RUNNER_BIN"
+[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || fail "Rust frontend is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
 
 prepare_package() {
   local directory=$1
@@ -70,7 +70,7 @@ run_rust() {
   local directory=$1
   local log=$2
   PUB_CACHE="$pub_cache" \
-    FAST_BUILD_RUNNER_BIN="$FAST_BUILD_RUNNER_BIN" \
+    BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
     "$script_dir/run_rust_frontend.sh" \
     build --root "$directory" --dart "$dart_bin" >"$log" 2>&1
 }

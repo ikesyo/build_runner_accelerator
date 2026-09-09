@@ -6,9 +6,9 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 count=${COUNT:-10}
 jobs=${JOBS:-1}
 builders=${BUILDERS:-json,freezed,riverpod}
-metrics=${FAST_BUILD_RUNNER_METRICS:-1}
+metrics=${BUILD_RUNNER_ACCELERATOR_METRICS:-1}
 repeat=${REPEAT:-1}
-results_dir=$(mktemp -d "${TMPDIR:-/tmp}/fast-build-benchmark-matrix.XXXXXX")
+results_dir=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-benchmark-matrix.XXXXXX")
 trap 'find "$results_dir" -depth -type f -delete; find "$results_dir" -depth -type d -empty -delete' EXIT
 
 fail() {
@@ -18,24 +18,24 @@ fail() {
 
 [[ "$repeat" =~ ^[1-9][0-9]*$ ]] || fail "REPEAT must be a positive integer: $repeat"
 
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" && -x "$repo_root/rust/target/debug/fast_build_runner" ]]; then
-  FAST_BUILD_RUNNER_BIN="$repo_root/rust/target/debug/fast_build_runner"
-  export FAST_BUILD_RUNNER_BIN
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" && -x "$repo_root/rust/target/debug/build_runner_accelerator" ]]; then
+  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
+  export BUILD_RUNNER_ACCELERATOR_BIN
 fi
 
 run_builder() {
   local builder=$1
   case "$builder" in
     json)
-      COUNT="$count" JOBS="$jobs" FAST_BUILD_RUNNER_METRICS="$metrics" \
+      COUNT="$count" JOBS="$jobs" BUILD_RUNNER_ACCELERATOR_METRICS="$metrics" \
         bash "$script_dir/benchmark_json_serializable.sh"
       ;;
     freezed)
-      JOBS="$jobs" FAST_BUILD_RUNNER_METRICS="$metrics" \
+      JOBS="$jobs" BUILD_RUNNER_ACCELERATOR_METRICS="$metrics" \
         bash "$script_dir/benchmark_freezed.sh"
       ;;
     riverpod)
-      JOBS="$jobs" FAST_BUILD_RUNNER_METRICS="$metrics" \
+      JOBS="$jobs" BUILD_RUNNER_ACCELERATOR_METRICS="$metrics" \
         bash "$script_dir/benchmark_riverpod.sh"
       ;;
     *)

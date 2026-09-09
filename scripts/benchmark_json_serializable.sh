@@ -14,7 +14,7 @@ io_metrics=${IO_METRICS:-0}
 strace_bin=${STRACE_BIN:-}
 worker_dir="$repo_root/dart_worker"
 fixture_dir="$repo_root/fixtures/json_serializable_${count}_app"
-state_path="$fixture_dir/.dart_tool/fast_build_runner/graph-v3.bin"
+state_path="$fixture_dir/.dart_tool/build_runner_accelerator/graph-v3.bin"
 results_dir=$(mktemp -d)
 metrics_path="$results_dir/metrics.txt"
 io_trace_path=
@@ -36,9 +36,9 @@ if [[ "$count" != 10 || ! -f "$fixture_dir/pubspec.yaml" ]]; then
 fi
 
 prepare_rust_binary() {
-  if [[ -n "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
-    [[ -x "$FAST_BUILD_RUNNER_BIN" ]] || {
-      printf 'Rust frontend binary is not executable: %s\n' "$FAST_BUILD_RUNNER_BIN" >&2
+  if [[ -n "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
+    [[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || {
+      printf 'Rust frontend binary is not executable: %s\n' "$BUILD_RUNNER_ACCELERATOR_BIN" >&2
       exit 1
     }
     return 0
@@ -50,12 +50,12 @@ prepare_rust_binary() {
   (cd "$repo_root" && \
     RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
       "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml")
-  local binary="$repo_root/rust/target/debug/fast_build_runner"
+  local binary="$repo_root/rust/target/debug/build_runner_accelerator"
   [[ -x "$binary" ]] || {
     printf 'Rust frontend binary was not built: %s\n' "$binary" >&2
     exit 1
   }
-  export FAST_BUILD_RUNNER_BIN="$binary"
+  export BUILD_RUNNER_ACCELERATOR_BIN="$binary"
 }
 
 prepare_rust_binary
@@ -95,7 +95,7 @@ run_stock() {
   (cd "$fixture_dir" && \
     PUB_CACHE="$pub_cache" run_traced "$dart_bin" --suppress-analytics run build_runner \
       build --delete-conflicting-outputs \
-      --log-performance .dart_tool/fast_build_runner/stock-performance)
+      --log-performance .dart_tool/build_runner_accelerator/stock-performance)
 }
 
 run_frontend() {
@@ -163,7 +163,7 @@ measure() {
 
 cache_size_kb() {
   local label=$1
-  local cache_path="$fixture_dir/.dart_tool/fast_build_runner/cache"
+  local cache_path="$fixture_dir/.dart_tool/build_runner_accelerator/cache"
   if [[ "$label" == stock_* ]]; then
     cache_path="$fixture_dir/.dart_tool/build"
   fi

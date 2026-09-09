@@ -12,7 +12,7 @@ worker、graph persistenceの寄与を分離できず、変更の正しさを保
 
 ## Decision
 
-- `FAST_BUILD_RUNNER_METRICS=1`のとき、stderrへ`Rust filesystem metrics:`を出力する。
+- `BUILD_RUNNER_ACCELERATOR_METRICS=1`のとき、stderrへ`Rust filesystem metrics:`を出力する。
 - 初回root scanの時間・asset数・byte数、generated/dependency/glob追加、dirty判定、
   build後scan、build後asset追加をbuild単位で測る。
 - metricsは既存のgraph/worker metricsと同じopt-in・stderr-only経路に置き、通常実行の

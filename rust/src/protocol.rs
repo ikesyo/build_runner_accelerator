@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{self, Read, Write};
 
-pub const BINARY_ASSET_RESPONSE_MAGIC: &[u8; 4] = b"FBRB";
-pub const BINARY_BUILD_RESULT_MAGIC: &[u8; 4] = b"FBRR";
+pub const BINARY_ASSET_RESPONSE_MAGIC: &[u8; 4] = b"BRAB";
+pub const BINARY_BUILD_RESULT_MAGIC: &[u8; 4] = b"BRAR";
 pub const MAX_FRAME_LENGTH: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]

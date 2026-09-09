@@ -22,7 +22,7 @@ DP tableを確保していた。100入力fixtureでは、actionごとに異な�
 
 ## Measurement snapshot
 
-2026-09-04、`COUNT=100 JOBS=1 FAST_BUILD_RUNNER_METRICS=1`で、直前のbuild-scoped
+2026-09-04、`COUNT=100 JOBS=1 BUILD_RUNNER_ACCELERATOR_METRICS=1`で、直前のbuild-scoped
 asset cacheを含む実装と比較した。単回測定のため、wall timeは参考値とする。
 
 | ケース | 旧glob stage | 新glob stage | Rust wall (旧 → 新) |

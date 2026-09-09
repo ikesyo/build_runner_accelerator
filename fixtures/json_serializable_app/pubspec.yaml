@@ -12,5 +12,5 @@ dev_dependencies:
   # which pins build_runner to 2.7.2.
   build_runner: 2.7.2
   json_serializable: 6.11.2
-  fast_build_runner_worker:
+  build_runner_accelerator_worker:
     path: ../../dart_worker

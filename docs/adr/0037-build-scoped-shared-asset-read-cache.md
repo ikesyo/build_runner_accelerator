@@ -24,7 +24,7 @@ watch iterationをまたぐcache共有は安全ではない。
   要件は変更しない。
 - cacheは`Workspace`の寿命に閉じ込め、commit後に明示的にclearする。次のwatch buildは
   新しい`Workspace`で開始する。
-- `FAST_BUILD_RUNNER_METRICS=1`ではcache hit/missを`Rust workspace metrics`として
+- `BUILD_RUNNER_ACCELERATOR_METRICS=1`ではcache hit/missを`Rust workspace metrics`として
   出力し、worker数を増やした場合のfilesystem read重複をwall timeと併記して評価する。
 - cache fill競合時は既に格納されたbytesを再利用する。ただし異なるassetのfilesystem
   readを一つの大域ロックで直列化しない。same-assetの同時missを完全に一回へ畳み込む
@@ -32,7 +32,7 @@ watch iterationをまたぐcache共有は安全ではない。
 
 ## Measurement snapshot
 
-2026-09-04、同じbenchmark scriptで`FAST_BUILD_RUNNER_METRICS=1`を有効にして測定した。
+2026-09-04、同じbenchmark scriptで`BUILD_RUNNER_ACCELERATOR_METRICS=1`を有効にして測定した。
 単回値なのでwall timeの差は参考値とし、cache hit/missを主な判断材料にする。
 
 | fixture / case | jobs | Rust wall | read requests | cache hits | cache misses |

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-results_dir=$(mktemp -d "${TMPDIR:-/tmp}/fast-build-resolver-cold-path.XXXXXX")
+results_dir=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-resolver-cold-path.XXXXXX")
 
 remove_tree() {
   local path=$1
@@ -20,7 +20,7 @@ run_benchmark() {
   local log="$results_dir/$label.log"
   local benchmark_jobs=${JOBS:-1}
 
-  JOBS="$benchmark_jobs" FAST_BUILD_RUNNER_METRICS=1 "$script_dir/$script" >"$log" 2>&1
+  JOBS="$benchmark_jobs" BUILD_RUNNER_ACCELERATOR_METRICS=1 "$script_dir/$script" >"$log" 2>&1
   local cold_metrics
   cold_metrics=$(rg '^Dart resolver metrics: ' "$log" || true)
   if [[ -z "$cold_metrics" ]]; then

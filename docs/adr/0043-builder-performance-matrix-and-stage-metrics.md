@@ -19,7 +19,7 @@ worker起動、resolver初期化、asset RPC、builder実行のどこに支配�
   metricsを集約表示する。
 - `riverpod_app`に`secondary.dart`を追加し、Riverpod単独入力とFreezed・JSON併用入力を
   同じpackageで持つ。これによりRiverpodにも1-fileとbroad incrementalの比較軸を持たせる。
-- `FAST_BUILD_RUNNER_METRICS=1`の`Rust metrics:`へ、次の時間とreset数を追加する。
+- `BUILD_RUNNER_ACCELERATOR_METRICS=1`の`Rust metrics:`へ、次の時間とreset数を追加する。
   - worker process start
   - worker initialize（Analyzer resolver初期化を含む）
   - resident worker reset

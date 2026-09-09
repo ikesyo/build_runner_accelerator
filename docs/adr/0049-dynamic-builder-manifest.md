@@ -19,7 +19,7 @@ BuildConfigと異なる挙動を生みやすい。
 
 ## Decision
 
-default worker (fast_build_runner_worker:fast_build_worker)を使う場合、Rust
+default worker (build_runner_accelerator_worker:fast_build_worker)を使う場合、Rust
 frontendは次の順序で動作する。
 
 1. package_config.jsonとpackageごとのbuild.yamlからworkspace fingerprintを作る。
@@ -29,7 +29,7 @@ frontendは次の順序で動作する。
    解決し、builderごとのpackage import、factory、extension、build_to、option、
    generate_for、phase順をmanifestへ書く。
 4. generatorは解決したfactoryを静的importするworkspace固有の
-   .dart_tool/fast_build_runner/dynamic_worker.dartを生成する。worker本体の
+   .dart_tool/build_runner_accelerator/dynamic_worker.dartを生成する。worker本体の
    IPC、BuildStep、AssetReader、Resolver実行は既存のrunWorkerを再利用する。
 5. Rust frontendはmanifestを既存の共通BuilderDefinitionへ変換し、既存の
    snapshot、action graph、overlay、atomic commitをそのまま使う。

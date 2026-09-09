@@ -1,6 +1,6 @@
 # Roadmap
 
-`fast_build_runner` の作業継続用タスクリスト。現在の実装範囲を保ったまま、
+`build_runner_accelerator` の作業継続用タスクリスト。現在の実装範囲を保ったまま、
 対応builderを段階的に増やし、任意builderの動的ロードを段階導入する。
 
 ## 現在のベースライン
@@ -83,17 +83,17 @@ shared-part builderとして扱う。現行のAnalyzer 8系との互換性を保
 このため、この段階ではFreezed専用のbuilder fast pathは追加しない。`builder_manifest.dart`は
 約26.8KB・860行だが、warmなmanifest生成は約1秒であり、Rust cleanのworker initialize約8.1秒や
 SDK summary約4.35秒より小さい。workspace固有dynamic workerにはbuilder名に依存しないkernel
-cacheを追加し、初回コンパイル失敗時は従来scriptへfallbackする。`FAST_BUILD_RUNNER_WORKER_KERNEL`
+cacheを追加し、初回コンパイル失敗時は従来scriptへfallbackする。`BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL`
 も生成scriptへ適用できるようにした。builder固有fast pathは、汎用経路と同一fixture・同一SDKで
 有意なwall time差が確認でき、かつfallback/correctnessを満たす場合だけ別経路として再評価する。
 詳細はADR-0055に記録する。
 `scripts/benchmark_matrix.sh`で3つの対応builderを同じ条件に揃え、
-`FAST_BUILD_RUNNER_METRICS=1`のworker lifecycle・resolver reset・asset RPC・IPC frame
+`BUILD_RUNNER_ACCELERATOR_METRICS=1`のworker lifecycle・resolver reset・asset RPC・IPC frame
 metricsを同時に記録した。1.98.1での3回反復では、filesystem/graph stageは概ねms未満から
 数十msに留まり、1-fileのRust wall timeはworker initializeとbuildの合計に支配された。
 Freezed/Riverpodのcold buildではworker initializeが約5秒、JSONでは約1秒だった。
 JIT kernel snapshotのinitialize handshakeは約0.24秒まで短縮できたため、起動経路を任意指定
-できるようにした。さらに`FAST_BUILD_RUNNER_METRICS=1`ではDart workerの`Dart metrics:`を
+できるようにした。さらに`BUILD_RUNNER_ACCELERATOR_METRICS=1`ではDart workerの`Dart metrics:`を
 action単位で出し、build stageをfactory、resolver初回取得、`runBuilder`、resolver依存収集、
 結果組み立てへ分解できるようにした。得られた内訳を次の最適化判断に使い、既定のjobs/cache
 方式は反復測定で支配要因が確認できるまで変更しない。
@@ -128,6 +128,21 @@ workspace内のrebuildをsingle-flight化した。lock後の再確認により�
 - [x] current `json_serializable` fixtureでclean / no-op / 1-file / broadのstock/Rust byte比較を行う
 - [x] current `json_serializable` fixtureでwatchの入力変更 / 生成物削除 / renameをstock/Rust比較する
 - [x] fast workerのjobs=1/2/4を同一fixture・同一cacheで計測する
+- [x] opt-in AOT worker executable cacheとAnalyzer向けSDK facadeを追加する
+- [x] AOT workerの初回compile、cache再利用、worker source変更時の再compileを検証する
+- [x] AOT workerでcurrent fixtureのcorrectness、watch、warm incrementalを測定する
+- [x] ローカルのAOT cache missではscript workerを先に起動し、AOT compileをbackgroundで進める
+  - [x] `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background` と per-workspace lock を追加する
+  - [x] 初回 build の script fallback、detached compile、次回 AOT reuse を検証する
+  - [x] watch の次回 rebuild で完成済み AOT worker へ切り替える
+- [x] CI向けAOT prewarm/prebuildを追加し、compile完了を待って成果物をcacheへ保存する
+  - [x] manifest / `dynamic_worker.dart`生成後にAOTだけを同期実行するprewarm入口を用意する
+  - [x] AOT executable、depfile、SDK metadata、generated worker / manifestを後続jobからrestoreできるようにする
+  - [x] cache miss / hit、複数workspace共有、worker source変更、SDK facade再bindを検証する
+- [x] CI runner間で再利用できるAOT cache identity（OS・arch・SDK互換性・worker manifest）を定義する
+- [x] AOTを既定経路にするための複数SDK / platform / workspace評価の実行基盤を追加する
+- [ ] Linux上で代表workspace/SDKの実測を拡張する
+- [x] リリース・配布方式の選択肢とCI integration前のrelease spikeを整理する
 
 現行版Freezed 4.0.1は、`build_runner 2.16.1`と解決するとAnalyzer制約が衝突するため、
 最初のstock基準はcurrent `json_serializable`で固定する。`scripts/benchmark_current_baseline.sh`
@@ -146,7 +161,17 @@ atomic commitへ渡す。通常Builderの削除やprimary input以外の削除�
 median wallはjobs=1/2/4で11.23/11.55/12.43秒、1-fileは1.38/1.39/1.56秒、broadは
 1.33/1.38/1.70秒だった。current JSON fixtureのwatch（入力変更、生成物削除、rename）も
 stock/Rust一致を3回確認した。したがってDAG/streaming schedulerやbuilder専用fast path、
-jobs既定値の変更はまだ行わず、次は同じ汎用経路でAOT/warm Analyzer pathを個別に評価する。
+jobs既定値の変更はまだ行わない。
+
+2026-09-06に、生成workerのAOT executable cacheをopt-inで追加した。AOTの直接handshakeは
+script/kernel/AOTで9.49/0.178/0.009秒、current JSONのwarm incrementalはjobs=1で
+one-file 87.7ms、broad 101.7msの3回中央値になった。初回cleanはAOT compile込みで26.51秒
+だったため、AOTはまだ既定化せず、CI prewarmでcompile待ちを分離する。`aot-cache-key`
+はabsolute pathを含まないOS/arch・SDK・manifest・worker・package identityを出力し、
+`aot-prewarm`は同期compile後にexecutable、depfile、metadata、generated worker/manifestを
+cache可能な状態で公開する。2つの移設workspaceでcache keyの一致、AOT再compileなしの再利用、
+SDK facade再bind、worker source変更時の無効化を確認した。次はFreezed/Riverpodを含むcold Analyzer pathで、AOTによる起動短縮と
+SDK summary / Analyzer stateの重複を分けて測定する。
 
 ## 任意builderの動的ロード — P1（重要度: 高）
 

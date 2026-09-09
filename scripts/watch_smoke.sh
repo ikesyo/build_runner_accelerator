@@ -9,7 +9,7 @@ cargo_bin=${CARGO_BIN:-"$repo_root/.toolchains/cargo/bin/cargo"}
 rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
 cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
 fixture_dir="$repo_root/fixtures/json_serializable_app"
-watch_dir=$(mktemp -d "$repo_root/fixtures/fast-build-watch.XXXXXX")
+watch_dir=$(mktemp -d "$repo_root/fixtures/build-runner-accelerator-watch.XXXXXX")
 results_dir=$(mktemp -d)
 log_path="$results_dir/watch.log"
 watch_pid=
@@ -47,20 +47,20 @@ fail() {
 if [[ ! -x "$dart_bin" ]]; then
   fail "Dart executable not found: $dart_bin"
 fi
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" && ! -x "$cargo_bin" ]]; then
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" && ! -x "$cargo_bin" ]]; then
   fail "Cargo executable not found: $cargo_bin"
 fi
 
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
   (cd "$repo_root" && \
     RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
       "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml") || \
     fail 'Rust frontend build failed'
-  FAST_BUILD_RUNNER_BIN="$repo_root/rust/target/debug/fast_build_runner"
-  export FAST_BUILD_RUNNER_BIN
+  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
+  export BUILD_RUNNER_ACCELERATOR_BIN
 fi
-[[ -x "$FAST_BUILD_RUNNER_BIN" ]] || \
-  fail "Rust frontend binary is not executable: $FAST_BUILD_RUNNER_BIN"
+[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
+  fail "Rust frontend binary is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
 
 mkdir -p "$watch_dir/lib"
 cp "$fixture_dir/pubspec.yaml" "$watch_dir/pubspec.yaml"
@@ -70,7 +70,7 @@ cp "$fixture_dir/lib/model.dart" "$watch_dir/lib/model.dart"
 (cd "$watch_dir" && \
   PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null)
 
-setsid env FAST_BUILD_RUNNER_METRICS=1 PUB_CACHE="$pub_cache" \
+setsid env BUILD_RUNNER_ACCELERATOR_METRICS=1 PUB_CACHE="$pub_cache" \
   RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
   "$script_dir/run_rust_frontend.sh" \
   watch --root "$watch_dir" --dart "$dart_bin" --interval-ms 200 \

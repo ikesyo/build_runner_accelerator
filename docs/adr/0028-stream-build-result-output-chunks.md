@@ -5,7 +5,7 @@
 
 ## Context
 
-FBRRはmetadataの後ろにoutput bytesを順番に置く必要がある。従来のDart workerは
+BRARはmetadataの後ろにoutput bytesを順番に置く必要がある。従来のDart workerは
 `BytesBuilder(copy: false)`へ全outputを追加し、`takeBytes()`で1本の`Uint8List`にして
 からframeへ渡していた。single resultでoutputが1個ならcopyは起きないが、batch result
 では複数chunkを連結するため、全raw bytesに比例した一時copyが発生する。
@@ -18,7 +18,7 @@ serializerが再度`Uint8List`へ変換していたため、出力生成から�
 
 - `writeAsBytes`のAPI境界で一度だけ防御copyし、worker内のbuild outputを`Uint8List`として
   保持する。
-- FBRR serializerはoutput metadataを作りながらraw `Uint8List`のchunk一覧を収集する。
+- BRAR serializerはoutput metadataを作りながらraw `Uint8List`のchunk一覧を収集する。
 - metadataと全chunkの合計長を事前計算した後、length prefix、magic、metadata、raw chunksを
   wire上の順序どおり同じ1 frameとして`IOSink`へ追加する。
 - wire format、output順序、frame数、strict capability境界は変更しない。上限超過時は

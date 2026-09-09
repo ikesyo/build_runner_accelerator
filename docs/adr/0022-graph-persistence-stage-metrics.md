@@ -12,13 +12,13 @@ no-op、incremental buildのどこで時間を使っているかを分離して�
 
 ## Decision
 
-- `FAST_BUILD_RUNNER_METRICS=1`のとき、buildごとにstderrへ`Rust graph metrics:`を出力する。
+- `BUILD_RUNNER_ACCELERATOR_METRICS=1`のとき、buildごとにstderrへ`Rust graph metrics:`を出力する。
 - `load_us`はgraph fileのreadとbinary decode、`save_us`はencode、一時fileへのwrite、
   renameを含む経過時間として測る。
 - `load_bytes`と`save_bytes`はgraph fileのsize、`save_skipped`は変更のないno-opで
   保存を省略したかを示す。saveを行わない場合は`save_us=0`とする。
 - metricsはstdout、生成物、IPC protocol、GraphStateの意味を変更しない。既存の
-  `FAST_BUILD_RUNNER_METRICS` worker metricsと同じstderr-onlyの観測経路を使う。
+  `BUILD_RUNNER_ACCELERATOR_METRICS` worker metricsと同じstderr-onlyの観測経路を使う。
 - process startupやsnapshot scanなどstage外の時間は、既存benchmarkのwall/user/sysと
   組み合わせて判断する。
 
@@ -28,7 +28,7 @@ no-op、incremental buildのどこで時間を使っているかを分離して�
 実行した。
 
 ```bash
-FAST_BUILD_RUNNER_METRICS=1 COUNT=100 JOBS=1 \
+BUILD_RUNNER_ACCELERATOR_METRICS=1 COUNT=100 JOBS=1 \
   bash scripts/benchmark_json_serializable.sh
 ```
 

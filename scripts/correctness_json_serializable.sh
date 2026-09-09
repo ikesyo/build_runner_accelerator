@@ -10,7 +10,7 @@ rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
 cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
 fixture_dir="$repo_root/fixtures/json_serializable_app"
 results_dir=$(mktemp -d)
-test_root=$(mktemp -d "${TMPDIR:-/tmp}/fast-build-correctness-root.XXXXXX")
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-correctness-root.XXXXXX")
 test_fixtures_dir="$test_root/fixtures"
 mkdir -p "$test_fixtures_dir"
 ln -s "$repo_root/dart_worker" "$test_root/dart_worker"
@@ -46,22 +46,22 @@ fail() {
 if [[ ! -x "$dart_bin" ]]; then
   fail "Dart executable not found: $dart_bin"
 fi
-if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" && ! -x "$cargo_bin" ]]; then
+if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" && ! -x "$cargo_bin" ]]; then
   fail "Cargo executable not found: $cargo_bin"
 fi
 
 prepare_rust_binary() {
-  if [[ -n "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
-    [[ -x "$FAST_BUILD_RUNNER_BIN" ]] || \
-      fail "FAST_BUILD_RUNNER_BIN is not executable: $FAST_BUILD_RUNNER_BIN"
+  if [[ -n "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
+    [[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
+      fail "BUILD_RUNNER_ACCELERATOR_BIN is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
     return 0
   fi
   (cd "$repo_root" && \
     RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
       "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml")
-  local binary="$repo_root/rust/target/debug/fast_build_runner"
+  local binary="$repo_root/rust/target/debug/build_runner_accelerator"
   [[ -x "$binary" ]] || fail "Rust frontend binary was not built: $binary"
-  export FAST_BUILD_RUNNER_BIN="$binary"
+  export BUILD_RUNNER_ACCELERATOR_BIN="$binary"
 }
 
 prepare_rust_binary
@@ -71,7 +71,7 @@ new_package_dir() {
   # Keep generated package trees out of the synced repository workspace. A
   # workspace synchronizer can replay a deleted generated file while the
   # stock and Rust builds are being compared.
-  new_directory=$(mktemp -d "$test_fixtures_dir/fast-build-correctness-${role}.XXXXXX")
+  new_directory=$(mktemp -d "$test_fixtures_dir/build-runner-accelerator-correctness-${role}.XXXXXX")
   cleanup_paths+=("$new_directory")
 }
 
@@ -155,7 +155,7 @@ setup_case() {
     "$rust_dir/lib/model.g.dart"
   assert_contains "$results_dir/$name.rust.initial.log" \
     'Rust frontend: 2 build action(s)'
-  cp "$rust_dir/.dart_tool/fast_build_runner/graph-v3.bin" \
+  cp "$rust_dir/.dart_tool/build_runner_accelerator/graph-v3.bin" \
     "$results_dir/$name.graph.before.bin"
   cp "$rust_dir/lib/model.g.dart" "$results_dir/$name.model.before.g.dart"
 }
@@ -182,7 +182,7 @@ run_case_input_delete() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_no_file "$stock_dir/lib/model.g.dart"
   assert_no_file "$rust_dir/lib/model.g.dart"
-  assert_no_file "$rust_dir/.dart_tool/fast_build_runner/cache/$case_package_name/lib/model.json_serializable.g.part"
+  assert_no_file "$rust_dir/.dart_tool/build_runner_accelerator/cache/$case_package_name/lib/model.json_serializable.g.part"
   assert_contains "$results_dir/$name.rust.change.log" \
     'Rust frontend: 0 build action(s)'
   printf 'correctness: input-delete: pass\n'
@@ -227,7 +227,7 @@ run_case_failure() {
   assert_different_status rust-failure \
     run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   cmp "$results_dir/$name.graph.before.bin" \
-    "$rust_dir/.dart_tool/fast_build_runner/graph-v3.bin" || \
+    "$rust_dir/.dart_tool/build_runner_accelerator/graph-v3.bin" || \
     fail 'Rust graph changed after failed build'
   # Rust keeps the last successful output because commits happen only after
   # every dirty action succeeds. Current build_runner removes this output on
