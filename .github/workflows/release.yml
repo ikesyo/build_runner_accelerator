@@ -1,0 +1,167 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  quality-gates:
+    name: Quality gates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.13.3
+      - name: Dart package checks
+        shell: bash
+        run: |
+          dart pub get
+          dart analyze
+          dart test
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust unit tests
+        run: cargo test --manifest-path rust/Cargo.toml
+
+  build-frontend:
+    name: Build ${{ matrix.target_id }}
+    needs: quality-gates
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_id: macos-arm64
+            runs_on: macos-14
+            rust_target: aarch64-apple-darwin
+            archive: tar.gz
+          - target_id: macos-x64
+            runs_on: macos-13
+            rust_target: x86_64-apple-darwin
+            archive: tar.gz
+          - target_id: linux-x64
+            runs_on: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - target_id: linux-arm64
+            runs_on: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+            archive: tar.gz
+          - target_id: windows-x64
+            runs_on: windows-2022
+            rust_target: x86_64-pc-windows-msvc
+            archive: zip
+          - target_id: windows-arm64
+            runs_on: windows-11-arm
+            rust_target: aarch64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.runs_on }}
+    env:
+      RUST_TARGET: ${{ matrix.rust_target }}
+      TARGET_ID: ${{ matrix.target_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+      - name: Read release version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version: *//p' pubspec.yaml | head -n 1)
+          launcher_version=$(sed -n "s/^const buildRunnerAcceleratorVersion = '\(.*\)';/\1/p" lib/launcher.dart)
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' rust/Cargo.toml | head -n 1)
+          if [[ "${GITHUB_REF_NAME#v}" != "$version" && "${GITHUB_REF_TYPE}" == tag ]]; then
+            echo "tag version ${GITHUB_REF_NAME#v} does not match pubspec version $version" >&2
+            exit 1
+          fi
+          if [[ "$launcher_version" != "$version" || "$cargo_version" != "$version" ]]; then
+            echo "version mismatch: pubspec=$version launcher=$launcher_version cargo=$cargo_version" >&2
+            exit 1
+          fi
+          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build Rust frontend
+        shell: bash
+        run: cargo build --release --manifest-path rust/Cargo.toml --target "$RUST_TARGET"
+      - name: Native binary smoke
+        shell: bash
+        run: |
+          binary="rust/target/$RUST_TARGET/release/build_runner_accelerator"
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          "$binary" --version
+          "$binary" --help
+      - name: Package archive
+        shell: bash
+        run: |
+          staging="release/$TARGET_ID"
+          mkdir -p "$staging"
+          binary="rust/target/$RUST_TARGET/release/build_runner_accelerator"
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          cp "$binary" "$staging/"
+          printf '%s\n' "$PACKAGE_VERSION" > "$staging/VERSION"
+          cp README.md "$staging/README.md"
+          if [[ -f LICENSE ]]; then cp LICENSE "$staging/LICENSE"; fi
+          if [[ "${{ matrix.archive }}" == tar.gz ]]; then
+            tar -C release -czf "build_runner_accelerator-$TARGET_ID.tar.gz" "$TARGET_ID"
+          else
+            (
+              cd release
+              7z a -tzip "../build_runner_accelerator-$TARGET_ID.zip" "$TARGET_ID/*"
+            )
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target_id }}
+          path: build_runner_accelerator-${{ matrix.target_id }}.${{ matrix.archive }}
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish release
+    needs: build-frontend
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Read release version
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version: *//p' pubspec.yaml | head -n 1)
+          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Create release manifest and checksums
+        run: |
+          python3 scripts/create_release_manifest.py \
+            --version "$PACKAGE_VERSION" \
+            --artifacts-dir dist \
+            --output dist/release-manifest.json
+          (cd dist && sha256sum *.tar.gz *.zip release-manifest.json > SHA256SUMS)
+      - name: Sign release manifest
+        shell: bash
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY }}
+        run: |
+          test -n "$RELEASE_SIGNING_KEY"
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > signing-key.pem
+          expected_public_key=$(awk '
+            /^const releaseSigningPublicKeyBase64 =/ { getline; gsub(/[ '\'';]/, ""); print }
+          ' lib/release_downloader.dart)
+          actual_public_key=$(openssl pkey -in signing-key.pem -pubout -outform DER \
+            | tail -c 32 | base64 -w0)
+          test "$actual_public_key" = "$expected_public_key"
+          openssl pkeyutl -sign -rawin -inkey signing-key.pem \
+            -in dist/release-manifest.json -out dist/release-manifest.json.sig
+          openssl pkeyutl -sign -rawin -inkey signing-key.pem \
+            -in dist/SHA256SUMS -out dist/SHA256SUMS.sig
+          rm -f signing-key.pem
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" --generate-notes

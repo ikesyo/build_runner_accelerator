@@ -94,9 +94,7 @@ fn read_manifest(
         // The generated manifest historically stored an absolute path. Rebase
         // it to the current workspace so the manifest and AOT cache can move
         // between CI runners/workspaces together.
-        manifest.worker_entrypoint = expected_worker_entrypoint
-            .to_string_lossy()
-            .into_owned();
+        manifest.worker_entrypoint = expected_worker_entrypoint.to_string_lossy().into_owned();
     } else if !manifest_worker_exists {
         return Ok(None);
     }
@@ -112,31 +110,39 @@ fn generate_manifest(
 ) -> io::Result<()> {
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     let mut command = Command::new(dart_binary);
-    if let Ok(worker_package_root) = workspace.package_root("build_runner_accelerator_worker") {
+    let mut generator_found = false;
+    for worker_package in [
+        "build_runner_accelerator",
+        "build_runner_accelerator_worker",
+    ] {
+        let Ok(worker_package_root) = workspace.package_root(worker_package) else {
+            continue;
+        };
         let generator = worker_package_root.join("bin/generate_builder_manifest.dart");
-        if generator.is_file() {
-            // Running the package entrypoint directly avoids an implicit pub
-            // resolution step in `dart run`. The workspace has already been
-            // resolved, so reuse its package config for deterministic/offline
-            // manifest generation in CI.
-            command
-                .arg(format!(
-                    "--packages={}",
-                    workspace.root.join(".dart_tool/package_config.json").display()
-                ))
-                .arg(generator);
-        } else {
-            command.args([
-                "--suppress-analytics",
-                "run",
-                "build_runner_accelerator_worker:generate_builder_manifest",
-            ]);
+        if !generator.is_file() {
+            continue;
         }
-    } else {
+        // Running the package entrypoint directly avoids an implicit pub
+        // resolution step in `dart run`. The workspace has already been
+        // resolved, so reuse its package config for deterministic/offline
+        // manifest generation in CI.
+        command
+            .arg(format!(
+                "--packages={}",
+                workspace
+                    .root
+                    .join(".dart_tool/package_config.json")
+                    .display()
+            ))
+            .arg(generator);
+        generator_found = true;
+        break;
+    }
+    if !generator_found {
         command.args([
             "--suppress-analytics",
             "run",
-            "build_runner_accelerator_worker:generate_builder_manifest",
+            "build_runner_accelerator:generate_builder_manifest",
         ]);
     }
     let status = command

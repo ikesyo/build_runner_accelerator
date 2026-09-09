@@ -1,0 +1,353 @@
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
+
+import 'release_downloader.dart';
+
+const buildRunnerAcceleratorVersion = '0.1.0';
+
+/// The small set of launcher options that must be consumed before invoking
+/// either the Rust frontend or stock build_runner.
+class LauncherOptions {
+  LauncherOptions._({
+    required this.command,
+    required this.mode,
+    required this.root,
+    required this.dartBinary,
+    required this.rustArguments,
+    required this.dartArguments,
+    required this.showHelp,
+    required this.showVersion,
+  });
+
+  factory LauncherOptions.parse(List<String> arguments) {
+    var command = 'build';
+    var commandSeen = false;
+    var mode = 'auto';
+    var root = Directory.current.absolute.path;
+    var dartBinary = Platform.resolvedExecutable;
+    var showHelp = false;
+    var showVersion = false;
+    final rustArguments = <String>[];
+    final dartArguments = <String>[];
+    final passthrough = <String>[];
+
+    String takeValue(List<String> values, String option, int index) {
+      if (index + 1 >= values.length) {
+        throw FormatException('$option requires a value');
+      }
+      return values[index + 1];
+    }
+
+    for (var index = 0; index < arguments.length; index++) {
+      final argument = arguments[index];
+      if (argument == '--help' || argument == '-h') {
+        showHelp = true;
+        continue;
+      }
+      if (argument == '--version') {
+        showVersion = true;
+        continue;
+      }
+      if (argument == '--mode' || argument.startsWith('--mode=')) {
+        final value = argument.startsWith('--mode=')
+            ? argument.substring('--mode='.length)
+            : takeValue(arguments, '--mode', index);
+        if (!argument.startsWith('--mode=')) index++;
+        if (!const {'auto', 'rust', 'dart'}.contains(value)) {
+          throw FormatException('--mode must be auto, rust, or dart: $value');
+        }
+        mode = value;
+        continue;
+      }
+      if (argument == '--root' || argument.startsWith('--root=')) {
+        final value = argument.startsWith('--root=')
+            ? argument.substring('--root='.length)
+            : takeValue(arguments, '--root', index);
+        if (!argument.startsWith('--root=')) index++;
+        root = Directory(value).absolute.path;
+        continue;
+      }
+      if (argument == '--dart' || argument.startsWith('--dart=')) {
+        final value = argument.startsWith('--dart=')
+            ? argument.substring('--dart='.length)
+            : takeValue(arguments, '--dart', index);
+        if (!argument.startsWith('--dart=')) index++;
+        dartBinary = value;
+        continue;
+      }
+
+      if (!commandSeen && !argument.startsWith('-')) {
+        command = argument;
+        commandSeen = true;
+        continue;
+      }
+
+      const rustValueOptions = {'--jobs', '--interval-ms', '--worker'};
+      if (rustValueOptions.contains(argument)) {
+        final value = takeValue(arguments, argument, index);
+        index++;
+        rustArguments.addAll([argument, value]);
+      } else if (argument.startsWith('--jobs=') ||
+          argument.startsWith('--interval-ms=') ||
+          argument.startsWith('--worker=')) {
+        final separator = argument.indexOf('=');
+        final option = argument.substring(0, separator);
+        final value = argument.substring(separator + 1);
+        if (value.isEmpty) throw FormatException('$option requires a value');
+        rustArguments.addAll([option, value]);
+      } else {
+        passthrough.add(argument);
+      }
+    }
+
+    rustArguments.insert(0, command);
+    rustArguments.addAll([
+      '--root',
+      root,
+      '--dart',
+      dartBinary,
+      '--mode',
+      'rust',
+    ]);
+    dartArguments
+      ..add(command)
+      ..addAll(passthrough);
+    if (command == 'build' &&
+        !passthrough.contains('--delete-conflicting-outputs')) {
+      dartArguments.add('--delete-conflicting-outputs');
+    }
+
+    return LauncherOptions._(
+      command: command,
+      mode: mode,
+      root: root,
+      dartBinary: dartBinary,
+      rustArguments: List.unmodifiable(rustArguments),
+      dartArguments: List.unmodifiable(dartArguments),
+      showHelp: showHelp,
+      showVersion: showVersion,
+    );
+  }
+
+  final String command;
+  final String mode;
+  final String root;
+  final String dartBinary;
+  final List<String> rustArguments;
+  final List<String> dartArguments;
+  final bool showHelp;
+  final bool showVersion;
+}
+
+class FrontendBinaryResolver {
+  FrontendBinaryResolver({
+    String? environmentCache,
+    ReleaseDownloader? releaseDownloader,
+  }) : environmentCache =
+           environmentCache ??
+           Platform.environment['BUILD_RUNNER_ACCELERATOR_CACHE'],
+       releaseDownloader = releaseDownloader;
+
+  final String? environmentCache;
+  final ReleaseDownloader? releaseDownloader;
+
+  Future<String?> resolve(String workspaceRoot) async {
+    final override = Platform.environment['BUILD_RUNNER_ACCELERATOR_BIN'];
+    if (override != null && override.isNotEmpty) {
+      return _existingFile(_resolvePath(override, Directory.current.path));
+    }
+
+    final target = await detectTarget();
+    final binaryName = Platform.isWindows
+        ? 'build_runner_accelerator.exe'
+        : 'build_runner_accelerator';
+    final workspaceCandidate = p.join(
+      workspaceRoot,
+      '.dart_tool',
+      'build_runner_accelerator',
+      'bin',
+      binaryName,
+    );
+    final workspaceBinary = _existingFile(workspaceCandidate);
+    if (workspaceBinary != null) return workspaceBinary;
+
+    final downloader =
+        releaseDownloader ??
+        ReleaseDownloader(
+          cacheDirectory: cacheDirectory(),
+          baseUrl:
+              Platform
+                  .environment['BUILD_RUNNER_ACCELERATOR_RELEASE_BASE_URL'] ??
+              releaseBaseUrl,
+        );
+    return downloader.ensureInstalled(
+      version: buildRunnerAcceleratorVersion,
+      target: target,
+      binaryName: binaryName,
+    );
+  }
+
+  String cacheDirectory() {
+    if (environmentCache != null && environmentCache!.isNotEmpty) {
+      return _resolvePath(environmentCache!, Directory.current.path);
+    }
+    if (Platform.isWindows) {
+      final localAppData = Platform.environment['LOCALAPPDATA'];
+      if (localAppData != null && localAppData.isNotEmpty) {
+        return p.join(localAppData, 'build_runner_accelerator');
+      }
+      final userProfile = Platform.environment['USERPROFILE'];
+      if (userProfile != null && userProfile.isNotEmpty) {
+        return p.join(
+          userProfile,
+          'AppData',
+          'Local',
+          'build_runner_accelerator',
+        );
+      }
+      return p.join(
+        Directory.current.path,
+        '.cache',
+        'build_runner_accelerator',
+      );
+    }
+    if (Platform.isMacOS) {
+      final home = Platform.environment['HOME'];
+      return p.join(
+        home ?? Directory.current.path,
+        'Library',
+        'Caches',
+        'build_runner_accelerator',
+      );
+    }
+    final xdg = Platform.environment['XDG_CACHE_HOME'];
+    if (xdg != null && xdg.isNotEmpty) {
+      return p.join(xdg, 'build_runner_accelerator');
+    }
+    final home = Platform.environment['HOME'];
+    return p.join(
+      home ?? Directory.current.path,
+      '.cache',
+      'build_runner_accelerator',
+    );
+  }
+
+  static Future<String> detectTarget() async {
+    final os = Platform.isMacOS
+        ? 'macos'
+        : Platform.isWindows
+        ? 'windows'
+        : Platform.isLinux
+        ? 'linux'
+        : throw UnsupportedError(
+            'Unsupported operating system: ${Platform.operatingSystem}',
+          );
+    var architecture = Platform.environment['PROCESSOR_ARCHITECTURE'] ?? '';
+    if (Platform.isWindows) {
+      final emulatedArchitecture =
+          Platform.environment['PROCESSOR_ARCHITEW6432'] ?? '';
+      if (architecture.isEmpty || architecture.toLowerCase() == 'x86') {
+        architecture = emulatedArchitecture;
+      }
+    }
+    if (architecture.isEmpty && !Platform.isWindows) {
+      final result = await Process.run('uname', ['-m']);
+      if (result.exitCode == 0) architecture = result.stdout.toString().trim();
+    }
+    architecture = switch (architecture.toLowerCase()) {
+      'aarch64' || 'arm64' || 'armv8' => 'arm64',
+      'x86_64' || 'amd64' || 'x64' => 'x64',
+      _ => throw UnsupportedError(
+        'Unsupported CPU architecture: $architecture',
+      ),
+    };
+    return '$os-$architecture';
+  }
+
+  static String? _existingFile(String path) {
+    final file = File(path);
+    return file.existsSync() ? file.absolute.path : null;
+  }
+
+  static String _resolvePath(String path, String base) =>
+      p.isAbsolute(path) ? path : p.join(base, path);
+}
+
+Future<int> runLauncher(List<String> arguments) async {
+  final options = LauncherOptions.parse(arguments);
+  if (options.showHelp) {
+    stdout.write(launcherHelp);
+    return 0;
+  }
+  if (options.showVersion) {
+    stdout.writeln(buildRunnerAcceleratorVersion);
+    return 0;
+  }
+  if (options.mode == 'dart') {
+    return _runProcess(options.dartBinary, options.dartArguments, options.root);
+  }
+
+  String? binary;
+  try {
+    binary = await FrontendBinaryResolver().resolve(options.root);
+  } on Object catch (error) {
+    if (options.mode == 'rust') {
+      throw StateError('Rust frontend is unavailable: $error');
+    }
+    stderr.writeln(
+      'build_runner_accelerator: Rust frontend unavailable ($error); '
+      'using Dart build_runner fallback.',
+    );
+    return _runProcess(options.dartBinary, options.dartArguments, options.root);
+  }
+  if (binary == null) {
+    if (options.mode == 'rust') {
+      throw StateError(
+        'Rust frontend binary is unavailable for this platform. '
+        'Set BUILD_RUNNER_ACCELERATOR_BIN or install a release artifact.',
+      );
+    }
+    stderr.writeln(
+      'build_runner_accelerator: Rust frontend unavailable; '
+      'using Dart build_runner fallback.',
+    );
+    return _runProcess(options.dartBinary, options.dartArguments, options.root);
+  }
+  return _runProcess(binary, options.rustArguments, options.root);
+}
+
+Future<int> _runProcess(
+  String executable,
+  List<String> arguments,
+  String root,
+) async {
+  final process = await Process.start(
+    executable,
+    arguments,
+    workingDirectory: root,
+    mode: ProcessStartMode.inheritStdio,
+  );
+  return process.exitCode;
+}
+
+const launcherHelp =
+    '''Usage: dart run build_runner_accelerator <build|watch> [options]
+
+The launcher uses a cached Rust frontend when available and otherwise falls
+back to stock dart build_runner in --mode auto. On a cache miss it downloads
+and verifies the matching signed release artifact.
+
+Launcher options:
+  --mode auto|rust|dart  Select frontend policy (default: auto)
+  --root PATH            Build workspace (default: current directory)
+  --dart PATH            Dart executable used by the frontend/fallback
+  --jobs N               Rust worker count
+  --interval-ms N        Rust watch debounce interval
+  --worker VALUE         Rust worker override
+  BUILD_RUNNER_ACCELERATOR_BIN   Use a preinstalled frontend binary
+  BUILD_RUNNER_ACCELERATOR_CACHE Override the frontend cache directory
+  BUILD_RUNNER_ACCELERATOR_RELEASE_BASE_URL  Use a signed HTTPS mirror
+  --version              Print the package version
+  -h, --help             Show this help
+''';

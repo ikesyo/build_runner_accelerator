@@ -144,6 +144,30 @@ workspace内のrebuildをsingle-flight化した。lock後の再確認により�
 - [ ] Linux上で代表workspace/SDKの実測を拡張する
 - [x] リリース・配布方式の選択肢とCI integration前のrelease spikeを整理する
 
+### 7. launcher/package と artifact matrix — P0（release spike）
+
+- [x] Dart/pub-facing launcher、Rust binary、workspace AOT cacheの責務境界を決める
+- [x] `build_runner_accelerator` を単一の公開project-facing packageとし、workerとのversion skewを避ける方針を決める
+- [x] Rust toolchainなしの通常利用者向けに、署名済みGitHub Release artifactをtargetごとに取得する方針を決める
+- [x] macOS arm64/x64、Linux arm64/x64（GNU/glibc）、Windows arm64/x64のartifact matrixを定義する
+- [x] frontend binary cache、workspace generated files、worker AOT cacheを分離する
+- [x] `--mode auto` のDart fallbackと `--mode rust` のエラー境界をrelease contractへ含める
+- [x] publishable package layoutと`dart run build_runner_accelerator` launcherを実装する
+- [x] target検出と、workspace/user binary cacheの探索を実装する
+- [x] 署名manifest検証、atomic download、user cacheへのrelease artifact導入を実装する
+- [x] 6 targetのarchive、checksum、manifest署名、native version/help smokeを行うrelease workflowを追加する
+- [ ] macOS codesign/notarization、Windows Authenticodeをrelease gateへ追加する
+- [ ] Dart-only / Rust-toolchain-free machineでclean installを検証する
+- [ ] released frontendを使用するCI AOT prewarm/cache integrationを追加する
+
+2026-09-07のrelease spikeでは、公開packageのlauncher/worker layout、mode境界、6 target matrix、archive/manifest/checksum/signature workflow、Dart/Rustのlocal smokeを追加した。続くdownload sliceで、署名manifest検証、target/version/protocol固定、archive SHA-256検証、per-target lock、atomic cache installを追加した。pub publishはLICENSE選択待ち、platform code signingとDart-only clean-install検証は引き続き残っている。
+
+設計判断は[ADR-0065](adr/0065-launcher-and-release-artifact-boundary.md)に記録する。v1では
+project-local `dart run`を基準経路とし、global `dart install`はtarget package graphへの
+worker bootstrapを別途検証してから扱う。AOT workerとgenerated manifestはworkspace/SDK固有であり、
+release artifactには含めない。
+
+
 現行版Freezed 4.0.1は、`build_runner 2.16.1`と解決するとAnalyzer制約が衝突するため、
 最初のstock基準はcurrent `json_serializable`で固定する。`scripts/benchmark_current_baseline.sh`
 は、現行build_runnerが提供しない旧`--jobs`をstock側で仮定せず、default / force-jit /

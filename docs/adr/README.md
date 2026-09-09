@@ -65,3 +65,18 @@
 | [0049](0049-dynamic-builder-manifest.md) | build.yamlからworkspace固有のdynamic builder workerを生成 |
 
 | [0050](0050-generic-manifest-first-builder-boundary.md) | manifest-firstの汎用builder境界と任意fast pathの分離 |
+| [0051](0051-generic-manifest-fast-path-gate.md) | generic manifest fast pathを独立評価するゲート |
+| [0052](0052-literal-build-extension-mapping.md) | literal build extension mapping |
+| [0053](0053-capture-group-build-extension-mapping.md) | capture group build extension mapping |
+| [0054](0054-package-target-boundaries.md) | package target boundary |
+| [0055](0055-generic-worker-kernel-cache.md) | generic worker kernel cache |
+| [0056](0056-package-owned-target-graph.md) | package-owned target graph |
+| [0057](0057-target-scc-phase-semantics.md) | target SCC phase semantics |
+| [0058](0058-watch-reuse-resolved-frontend.md) | watchでresolved frontendを再利用 |
+| [0059](0059-multiple-build-extension-mappings.md) | 複数build_extensions mapping |
+| [0060](0060-post-process-builder-generic-subset.md) | generic PostProcessBuilder subset |
+| [0061](0061-aot-worker-cache.md) | AOT worker executable cache |
+| [0062](0062-ci-aot-prewarm.md) | CI AOT prewarm |
+| [0063](0063-local-background-aot.md) | local background AOT |
+| [0064](0064-evaluation-and-distribution-gate.md) | 評価matrixとdistribution gate |
+| [0065](0065-launcher-and-release-artifact-boundary.md) | launcher/packageとrelease artifactの責務境界 |

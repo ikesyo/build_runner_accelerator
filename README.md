@@ -2,6 +2,31 @@
 
 `build_runner` の実行モデルを保ったまま、ファイル走査・差分判定・依存グラフ・成果物コミットを Rust 側へ寄せる最小 PoC です。既定workerでは、対応subsetのbuilderをbuild.yamlから解決する段階的なdynamic loadingも行います。
 
+## Project-facing package
+
+The release spike exposes one Dart package, `build_runner_accelerator`, which
+contains the launcher, manifest generator, and compatible worker runtime.
+Project-local usage is:
+
+```yaml
+dev_dependencies:
+  build_runner_accelerator: ^0.1.0
+```
+
+```bash
+dart run build_runner_accelerator build
+dart run build_runner_accelerator watch
+```
+
+The launcher selects a cached native frontend in `--mode auto`, downloading the
+matching versioned GitHub Release artifact on a cache miss. The detached
+Ed25519 manifest signature and artifact SHA-256 are verified before the binary
+is installed into the user cache. If the native frontend or manifest subset is
+not available, `--mode auto` falls back to stock Dart `build_runner`; `--mode
+rust` makes those cases errors, while `--mode dart` always selects the stock
+path. The release target matrix and cache boundaries are described in
+[`doc/launcher-and-release.md`](doc/launcher-and-release.md).
+
 作業継続時は [AGENTS.md](AGENTS.md) と [docs/roadmap.md](docs/roadmap.md) を先に確認してください。
 
 ## 今回の実装スコープ
