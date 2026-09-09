@@ -1,0 +1,33 @@
+builders:
+  echo_builder:
+    import: "package:post_process_builder_app/post_process_builder.dart"
+    builder_factories:
+      - echoBuilder
+    build_extensions:
+      ".txt":
+        - ".gen.txt"
+    auto_apply: none
+    build_to: source
+
+post_process_builders:
+  append_post_process:
+    import: "package:post_process_builder_app/post_process_builder.dart"
+    builder_factory: appendPostProcessBuilder
+    input_extensions:
+      - ".gen.txt"
+
+targets:
+  $default:
+    sources:
+      include:
+        - lib/**
+    builders:
+      post_process_builder_app:echo_builder:
+        generate_for:
+          - lib/**/*.txt
+      post_process_builder_app:append_post_process:
+        generate_for:
+          - lib/**/*.gen.txt
+        options:
+          emit: true
+          fail: false

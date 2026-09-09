@@ -1,0 +1,32 @@
+builders:
+  seed_builder:
+    import: "package:arbitrary_dependency_app/dependency_builder.dart"
+    builder_factories:
+      - seedBuilder
+    build_extensions:
+      ".txt":
+        - ".seed.txt"
+    auto_apply: none
+    build_to: cache
+
+  summary_builder:
+    import: "package:arbitrary_dependency_app/dependency_builder.dart"
+    builder_factories:
+      - summaryBuilder
+    build_extensions:
+      ".txt":
+        - ".summary.txt"
+    required_inputs:
+      - ".seed.txt"
+    auto_apply: none
+    build_to: source
+
+targets:
+  $default:
+    builders:
+      arbitrary_dependency_app:seed_builder:
+        generate_for:
+          - lib/input.txt
+      arbitrary_dependency_app:summary_builder:
+        generate_for:
+          - lib/input.txt

@@ -1,0 +1,56 @@
+builders:
+  echo_builder:
+    import: "package:arbitrary_builder_app/arbitrary_builder.dart"
+    builder_factories:
+      - echoBuilder
+    build_extensions:
+      ".txt":
+        - ".gen.txt"
+        - ".meta.txt"
+    auto_apply: none
+    build_to: source
+  exact_builder:
+    import: "package:arbitrary_builder_app/arbitrary_builder.dart"
+    builder_factories:
+      - exactBuilder
+    build_extensions:
+      "^lib/special.txt":
+        - "lib/special.generated.txt"
+    auto_apply: none
+    build_to: source
+  capture_builder:
+    import: "package:arbitrary_builder_app/arbitrary_builder.dart"
+    builder_factories:
+      - captureBuilder
+    build_extensions:
+      "^lib/assets/{{dir}}/{{file}}.txt":
+        - "lib/generated/{{dir}}/{{file}}.dart"
+    auto_apply: none
+    build_to: source
+
+targets:
+  $default:
+    sources:
+      include:
+        - lib/**
+      exclude:
+        - lib/target-ignored.txt
+    builders:
+      arbitrary_builder_app:echo_builder:
+        generate_for:
+          include:
+            - lib/**/*.txt
+          exclude:
+            - lib/ignored.txt
+        options:
+          suffix: " generated"
+      arbitrary_builder_app:exact_builder:
+        generate_for:
+          - lib/special.txt
+      arbitrary_builder_app:capture_builder:
+        generate_for:
+          include:
+            - lib/assets/**/*.txt
+          exclude:
+            - lib/assets/**/*.gen.txt
+            - lib/assets/**/*.meta.txt

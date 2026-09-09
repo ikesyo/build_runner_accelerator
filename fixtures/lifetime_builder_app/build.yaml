@@ -1,0 +1,17 @@
+builders:
+  lifetime_builder:
+    import: "package:lifetime_builder_app/lifetime_builder.dart"
+    builder_factories:
+      - lifetimeBuilder
+    build_extensions:
+      ".txt":
+        - ".lifetime.txt"
+    auto_apply: none
+    build_to: source
+
+targets:
+  $default:
+    builders:
+      lifetime_builder_app:lifetime_builder:
+        generate_for:
+          - lib/**/*.txt

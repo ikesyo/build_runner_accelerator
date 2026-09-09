@@ -1,0 +1,22 @@
+builders:
+  multi_mapping_builder:
+    import: "package:multi_mapping_builder_app/multi_mapping_builder.dart"
+    builder_factories:
+      - multiMappingBuilder
+    build_extensions:
+      ".txt":
+        - ".multi"
+      "^lib/special.txt":
+        - "lib/special.generated.txt"
+    auto_apply: none
+    build_to: source
+
+targets:
+  $default:
+    sources:
+      include:
+        - lib/**
+    builders:
+      multi_mapping_builder_app:multi_mapping_builder:
+        generate_for:
+          - lib/**/*.txt

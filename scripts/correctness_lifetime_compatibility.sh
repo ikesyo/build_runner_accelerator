@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Validate builder-instance and ResourceManager lifetime compatibility between
+# the current fast worker and stock build_runner.
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd -- "$script_dir/.." && pwd)
+fixture_dir="$repo_root/fixtures/lifetime_builder_app"
+lockfile_source="$repo_root/fixtures/arbitrary_builder_app/pubspec.lock"
+dart_bin=${DART_BIN:-"$repo_root/.toolchains/dart/dart-sdk/bin/dart"}
+pub_cache=${PUB_CACHE:-"$repo_root/.pub-cache"}
+cargo_bin=${CARGO_BIN:-"$repo_root/.toolchains/cargo/bin/cargo"}
+rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
+cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
+temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/fast-build-lifetime.XXXXXX")
+workspace_root="$temporary_dir/workspace"
+fixture_root="$workspace_root/fixtures"
+stock_dir="$fixture_root/stock"
+rust_dir="$fixture_root/rust"
+
+remove_tree() {
+  local path=$1
+  [[ -e "$path" || -L "$path" ]] || return 0
+  if [[ -L "$path" ]]; then
+    rm -f -- "$path"
+    return 0
+  fi
+  find "$path" -depth -type f -delete
+  find "$path" -depth -type l -delete
+  find "$path" -depth -type d -empty -delete
+}
+
+cleanup() {
+  remove_tree "$temporary_dir"
+}
+trap cleanup EXIT
+
+fail() {
+  printf 'lifetime-compatibility: FAIL: %s\n' "$*" >&2
+  for log in "$temporary_dir"/*.log; do
+    [[ -f "$log" ]] || continue
+    printf '%s\n' "--- $log ---" >&2
+    sed -n '1,220p' "$log" >&2
+  done
+  exit 1
+}
+
+[[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
+[[ -f "$fixture_dir/build.yaml" ]] || fail "fixture not found: $fixture_dir"
+
+if [[ -z "${FAST_BUILD_RUNNER_BIN:-}" ]]; then
+  [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
+  RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
+    "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml" \
+    || fail 'Rust frontend build failed'
+  FAST_BUILD_RUNNER_BIN="$repo_root/rust/target/debug/fast_build_runner"
+  export FAST_BUILD_RUNNER_BIN
+fi
+[[ -x "$FAST_BUILD_RUNNER_BIN" ]] || fail "Rust frontend is not executable: $FAST_BUILD_RUNNER_BIN"
+
+mkdir -p "$fixture_root"
+ln -s "$repo_root/dart_worker" "$workspace_root/dart_worker"
+
+write_package() {
+  local directory=$1
+  mkdir -p "$directory/lib"
+  cp "$fixture_dir/pubspec.yaml" "$directory/pubspec.yaml"
+  cp "$lockfile_source" "$directory/pubspec.lock"
+  cp "$fixture_dir/build.yaml" "$directory/build.yaml"
+  cp "$fixture_dir/lib/lifetime_builder.dart" "$directory/lib/lifetime_builder.dart"
+  cp "$fixture_dir/lib"/input_*.txt "$directory/lib/"
+  (cd "$directory" && \
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get --offline \
+    >"$temporary_dir/$(basename "$directory").pub-get.log" 2>&1) \
+    || fail "pub get failed for $directory"
+}
+
+run_stock() {
+  local directory=$1
+  local log=$2
+  (cd "$directory" && \
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics run build_runner \
+      build --delete-conflicting-outputs >"$log" 2>&1)
+}
+
+run_rust() {
+  local directory=$1
+  local log=$2
+  PUB_CACHE="$pub_cache" FAST_BUILD_RUNNER_BIN="$FAST_BUILD_RUNNER_BIN" \
+    "$script_dir/run_rust_frontend.sh" build --root "$directory" --dart "$dart_bin" \
+    >"$log" 2>&1
+}
+
+field_values() {
+  local file=$1
+  local field=$2
+  sed -E "s/.* ${field}=([^ ]+).*/\1/" "$file" | sort -n
+}
+
+assert_value_set() {
+  local label=$1
+  local expected=$2
+  local actual=$3
+  [[ "$actual" == "$expected" ]] || {
+    printf '%s\n' "--- $label ---" >&2
+    printf 'expected:\n%s\nactual:\n%s\n' "$expected" "$actual" >&2
+    fail "$label did not match"
+  }
+}
+
+for directory in "$stock_dir" "$rust_dir"; do
+  write_package "$directory"
+done
+
+run_stock "$stock_dir" "$temporary_dir/stock.log" || fail 'stock build failed'
+run_rust "$rust_dir" "$temporary_dir/rust.log" || fail 'Rust build failed'
+
+for input in 01 02 03 04; do
+  [[ -f "$stock_dir/lib/input_${input}.lifetime.txt" ]] || \
+    fail "stock output missing for input_${input}"
+  [[ -f "$rust_dir/lib/input_${input}.lifetime.txt" ]] || \
+    fail "Rust output missing for input_${input}"
+done
+
+stock_instances=$(for file in "$stock_dir"/lib/*.lifetime.txt; do field_values "$file" instance; done | sort -n -u)
+stock_builds=$(for file in "$stock_dir"/lib/*.lifetime.txt; do field_values "$file" build; done | sort -n -u)
+stock_resources=$(for file in "$stock_dir"/lib/*.lifetime.txt; do field_values "$file" resource; done | sort -n -u)
+stock_resource_uses=$(for file in "$stock_dir"/lib/*.lifetime.txt; do field_values "$file" resource_use; done | sort -n -u)
+rust_instances=$(for file in "$rust_dir"/lib/*.lifetime.txt; do field_values "$file" instance; done | sort -n -u)
+rust_builds=$(for file in "$rust_dir"/lib/*.lifetime.txt; do field_values "$file" build; done | sort -n -u)
+rust_resources=$(for file in "$rust_dir"/lib/*.lifetime.txt; do field_values "$file" resource; done | sort -n -u)
+rust_resource_uses=$(for file in "$rust_dir"/lib/*.lifetime.txt; do field_values "$file" resource_use; done | sort -n -u)
+
+expected_one=1
+expected_sequence=$'1\n2\n3\n4'
+assert_value_set 'stock builder instances' "$expected_one" "$stock_instances"
+assert_value_set 'stock builder build sequence' "$expected_sequence" "$stock_builds"
+assert_value_set 'stock resource instances' "$expected_one" "$stock_resources"
+assert_value_set 'stock resource use sequence' "$expected_sequence" "$stock_resource_uses"
+
+printf 'stock: instances=%s builds=%s resources=%s resource_uses=%s\n' \
+  "$(tr '\n' ',' <<<"$stock_instances" | sed 's/,$//')" \
+  "$(tr '\n' ',' <<<"$stock_builds" | sed 's/,$//')" \
+  "$(tr '\n' ',' <<<"$stock_resources" | sed 's/,$//')" \
+  "$(tr '\n' ',' <<<"$stock_resource_uses" | sed 's/,$//')"
+printf 'rust: instances=%s builds=%s resources=%s resource_uses=%s\n' \
+  "$(tr '\n' ',' <<<"$rust_instances" | sed 's/,$//')" \
+  "$(tr '\n' ',' <<<"$rust_builds" | sed 's/,$//')" \
+  "$(tr '\n' ',' <<<"$rust_resources" | sed 's/,$//')" \
+  "$(tr '\n' ',' <<<"$rust_resource_uses" | sed 's/,$//')"
+
+for input in 01 02 03 04; do
+  cmp "$stock_dir/lib/input_${input}.lifetime.txt" \
+    "$rust_dir/lib/input_${input}.lifetime.txt" || \
+    fail "post-rebase output mismatch for input_${input}"
+done
+printf 'lifetime-compatibility: PASS (stock match)\n'

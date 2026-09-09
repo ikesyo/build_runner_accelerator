@@ -1,0 +1,17 @@
+import 'package:json_annotation/json_annotation.dart';
+
+part 'model_06.g.dart';
+
+// benchmark marker: 0
+@JsonSerializable()
+class Model06 {
+  const Model06({required this.id, required this.value});
+
+  final int id;
+  final String value;
+
+  factory Model06.fromJson(Map<String, dynamic> json) =>
+      _$Model06FromJson(json);
+
+  Map<String, dynamic> toJson() => _$Model06ToJson(this);
+}

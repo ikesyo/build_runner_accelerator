@@ -1,0 +1,13 @@
+.toolchains/
+.downloads/
+.pub-cache/
+rust/target/
+
+dart_worker/.dart_tool/
+fixtures/*/.dart_tool/
+fixtures/*/build/
+fixtures/*/lib/*.g.dart
+fixtures/*/lib/*.g.part
+fixtures/*/lib/*.gen.txt
+fixtures/fast-build-correctness-*/
+upload/

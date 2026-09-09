@@ -1,0 +1,13 @@
+name: multi_mapping_builder_app
+publish_to: none
+
+environment:
+  sdk: ">=3.13.0 <4.0.0"
+
+dependencies:
+  build: 4.0.10
+
+dev_dependencies:
+  build_runner: 2.16.1
+  fast_build_runner_worker:
+    path: ../../dart_worker
