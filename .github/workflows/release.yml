@@ -31,7 +31,7 @@ jobs:
           dart pub ${{ matrix.resolution }}
           dart format --output=none --set-exit-if-changed lib bin test
           dart analyze lib bin test
-          dart test
+          dart test --compiler=source
 
       - name: Validate publish package
         if: matrix.resolution == 'upgrade'
