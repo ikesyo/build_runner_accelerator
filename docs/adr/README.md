@@ -27,4 +27,4 @@ boundary rather than restoring commit-level history.
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for
 ADR 0006 live in
-[doc/launcher-and-release.md](../../doc/launcher-and-release.md).
+[launcher-and-release.md](../launcher-and-release.md).

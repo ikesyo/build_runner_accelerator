@@ -109,7 +109,7 @@ and Windows arm64. macOS Intel is intentionally not a native release target
 and uses the Dart fallback in `auto` mode.
 
 The release matrix, cache locations, signature rules, and mirror override are
-documented in [`doc/launcher-and-release.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/doc/launcher-and-release.md).
+documented in [`docs/launcher-and-release.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/launcher-and-release.md).
 The launcher adds one process launch and local cache/target resolution, but it
 does not proxy worker IPC or participate in action scheduling. Worker AOT
 artifacts remain workspace-local and are invalidated by the SDK, package

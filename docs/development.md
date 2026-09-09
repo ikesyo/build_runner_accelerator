@@ -75,7 +75,7 @@ reproducible launcher-inclusive run; detailed experiments belong in
 ## Release checks
 
 The release workflow builds one archive per target in
-[`doc/launcher-and-release.md`](../doc/launcher-and-release.md), checks the
+[`launcher-and-release.md`](launcher-and-release.md), checks the
 native `--version` and `--help` paths, then creates the signed manifest and
 checksums. The signing private key must only be supplied through the CI secret;
 the public key is pinned in the Dart package.
