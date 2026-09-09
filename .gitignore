@@ -11,7 +11,7 @@ fixtures/*/build/
 fixtures/*/lib/*.g.dart
 fixtures/*/lib/*.g.part
 fixtures/*/lib/*.gen.txt
-fixtures/fast-build-correctness-*/
+fixtures/accelerator-build-correctness-*/
 upload/
 
 # Local benchmark workspaces (results are summarized in docs/current-baseline.md).

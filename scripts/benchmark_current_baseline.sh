@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Reproducible current build_runner baseline. The default lane measures stock;
-# LANE=fast measures the Rust frontend with FAST_JOBS. Set FAST_LAUNCHER=1 to
-# include the project-facing Dart launcher in the fast lane.
+# LANE=accelerator measures the Rust frontend with ACCELERATOR_JOBS. Set ACCELERATOR_LAUNCHER=1 to
+# include the project-facing Dart launcher in the accelerator lane.
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
@@ -23,9 +23,9 @@ case_list=${CASES:-"clean no-op one-file broad"}
 mode_list=${STOCK_MODES:-default}
 trace_mode=${TRACE_MODE:-0}
 lane=${LANE:-stock}
-fast_jobs=${FAST_JOBS:-1}
-fast_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-}
-fast_launcher=${FAST_LAUNCHER:-0}
+accelerator_jobs=${ACCELERATOR_JOBS:-1}
+accelerator_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-}
+accelerator_launcher=${ACCELERATOR_LAUNCHER:-0}
 toolchain_bin=${RUST_TOOLCHAIN_BIN:-"$repo_root/.toolchains/rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin"}
 cargo_bin=${CARGO_BIN:-"$toolchain_bin/cargo"}
 rustc_bin=${RUSTC_BIN:-"$toolchain_bin/rustc"}
@@ -87,14 +87,14 @@ read -r -a modes <<<"$(normalize_list "$mode_list")"
 [[ "${#cases[@]}" -gt 0 ]] || fail "CASES is empty"
 [[ "${#modes[@]}" -gt 0 ]] || fail "STOCK_MODES is empty"
 case "$lane" in
-  stock|fast) ;;
-  *) fail "unsupported LANE value: $lane (use stock or fast)" ;;
+  stock|accelerator) ;;
+  *) fail "unsupported LANE value: $lane (use stock or accelerator)" ;;
 esac
-if [[ "$lane" == fast && ! "$fast_jobs" =~ ^[1-9][0-9]*$ ]]; then
-  fail "FAST_JOBS must be a positive integer: $fast_jobs"
+if [[ "$lane" == accelerator && ! "$accelerator_jobs" =~ ^[1-9][0-9]*$ ]]; then
+  fail "ACCELERATOR_JOBS must be a positive integer: $accelerator_jobs"
 fi
-if [[ "$fast_launcher" != 0 && "$fast_launcher" != 1 ]]; then
-  fail "FAST_LAUNCHER must be 0 or 1: $fast_launcher"
+if [[ "$accelerator_launcher" != 0 && "$accelerator_launcher" != 1 ]]; then
+  fail "ACCELERATOR_LAUNCHER must be 0 or 1: $accelerator_launcher"
 fi
 
 for case_name in "${cases[@]}"; do
@@ -108,22 +108,22 @@ for mode in "${modes[@]}"; do
     default|force-jit|force-aot|low-resources) ;;
     *) fail "unsupported STOCK_MODES value: $mode" ;;
   esac
-  if [[ "$lane" == fast && "$mode" != default ]]; then
-    fail "LANE=fast only supports STOCK_MODES=default"
+  if [[ "$lane" == accelerator && "$mode" != default ]]; then
+    fail "LANE=accelerator only supports STOCK_MODES=default"
   fi
 done
 
-if [[ "$lane" == fast && -z "$fast_bin" ]]; then
+if [[ "$lane" == accelerator && -z "$accelerator_bin" ]]; then
   [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
   [[ -x "$rustc_bin" ]] || fail "rustc executable not found: $rustc_bin"
   PATH="$toolchain_bin:$PATH" RUSTUP_HOME="$rustup_home" \
     CARGO_HOME="$cargo_home" RUSTC="$rustc_bin" \
     "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml" || \
     fail 'Rust frontend build failed'
-  fast_bin="$repo_root/rust/target/debug/build_runner_accelerator"
+  accelerator_bin="$repo_root/rust/target/debug/build_runner_accelerator"
 fi
-if [[ "$lane" == fast ]]; then
-  [[ -x "$fast_bin" ]] || fail "Rust frontend is not executable: $fast_bin"
+if [[ "$lane" == accelerator ]]; then
+  [[ -x "$accelerator_bin" ]] || fail "Rust frontend is not executable: $accelerator_bin"
 fi
 
 printf 'dart_bin=%s\n' "$dart_bin" >"$metadata_file"
@@ -139,8 +139,8 @@ printf 'repeats=%s\n' "$repeat_count" >>"$metadata_file"
 printf 'pub_get_offline=%s\n' "$pub_get_offline" >>"$metadata_file"
 printf 'trace_mode=%s\n' "$trace_mode" >>"$metadata_file"
 printf 'lane=%s\n' "$lane" >>"$metadata_file"
-printf 'fast_jobs=%s\n' "$fast_jobs" >>"$metadata_file"
-printf 'fast_launcher=%s\n' "$fast_launcher" >>"$metadata_file"
+printf 'accelerator_jobs=%s\n' "$accelerator_jobs" >>"$metadata_file"
+printf 'accelerator_launcher=%s\n' "$accelerator_launcher" >>"$metadata_file"
 
 hash_outputs() {
   local package_dir=$1
@@ -186,12 +186,12 @@ prepare_package() {
 
 build_command() {
   local mode=$1
-  if [[ "$lane" == fast ]]; then
-    if [[ "$fast_launcher" == 1 ]]; then
+  if [[ "$lane" == accelerator ]]; then
+    if [[ "$accelerator_launcher" == 1 ]]; then
       BUILD_COMMAND=(
         env
         "PUB_CACHE=$pub_cache"
-        "BUILD_RUNNER_ACCELERATOR_BIN=$fast_bin"
+        "BUILD_RUNNER_ACCELERATOR_BIN=$accelerator_bin"
         "$dart_bin"
         --suppress-analytics
         run
@@ -202,7 +202,7 @@ build_command() {
         --dart
         "$dart_bin"
         --jobs
-        "$fast_jobs"
+        "$accelerator_jobs"
         --mode
         rust
       )
@@ -210,7 +210,7 @@ build_command() {
       BUILD_COMMAND=(
         env
         "PUB_CACHE=$pub_cache"
-        "BUILD_RUNNER_ACCELERATOR_BIN=$fast_bin"
+        "BUILD_RUNNER_ACCELERATOR_BIN=$accelerator_bin"
         "$script_dir/run_rust_frontend.sh"
         build
         --root
@@ -218,7 +218,7 @@ build_command() {
         --dart
         "$dart_bin"
         --jobs
-        "$fast_jobs"
+        "$accelerator_jobs"
         --mode
         rust
       )
@@ -272,8 +272,8 @@ measure_case() {
   local trace_path="$output_path.strace"
   local trace_args=()
   local parallelism=default
-  if [[ "$lane" == fast ]]; then
-    parallelism="jobs:$fast_jobs"
+  if [[ "$lane" == accelerator ]]; then
+    parallelism="jobs:$accelerator_jobs"
   fi
   if [[ "$trace_mode" == 1 ]]; then
     trace_args+=(--trace "$trace_path")

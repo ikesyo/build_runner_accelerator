@@ -37,13 +37,13 @@ done
 
 Current `build_runner` does not expose the old `--jobs` flag. The stock record
 therefore declares `build_runner_parallelism=default`. The same script now
-supports the rebased Rust worker through `LANE=fast`; `FAST_JOBS` records the
+supports the rebased Rust worker through `LANE=accelerator`; `ACCELERATOR_JOBS` records the
 worker matrix without changing stock behavior.
 
 ```sh
-LANE=fast FAST_JOBS=1 scripts/benchmark_current_baseline.sh
-LANE=fast FAST_JOBS=2 scripts/benchmark_current_baseline.sh
-LANE=fast FAST_JOBS=4 scripts/benchmark_current_baseline.sh
+LANE=accelerator ACCELERATOR_JOBS=1 scripts/benchmark_current_baseline.sh
+LANE=accelerator ACCELERATOR_JOBS=2 scripts/benchmark_current_baseline.sh
+LANE=accelerator ACCELERATOR_JOBS=4 scripts/benchmark_current_baseline.sh
 scripts/correctness_current_json.sh
 BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
   scripts/watch_smoke_current_json.sh
@@ -52,20 +52,20 @@ BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
 The single-repeat paired run on 2026-09-06 used the same Dart 3.13.0 SDK,
 lockfile, cache, and ten-input fixture. Wall time was:
 
-| Case | stock | fast jobs=1 | fast jobs=2 | fast jobs=4 |
+| Case | stock | accelerator jobs=1 | accelerator jobs=2 | accelerator jobs=4 |
 | --- | ---: | ---: | ---: | ---: |
 | clean | 35.67s | 11.04s | 11.51s | 12.02s |
 | no-op | 0.827s | 0.011s | 0.010s | 0.011s |
 | one-file | 0.778s | 1.396s | 1.462s | 1.642s |
 | broad | 0.794s | 1.392s | 1.389s | 1.585s |
 
-All four lanes produced byte-identical generated Dart files. The clean fast
-lane is dominated by worker/kernel initialization; the incremental fast lanes
+All four lanes produced byte-identical generated Dart files. The clean accelerator
+lane is dominated by worker/kernel initialization; the incremental accelerator lanes
 are currently dominated by action execution and do not benefit from jobs 2/4
 on this ten-input fixture. These are initial single-repeat measurements, not a
 release performance claim.
 
-A three-repeat fast-lane run confirmed the same shape. The following are
+A three-repeat accelerator-lane run confirmed the same shape. The following are
 medians; `wall/user/sys` are milliseconds and RSS is KiB:
 
 | Case | jobs=1 | jobs=2 | jobs=4 |
@@ -88,7 +88,7 @@ The AOT worker measurements use the same fixture and cache conditions:
 
 ```sh
 BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 \
-  LANE=fast FAST_JOBS=1 \
+  LANE=accelerator ACCELERATOR_JOBS=1 \
   BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
   scripts/benchmark_current_baseline.sh
 scripts/correctness_aot_worker.sh
@@ -126,7 +126,7 @@ launcher-inclusive run was remeasured on 2026-09-09. Both lanes used the same
 ten-input `current_json_app` fixture, Dart 3.13.3, build_runner 2.16.1, and the
 repository pub cache. The accelerator used the optimized Rust release binary
 and was invoked through `dart run bin/build_runner_accelerator.dart` with
-`FAST_LAUNCHER=1`; its clean case includes the workspace-local worker AOT
+`ACCELERATOR_LAUNCHER=1`; its clean case includes the workspace-local worker AOT
 compilation. The one-file case was measured after an unmeasured warm build in
 each lane. The clean row is one run; the warm rows are three-repeat medians.
 
@@ -144,8 +144,8 @@ after the change and continued to complete successfully, although it is
 expected to be slower for dirty builds.
 
 The benchmark script supports the same distinction explicitly:
-`FAST_LAUNCHER=0` measures the native frontend directly, while
-`FAST_LAUNCHER=1` includes the normal Dart script launcher. Neither setting
+`ACCELERATOR_LAUNCHER=0` measures the native frontend directly, while
+`ACCELERATOR_LAUNCHER=1` includes the normal Dart script launcher. Neither setting
 means that the launcher itself was AOT-compiled.
 
 ### CI AOT prewarm
@@ -182,6 +182,6 @@ retry. `scripts/correctness_aot_background.sh` verifies the compile gate,
 script fallback, artifact publication, and next-invocation AOT reuse.
 
 The existing `scripts/benchmark_freezed.sh` remains the legacy Freezed 3.x
-stock/fast comparison. It is intentionally not combined with this current
+stock/accelerator comparison. It is intentionally not combined with this current
 baseline: Freezed 4.0.1 currently resolves through `analyzer_buffer` with an
 Analyzer constraint below the Analyzer major required by build_runner 2.16.1.
