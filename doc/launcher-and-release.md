@@ -1,96 +1,118 @@
 # Launcher and release contract
 
-The public package is `build_runner_accelerator`. It is the single project-facing
-Dart package: the launcher, manifest generator, worker runtime, and protocol
-libraries are released together so the generated worker cannot drift from the
-frontend contract.
+`build_runner_accelerator` is the single project-facing Dart package. It
+contains the launcher, manifest generator, worker runtime, and protocol
+libraries so the generated worker and native frontend share one versioned
+contract.
 
 ## Invocation
 
-Add the package to the target project's `dev_dependencies` and invoke the
-project-local executable:
+Add the package to a target project's `dev_dependencies`:
 
 ```yaml
 dev_dependencies:
   build_runner_accelerator: ^0.1.0
 ```
 
+Invoke the project-local executable:
+
 ```bash
 dart run build_runner_accelerator build
 dart run build_runner_accelerator watch
 ```
 
-The launcher consumes `--mode`, `--root`, and `--dart`. Rust frontend options
-such as `--jobs`, `--interval-ms`, and `--worker` are passed to the native
-frontend; other build_runner options remain Dart fallback arguments.
+The launcher consumes `--mode`, `--root`, `--dart`, `--force-aot`, and
+`--force-jit`. Native frontend options such as `--jobs`, `--interval-ms`, and
+`--worker` are passed to the native frontend. The compile-mode options use the
+stock build_runner names, are mutually exclusive, and are retained when the
+stock Dart path is selected. Other arguments are retained for the stock Dart
+path.
+The native frontend does not consume arbitrary build-runner flags; use
+`--mode dart` when those flags are required.
 
 Mode behavior is part of the release contract:
 
-| Mode | Native frontend unavailable | Unsupported builder manifest |
+| Mode | Native frontend unavailable | Unsupported manifest |
 | --- | --- | --- |
-| `auto` | report on stderr, then run stock Dart build_runner | report on stderr, then run stock Dart build_runner |
-| `rust` | return an error | return an error |
-| `dart` | always run stock Dart build_runner | always run stock Dart build_runner |
+| `auto` | Report on stderr, then run stock Dart `build_runner`. | Report on stderr, then run stock Dart `build_runner`. |
+| `rust` | Return an error. | Return an error. |
+| `dart` | Always run stock Dart `build_runner`. | Always run stock Dart `build_runner`. |
 
-The launcher keeps stdout available to the selected build process. Its own
-diagnostics are written to stderr.
+The launcher keeps the selected build process's standard streams intact. Its
+own diagnostics are written to standard error.
+
+When a native frontend is selected, the launcher enables the workspace-local
+worker AOT cache unless `BUILD_RUNNER_ACCELERATOR_WORKER_AOT` is already set.
+This makes dirty builds use the fast AOT worker after the first cache build.
+Set the variable to `0` to keep the kernel/script worker path, or to
+`background` when an asynchronous prewarm is preferred. Explicit
+`--force-aot` and `--force-jit` take precedence over the environment variable;
+`--force-aot` also makes an AOT compilation failure fatal, matching stock
+build_runner's force semantics.
 
 ## Frontend resolution
 
 Resolution is version-pinned and ordered:
 
 1. `BUILD_RUNNER_ACCELERATOR_BIN`;
-2. `.dart_tool/build_runner_accelerator/bin/` in the workspace;
-3. the user cache;
+2. a workspace binary under
+   `.dart_tool/build_runner_accelerator/bin/`;
+3. the versioned user cache;
 4. the matching GitHub Release artifact;
-5. Dart fallback in `auto` mode.
+5. the Dart fallback in `auto` mode.
 
-The launcher now implements the complete release path. On a cache miss it
-downloads the version-pinned manifest and detached Ed25519 signature, verifies
-the signature with the public key shipped in the Dart package, validates the
-target/version/protocol fields, downloads the matching archive, and checks its
-size and SHA-256 before installation. No unverified network binary is
-executed.
+On a cache miss, the launcher downloads the versioned manifest and detached
+Ed25519 signature, verifies the signature with the public key shipped in the
+Dart package, validates the target, package version, and protocol major, then
+downloads the matching archive. The archive size and SHA-256 are checked before
+the executable is extracted or run. No unverified network binary is executed.
 
-The downloaded executable and a small cache metadata file are written through
-temporary files and renamed into place. A per-version/per-target lock prevents
-concurrent invocations from racing on the same cache entry. Existing cache
-entries are re-hashed before execution; a partial or modified entry is treated
-as a cache miss. `BUILD_RUNNER_ACCELERATOR_RELEASE_BASE_URL` is available for
-an HTTPS-compatible mirror, while the release signing key remains pinned in
-the package.
+Installation uses temporary files, atomic renames, and a per-version/per-target
+lock. Existing cache entries are re-hashed before execution; an incomplete or
+modified entry is treated as a cache miss. The
+`BUILD_RUNNER_ACCELERATOR_RELEASE_BASE_URL` environment variable may point to
+an HTTPS-compatible mirror. `BUILD_RUNNER_ACCELERATOR_CACHE` overrides the
+local frontend cache root.
 
-The default frontend cache is separate from workspace generated files:
+The frontend cache is separate from workspace-generated state:
 
 ```text
 Linux:   $XDG_CACHE_HOME/build_runner_accelerator/<version>/<target>/
          or ~/.cache/build_runner_accelerator/<version>/<target>/
 macOS:   ~/Library/Caches/build_runner_accelerator/<version>/<target>/
-Windows: %LOCALAPPDATA%\\build_runner_accelerator\\<version>\\<target>\\
+Windows: %LOCALAPPDATA%\build_runner_accelerator\<version>\<target>\
 ```
 
-Workspace manifest, generated worker, graph, SDK facade, and AOT executable
-remain under `.dart_tool/build_runner_accelerator/` and are never packed into a
+The workspace manifest, generated worker, graph, SDK facade, and AOT cache
+remain under `.dart_tool/build_runner_accelerator/`. They are not part of a
 portable frontend archive.
 
 ## Artifact matrix
 
-Each release is built as six independent native cells:
+Each release is built as five independent native cells:
 
 | Target ID | Rust target | Archive | Runner |
 | --- | --- | --- | --- |
 | `macos-arm64` | `aarch64-apple-darwin` | `.tar.gz` | `macos-14` |
-| `macos-x64` | `x86_64-apple-darwin` | `.tar.gz` | `macos-13` |
 | `linux-x64` | `x86_64-unknown-linux-gnu` | `.tar.gz` | `ubuntu-24.04` |
 | `linux-arm64` | `aarch64-unknown-linux-gnu` | `.tar.gz` | `ubuntu-24.04-arm` |
 | `windows-x64` | `x86_64-pc-windows-msvc` | `.zip` | `windows-2022` |
 | `windows-arm64` | `aarch64-pc-windows-msvc` | `.zip` | `windows-11-arm` |
 
-Archives contain only the native executable, `VERSION`, and release notice
-files. The publish job emits `release-manifest.json`, `SHA256SUMS`, and detached
-Ed25519 signatures. The manifest records the package version, protocol major,
-target, filename, byte size, and SHA-256. The launcher verifies the detached
-Ed25519 signature before trusting these fields and verifies the archive digest
-before extracting the executable. The signed manifest is the trust anchor for
-the artifact checksum; `SHA256SUMS` and its signature remain available for
-release-level consumer verification.
+macOS Intel is intentionally not a release target; in `auto` mode the launcher
+falls back to stock Dart `build_runner` on that platform.
+
+Archives contain the native executable, `VERSION`, and release notice files.
+The publish job emits `release-manifest.json`, `SHA256SUMS`, and detached
+Ed25519 signatures. The signed manifest records package version, protocol
+major, target, filename, byte size, and SHA-256.
+
+## Launcher overhead
+
+The launcher adds one Dart process launch plus target detection and local cache
+metadata work. It does not proxy Rust/Dart worker IPC, scan build inputs, or
+schedule actions. A frontend cache hit therefore adds only startup overhead; a
+worker AOT cache miss additionally compiles the workspace-local worker before
+the first dirty build. Direct binary selection through
+`BUILD_RUNNER_ACCELERATOR_BIN` remains available for benchmarking, offline
+environments, and CI images that preinstall the frontend.

@@ -6,11 +6,13 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
+
+source "$script_dir/toolchain.sh"
 fixture_dir="$repo_root/fixtures/current_json_app"
 measure_script="$script_dir/measure_process.py"
-dart_bin=${DART_BIN:-"$repo_root/.toolchains/dart/dart-sdk/bin/dart"}
+dart_bin=$(resolve_toolchain_dart)
 python_bin=${PYTHON_BIN:-python3}
-pub_cache=${PUB_CACHE:-"$repo_root/.pub-cache"}
+pub_cache=$(resolve_toolchain_pub_cache)
 build_runner_version=${BUILD_RUNNER_VERSION:-2.16.1}
 json_serializable_version=${JSON_SERIALIZABLE_VERSION:-6.14.1}
 json_annotation_version=${JSON_ANNOTATION_VERSION:-4.12.0}
@@ -25,8 +27,8 @@ fast_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-}
 toolchain_bin=${RUST_TOOLCHAIN_BIN:-"$repo_root/.toolchains/rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin"}
 cargo_bin=${CARGO_BIN:-"$toolchain_bin/cargo"}
 rustc_bin=${RUSTC_BIN:-"$toolchain_bin/rustc"}
-rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
-cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
+rustup_home=$(resolve_toolchain_rustup_home)
+cargo_home=$(resolve_toolchain_cargo_home)
 
 fail() {
   printf 'current-baseline: FAIL: %s\n' "$*" >&2

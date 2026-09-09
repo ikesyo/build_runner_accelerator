@@ -1,4 +1,4 @@
-use crate::builder::{rust_build_config_from_manifest, BuilderManifestFile, RustBuildConfig};
+use crate::builder::{BuilderManifestFile, RustBuildConfig, rust_build_config_from_manifest};
 use crate::cli::{FrontendMode, Options};
 use crate::worker_kernel::{prewarm_worker_aot, take_background_aot_lock, worker_aot_cache_key};
 use crate::workspace::Workspace;
@@ -219,16 +219,13 @@ fn select_dart_fallback(options: &Options, reason: &str) -> io::Result<Option<Ru
 
 pub(crate) fn run_dart_fallback(options: &Options, workspace: &Workspace) -> io::Result<()> {
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
-    let status = Command::new(dart_binary)
-        .args([
-            "--suppress-analytics",
-            "run",
-            "build_runner",
-            "build",
-            "--delete-conflicting-outputs",
-        ])
-        .current_dir(&workspace.root)
-        .status()?;
+    let mut command = Command::new(dart_binary);
+    command.args(["--suppress-analytics", "run", "build_runner"]);
+    command.arg(&options.command);
+    if options.command == "build" {
+        command.arg("--delete-conflicting-outputs");
+    }
+    let status = command.current_dir(&workspace.root).status()?;
     if !status.success() {
         return Err(io::Error::other(format!("Dart fallback failed: {status}")));
     }

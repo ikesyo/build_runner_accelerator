@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Verify the opt-in AOT worker cache, its reuse, and source invalidation.
+# Verify the AOT worker cache, its reuse, and source invalidation.
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
-dart_bin=${DART_BIN:-"$repo_root/.toolchains/dart/dart-sdk/bin/dart"}
-pub_cache=${PUB_CACHE:-"$repo_root/.pub-cache"}
+
+source "$script_dir/toolchain.sh"
+dart_bin=$(resolve_toolchain_dart)
+pub_cache=$(resolve_toolchain_pub_cache)
 fast_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-"$repo_root/rust/target/debug/build_runner_accelerator"}
 fixture_dir="$repo_root/fixtures/current_json_app"
 temporary_dir=$(mktemp -d)

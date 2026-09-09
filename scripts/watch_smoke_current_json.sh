@@ -3,8 +3,10 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
-dart_bin=${DART_BIN:-"$repo_root/.toolchains/dart/dart-sdk/bin/dart"}
-pub_cache=${PUB_CACHE:-"$repo_root/.pub-cache"}
+
+source "$script_dir/toolchain.sh"
+dart_bin=$(resolve_toolchain_dart)
+pub_cache=$(resolve_toolchain_pub_cache)
 worker_dir="$repo_root/dart_worker"
 fixture_dir="$repo_root/fixtures/current_json_app"
 temporary_dir=$(mktemp -d)

@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'release_downloader.dart';
 
 const buildRunnerAcceleratorVersion = '0.1.0';
+const _workerAotEnvironment = 'BUILD_RUNNER_ACCELERATOR_WORKER_AOT';
 
 /// The small set of launcher options that must be consumed before invoking
 /// either the Rust frontend or stock build_runner.
@@ -16,6 +17,8 @@ class LauncherOptions {
     required this.dartBinary,
     required this.rustArguments,
     required this.dartArguments,
+    required this.forceAot,
+    required this.forceJit,
     required this.showHelp,
     required this.showVersion,
   });
@@ -26,6 +29,8 @@ class LauncherOptions {
     var mode = 'auto';
     var root = Directory.current.absolute.path;
     var dartBinary = Platform.resolvedExecutable;
+    var forceAot = false;
+    var forceJit = false;
     var showHelp = false;
     var showVersion = false;
     final rustArguments = <String>[];
@@ -76,6 +81,14 @@ class LauncherOptions {
         dartBinary = value;
         continue;
       }
+      if (argument == '--force-aot') {
+        forceAot = true;
+        continue;
+      }
+      if (argument == '--force-jit') {
+        forceJit = true;
+        continue;
+      }
 
       if (!commandSeen && !argument.startsWith('-')) {
         command = argument;
@@ -101,6 +114,12 @@ class LauncherOptions {
       }
     }
 
+    if (forceAot && forceJit) {
+      throw FormatException(
+        'Only one compile mode can be used, got --force-aot and --force-jit.',
+      );
+    }
+
     rustArguments.insert(0, command);
     rustArguments.addAll([
       '--root',
@@ -108,10 +127,11 @@ class LauncherOptions {
       '--dart',
       dartBinary,
       '--mode',
-      'rust',
+      mode,
     ]);
     dartArguments
-      ..add(command)
+      ..addAll(['run', 'build_runner', command])
+      ..addAll([if (forceAot) '--force-aot', if (forceJit) '--force-jit'])
       ..addAll(passthrough);
     if (command == 'build' &&
         !passthrough.contains('--delete-conflicting-outputs')) {
@@ -125,6 +145,8 @@ class LauncherOptions {
       dartBinary: dartBinary,
       rustArguments: List.unmodifiable(rustArguments),
       dartArguments: List.unmodifiable(dartArguments),
+      forceAot: forceAot,
+      forceJit: forceJit,
       showHelp: showHelp,
       showVersion: showVersion,
     );
@@ -136,6 +158,8 @@ class LauncherOptions {
   final String dartBinary;
   final List<String> rustArguments;
   final List<String> dartArguments;
+  final bool forceAot;
+  final bool forceJit;
   final bool showHelp;
   final bool showVersion;
 }
@@ -262,6 +286,12 @@ class FrontendBinaryResolver {
         'Unsupported CPU architecture: $architecture',
       ),
     };
+    if (Platform.isMacOS && architecture == 'x64') {
+      throw UnsupportedError(
+        'macOS Intel (x86_64) is not supported by released frontend artifacts. '
+        'Use --mode dart or set BUILD_RUNNER_ACCELERATOR_BIN.',
+      );
+    }
     return '$os-$architecture';
   }
 
@@ -314,18 +344,36 @@ Future<int> runLauncher(List<String> arguments) async {
     );
     return _runProcess(options.dartBinary, options.dartArguments, options.root);
   }
-  return _runProcess(binary, options.rustArguments, options.root);
+  final environment = Map<String, String>.from(Platform.environment);
+  // AOT startup is substantially faster for dirty builds. Keep the setting
+  // overridable so users can opt back into the kernel/script worker path when
+  // the one-time workspace-local AOT compilation is undesirable.
+  if (options.forceAot) {
+    environment[_workerAotEnvironment] = 'force';
+  } else if (options.forceJit) {
+    environment[_workerAotEnvironment] = '0';
+  } else {
+    environment.putIfAbsent(_workerAotEnvironment, () => '1');
+  }
+  return _runProcess(
+    binary,
+    options.rustArguments,
+    options.root,
+    environment: environment,
+  );
 }
 
 Future<int> _runProcess(
   String executable,
   List<String> arguments,
-  String root,
-) async {
+  String root, {
+  Map<String, String>? environment,
+}) async {
   final process = await Process.start(
     executable,
     arguments,
     workingDirectory: root,
+    environment: environment,
     mode: ProcessStartMode.inheritStdio,
   );
   return process.exitCode;
@@ -345,8 +393,12 @@ Launcher options:
   --jobs N               Rust worker count
   --interval-ms N        Rust watch debounce interval
   --worker VALUE         Rust worker override
+  --force-aot             Force the AOT worker (stock-compatible)
+  --force-jit             Force the non-AOT worker (stock-compatible)
   BUILD_RUNNER_ACCELERATOR_BIN   Use a preinstalled frontend binary
   BUILD_RUNNER_ACCELERATOR_CACHE Override the frontend cache directory
+  BUILD_RUNNER_ACCELERATOR_WORKER_AOT
+                               Override worker AOT policy (default: 1)
   BUILD_RUNNER_ACCELERATOR_RELEASE_BASE_URL  Use a signed HTTPS mirror
   --version              Print the package version
   -h, --help             Show this help

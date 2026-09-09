@@ -3,13 +3,15 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
-dart_bin=${DART_BIN:-"$repo_root/.toolchains/dart/dart-sdk/bin/dart"}
-pub_cache=${PUB_CACHE:-"$repo_root/.pub-cache"}
+
+source "$script_dir/toolchain.sh"
+dart_bin=$(resolve_toolchain_dart)
+pub_cache=$(resolve_toolchain_pub_cache)
 toolchain_bin=${RUST_TOOLCHAIN_BIN:-"$repo_root/.toolchains/rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin"}
 cargo_bin=${CARGO_BIN:-"$toolchain_bin/cargo"}
 rustc_bin=${RUSTC_BIN:-"$toolchain_bin/rustc"}
-rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
-cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
+rustup_home=$(resolve_toolchain_rustup_home)
+cargo_home=$(resolve_toolchain_cargo_home)
 fixture_dir="$repo_root/fixtures/current_json_app"
 temporary_dir=$(mktemp -d)
 workspace_root="$temporary_dir/workspace"

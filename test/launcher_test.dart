@@ -9,11 +9,16 @@ void main() {
     expect(options.mode, 'auto');
     expect(
       options.rustArguments,
-      containsAll(<String>['build', '--mode', 'rust']),
+      containsAll(<String>['build', '--mode', 'auto']),
     );
     expect(
       options.dartArguments,
-      containsAll(<String>['build', '--delete-conflicting-outputs']),
+      containsAll(<String>[
+        'run',
+        'build_runner',
+        'build',
+        '--delete-conflicting-outputs',
+      ]),
     );
   });
 
@@ -35,13 +40,36 @@ void main() {
       expect(options.mode, 'dart');
       expect(options.root, '/tmp/example');
       expect(options.rustArguments, containsAll(<String>['--jobs', '2']));
-      expect(options.dartArguments, ['watch', '--verbose']);
+      expect(options.dartArguments, [
+        'run',
+        'build_runner',
+        'watch',
+        '--verbose',
+      ]);
     },
   );
 
   test('rejects an invalid mode', () {
     expect(
       () => LauncherOptions.parse(const ['--mode', 'native']),
+      throwsFormatException,
+    );
+  });
+
+  test('preserves stock AOT mode flags and rejects conflicting modes', () {
+    final aot = LauncherOptions.parse(const ['build', '--force-aot']);
+    expect(aot.forceAot, isTrue);
+    expect(aot.forceJit, isFalse);
+    expect(aot.dartArguments, contains('--force-aot'));
+
+    final jit = LauncherOptions.parse(const ['build', '--force-jit']);
+    expect(jit.forceAot, isFalse);
+    expect(jit.forceJit, isTrue);
+    expect(jit.dartArguments, contains('--force-jit'));
+
+    expect(
+      () =>
+          LauncherOptions.parse(const ['build', '--force-aot', '--force-jit']),
       throwsFormatException,
     );
   });

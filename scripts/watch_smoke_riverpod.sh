@@ -3,11 +3,13 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
-dart_bin=${DART_BIN:-"$repo_root/.toolchains/dart/dart-sdk/bin/dart"}
-pub_cache=${PUB_CACHE:-"$repo_root/.pub-cache"}
-cargo_bin=${CARGO_BIN:-"$repo_root/.toolchains/cargo/bin/cargo"}
-rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
-cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
+
+source "$script_dir/toolchain.sh"
+dart_bin=$(resolve_toolchain_dart)
+pub_cache=$(resolve_toolchain_pub_cache)
+cargo_bin=$(resolve_toolchain_cargo)
+rustup_home=$(resolve_toolchain_rustup_home)
+cargo_home=$(resolve_toolchain_cargo_home)
 fixture_dir="$repo_root/fixtures/riverpod_app"
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-riverpod-watch-root.XXXXXX")
 watch_dir="$test_root/fixtures/watch"

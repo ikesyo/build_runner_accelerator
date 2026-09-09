@@ -9,7 +9,7 @@ The default pins are:
 
 | Item | Version or value |
 | --- | --- |
-| Dart SDK | selected by `DART_BIN` (the checked-in local toolchain is 3.13.0) |
+| Dart SDK | selected by `DART_BIN` (the reference run used Dart 3.13.0) |
 | build_runner | 2.16.1 |
 | build | resolved by the lockfile (4.0.10 with the default cache) |
 | json_serializable | 6.14.1 |
@@ -80,10 +80,11 @@ generated-output deletion, and rename, with byte-identical stock/Rust output.
 The stock mode comparison also showed that `default` and `force-aot` use
 `build_runner/aot` and have similar incremental timings (about 0.78--0.82s),
 while `force-jit` was slower for incremental builds (about 2.30--2.51s).
-This keeps the default stock AOT path as the reference and makes the fast
-worker kernel cache the relevant warm-path optimization.
+The stock default AOT path remains the reference. The launcher now enables
+AOT by default for native invocations; the explicit AOT measurements below
+cover that release path.
 
-The opt-in AOT worker experiment uses the same fixture and cache conditions:
+The AOT worker measurements use the same fixture and cache conditions:
 
 ```sh
 BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 \
@@ -113,9 +114,10 @@ their measured three-repeat medians were:
 One broad repeat was an `865ms` outlier; all AOT cases produced the same
 `51d4d65d...` output hash as stock. A direct worker handshake on the same
 fixture measured medians of `9.49s` for the script, `0.178s` for the kernel,
-and `0.009s` for the AOT executable. AOT remains opt-in because its cold
-compile cost and cross-platform / cross-workspace memory behavior need
-broader evaluation.
+and `0.009s` for the AOT executable. The launcher now defaults native invocations to AOT. Cold compile cost and
+cross-platform / cross-workspace memory behavior still need broader
+evaluation, so these measurements are not a release-wide performance
+guarantee.
 
 ### CI AOT prewarm
 
@@ -136,9 +138,8 @@ generated worker digest; it contains no checkout or SDK absolute path. The
 version-2 metadata sidecar records logical package/workspace dependencies and
 content digests, and the SDK facade links are rebound when a restored artifact
 is used. `scripts/correctness_aot_prewarm.sh` covers prewarm compile wait,
-relocated cache reuse, facade rebind, and worker-source invalidation. A
-provider-specific restore/save example is recorded in
-`docs/adr/0062-ci-aot-prewarm.md`.
+relocated cache reuse, facade rebind, and worker-source invalidation. The provider-specific restore/save policy is covered by
+[ADR 0005](adr/0005-performance-and-validation-policy.md).
 
 ### Local background AOT
 

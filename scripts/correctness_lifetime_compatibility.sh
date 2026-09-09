@@ -6,13 +6,15 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
+
+source "$script_dir/toolchain.sh"
 fixture_dir="$repo_root/fixtures/lifetime_builder_app"
 lockfile_source="$repo_root/fixtures/arbitrary_builder_app/pubspec.lock"
-dart_bin=${DART_BIN:-"$repo_root/.toolchains/dart/dart-sdk/bin/dart"}
-pub_cache=${PUB_CACHE:-"$repo_root/.pub-cache"}
-cargo_bin=${CARGO_BIN:-"$repo_root/.toolchains/cargo/bin/cargo"}
-rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
-cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
+dart_bin=$(resolve_toolchain_dart)
+pub_cache=$(resolve_toolchain_pub_cache)
+cargo_bin=$(resolve_toolchain_cargo)
+rustup_home=$(resolve_toolchain_rustup_home)
+cargo_home=$(resolve_toolchain_cargo_home)
 temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-lifetime.XXXXXX")
 workspace_root="$temporary_dir/workspace"
 fixture_root="$workspace_root/fixtures"

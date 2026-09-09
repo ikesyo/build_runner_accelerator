@@ -27,6 +27,7 @@ pub(crate) enum WorkerArtifact {
 enum AotRequest {
     Disabled,
     Synchronous,
+    Force,
     Background,
 }
 
@@ -43,10 +44,9 @@ struct AotMetadata {
 
 /// Select the worker launch artifact.
 ///
-/// The generated worker remains script-based by default. A kernel cache is
-/// still the normal automatic optimization, while the AOT executable cache is
-/// opt-in until its platform and memory trade-offs have been measured in more
-/// workspaces. An explicit AOT path takes precedence over every other mode.
+/// The launcher requests a synchronous AOT worker by default. The request can
+/// be disabled, run in the background, or made strict through the environment.
+/// An explicit AOT path takes precedence over every other mode.
 pub(crate) fn resolve_worker_artifact(
     root: &Path,
     dart_binary: &str,
@@ -58,6 +58,10 @@ pub(crate) fn resolve_worker_artifact(
     }
     if auto && is_dart_source(worker_executable) {
         match aot_request() {
+            AotRequest::Force => {
+                let aot = prepare_worker_aot(root, dart_binary, worker_executable)?;
+                return Ok(WorkerArtifact::Aot(aot));
+            }
             AotRequest::Synchronous => match prepare_worker_aot(root, dart_binary, worker_executable)
             {
                 Ok(aot) => return Ok(WorkerArtifact::Aot(aot)),
@@ -202,6 +206,7 @@ fn aot_request() -> AotRequest {
     };
     match value.to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "auto" => AotRequest::Synchronous,
+        "force" => AotRequest::Force,
         "background" | "async" => AotRequest::Background,
         _ => AotRequest::Disabled,
     }

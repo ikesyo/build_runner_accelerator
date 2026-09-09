@@ -7,10 +7,12 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
+
+source "$script_dir/toolchain.sh"
 fixture_dir="$repo_root/fixtures/current_json_app"
-dart_bin=${DART_BIN:-"$repo_root/.toolchains/dart/dart-sdk/bin/dart"}
-dart_sdk=${DART_SDK:-"$repo_root/.toolchains/dart/dart-sdk"}
-pub_cache=${PUB_CACHE:-"$repo_root/.pub-cache"}
+dart_bin=$(resolve_toolchain_dart)
+dart_sdk=$(resolve_toolchain_dart_sdk)
+pub_cache=$(resolve_toolchain_pub_cache)
 fast_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-"$repo_root/rust/target/debug/build_runner_accelerator"}
 temporary_dir=$(mktemp -d)
 workspace_root="$temporary_dir/workspace"

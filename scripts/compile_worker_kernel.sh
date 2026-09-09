@@ -3,8 +3,10 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
-dart_bin=${DART_BIN:-"$repo_root/.toolchains/dart/dart-sdk/bin/dart"}
-pub_cache=${PUB_CACHE:-"$repo_root/.pub-cache"}
+
+source "$script_dir/toolchain.sh"
+dart_bin=$(resolve_toolchain_dart)
+pub_cache=$(resolve_toolchain_pub_cache)
 package_config="$repo_root/dart_worker/.dart_tool/package_config.json"
 worker_kernel=${BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL:-"$repo_root/.toolchains/build_runner_accelerator_worker.dill"}
 

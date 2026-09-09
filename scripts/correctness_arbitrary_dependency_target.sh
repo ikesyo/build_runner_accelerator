@@ -3,8 +3,10 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
-dart_bin=${DART_BIN:-"$repo_root/.toolchains/dart/dart-sdk/bin/dart"}
-pub_cache=${PUB_CACHE:-"$repo_root/.pub-cache"}
+
+source "$script_dir/toolchain.sh"
+dart_bin=$(resolve_toolchain_dart)
+pub_cache=$(resolve_toolchain_pub_cache)
 temporary_dir=$(mktemp -d)
 workspace_root="$temporary_dir/workspace"
 fixture_root="$workspace_root/fixtures"
@@ -60,9 +62,9 @@ assert_contains() {
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 
 if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
-  cargo_bin=${CARGO_BIN:-"$repo_root/.toolchains/cargo/bin/cargo"}
-  rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
-  cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
+  cargo_bin=$(resolve_toolchain_cargo)
+  rustup_home=$(resolve_toolchain_rustup_home)
+  cargo_home=$(resolve_toolchain_cargo_home)
   [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
   RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
     "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml" || \

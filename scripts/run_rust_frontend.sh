@@ -4,13 +4,15 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
+source "$script_dir/toolchain.sh"
+
 if [[ -n "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
   exec "$BUILD_RUNNER_ACCELERATOR_BIN" "$@"
 fi
 
-cargo_bin=${CARGO_BIN:-"$repo_root/.toolchains/cargo/bin/cargo"}
-rustup_home=${RUSTUP_HOME:-"$repo_root/.toolchains/rustup"}
-cargo_home=${CARGO_HOME:-"$repo_root/.toolchains/cargo"}
+cargo_bin=$(resolve_toolchain_cargo)
+rustup_home=$(resolve_toolchain_rustup_home)
+cargo_home=$(resolve_toolchain_cargo_home)
 
 [[ -x "$cargo_bin" ]] || {
   printf 'Cargo executable not found: %s\n' "$cargo_bin" >&2

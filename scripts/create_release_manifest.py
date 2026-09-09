@@ -10,7 +10,6 @@ from pathlib import Path
 
 EXPECTED_TARGETS = {
     "macos-arm64",
-    "macos-x64",
     "linux-x64",
     "linux-arm64",
     "windows-x64",
