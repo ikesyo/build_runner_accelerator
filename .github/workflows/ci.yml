@@ -88,6 +88,8 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-${{ runner.arch }}-
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
+        with:
+          toolchain: stable
       - name: Rust unit tests
         run: cargo test --locked --manifest-path rust/Cargo.toml
 
@@ -111,6 +113,8 @@ jobs:
         with:
           sdk: '3.13.3'
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
+        with:
+          toolchain: stable
       - name: Run correctness verification
         run: |
           cargo build --locked --quiet --manifest-path rust/Cargo.toml
@@ -155,6 +159,7 @@ jobs:
             cargo-${{ runner.os }}-${{ runner.arch }}-
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.rust_target }}
       - name: Build native frontend
         shell: bash
