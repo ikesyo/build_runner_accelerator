@@ -1,4 +1,11 @@
-# Current build_runner baseline
+# Benchmark experiments (2026-09)
+
+This document preserves implementation experiments and historical measurements.
+The latest launcher-inclusive benchmark is summarized in
+[`docs/benchmarks.md`](../benchmarks.md). Experimental results are not release-wide
+performance claims.
+
+## Historical baseline and implementation experiments
 
 `scripts/benchmark_current_baseline.sh` measures the current stock
 `build_runner` lane in an isolated temporary package. The fixture contains ten
@@ -168,7 +175,7 @@ version-2 metadata sidecar records logical package/workspace dependencies and
 content digests, and the SDK facade links are rebound when a restored artifact
 is used. `scripts/correctness_aot_prewarm.sh` covers prewarm compile wait,
 relocated cache reuse, facade rebind, and worker-source invalidation. The provider-specific restore/save policy is covered by
-[ADR 0005](adr/0005-performance-and-validation-policy.md).
+[ADR 0005](../adr/0005-performance-and-validation-policy.md).
 
 ### Local background AOT
 
@@ -185,3 +192,4 @@ The existing `scripts/benchmark_freezed.sh` remains the legacy Freezed 3.x
 stock/accelerator comparison. It is intentionally not combined with this current
 baseline: Freezed 4.0.1 currently resolves through `analyzer_buffer` with an
 Analyzer constraint below the Analyzer major required by build_runner 2.16.1.
+

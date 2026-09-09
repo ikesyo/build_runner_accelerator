@@ -14,5 +14,5 @@ fixtures/*/lib/*.gen.txt
 fixtures/accelerator-build-correctness-*/
 upload/
 
-# Local benchmark workspaces (results are summarized in docs/current-baseline.md).
+# Local benchmark workspaces (results are summarized in docs/benchmarks.md).
 bench_*/

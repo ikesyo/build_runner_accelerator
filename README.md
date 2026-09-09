@@ -163,5 +163,8 @@ post-release work.
 ## Development
 
 Contributor setup, local SDK selection, correctness checks, and benchmark
-commands are in [`docs/development.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/development.md). Architecture
+commands are in [`docs/development.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/development.md). The latest launcher-inclusive measurements are in [`docs/benchmarks.md`](docs/benchmarks.md).
+Historical implementation experiments are in [`docs/benchmarks/experiments-2026-09.md`](docs/benchmarks/experiments-2026-09.md).
+
+Architecture
 decisions are summarized in [`docs/adr/README.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/adr/README.md).

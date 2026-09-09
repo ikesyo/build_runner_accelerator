@@ -67,8 +67,10 @@ bash scripts/benchmark_matrix.sh
 
 For performance changes, enable
 `BUILD_RUNNER_ACCELERATOR_METRICS=1` and record clean, no-op, one-file, and
-broad incremental cases. Generated measurements should remain local unless
-they establish a durable architecture decision.
+broad incremental cases. Keep raw JSONL and trace artifacts local. Update
+the public summary in [`benchmarks.md`](benchmarks.md) only from a
+reproducible launcher-inclusive run; detailed experiments belong in
+[`benchmarks/experiments-2026-09.md`](benchmarks/experiments-2026-09.md).
 
 ## Release checks
 
