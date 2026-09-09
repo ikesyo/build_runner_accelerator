@@ -14,20 +14,43 @@ delete, rename, and watch semantics.
 ## Try from source
 
 The pub package has not been published yet. To try the current implementation,
-use a checkout of this repository and build the matching local Rust frontend:
+check out this repository, add it to the target project as a path dependency,
+and build the matching local Rust frontend:
 
 ```bash
+git clone https://github.com/ikesyo/build_runner_accelerator.git
+cd build_runner_accelerator
 dart pub get
 cargo build --release --manifest-path rust/Cargo.toml
-BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/release/build_runner_accelerator" \
-  dart run bin/build_runner_accelerator.dart build \
-  --root /absolute/path/to/your/project
 ```
 
-Use `watch` instead of `build` for a native watch session. The launcher also
-supports `--mode dart` when the stock path is preferred. Once the package and
-GitHub Release artifacts are published, this section will be replaced with the
-normal `dart pub add` installation instructions.
+Add the checkout to the target project's `pubspec.yaml`:
+
+```yaml
+dev_dependencies:
+  build_runner_accelerator:
+    path: /absolute/path/to/build_runner_accelerator
+```
+
+Then resolve the target project and run the launcher in strict native mode:
+
+```bash
+cd /absolute/path/to/your/project
+dart pub get
+cd /absolute/path/to/build_runner_accelerator
+BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/release/build_runner_accelerator" \
+  dart run bin/build_runner_accelerator.dart build \
+  --root /absolute/path/to/your/project \
+  --mode rust
+```
+
+The path dependency is required so the manifest generator is available from the
+target project's package configuration. Using `--mode rust` makes an unsupported
+or incorrectly configured source setup fail instead of silently falling back to
+stock `build_runner`. Use `watch` instead of `build` for a native watch session.
+The launcher also supports `--mode dart` when the stock path is preferred. Once
+the package and GitHub Release artifacts are published, this section will be
+replaced with the normal `dart pub add` installation instructions.
 
 ## Frontend modes
 
@@ -81,8 +104,9 @@ runtime, and protocol implementation. Rust frontend executables are released
 per platform rather than packed into the Dart package. This keeps the package
 portable and allows the launcher to select a target-specific binary.
 
-The initial release targets Linux x64, Linux arm64, and macOS arm64. macOS Intel is intentionally not
-a native release target and uses the Dart fallback in `auto` mode.
+The initial release targets Linux x64, Linux arm64, macOS arm64, Windows x64,
+and Windows arm64. macOS Intel is intentionally not a native release target
+and uses the Dart fallback in `auto` mode.
 
 The release matrix, cache locations, signature rules, and mirror override are
 documented in [`doc/launcher-and-release.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/doc/launcher-and-release.md).
