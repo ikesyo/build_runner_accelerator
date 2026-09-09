@@ -83,7 +83,6 @@ void main() {
       await request.response.close();
     });
 
-    // Keep the fixture material available through the test body.
     _fixturePublicKey = publicKey.bytes;
   });
 

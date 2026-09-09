@@ -8,10 +8,12 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
 import 'package:path/path.dart' as p;
 
+import 'release_downloader_api.dart';
+
+export 'release_downloader_api.dart' show releaseBaseUrl;
+
 const releaseManifestSchemaVersion = 1;
 const releaseProtocolMajor = 1;
-const releaseBaseUrl =
-    'https://github.com/ikesyo/build_runner_accelerator/releases/download';
 
 // Raw Ed25519 public key bytes, base64 encoded. The corresponding private key
 // must only be stored in the release-signing secret; it is never part of the
@@ -173,7 +175,7 @@ class ReleaseManifest {
 }
 
 /// Downloads and installs one versioned, signed native frontend.
-class ReleaseDownloader {
+class ReleaseDownloader implements ReleaseArtifactDownloader {
   ReleaseDownloader({
     required String cacheDirectory,
     this.baseUrl = releaseBaseUrl,
@@ -313,11 +315,13 @@ class ReleaseDownloader {
           decoded['archive_size'] is! int ||
           decoded['archive_size'] <= 0 ||
           decoded['archive_sha256'] is! String ||
-          !RegExp(r'^[0-9a-f]{64}$')
-              .hasMatch(decoded['archive_sha256'] as String) ||
+          !RegExp(
+            r'^[0-9a-f]{64}$',
+          ).hasMatch(decoded['archive_sha256'] as String) ||
           decoded['binary_sha256'] is! String ||
-          !RegExp(r'^[0-9a-f]{64}$')
-              .hasMatch(decoded['binary_sha256'] as String)) {
+          !RegExp(
+            r'^[0-9a-f]{64}$',
+          ).hasMatch(decoded['binary_sha256'] as String)) {
         return null;
       }
       final digest = crypto.sha256

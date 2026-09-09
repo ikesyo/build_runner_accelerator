@@ -119,6 +119,35 @@ cross-platform / cross-workspace memory behavior still need broader
 evaluation, so these measurements are not a release-wide performance
 guarantee.
 
+### Launcher-inclusive post-optimization spot check
+
+After moving release-download dependencies off the normal import path, a
+launcher-inclusive run was remeasured on 2026-09-09. Both lanes used the same
+ten-input `current_json_app` fixture, Dart 3.13.3, build_runner 2.16.1, and the
+repository pub cache. The accelerator used the optimized Rust release binary
+and was invoked through `dart run bin/build_runner_accelerator.dart` with
+`FAST_LAUNCHER=1`; its clean case includes the workspace-local worker AOT
+compilation. The one-file case was measured after an unmeasured warm build in
+each lane. The clean row is one run; the warm rows are three-repeat medians.
+
+| Case | stock wall | accelerator launcher wall | speedup |
+| --- | ---: | ---: | ---: |
+| clean, including AOT cache generation | 36,873 ms | 31,626 ms | 1.17x |
+| warm no-op | 1,206 ms | 486 ms | 2.48x |
+| warm one-file change | 1,018 ms | 618 ms | 1.65x |
+
+This is a single paired spot check rather than a release guarantee. The
+steady-state result is now faster even with the launcher included; the
+remaining warm incremental time is dominated by the Dart builder and resolver,
+not Rust planning. `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=0` was also exercised
+after the change and continued to complete successfully, although it is
+expected to be slower for dirty builds.
+
+The benchmark script supports the same distinction explicitly:
+`FAST_LAUNCHER=0` measures the native frontend directly, while
+`FAST_LAUNCHER=1` includes the normal Dart script launcher. Neither setting
+means that the launcher itself was AOT-compiled.
+
 ### CI AOT prewarm
 
 The CI lane is intentionally split into key computation, cache restore,

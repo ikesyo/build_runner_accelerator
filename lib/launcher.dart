@@ -1,11 +1,15 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 
-import 'release_downloader.dart';
+import 'release_downloader_api.dart';
 
 const buildRunnerAcceleratorVersion = '0.1.0';
 const _workerAotEnvironment = 'BUILD_RUNNER_ACCELERATOR_WORKER_AOT';
+const _releaseCacheMetadataFilename = 'artifact.json';
 
 /// The small set of launcher options that must be consumed before invoking
 /// either the Rust frontend or stock build_runner.
@@ -167,22 +171,21 @@ class LauncherOptions {
 class FrontendBinaryResolver {
   FrontendBinaryResolver({
     String? environmentCache,
-    ReleaseDownloader? releaseDownloader,
+    ReleaseArtifactDownloader? releaseDownloader,
   }) : environmentCache =
            environmentCache ??
            Platform.environment['BUILD_RUNNER_ACCELERATOR_CACHE'],
        releaseDownloader = releaseDownloader;
 
   final String? environmentCache;
-  final ReleaseDownloader? releaseDownloader;
+  final ReleaseArtifactDownloader? releaseDownloader;
 
-  Future<String?> resolve(String workspaceRoot) async {
+  Future<String?> resolve(String workspaceRoot, {String? dartBinary}) async {
     final override = Platform.environment['BUILD_RUNNER_ACCELERATOR_BIN'];
     if (override != null && override.isNotEmpty) {
       return _existingFile(_resolvePath(override, Directory.current.path));
     }
 
-    final target = await detectTarget();
     final binaryName = Platform.isWindows
         ? 'build_runner_accelerator.exe'
         : 'build_runner_accelerator';
@@ -196,19 +199,36 @@ class FrontendBinaryResolver {
     final workspaceBinary = _existingFile(workspaceCandidate);
     if (workspaceBinary != null) return workspaceBinary;
 
-    final downloader =
-        releaseDownloader ??
-        ReleaseDownloader(
-          cacheDirectory: cacheDirectory(),
-          baseUrl:
-              Platform
-                  .environment['BUILD_RUNNER_ACCELERATOR_RELEASE_BASE_URL'] ??
-              releaseBaseUrl,
-        );
-    return downloader.ensureInstalled(
+    final target = await detectTarget();
+
+    final configuredDownloader = releaseDownloader;
+    if (configuredDownloader != null) {
+      return configuredDownloader.ensureInstalled(
+        version: buildRunnerAcceleratorVersion,
+        target: target,
+        binaryName: binaryName,
+      );
+    }
+
+    final releaseCacheDirectory = cacheDirectory();
+    final cachedRelease = await _validCachedReleaseBinary(
+      cacheDirectory: releaseCacheDirectory,
       version: buildRunnerAcceleratorVersion,
       target: target,
       binaryName: binaryName,
+    );
+    if (cachedRelease != null) return cachedRelease;
+
+    return _ensureInstalled(
+      cacheDirectory: releaseCacheDirectory,
+      baseUrl:
+          Platform.environment['BUILD_RUNNER_ACCELERATOR_RELEASE_BASE_URL'] ??
+          releaseBaseUrl,
+      version: buildRunnerAcceleratorVersion,
+      target: target,
+      binaryName: binaryName,
+      dartBinary: dartBinary,
+      workingDirectory: workspaceRoot,
     );
   }
 
@@ -304,6 +324,266 @@ class FrontendBinaryResolver {
       p.isAbsolute(path) ? path : p.join(base, path);
 }
 
+Future<String?> _validCachedReleaseBinary({
+  required String cacheDirectory,
+  required String version,
+  required String target,
+  required String binaryName,
+}) async {
+  final targetDirectory = Directory(p.join(cacheDirectory, version, target));
+  final binary = File(p.join(targetDirectory.path, binaryName));
+  final metadataFile = File(
+    p.join(targetDirectory.path, _releaseCacheMetadataFilename),
+  );
+  if (!await binary.exists() || !await metadataFile.exists()) return null;
+  if (await FileSystemEntity.type(binary.path, followLinks: false) !=
+      FileSystemEntityType.file) {
+    return null;
+  }
+
+  try {
+    final decoded = jsonDecode(await metadataFile.readAsString());
+    final archiveFilename = _releaseArchiveFilename(target);
+    if (decoded is! Map ||
+        decoded['schema_version'] != 1 ||
+        decoded['package_version'] != version ||
+        decoded['target'] != target ||
+        decoded['binary'] != binaryName ||
+        decoded['archive'] != archiveFilename ||
+        decoded['archive_size'] is! int ||
+        decoded['archive_size'] <= 0 ||
+        decoded['archive_sha256'] is! String ||
+        !_isSha256(decoded['archive_sha256'] as String) ||
+        decoded['binary_sha256'] is! String ||
+        !_isSha256(decoded['binary_sha256'] as String)) {
+      return null;
+    }
+    final digest = await _sha256File(binary.path);
+    if (digest == null || digest != decoded['binary_sha256']) return null;
+    return binary.absolute.path;
+  } on Object {
+    return null;
+  }
+}
+
+String _releaseArchiveFilename(String target) =>
+    'build_runner_accelerator-$target${target.startsWith('windows-') ? '.zip' : '.tar.gz'}';
+
+bool _isSha256(String value) => RegExp(r'^[0-9a-f]{64}$').hasMatch(value);
+
+Future<String?> _sha256File(String path) async {
+  final command = Platform.isWindows
+      ? ('certutil', ['-hashfile', path, 'SHA256'])
+      : Platform.isMacOS
+      ? ('shasum', ['-a', '256', path])
+      : ('sha256sum', [path]);
+  try {
+    final result = await Process.run(command.$1, command.$2);
+    if (result.exitCode != 0) return null;
+    final match = RegExp(
+      r'\b[0-9a-fA-F]{64}\b',
+    ).firstMatch(result.stdout.toString());
+    return match?.group(0)?.toLowerCase();
+  } on Object {
+    return null;
+  }
+}
+
+const _releaseDownloaderEntrypoint = 'release_downloader_entrypoint.dart';
+
+class _DownloaderSpawnFailure implements Exception {
+  _DownloaderSpawnFailure(this.error);
+
+  final Object error;
+}
+
+Future<String> _ensureInstalled({
+  required String cacheDirectory,
+  required String baseUrl,
+  required String version,
+  required String target,
+  required String binaryName,
+  required String? dartBinary,
+  required String workingDirectory,
+}) async {
+  if (!_launcherRunsFromDartSource()) {
+    return _ensureInstalledInProcess(
+      cacheDirectory: cacheDirectory,
+      baseUrl: baseUrl,
+      version: version,
+      target: target,
+      binaryName: binaryName,
+      dartBinary: dartBinary,
+      workingDirectory: workingDirectory,
+    );
+  }
+  try {
+    return await _ensureInstalledInSpawnedIsolate(
+      cacheDirectory: cacheDirectory,
+      baseUrl: baseUrl,
+      version: version,
+      target: target,
+      binaryName: binaryName,
+    );
+  } on _DownloaderSpawnFailure {
+    return _ensureInstalledInProcess(
+      cacheDirectory: cacheDirectory,
+      baseUrl: baseUrl,
+      version: version,
+      target: target,
+      binaryName: binaryName,
+      dartBinary: dartBinary,
+      workingDirectory: workingDirectory,
+    );
+  }
+}
+
+Future<String> _ensureInstalledInSpawnedIsolate({
+  required String cacheDirectory,
+  required String baseUrl,
+  required String version,
+  required String target,
+  required String binaryName,
+}) async {
+  final entrypoint = _findReleaseDownloaderEntrypoint();
+  final responsePort = ReceivePort();
+  final errorPort = ReceivePort();
+  Isolate? downloaderIsolate;
+  try {
+    try {
+      downloaderIsolate = await Isolate.spawnUri(
+        entrypoint,
+        [cacheDirectory, baseUrl, version, target, binaryName],
+        responsePort.sendPort,
+        errorsAreFatal: false,
+        onError: errorPort.sendPort,
+      );
+    } on Object catch (error) {
+      throw _DownloaderSpawnFailure(error);
+    }
+    final response =
+        await Future.any<Object?>([
+          responsePort.first,
+          errorPort.first.then(
+            (error) => <String, Object>{
+              'ok': false,
+              'error': 'release downloader isolate failed: $error',
+            },
+          ),
+        ]).timeout(
+          const Duration(minutes: 2),
+          onTimeout: () => <String, Object>{
+            'ok': false,
+            'error': 'release downloader isolate timed out',
+          },
+        );
+    if (response is Map &&
+        response['ok'] == true &&
+        response['path'] is String) {
+      return response['path'] as String;
+    }
+    final error = response is Map ? response['error'] : response;
+    final stack = response is Map ? response['stack'] : null;
+    throw StateError(
+      'release artifact download failed: $error${stack is String ? '\n$stack' : ''}',
+    );
+  } on TimeoutException {
+    throw StateError('release downloader isolate timed out');
+  } finally {
+    downloaderIsolate?.kill(priority: Isolate.immediate);
+    responsePort.close();
+    errorPort.close();
+  }
+}
+
+Future<String> _ensureInstalledInProcess({
+  required String cacheDirectory,
+  required String baseUrl,
+  required String version,
+  required String target,
+  required String binaryName,
+  required String? dartBinary,
+  required String workingDirectory,
+}) async {
+  final entrypoint = _findReleaseDownloaderEntrypoint();
+  final packageConfig = Isolate.packageConfigSync;
+  final arguments = <String>[
+    '--suppress-analytics',
+    'run',
+    if (packageConfig != null && packageConfig.isScheme('file'))
+      '--packages=${packageConfig.toFilePath()}',
+    entrypoint.toFilePath(),
+    cacheDirectory,
+    baseUrl,
+    version,
+    target,
+    binaryName,
+  ];
+  final result = await Process.run(
+    dartBinary ?? 'dart',
+    arguments,
+    workingDirectory: workingDirectory,
+  );
+  if (result.exitCode != 0) {
+    final stderr = result.stderr.toString().trim();
+    final stdout = result.stdout.toString().trim();
+    throw StateError(
+      'release downloader process failed (${result.exitCode}): '
+      '${stderr.isNotEmpty ? stderr : stdout}',
+    );
+  }
+  final output = result.stdout.toString().trim();
+  if (output.isEmpty) {
+    throw StateError('release downloader process returned no result');
+  }
+  final response = jsonDecode(output.split('\n').last);
+  if (response is Map && response['ok'] == true && response['path'] is String) {
+    return response['path'] as String;
+  }
+  final error = response is Map ? response['error'] : response;
+  final stack = response is Map ? response['stack'] : null;
+  throw StateError(
+    'release artifact download failed: $error${stack is String ? '\n$stack' : ''}',
+  );
+}
+
+bool _launcherRunsFromDartSource() {
+  final script = Platform.script;
+  return script.isScheme('file') && p.extension(script.toFilePath()) == '.dart';
+}
+
+Uri _findReleaseDownloaderEntrypoint() {
+  final candidates = <String>[
+    p.join(
+      File.fromUri(Platform.script).absolute.parent.path,
+      '..',
+      'lib',
+      _releaseDownloaderEntrypoint,
+    ),
+    p.join(Directory.current.path, 'lib', _releaseDownloaderEntrypoint),
+  ];
+  for (final candidate in candidates) {
+    final file = File(candidate);
+    if (file.existsSync()) return file.absolute.uri;
+  }
+  try {
+    final packageUri = Isolate.resolvePackageUriSync(
+      Uri.parse(
+        'package:build_runner_accelerator/$_releaseDownloaderEntrypoint',
+      ),
+    );
+    if (packageUri != null) {
+      final file = File.fromUri(packageUri);
+      if (file.existsSync()) return file.absolute.uri;
+    }
+  } on Object {
+    // A compiled or embedded launcher may not expose package resolution.
+  }
+  throw StateError(
+    'release downloader entrypoint is unavailable; reinstall the package',
+  );
+}
+
 Future<int> runLauncher(List<String> arguments) async {
   final options = LauncherOptions.parse(arguments);
   if (options.showHelp) {
@@ -320,7 +600,10 @@ Future<int> runLauncher(List<String> arguments) async {
 
   String? binary;
   try {
-    binary = await FrontendBinaryResolver().resolve(options.root);
+    binary = await FrontendBinaryResolver().resolve(
+      options.root,
+      dartBinary: options.dartBinary,
+    );
   } on Object catch (error) {
     if (options.mode == 'rust') {
       throw StateError('Rust frontend is unavailable: $error');

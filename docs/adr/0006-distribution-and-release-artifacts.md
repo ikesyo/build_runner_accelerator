@@ -32,6 +32,10 @@ archives:
 - Cache installation uses a per-target lock, temporary files, atomic renames,
   and re-hashing of existing entries. An HTTPS mirror may be selected through
   BUILD_RUNNER_ACCELERATOR_RELEASE_BASE_URL.
+- Keep release download, archive, and signature-verification dependencies out
+  of normal launcher startup. The launcher validates a cache hit with the
+  metadata and executable digest, and starts a dedicated downloader isolate
+  only for cache misses or when the lightweight hash check cannot run.
 - auto falls back to stock Dart build_runner when resolution or manifest
   support fails; rust returns an error; dart skips native resolution.
 - Workspace-generated manifests, workers, graphs, SDK facades, and AOT
@@ -42,12 +46,19 @@ parsing, target/cache resolution, and one child-process launch, then leaves
 worker IPC and scheduling to the selected frontend. A preinstalled binary
 override is retained for offline use, CI, and direct performance measurement.
 
+The supported distribution shape is a Dart script launcher invoked through
+`dart run`; the package does not ship a native AOT launcher. If an advanced
+user compiles the launcher with `dart compile exe`, cache-miss downloading may
+use the configured Dart executable as a short-lived child process. This is a
+compatibility path and does not change the worker AOT contract.
+
 ## Consequences
 
 Normal users do not need Rust, and the Dart package remains platform-neutral.
 The first native invocation may perform a network download and a cache miss
-adds startup latency. A cache hit still has a small launcher process overhead,
-but it does not add a second worker protocol or scheduling layer.
+adds startup latency. A valid cache hit does not load the heavy release
+dependency graph or add a second worker protocol; it only performs lightweight
+metadata and executable-digest validation before the native launch.
 
 Trust depends on the release signing key pinned in the package and the CI
 secret that signs release inputs. Platform code-signing/notarization remains a
@@ -64,4 +75,3 @@ valid repository license and a successful Dart package dry run.
   worker, and protocol version skew would become a normal failure mode.
 - Require users to install a system binary: retained only as an advanced
   override, not the default installation path.
-

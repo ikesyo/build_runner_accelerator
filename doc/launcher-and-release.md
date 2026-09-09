@@ -21,6 +21,11 @@ dart run build_runner_accelerator build
 dart run build_runner_accelerator watch
 ```
 
+These are the normal invocations: `dart run` starts the project-facing
+launcher as a Dart program. Launcher execution and worker execution are
+separate layers. The AOT options below select the generated Dart worker; they
+do not compile the launcher itself.
+
 The launcher consumes `--mode`, `--root`, `--dart`, `--force-aot`, and
 `--force-jit`. Native frontend options such as `--jobs`, `--interval-ms`, and
 `--worker` are passed to the native frontend. The compile-mode options use the
@@ -74,6 +79,25 @@ modified entry is treated as a cache miss. The
 an HTTPS-compatible mirror. `BUILD_RUNNER_ACCELERATOR_CACHE` overrides the
 local frontend cache root.
 
+The launcher keeps the archive, crypto, and signature-verification dependency
+graph out of the normal Dart startup path. On a valid release-cache hit it
+checks the small metadata file and re-hashes the executable using the
+platform's SHA-256 command, then launches the native frontend immediately.
+Only a cache miss starts `release_downloader_entrypoint.dart` in a short-lived
+isolate; that isolate performs the signed manifest, archive, and atomic install
+work. If the platform hash utility is unavailable, the conservative downloader
+path performs the full validation instead.
+
+### Optional precompiled launcher
+
+The release package distributes a Dart launcher, not a native AOT launcher.
+An advanced user can nevertheless run `dart compile exe` against the launcher
+entrypoint. In that form Dart cannot spawn the source downloader directly as an
+isolate, so a release-cache miss invokes the same downloader entrypoint through
+the configured `--dart` executable as a short-lived child process. This is a
+compatibility path; normal installation and the launcher-inclusive benchmark
+use `dart run`.
+
 The frontend cache is separate from workspace-generated state:
 
 ```text
@@ -111,8 +135,9 @@ major, target, filename, byte size, and SHA-256.
 
 The launcher adds one Dart process launch plus target detection and local cache
 metadata work. It does not proxy Rust/Dart worker IPC, scan build inputs, or
-schedule actions. A frontend cache hit therefore adds only startup overhead; a
-worker AOT cache miss additionally compiles the workspace-local worker before
-the first dirty build. Direct binary selection through
+schedule actions. A workspace or valid release-cache hit therefore adds only
+lightweight startup overhead; a release cache miss starts the downloader
+isolate, and a worker AOT cache miss additionally compiles the workspace-local
+worker before the first dirty build. Direct binary selection through
 `BUILD_RUNNER_ACCELERATOR_BIN` remains available for benchmarking, offline
 environments, and CI images that preinstall the frontend.

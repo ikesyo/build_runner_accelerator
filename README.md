@@ -46,6 +46,14 @@ accepts only its documented launcher options; use `--mode dart` when passing
 arbitrary build-runner arguments. A preinstalled native binary can be selected
 with `BUILD_RUNNER_ACCELERATOR_BIN`.
 
+Worker AOT and launcher AOT are separate concerns. In the normal invocation
+above, `dart run` starts the launcher as a Dart program; `--force-aot` and
+`BUILD_RUNNER_ACCELERATOR_WORKER_AOT` control the generated Dart worker, not
+the launcher itself. The package does not distribute an AOT-compiled launcher.
+An advanced user may compile the launcher with `dart compile exe`; that form is
+supported as a compatibility path for release-cache misses, but it is not the
+normal installation or benchmark path.
+
 ## Architecture
 
 | Component | Responsibility |
@@ -84,6 +92,12 @@ artifacts remain workspace-local and are invalidated by the SDK, package
 configuration, or worker dependency changes. For startup benchmarks or
 offline use, run a preinstalled binary through
 `BUILD_RUNNER_ACCELERATOR_BIN`.
+
+The launcher keeps archive extraction, signature verification, and release
+download dependencies out of its normal startup path. A valid user-cache hit
+is checked with lightweight metadata and executable hashing; the heavier
+release downloader is started only when the cache needs to be filled or
+repaired.
 
 ## Current compatibility and limitations
 

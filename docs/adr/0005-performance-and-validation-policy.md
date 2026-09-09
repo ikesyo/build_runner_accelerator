@@ -30,11 +30,18 @@ Use the following policy:
   state across incompatible SDK, package, or workspace identities.
 - Treat worker AOT/kernel caches as derived artifacts. The launcher defaults to
   the workspace-local AOT worker because dirty-build startup is a primary
-  release performance target. A cache miss must preserve correctness and
-  provide a usable kernel/script-worker path; `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=0`
+  release performance target. This is worker AOT, not AOT compilation of the
+  project-facing launcher. A cache miss must preserve correctness and provide
+  a usable kernel/script-worker path; `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=0`
   remains an explicit opt-out. The launcher also accepts stock-compatible
   `--force-aot` and `--force-jit` flags, with explicit flags taking precedence
   over the environment variable.
+- Keep release artifact verification off the steady-state launcher startup
+  path. Workspace binaries and valid user-cache entries are resolved by the
+  lightweight launcher; archive extraction, signature verification, and
+  download dependencies run only in the cache-miss downloader isolate. A
+  cache hit must still re-hash the executable, and failure of the platform
+  hash helper must fall back to the full downloader validator.
 - For performance changes, compare clean, no-op, one-file, and broad
   incremental cases with the same SDK, dependency lock, cache state, command,
   worker count, and byte-identical output check.
@@ -52,6 +59,9 @@ The native frontend can be faster on broad or repeated work while showing
 little benefit on a small no-op dominated by Dart/Analyzer startup. The
 launcher adds startup work but does not enter the action scheduler; direct
 binary selection remains available when measuring frontend performance itself.
+Launcher-inclusive measurements use the normal `dart run` script launcher.
+An explicitly AOT-compiled launcher is an advanced compatibility case, not a
+release artifact or a required performance target.
 
 ## Alternatives considered
 

@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Reproducible current build_runner baseline. The default lane measures stock;
-# LANE=fast measures the rebased Rust frontend with FAST_JOBS.
+# LANE=fast measures the Rust frontend with FAST_JOBS. Set FAST_LAUNCHER=1 to
+# include the project-facing Dart launcher in the fast lane.
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
@@ -24,6 +25,7 @@ trace_mode=${TRACE_MODE:-0}
 lane=${LANE:-stock}
 fast_jobs=${FAST_JOBS:-1}
 fast_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-}
+fast_launcher=${FAST_LAUNCHER:-0}
 toolchain_bin=${RUST_TOOLCHAIN_BIN:-"$repo_root/.toolchains/rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin"}
 cargo_bin=${CARGO_BIN:-"$toolchain_bin/cargo"}
 rustc_bin=${RUSTC_BIN:-"$toolchain_bin/rustc"}
@@ -91,6 +93,9 @@ esac
 if [[ "$lane" == fast && ! "$fast_jobs" =~ ^[1-9][0-9]*$ ]]; then
   fail "FAST_JOBS must be a positive integer: $fast_jobs"
 fi
+if [[ "$fast_launcher" != 0 && "$fast_launcher" != 1 ]]; then
+  fail "FAST_LAUNCHER must be 0 or 1: $fast_launcher"
+fi
 
 for case_name in "${cases[@]}"; do
   case "$case_name" in
@@ -135,6 +140,7 @@ printf 'pub_get_offline=%s\n' "$pub_get_offline" >>"$metadata_file"
 printf 'trace_mode=%s\n' "$trace_mode" >>"$metadata_file"
 printf 'lane=%s\n' "$lane" >>"$metadata_file"
 printf 'fast_jobs=%s\n' "$fast_jobs" >>"$metadata_file"
+printf 'fast_launcher=%s\n' "$fast_launcher" >>"$metadata_file"
 
 hash_outputs() {
   local package_dir=$1
@@ -181,21 +187,42 @@ prepare_package() {
 build_command() {
   local mode=$1
   if [[ "$lane" == fast ]]; then
-    BUILD_COMMAND=(
-      env
-      "PUB_CACHE=$pub_cache"
-      "BUILD_RUNNER_ACCELERATOR_BIN=$fast_bin"
-      "$script_dir/run_rust_frontend.sh"
-      build
-      --root
-      .
-      --dart
-      "$dart_bin"
-      --jobs
-      "$fast_jobs"
-      --mode
-      rust
-    )
+    if [[ "$fast_launcher" == 1 ]]; then
+      BUILD_COMMAND=(
+        env
+        "PUB_CACHE=$pub_cache"
+        "BUILD_RUNNER_ACCELERATOR_BIN=$fast_bin"
+        "$dart_bin"
+        --suppress-analytics
+        run
+        "$repo_root/bin/build_runner_accelerator.dart"
+        build
+        --root
+        .
+        --dart
+        "$dart_bin"
+        --jobs
+        "$fast_jobs"
+        --mode
+        rust
+      )
+    else
+      BUILD_COMMAND=(
+        env
+        "PUB_CACHE=$pub_cache"
+        "BUILD_RUNNER_ACCELERATOR_BIN=$fast_bin"
+        "$script_dir/run_rust_frontend.sh"
+        build
+        --root
+        .
+        --dart
+        "$dart_bin"
+        --jobs
+        "$fast_jobs"
+        --mode
+        rust
+      )
+    fi
     return 0
   fi
   BUILD_COMMAND=(

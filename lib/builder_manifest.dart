@@ -383,8 +383,9 @@ Future<_PackageGraph> _loadPackageGraph(String packagePath) async {
   for (final package in orderedPackages.where((p) => p.name != rootName)) {
     final pubspec = _pubspecForPath(package.root.toFilePath());
     packages[package.name]!.dependencies.addAll(
-      _depsFromYaml(pubspec)
-          .map((name) => packageNode(name, parent: package.name)),
+      _depsFromYaml(
+        pubspec,
+      ).map((name) => packageNode(name, parent: package.name)),
     );
   }
 
