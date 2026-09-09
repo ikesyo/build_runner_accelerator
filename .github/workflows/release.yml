@@ -29,7 +29,8 @@ jobs:
         shell: bash
         run: |
           dart pub ${{ matrix.resolution }}
-          dart analyze
+          dart format --output=none --set-exit-if-changed lib bin test
+          dart analyze lib bin test
           dart test
 
       - name: Validate publish package
