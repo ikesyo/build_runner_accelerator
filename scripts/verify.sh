@@ -121,6 +121,8 @@ run_freezed_correctness() {
 
 run_quick() {
   printf 'verify: level=quick\n'
+  (cd "$repo_root/dart_worker" && \
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get)
   (cd "$repo_root" && \
     PUB_CACHE="$pub_cache" "$dart_bin" analyze dart_worker)
   bash "$script_dir/smoke.sh"

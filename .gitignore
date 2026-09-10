@@ -11,6 +11,8 @@ fixtures/*/build/
 fixtures/*/lib/*.g.dart
 fixtures/*/lib/*.g.part
 fixtures/*/lib/*.gen.txt
+# This checked-in fixture output is part of the published-source test data.
+!fixtures/freezed_app/lib/serializable.g.dart
 fixtures/accelerator-build-correctness-*/
 upload/
 

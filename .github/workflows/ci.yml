@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dart-package:
+    name: Dart ${{ matrix.sdk }} (${{ matrix.resolution }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: '3.11.0'
+            resolution: downgrade
+          - sdk: '3.13.3'
+            resolution: upgrade
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk }}-${{ matrix.resolution }}-${{ hashFiles('pubspec.yaml', 'pubspec.lock') }}
+          restore-keys: |
+            pub-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: ${{ matrix.sdk }}
+      - name: Dart package checks
+        shell: bash
+        run: |
+          dart pub ${{ matrix.resolution }}
+          dart format --output=none --set-exit-if-changed lib bin test
+          dart analyze lib bin test
+          dart test --compiler=source
+      - name: Validate publish package
+        if: matrix.resolution == 'upgrade'
+        run: dart pub publish --dry-run
+
+  dart-worker:
+    name: Dart worker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.pub-cache
+          key: pub-worker-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dart_worker/pubspec.yaml', 'dart_worker/pubspec.lock') }}
+          restore-keys: |
+            pub-worker-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - name: Analyze and format worker
+        shell: bash
+        run: |
+          cd dart_worker
+          dart pub get
+          dart format --output=none --set-exit-if-changed lib bin
+          dart analyze lib bin
+
+  rust:
+    name: Rust unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.toml', 'rust/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
+        with:
+          toolchain: stable
+      - name: Rust unit tests
+        run: cargo test --locked --manifest-path rust/Cargo.toml
+
+  integration:
+    name: Integration verification
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .pub-cache
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: integration-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/**/pubspec.lock', 'rust/Cargo.lock') }}
+          restore-keys: |
+            integration-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
+        with:
+          toolchain: stable
+      - name: Run correctness verification
+        env:
+          PUB_CACHE: ${{ github.workspace }}/.pub-cache
+        run: |
+          cargo build --locked --quiet --manifest-path rust/Cargo.toml
+          chmod +x rust/target/debug/build_runner_accelerator
+          BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
+            VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
+
+  native-build:
+    name: Native build (${{ matrix.target_id }})
+    runs-on: ${{ matrix.runs_on }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_id: macos-arm64
+            runs_on: macos-14
+            rust_target: aarch64-apple-darwin
+          - target_id: linux-x64
+            runs_on: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-gnu
+          - target_id: linux-arm64
+            runs_on: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+          - target_id: windows-x64
+            runs_on: windows-2022
+            rust_target: x86_64-pc-windows-msvc
+          - target_id: windows-arm64
+            runs_on: windows-11-arm
+            rust_target: aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rust_target }}-${{ hashFiles('rust/Cargo.toml', 'rust/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rust_target }}-
+            cargo-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+      - name: Build native frontend
+        shell: bash
+        run: cargo build --locked --release --manifest-path rust/Cargo.toml --target ${{ matrix.rust_target }}
+      - name: Native binary smoke
+        shell: bash
+        run: |
+          binary="rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator"
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          if [[ "$RUNNER_OS" != Windows ]]; then chmod +x "$binary"; fi
+          "$binary" --version
+          "$binary" --help
