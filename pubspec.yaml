@@ -1,7 +1,17 @@
 name: build_runner_accelerator
 description: A Rust-accelerated frontend for build_runner with a compatible Dart worker.
-version: 0.1.0
+version: 0.1.0-dev.1
 repository: https://github.com/ikesyo/build_runner_accelerator
+topics:
+  - build-runner
+  - code-generation
+  - dart
+  - rust
+  - command-line
+platforms:
+  linux:
+  macos:
+  windows:
 
 environment:
   sdk: ">=3.11.0 <4.0.0"
@@ -28,4 +38,3 @@ dev_dependencies:
 
 executables:
   build_runner_accelerator: build_runner_accelerator
-  generate_builder_manifest: generate_builder_manifest

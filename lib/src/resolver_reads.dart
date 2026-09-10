@@ -32,7 +32,7 @@ Future<void> collectResolverReads(
     List<int> bytes;
     try {
       bytes = await io.readAsBytes(asset);
-    } catch (_) {
+    } on AssetNotFoundException {
       continue;
     }
 

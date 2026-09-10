@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.1.0 (planned)
+## 0.1.0-dev.1
 
-Initial public preview. Not yet published.
+Initial public preview.
 
 ### Added
 

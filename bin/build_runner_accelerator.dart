@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:build_runner_accelerator/launcher.dart';
+import 'package:build_runner_accelerator/src/launcher.dart';
 
 Future<void> main(List<String> arguments) async {
   try {

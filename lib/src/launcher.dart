@@ -7,7 +7,7 @@ import 'package:path/path.dart' as p;
 
 import 'release_downloader_api.dart';
 
-const buildRunnerAcceleratorVersion = '0.1.0';
+const buildRunnerAcceleratorVersion = '0.1.0-dev.1';
 const _workerAotEnvironment = 'BUILD_RUNNER_ACCELERATOR_WORKER_AOT';
 const _releaseCacheMetadataFilename = 'artifact.json';
 
@@ -558,9 +558,10 @@ Uri _findReleaseDownloaderEntrypoint() {
       File.fromUri(Platform.script).absolute.parent.path,
       '..',
       'lib',
+      'src',
       _releaseDownloaderEntrypoint,
     ),
-    p.join(Directory.current.path, 'lib', _releaseDownloaderEntrypoint),
+    p.join(Directory.current.path, 'lib', 'src', _releaseDownloaderEntrypoint),
   ];
   for (final candidate in candidates) {
     final file = File(candidate);
@@ -569,7 +570,7 @@ Uri _findReleaseDownloaderEntrypoint() {
   try {
     final packageUri = Isolate.resolvePackageUriSync(
       Uri.parse(
-        'package:build_runner_accelerator/$_releaseDownloaderEntrypoint',
+        'package:build_runner_accelerator/src/$_releaseDownloaderEntrypoint',
       ),
     );
     if (packageUri != null) {

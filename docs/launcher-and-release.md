@@ -11,7 +11,7 @@ Add the package to a target project's `dev_dependencies`:
 
 ```yaml
 dev_dependencies:
-  build_runner_accelerator: ^0.1.0
+  build_runner_accelerator: ^0.1.0-dev.1
 ```
 
 Invoke the project-local executable:
@@ -130,6 +130,14 @@ Archives contain the native executable, `VERSION`, and release notice files.
 The publish job emits `release-manifest.json`, `SHA256SUMS`, and detached
 Ed25519 signatures. The signed manifest records package version, protocol
 major, target, filename, byte size, and SHA-256.
+
+### Release signing setup
+
+The release workflow expects the repository Actions secret
+`BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY` to contain the PEM-encoded
+Ed25519 private key corresponding to the public key pinned in
+`lib/src/release_downloader.dart`. The workflow verifies that correspondence
+before signing and never checks the private key into the repository.
 
 ## Launcher overhead
 

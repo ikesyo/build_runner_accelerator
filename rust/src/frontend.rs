@@ -118,14 +118,20 @@ fn generate_manifest(
         let Ok(worker_package_root) = workspace.package_root(worker_package) else {
             continue;
         };
-        let generator = worker_package_root.join("bin/generate_builder_manifest.dart");
-        if !generator.is_file() {
+        let generator = [
+            "tool/generate_builder_manifest.dart",
+            "bin/generate_builder_manifest.dart",
+        ]
+        .into_iter()
+        .map(|path| worker_package_root.join(path))
+        .find(|path| path.is_file());
+        let Some(generator) = generator else {
             continue;
-        }
-        // Running the package entrypoint directly avoids an implicit pub
-        // resolution step in `dart run`. The workspace has already been
-        // resolved, so reuse its package config for deterministic/offline
-        // manifest generation in CI.
+        };
+        // Running the package's internal tool directly avoids an implicit
+        // pub resolution step. The workspace has already been resolved, so
+        // reuse its package config for deterministic/offline manifest
+        // generation in CI and installed packages.
         command
             .arg(format!(
                 "--packages={}",
@@ -139,11 +145,10 @@ fn generate_manifest(
         break;
     }
     if !generator_found {
-        command.args([
-            "--suppress-analytics",
-            "run",
-            "build_runner_accelerator:generate_builder_manifest",
-        ]);
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "manifest generator not found in the resolved package roots",
+        ));
     }
     let status = command
         .arg("--root")

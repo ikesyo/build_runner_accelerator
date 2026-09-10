@@ -4,7 +4,7 @@ import 'dart:isolate';
 
 import 'release_downloader.dart';
 
-Future<void> main(List<String> arguments, Object? message) async {
+Future<void> main(List<String> arguments, [Object? message]) async {
   void sendResponse(Map<String, Object> response, {bool failure = false}) {
     if (message is SendPort) {
       message.send(response);

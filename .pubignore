@@ -8,3 +8,7 @@
 /rust/
 /scripts/
 /test/
+
+# The package is consumed as a dependency; this lockfile is only for
+# repository-level CI and local development.
+/pubspec.lock

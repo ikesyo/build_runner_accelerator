@@ -25,7 +25,8 @@ const _cacheMetadataFilename = 'artifact.json';
 const _maximumManifestBytes = 1024 * 1024;
 const _maximumSignatureBytes = 1024;
 const _maximumArtifactBytes = 128 * 1024 * 1024;
-const _lockStaleAfter = Duration(minutes: 10);
+const _cacheLockTimeout = Duration(minutes: 2);
+const _cacheLockRetryDelay = Duration(milliseconds: 100);
 
 class ReleaseDownloadException implements Exception {
   ReleaseDownloadException(this.message);
@@ -183,6 +184,7 @@ class ReleaseDownloader implements ReleaseArtifactDownloader {
     HttpClient? httpClient,
     this.requireHttps = true,
     this.requestTimeout = const Duration(seconds: 30),
+    this.cacheLockTimeout = _cacheLockTimeout,
   }) : cacheDirectory = p.normalize(cacheDirectory),
        _httpClient = httpClient,
        trustedPublicKey = List.unmodifiable(
@@ -193,6 +195,13 @@ class ReleaseDownloader implements ReleaseArtifactDownloader {
         this.trustedPublicKey.length,
         'trustedPublicKey',
         'an Ed25519 public key must contain 32 bytes',
+      );
+    }
+    if (cacheLockTimeout.isNegative || cacheLockTimeout == Duration.zero) {
+      throw ArgumentError.value(
+        cacheLockTimeout,
+        'cacheLockTimeout',
+        'must be greater than zero',
       );
     }
     final uri = Uri.tryParse(this.baseUrl);
@@ -213,6 +222,7 @@ class ReleaseDownloader implements ReleaseArtifactDownloader {
   final List<int> trustedPublicKey;
   final bool requireHttps;
   final Duration requestTimeout;
+  final Duration cacheLockTimeout;
   final HttpClient? _httpClient;
 
   Future<String> ensureInstalled({
@@ -228,6 +238,7 @@ class ReleaseDownloader implements ReleaseArtifactDownloader {
     await versionDirectory.create(recursive: true);
     final lock = await _CacheLock.acquire(
       File(p.join(versionDirectory.path, '.$target.lock')),
+      timeout: cacheLockTimeout,
     );
     try {
       final cached = await _validCachedBinary(
@@ -573,47 +584,49 @@ class ReleaseDownloader implements ReleaseArtifactDownloader {
 }
 
 class _CacheLock {
-  _CacheLock(this.file);
+  _CacheLock(this._handle);
 
-  final File file;
+  final RandomAccessFile _handle;
 
-  static Future<_CacheLock> acquire(File file) async {
+  static Future<_CacheLock> acquire(
+    File file, {
+    required Duration timeout,
+  }) async {
     await file.parent.create(recursive: true);
-    for (var attempt = 0; attempt < 600; attempt++) {
+    final elapsed = Stopwatch()..start();
+    while (true) {
+      final handle = await file.open(mode: FileMode.append);
       try {
-        await file.create(exclusive: true);
-        await file.writeAsString('$pid\n');
-        return _CacheLock(file);
+        // The non-blocking lock keeps a hung process from making every later
+        // installation wait forever. A successful handle remains open for the
+        // entire download and installation, and the OS releases it if the
+        // owning process exits.
+        await handle.lock(FileLock.exclusive);
+        return _CacheLock(handle);
       } on FileSystemException {
-        if (await _isStale(file)) {
-          try {
-            await file.delete();
-          } on FileSystemException {
-            // Another process may have refreshed or removed the lock.
-          }
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+        // A failed non-blocking lock does not own the handle. Close it before
+        // retrying so every attempt has an independently cancellable lock
+        // operation.
+        await handle.close();
+      } on Object {
+        await handle.close();
+        rethrow;
       }
+
+      if (elapsed.elapsed.compareTo(timeout) >= 0) {
+        throw ReleaseDownloadException(
+          'timed out waiting for release cache lock: ${file.path}',
+        );
+      }
+      await Future<void>.delayed(_cacheLockRetryDelay);
     }
-    throw ReleaseDownloadException(
-      'timed out waiting for release cache lock: ${file.path}',
-    );
   }
 
   Future<void> release() async {
     try {
-      if (await file.exists()) await file.delete();
-    } on FileSystemException {
-      // A concurrent stale-lock cleanup may already have removed it.
-    }
-  }
-
-  static Future<bool> _isStale(File file) async {
-    try {
-      final modified = await file.lastModified();
-      return DateTime.now().difference(modified) > _lockStaleAfter;
-    } on FileSystemException {
-      return false;
+      await _handle.unlock();
+    } finally {
+      await _handle.close();
     }
   }
 }
