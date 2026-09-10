@@ -1,4 +1,4 @@
-import 'package:build_runner_accelerator/launcher.dart';
+import 'package:build_runner_accelerator/src/launcher.dart';
 import 'package:test/test.dart';
 
 void main() {

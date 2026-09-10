@@ -11,11 +11,40 @@ is the primary constraint: when the native frontend is selected, supported
 fixtures must produce byte-identical outputs and preserve incremental, failure,
 delete, rename, and watch semantics.
 
+## Installation
+
+The first public release is the `0.1.0-dev.1` pre-release. Add it to the
+target project's `dev_dependencies`:
+
+```bash
+dart pub add dev:build_runner_accelerator:^0.1.0-dev.1
+```
+
+Or add the dependency explicitly:
+
+```yaml
+dev_dependencies:
+  build_runner_accelerator: ^0.1.0-dev.1
+```
+
+Run the project-local executable in the same place where you would normally
+run `build_runner`:
+
+```bash
+dart run build_runner_accelerator build
+dart run build_runner_accelerator watch
+```
+
+The default `auto` mode downloads and verifies the matching signed native
+frontend on supported Linux, macOS, and Windows platforms. On macOS Intel or
+when native execution is unavailable, it falls back to stock Dart
+`build_runner`. Use `--mode dart` to select the stock path explicitly, or
+`--mode rust` to require the native frontend.
+
 ## Try from source
 
-The pub package has not been published yet. To try the current implementation,
-check out this repository, add it to the target project as a path dependency,
-and build the matching local Rust frontend:
+To try unreleased changes, check out this repository, add it to the target
+project as a path dependency, and build the matching local Rust frontend:
 
 ```bash
 git clone https://github.com/ikesyo/build_runner_accelerator.git
@@ -44,13 +73,12 @@ BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/release/build_runner_accelerator"
   --mode rust
 ```
 
-The path dependency is required so the manifest generator is available from the
-target project's package configuration. Using `--mode rust` makes an unsupported
-or incorrectly configured source setup fail instead of silently falling back to
-stock `build_runner`. Use `watch` instead of `build` for a native watch session.
-The launcher also supports `--mode dart` when the stock path is preferred. Once
-the package and GitHub Release artifacts are published, this section will be
-replaced with the normal `dart pub add` installation instructions.
+The path dependency is required so the package's internal manifest generator and
+worker are available from the target project's package configuration. Using
+`--mode rust` makes an unsupported or incorrectly configured source setup fail
+instead of silently falling back to stock `build_runner`. Use `watch` instead of
+`build` for a native watch session. The launcher also supports `--mode dart`
+when the stock path is preferred.
 
 ## Frontend modes
 
@@ -146,6 +174,10 @@ The native frontend has been validated against workspace fixtures using
 builder. The fixture set is evidence for compatibility, not a built-in
 catalog: the generic manifest path remains the source of truth.
 
+The current `built_value` example does not pass the native planning baseline.
+Do not use `--mode rust` for that workflow yet; use `--mode dart` while this
+compatibility gap is being resolved.
+
 The following are deliberately outside the first release baseline:
 
 - complete `build.yaml` and `build_runner` semantic compatibility;
@@ -163,8 +195,7 @@ post-release work.
 ## Development
 
 Contributor setup, local SDK selection, correctness checks, and benchmark
-commands are in [`docs/development.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/development.md). The latest launcher-inclusive measurements are in [`docs/benchmarks.md`](docs/benchmarks.md).
-Historical implementation experiments are in [`docs/benchmarks/experiments-2026-09.md`](docs/benchmarks/experiments-2026-09.md).
+commands are in [`docs/development.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/development.md). The latest launcher-inclusive measurements are in [`docs/benchmarks.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/benchmarks.md).
+Historical implementation experiments are in [`docs/benchmarks/experiments-2026-09.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/benchmarks/experiments-2026-09.md).
 
-Architecture
-decisions are summarized in [`docs/adr/README.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/adr/README.md).
+Architecture decisions are summarized in [`docs/adr/README.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/adr/README.md).

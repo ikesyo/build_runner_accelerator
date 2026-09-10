@@ -6,7 +6,11 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
 import 'package:test/test.dart';
 
-import 'package:build_runner_accelerator/release_downloader.dart';
+import 'package:build_runner_accelerator/src/release_downloader.dart';
+
+const _testVersion = '0.1.0-dev.1';
+const _windowsArchiveFilename = 'build_runner_accelerator-windows-x64.zip';
+const _linuxArchiveFilename = 'build_runner_accelerator-linux-x64.tar.gz';
 
 void main() {
   late Directory cacheDirectory;
@@ -44,18 +48,18 @@ void main() {
     );
     final manifest = jsonEncode({
       'schema_version': releaseManifestSchemaVersion,
-      'package_version': '0.1.0',
+      'package_version': _testVersion,
       'protocol_major': releaseProtocolMajor,
       'artifacts': [
         {
           'target': 'windows-x64',
-          'filename': 'build_runner_accelerator-windows-x64.zip',
+          'filename': _windowsArchiveFilename,
           'size': archiveBytes.length,
           'sha256': _sha256(archiveBytes),
         },
         {
           'target': 'linux-x64',
-          'filename': 'build_runner_accelerator-linux-x64.tar.gz',
+          'filename': _linuxArchiveFilename,
           'size': linuxArchiveBytes.length,
           'sha256': _sha256(linuxArchiveBytes),
         },
@@ -65,10 +69,10 @@ void main() {
     final signature = await algorithm.sign(manifestBytes, keyPair: keyPair);
 
     responses = {
-      '/v0.1.0/release-manifest.json': manifestBytes,
-      '/v0.1.0/release-manifest.json.sig': signature.bytes,
-      '/v0.1.0/build_runner_accelerator-windows-x64.zip': archiveBytes,
-      '/v0.1.0/build_runner_accelerator-linux-x64.tar.gz': linuxArchiveBytes,
+      _releasePath('release-manifest.json'): manifestBytes,
+      _releasePath('release-manifest.json.sig'): signature.bytes,
+      _releasePath(_windowsArchiveFilename): archiveBytes,
+      _releasePath(_linuxArchiveFilename): linuxArchiveBytes,
     };
     requestCount = 0;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -96,7 +100,7 @@ void main() {
     () async {
       final downloader = _downloader(cacheDirectory, server);
       final path = await downloader.ensureInstalled(
-        version: '0.1.0',
+        version: _testVersion,
         target: 'windows-x64',
         binaryName: 'build_runner_accelerator.exe',
       );
@@ -109,7 +113,7 @@ void main() {
       expect(requestCount, 3);
 
       final cachedPath = await downloader.ensureInstalled(
-        version: '0.1.0',
+        version: _testVersion,
         target: 'windows-x64',
         binaryName: 'build_runner_accelerator.exe',
       );
@@ -119,13 +123,13 @@ void main() {
   );
 
   test('rejects a modified manifest signature', () async {
-    responses['/v0.1.0/release-manifest.json.sig'] = List<int>.from(
-      responses['/v0.1.0/release-manifest.json.sig']!,
+    responses[_releasePath('release-manifest.json.sig')] = List<int>.from(
+      responses[_releasePath('release-manifest.json.sig')]!,
     )..[0] ^= 1;
 
     expect(
       () => _downloader(cacheDirectory, server).ensureInstalled(
-        version: '0.1.0',
+        version: _testVersion,
         target: 'windows-x64',
         binaryName: 'build_runner_accelerator.exe',
       ),
@@ -133,7 +137,8 @@ void main() {
     );
     expect(
       await File(
-        '${cacheDirectory.path}/0.1.0/windows-x64/build_runner_accelerator.exe',
+        '${cacheDirectory.path}/$_testVersion/windows-x64/'
+        'build_runner_accelerator.exe',
       ).exists(),
       isFalse,
     );
@@ -141,7 +146,7 @@ void main() {
 
   test('extracts the tar.gz format used by Linux releases', () async {
     final path = await _downloader(cacheDirectory, server).ensureInstalled(
-      version: '0.1.0',
+      version: _testVersion,
       target: 'linux-x64',
       binaryName: 'build_runner_accelerator',
     );
@@ -152,14 +157,13 @@ void main() {
   test(
     'rejects an artifact whose bytes do not match the signed manifest',
     () async {
-      responses['/v0.1.0/build_runner_accelerator-windows-x64.zip'] =
-          List<int>.from(
-            responses['/v0.1.0/build_runner_accelerator-windows-x64.zip']!,
-          )..[0] ^= 1;
+      responses[_releasePath(_windowsArchiveFilename)] = List<int>.from(
+        responses[_releasePath(_windowsArchiveFilename)]!,
+      )..[0] ^= 1;
 
       expect(
         () => _downloader(cacheDirectory, server).ensureInstalled(
-          version: '0.1.0',
+          version: _testVersion,
           target: 'windows-x64',
           binaryName: 'build_runner_accelerator.exe',
         ),
@@ -182,3 +186,5 @@ ReleaseDownloader _downloader(Directory cacheDirectory, HttpServer server) =>
 String _sha256(List<int> bytes) {
   return crypto.sha256.convert(bytes).toString();
 }
+
+String _releasePath(String filename) => '/v$_testVersion/$filename';

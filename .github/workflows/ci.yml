@@ -42,8 +42,8 @@ jobs:
         shell: bash
         run: |
           dart pub ${{ matrix.resolution }}
-          dart format --output=none --set-exit-if-changed lib bin test
-          dart analyze lib bin test
+          dart format --output=none --set-exit-if-changed lib bin test tool
+          dart analyze lib bin test tool
           dart test --compiler=source
       - name: Validate publish package
         if: matrix.resolution == 'upgrade'
@@ -123,6 +123,8 @@ jobs:
           chmod +x rust/target/debug/build_runner_accelerator
           BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
             VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
+          BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
+            bash scripts/package_smoke.sh
 
   native-build:
     name: Native build (${{ matrix.target_id }})

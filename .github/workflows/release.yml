@@ -29,8 +29,8 @@ jobs:
         shell: bash
         run: |
           dart pub ${{ matrix.resolution }}
-          dart format --output=none --set-exit-if-changed lib bin test
-          dart analyze lib bin test
+          dart format --output=none --set-exit-if-changed lib bin test tool
+          dart analyze lib bin test tool
           dart test --compiler=source
 
       - name: Validate publish package
@@ -89,7 +89,7 @@ jobs:
         shell: bash
         run: |
           version=$(sed -n 's/^version: *//p' pubspec.yaml | head -n 1)
-          launcher_version=$(sed -n "s/^const buildRunnerAcceleratorVersion = '\(.*\)';/\1/p" lib/launcher.dart)
+          launcher_version=$(sed -n "s/^const buildRunnerAcceleratorVersion = '\(.*\)';/\1/p" lib/src/launcher.dart)
           cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' rust/Cargo.toml | head -n 1)
           if [[ "${GITHUB_REF_NAME#v}" != "$version" && "${GITHUB_REF_TYPE}" == tag ]]; then
             echo "tag version ${GITHUB_REF_NAME#v} does not match pubspec version $version" >&2
@@ -170,7 +170,7 @@ jobs:
           printf '%s\n' "$RELEASE_SIGNING_KEY" > signing-key.pem
           expected_public_key=$(awk '
             /^const releaseSigningPublicKeyBase64 =/ { getline; gsub(/[ '\'';]/, ""); print }
-          ' lib/release_downloader.dart)
+          ' lib/src/release_downloader.dart)
           actual_public_key=$(openssl pkey -in signing-key.pem -pubout -outform DER \
             | tail -c 32 | base64 -w0)
           test "$actual_public_key" = "$expected_public_key"
@@ -183,5 +183,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "$GITHUB_REF_NAME" --generate-notes
+          release_args=(
+            --title "$GITHUB_REF_NAME"
+            --generate-notes
+          )
+          if [[ "$PACKAGE_VERSION" == *-* ]]; then
+            release_args+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* "${release_args[@]}"
