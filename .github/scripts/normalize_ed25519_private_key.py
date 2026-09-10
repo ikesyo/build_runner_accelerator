@@ -18,6 +18,7 @@ from pathlib import Path
 PEM_BEGIN = b"-----BEGIN PRIVATE KEY-----"
 PEM_END = b"-----END PRIVATE KEY-----"
 ED25519_OID = b"+ep"
+PUBLIC_KEY_TAG = 0x81  # [1] IMPLICIT BIT STRING in RFC 5958.
 
 
 class KeyFormatError(ValueError):
@@ -127,7 +128,9 @@ def normalize(pem: bytes) -> bytes:
     if fields[2][0] != 0x04:
         raise KeyFormatError("missing private-key value")
 
-    public_key_fields = [field for field in fields[3:] if field[0] == 0xA1]
+    public_key_fields = [
+        field for field in fields[3:] if field[0] == PUBLIC_KEY_TAG
+    ]
     if len(public_key_fields) > 1:
         raise KeyFormatError("multiple public-key fields")
     if version == 0 and public_key_fields:
@@ -140,7 +143,9 @@ def normalize(pem: bytes) -> bytes:
 
     version_field = b"\x02\x01\x00"
     content = version_field + b"".join(
-        der[field[1] : field[3]] for field in fields[1:] if field[0] != 0xA1
+        der[field[1] : field[3]]
+        for field in fields[1:]
+        if field[0] != PUBLIC_KEY_TAG
     )
     normalized_der = b"\x30" + _encode_length(len(content)) + content
     return _der_to_pem(normalized_der)
