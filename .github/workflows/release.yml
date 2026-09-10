@@ -163,7 +163,8 @@ jobs:
       - name: Sign release manifest
         shell: bash
         env:
-          RELEASE_SIGNING_KEY: ${{ secrets.BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY }}
+          RELEASE_SIGNING_KEY: |
+            ${{ secrets.BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY }}
         run: |
           test -n "$RELEASE_SIGNING_KEY"
           umask 077
