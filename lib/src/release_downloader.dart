@@ -25,7 +25,6 @@ const _cacheMetadataFilename = 'artifact.json';
 const _maximumManifestBytes = 1024 * 1024;
 const _maximumSignatureBytes = 1024;
 const _maximumArtifactBytes = 128 * 1024 * 1024;
-const _lockStaleAfter = Duration(minutes: 10);
 
 class ReleaseDownloadException implements Exception {
   ReleaseDownloadException(this.message);
@@ -573,47 +572,30 @@ class ReleaseDownloader implements ReleaseArtifactDownloader {
 }
 
 class _CacheLock {
-  _CacheLock(this.file);
+  _CacheLock(this._handle);
 
-  final File file;
+  final RandomAccessFile _handle;
 
   static Future<_CacheLock> acquire(File file) async {
     await file.parent.create(recursive: true);
-    for (var attempt = 0; attempt < 600; attempt++) {
-      try {
-        await file.create(exclusive: true);
-        await file.writeAsString('$pid\n');
-        return _CacheLock(file);
-      } on FileSystemException {
-        if (await _isStale(file)) {
-          try {
-            await file.delete();
-          } on FileSystemException {
-            // Another process may have refreshed or removed the lock.
-          }
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      }
+    final handle = await file.open(mode: FileMode.append);
+    try {
+      // The OS owns the lock while this handle is open. A blocking lock lets
+      // healthy installs wait for the full download and installation, while
+      // the OS releases it automatically if the owning process exits.
+      await handle.lock(FileLock.blockingExclusive);
+      return _CacheLock(handle);
+    } on Object {
+      await handle.close();
+      rethrow;
     }
-    throw ReleaseDownloadException(
-      'timed out waiting for release cache lock: ${file.path}',
-    );
   }
 
   Future<void> release() async {
     try {
-      if (await file.exists()) await file.delete();
-    } on FileSystemException {
-      // A concurrent stale-lock cleanup may already have removed it.
-    }
-  }
-
-  static Future<bool> _isStale(File file) async {
-    try {
-      final modified = await file.lastModified();
-      return DateTime.now().difference(modified) > _lockStaleAfter;
-    } on FileSystemException {
-      return false;
+      await _handle.unlock();
+    } finally {
+      await _handle.close();
     }
   }
 }
