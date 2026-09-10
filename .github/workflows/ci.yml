@@ -116,6 +116,8 @@ jobs:
         with:
           toolchain: stable
       - name: Run correctness verification
+        env:
+          PUB_CACHE: ${{ github.workspace }}/.pub-cache
         run: |
           cargo build --locked --quiet --manifest-path rust/Cargo.toml
           chmod +x rust/target/debug/build_runner_accelerator
