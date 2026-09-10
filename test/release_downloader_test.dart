@@ -173,21 +173,15 @@ void main() {
   );
 
   test('bounds waiting for a cache lock held by a live process', () async {
-    final versionDirectory = Directory(
-      '${cacheDirectory.path}/$_testVersion',
-    );
+    final versionDirectory = Directory('${cacheDirectory.path}/$_testVersion');
     await versionDirectory.create(recursive: true);
     final lockPath = '${versionDirectory.path}/.windows-x64.lock';
-    final holder = await Process.start(
-      Platform.resolvedExecutable,
-      [
-        '--suppress-analytics',
-        'run',
-        File('test/lock_holder.dart').absolute.path,
-        lockPath,
-      ],
-      workingDirectory: Directory.current.path,
-    );
+    final holder = await Process.start(Platform.resolvedExecutable, [
+      '--suppress-analytics',
+      'run',
+      File('test/lock_holder.dart').absolute.path,
+      lockPath,
+    ], workingDirectory: Directory.current.path);
 
     try {
       final ready = await holder.stdout
@@ -230,14 +224,13 @@ ReleaseDownloader _downloader(
   Directory cacheDirectory,
   HttpServer server, {
   Duration? cacheLockTimeout,
-}) =>
-    ReleaseDownloader(
-      cacheDirectory: cacheDirectory.path,
-      baseUrl: 'http://${server.address.host}:${server.port}',
-      trustedPublicKey: _fixturePublicKey,
-      requireHttps: false,
-      cacheLockTimeout: cacheLockTimeout ?? const Duration(minutes: 2),
-    );
+}) => ReleaseDownloader(
+  cacheDirectory: cacheDirectory.path,
+  baseUrl: 'http://${server.address.host}:${server.port}',
+  trustedPublicKey: _fixturePublicKey,
+  requireHttps: false,
+  cacheLockTimeout: cacheLockTimeout ?? const Duration(minutes: 2),
+);
 
 String _sha256(List<int> bytes) {
   return crypto.sha256.convert(bytes).toString();
