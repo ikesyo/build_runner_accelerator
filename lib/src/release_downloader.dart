@@ -25,6 +25,8 @@ const _cacheMetadataFilename = 'artifact.json';
 const _maximumManifestBytes = 1024 * 1024;
 const _maximumSignatureBytes = 1024;
 const _maximumArtifactBytes = 128 * 1024 * 1024;
+const _cacheLockTimeout = Duration(minutes: 2);
+const _cacheLockRetryDelay = Duration(milliseconds: 100);
 
 class ReleaseDownloadException implements Exception {
   ReleaseDownloadException(this.message);
@@ -182,6 +184,7 @@ class ReleaseDownloader implements ReleaseArtifactDownloader {
     HttpClient? httpClient,
     this.requireHttps = true,
     this.requestTimeout = const Duration(seconds: 30),
+    this.cacheLockTimeout = _cacheLockTimeout,
   }) : cacheDirectory = p.normalize(cacheDirectory),
        _httpClient = httpClient,
        trustedPublicKey = List.unmodifiable(
@@ -192,6 +195,13 @@ class ReleaseDownloader implements ReleaseArtifactDownloader {
         this.trustedPublicKey.length,
         'trustedPublicKey',
         'an Ed25519 public key must contain 32 bytes',
+      );
+    }
+    if (cacheLockTimeout.isNegative || cacheLockTimeout == Duration.zero) {
+      throw ArgumentError.value(
+        cacheLockTimeout,
+        'cacheLockTimeout',
+        'must be greater than zero',
       );
     }
     final uri = Uri.tryParse(this.baseUrl);
@@ -212,6 +222,7 @@ class ReleaseDownloader implements ReleaseArtifactDownloader {
   final List<int> trustedPublicKey;
   final bool requireHttps;
   final Duration requestTimeout;
+  final Duration cacheLockTimeout;
   final HttpClient? _httpClient;
 
   Future<String> ensureInstalled({
@@ -227,6 +238,7 @@ class ReleaseDownloader implements ReleaseArtifactDownloader {
     await versionDirectory.create(recursive: true);
     final lock = await _CacheLock.acquire(
       File(p.join(versionDirectory.path, '.$target.lock')),
+      timeout: cacheLockTimeout,
     );
     try {
       final cached = await _validCachedBinary(
@@ -576,18 +588,37 @@ class _CacheLock {
 
   final RandomAccessFile _handle;
 
-  static Future<_CacheLock> acquire(File file) async {
+  static Future<_CacheLock> acquire(
+    File file, {
+    required Duration timeout,
+  }) async {
     await file.parent.create(recursive: true);
-    final handle = await file.open(mode: FileMode.append);
-    try {
-      // The OS owns the lock while this handle is open. A blocking lock lets
-      // healthy installs wait for the full download and installation, while
-      // the OS releases it automatically if the owning process exits.
-      await handle.lock(FileLock.blockingExclusive);
-      return _CacheLock(handle);
-    } on Object {
-      await handle.close();
-      rethrow;
+    final elapsed = Stopwatch()..start();
+    while (true) {
+      final handle = await file.open(mode: FileMode.append);
+      try {
+        // The non-blocking lock keeps a hung process from making every later
+        // installation wait forever. A successful handle remains open for the
+        // entire download and installation, and the OS releases it if the
+        // owning process exits.
+        await handle.lock(FileLock.exclusive);
+        return _CacheLock(handle);
+      } on FileSystemException {
+        // A failed non-blocking lock does not own the handle. Close it before
+        // retrying so every attempt has an independently cancellable lock
+        // operation.
+        await handle.close();
+      } on Object {
+        await handle.close();
+        rethrow;
+      }
+
+      if (elapsed.elapsed.compareTo(timeout) >= 0) {
+        throw ReleaseDownloadException(
+          'timed out waiting for release cache lock: ${file.path}',
+        );
+      }
+      await Future<void>.delayed(_cacheLockRetryDelay);
     }
   }
 

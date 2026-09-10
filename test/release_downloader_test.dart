@@ -171,16 +171,72 @@ void main() {
       );
     },
   );
+
+  test('bounds waiting for a cache lock held by a live process', () async {
+    final versionDirectory = Directory(
+      '${cacheDirectory.path}/$_testVersion',
+    );
+    await versionDirectory.create(recursive: true);
+    final lockPath = '${versionDirectory.path}/.windows-x64.lock';
+    final holder = await Process.start(
+      Platform.resolvedExecutable,
+      [
+        '--suppress-analytics',
+        'run',
+        File('test/lock_holder.dart').absolute.path,
+        lockPath,
+      ],
+      workingDirectory: Directory.current.path,
+    );
+
+    try {
+      final ready = await holder.stdout
+          .transform(utf8.decoder)
+          .transform(LineSplitter())
+          .first
+          .timeout(const Duration(seconds: 5));
+      expect(ready, 'ready');
+
+      final elapsed = Stopwatch()..start();
+      await expectLater(
+        _downloader(
+          cacheDirectory,
+          server,
+          cacheLockTimeout: const Duration(milliseconds: 300),
+        ).ensureInstalled(
+          version: _testVersion,
+          target: 'windows-x64',
+          binaryName: 'build_runner_accelerator.exe',
+        ),
+        throwsA(
+          isA<ReleaseDownloadException>().having(
+            (error) => error.message,
+            'message',
+            contains('timed out waiting for release cache lock'),
+          ),
+        ),
+      );
+      expect(elapsed.elapsed, lessThan(const Duration(seconds: 2)));
+    } finally {
+      holder.kill();
+      await holder.exitCode.timeout(const Duration(seconds: 5));
+    }
+  });
 }
 
 List<int> _fixturePublicKey = const [];
 
-ReleaseDownloader _downloader(Directory cacheDirectory, HttpServer server) =>
+ReleaseDownloader _downloader(
+  Directory cacheDirectory,
+  HttpServer server, {
+  Duration? cacheLockTimeout,
+}) =>
     ReleaseDownloader(
       cacheDirectory: cacheDirectory.path,
       baseUrl: 'http://${server.address.host}:${server.port}',
       trustedPublicKey: _fixturePublicKey,
       requireHttps: false,
+      cacheLockTimeout: cacheLockTimeout ?? const Duration(minutes: 2),
     );
 
 String _sha256(List<int> bytes) {
