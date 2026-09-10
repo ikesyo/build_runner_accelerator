@@ -386,7 +386,7 @@ impl WorkerClient {
                         return result;
                     }
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                        json!({ "v": 1, "type": "asset_response", "id": id, "ok": false, "error": error.to_string() })
+                        missing_asset_response(id, asset)
                     }
                     Err(error) => return Err(error),
                 }
@@ -506,6 +506,16 @@ impl WorkerClient {
     fn metrics(&self) -> WorkerClientMetrics {
         self.metrics
     }
+}
+
+fn missing_asset_response(id: u64, asset: &str) -> Value {
+    json!({
+        "v": 1,
+        "type": "asset_response",
+        "id": id,
+        "ok": false,
+        "error": format!("asset not found: {asset}"),
+    })
 }
 
 impl Drop for WorkerClient {
@@ -900,7 +910,10 @@ fn json_build_batch_result_frame_size(id: u64, results: &[BuildResult]) -> io::R
 
 #[cfg(test)]
 mod tests {
-    use super::{balanced_request_ranges, has_capability, is_worker_script, target_worker_count};
+    use super::{
+        balanced_request_ranges, has_capability, is_worker_script, missing_asset_response,
+        target_worker_count,
+    };
     use serde_json::json;
 
     #[test]
@@ -930,6 +943,14 @@ mod tests {
         assert!(has_capability(&response, "asset-rpc-binary-read-v1"));
         assert!(!has_capability(&response, "other-capability"));
         assert!(!has_capability(&json!({}), "asset-rpc-binary-read-v1"));
+    }
+
+    #[test]
+    fn missing_asset_response_uses_the_asset_not_found_message() {
+        let response = missing_asset_response(42, "app|lib/missing.dart");
+
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"], "asset not found: app|lib/missing.dart");
     }
 
     #[test]
