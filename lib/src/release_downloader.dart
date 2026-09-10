@@ -19,7 +19,7 @@ const releaseProtocolMajor = 1;
 // must only be stored in the release-signing secret; it is never part of the
 // package or repository.
 const releaseSigningPublicKeyBase64 =
-    'dkdKVJxTEsabSMrzAqZL7gdf67dym17IIRhBRRSEwSo=';
+    'jJKM2jIQ5fKEw22YHJvQOPhQ139IpfbFtSQ3FMPu2ic=';
 
 const _cacheMetadataFilename = 'artifact.json';
 const _maximumManifestBytes = 1024 * 1024;
