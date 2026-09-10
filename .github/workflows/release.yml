@@ -169,6 +169,9 @@ jobs:
           test -n "$RELEASE_SIGNING_KEY"
           umask 077
           printf '%s\n' "$RELEASE_SIGNING_KEY" > signing-key.pem
+          python3 .github/scripts/normalize_ed25519_private_key.py \
+            signing-key.pem signing-key-openssl.pem
+          mv signing-key-openssl.pem signing-key.pem
           expected_public_key=$(awk '
             /^const releaseSigningPublicKeyBase64 =/ { getline; gsub(/[ '\'';]/, ""); print }
           ' lib/src/release_downloader.dart)
