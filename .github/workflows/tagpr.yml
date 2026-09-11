@@ -33,6 +33,9 @@ jobs:
     name: Build and publish tagged release
     needs: tagpr
     if: needs.tagpr.outputs.tag != ''
+    permissions:
+      contents: write
+      id-token: write
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.tagpr.outputs.tag }}
