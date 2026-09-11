@@ -10,16 +10,6 @@ on:
         description: Release tag to build and publish.
         required: true
         type: string
-  workflow_call:
-    inputs:
-      tag:
-        description: Release tag created by tagpr.
-        required: true
-        type: string
-    secrets:
-      BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY:
-        required: true
-
 permissions:
   contents: read
 
