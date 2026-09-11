@@ -17,6 +17,10 @@ test_fixtures_dir="$test_root/fixtures"
 mkdir -p "$test_fixtures_dir"
 ln -s "$repo_root/dart_worker" "$test_root/dart_worker"
 case_filter=${CASE_FILTER:-all}
+pub_get_args=()
+if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
+  pub_get_args+=(--offline)
+fi
 cleanup_paths=()
 stock_dir=
 rust_dir=
@@ -88,7 +92,7 @@ prepare_package() {
   cp "$fixture_dir/lib/model.dart" "$directory/lib/model.dart"
   cp "$fixture_dir/lib/secondary.dart" "$directory/lib/secondary.dart"
   (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null)
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null)
 }
 
 run_stock() {

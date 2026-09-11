@@ -14,6 +14,10 @@ fixture_dir="$repo_root/fixtures/freezed_app"
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-freezed-watch-root.XXXXXX")
 watch_dir="$test_root/fixtures/watch"
 results_dir=$(mktemp -d)
+pub_get_args=()
+if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
+  pub_get_args+=(--offline)
+fi
 log_path="$results_dir/watch.log"
 watch_pid=
 
@@ -64,7 +68,7 @@ cp "$fixture_dir/build.yaml" "$watch_dir/build.yaml"
 cp "$fixture_dir/lib/model.dart" "$watch_dir/lib/model.dart"
 cp "$fixture_dir/lib/serializable.dart" "$watch_dir/lib/serializable.dart"
 (cd "$watch_dir" && \
-  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null)
+  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null)
 
 setsid env BUILD_RUNNER_ACCELERATOR_METRICS=1 PUB_CACHE="$pub_cache" \
   RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
