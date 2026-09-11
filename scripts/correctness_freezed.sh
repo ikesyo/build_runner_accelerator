@@ -90,7 +90,7 @@ prepare_package() {
   cp "$fixture_dir/lib/model.dart" "$directory/lib/model.dart"
   cp "$fixture_dir/lib/serializable.dart" "$directory/lib/serializable.dart"
   (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get --offline >/dev/null)
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null)
 }
 
 run_stock() {

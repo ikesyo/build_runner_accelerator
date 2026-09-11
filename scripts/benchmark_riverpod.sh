@@ -48,7 +48,7 @@ prepare_package() {
   cp "$fixture_dir/build.yaml" "$directory/build.yaml"
   cp "$fixture_dir/lib/model.dart" "$directory/lib/model.dart"
   cp "$fixture_dir/lib/secondary.dart" "$directory/lib/secondary.dart"
-  (cd "$directory" && PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get --offline >/dev/null)
+  (cd "$directory" && PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null)
 }
 
 prepare_package "$stock_dir" riverpod_benchmark_stock

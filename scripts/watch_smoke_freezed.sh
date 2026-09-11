@@ -64,7 +64,7 @@ cp "$fixture_dir/build.yaml" "$watch_dir/build.yaml"
 cp "$fixture_dir/lib/model.dart" "$watch_dir/lib/model.dart"
 cp "$fixture_dir/lib/serializable.dart" "$watch_dir/lib/serializable.dart"
 (cd "$watch_dir" && \
-  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get --offline >/dev/null)
+  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null)
 
 setsid env BUILD_RUNNER_ACCELERATOR_METRICS=1 PUB_CACHE="$pub_cache" \
   RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
