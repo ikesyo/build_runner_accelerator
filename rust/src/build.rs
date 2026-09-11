@@ -439,26 +439,19 @@ pub(crate) fn run_with_config(
                         generated.bytes.clone(),
                     ));
                 }
-                for expected_output in &spec.outputs {
-                    if !spec.builder.output_is_optional
-                        && !result
-                            .outputs
-                            .iter()
-                            .any(|generated| generated.asset == *expected_output)
-                    {
-                        return Err(io::Error::other(format!(
-                            "Builder did not produce expected output: {expected_output}"
-                        )));
-                    }
-                }
-
                 let mut output_digests = BTreeMap::new();
                 let actual_outputs = result
                     .outputs
                     .iter()
                     .map(|output| output.asset.as_str())
                     .collect::<BTreeSet<_>>();
-                if spec.builder.output_is_optional {
+                // build_runner permits a normal builder to declare an output
+                // mapping and then emit no output for a particular input. A
+                // common example is source_gen's shared-part builders: they
+                // skip libraries without generated content. Remove outputs
+                // recorded by the previous action when that happens, just as
+                // build_runner's build state cleanup does.
+                if builder.kind == BuilderKind::Normal || builder.output_is_optional {
                     if let Some(previous) = state.actions.get(&scoped_action_key(
                         &spec.target,
                         &spec.builder.id,
