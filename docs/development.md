@@ -79,3 +79,30 @@ The release workflow builds one archive per target in
 native `--version` and `--help` paths, then creates the signed manifest and
 checksums. The signing private key must only be supplied through the CI secret;
 the public key is pinned in the Dart package.
+
+## Release flow
+
+Releases are prepared with [tagpr](https://github.com/Songmu/tagpr). Pushes to
+`main` create or update one release pull request. The pull request updates the
+version in `pubspec.yaml`, `lib/src/launcher.dart`, and `rust/Cargo.toml`, and
+adds the generated entry to `CHANGELOG.md`. Review and merge that pull request
+when the release contents are ready.
+
+After the release pull request is merged, the tagpr workflow tags the merge
+commit. It then calls the reusable release workflow with that exact tag. The
+five native targets are built, the signed manifest and checksums are produced,
+and the GitHub Release is published with the artifacts. `release = false` in
+`.tagpr` is intentional: tagpr creates the tag, while the release workflow
+publishes the asset-bearing release after signing.
+
+Enable “Allow GitHub Actions to create and approve pull requests” in the
+repository's Actions settings before the first run. The existing tag trigger
+in `.github/workflows/release.yml` remains available for a manually created
+tag or a release rerun.
+
+The current baseline tag is `v0.1.0-dev.1`. Since tagpr uses the normal
+SemVer patch bump by default, the first generated proposal after this baseline
+will be `0.1.1`. If the next release should be the `0.1.0` stable release,
+edit all three version files in the generated release pull request before
+merging it; the release workflow requires the tag and all version files to
+match exactly.

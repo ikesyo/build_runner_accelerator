@@ -1,0 +1,11 @@
+# tagpr configuration for the single-package release flow.
+[tagpr]
+    releaseBranch = main
+    # Keep pubspec.yaml first: tagpr uses the first file to determine the tag.
+    versionFile = pubspec.yaml,lib/src/launcher.dart,rust/Cargo.toml
+    vPrefix = true
+    changelog = true
+    changelogFile = CHANGELOG.md
+    releaseYAMLPath = .github/release.yml
+    # The release workflow attaches signed native artifacts before publishing.
+    release = false
