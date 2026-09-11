@@ -116,7 +116,7 @@ run_rust() {
 assert_contains() {
   local file=$1
   local expected=$2
-  rg -Fq -- "$expected" "$file" || fail "${file##*/} does not contain: $expected"
+  grep -Fq -- "$expected" "$file" || fail "${file##*/} does not contain: $expected"
 }
 
 assert_same_file() {
