@@ -171,11 +171,42 @@ jobs:
           cargo build --locked --quiet --manifest-path rust/Cargo.toml
           echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
       - parallel:
-          - name: Freezed correctness
+          - name: Freezed correctness (inputs)
             shell: bash
             env:
               PUB_GET_OFFLINE: '1'
-            run: bash scripts/correctness_freezed.sh
+            run: |
+              for case_name in generated-output-delete no-op input-delete; do
+                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
+              done
+
+          - name: Freezed correctness (lifecycle)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              for case_name in rename failure affected-actions; do
+                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
+              done
+
+          - name: Freezed correctness (dependencies)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              for case_name in dependency annotation-removal combined-output-removal; do
+                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
+              done
+
+          - name: Freezed correctness (configuration)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              for case_name in builder-options glob-membership empty-options; do
+                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
+              done
+
           - name: Freezed watch smoke
             shell: bash
             env:
