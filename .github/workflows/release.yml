@@ -10,6 +10,7 @@ on:
         description: Release tag to build and publish.
         required: true
         type: string
+
 permissions:
   contents: read
 
