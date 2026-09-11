@@ -14,6 +14,10 @@ fixture_dir="$repo_root/fixtures/riverpod_app"
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-riverpod-watch-root.XXXXXX")
 watch_dir="$test_root/fixtures/watch"
 results_dir=$(mktemp -d)
+pub_get_args=()
+if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
+  pub_get_args+=(--offline)
+fi
 log_path="$results_dir/watch.log"
 watch_pid=
 
@@ -55,10 +59,11 @@ fi
 mkdir -p "$watch_dir/lib"
 ln -s "$repo_root/dart_worker" "$test_root/dart_worker"
 cp "$fixture_dir/pubspec.yaml" "$watch_dir/pubspec.yaml"
+cp "$fixture_dir/pubspec.lock" "$watch_dir/pubspec.lock"
 cp "$fixture_dir/build.yaml" "$watch_dir/build.yaml"
 cp "$fixture_dir/lib/model.dart" "$watch_dir/lib/model.dart"
 cp "$fixture_dir/lib/secondary.dart" "$watch_dir/lib/secondary.dart"
-(cd "$watch_dir" && PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get --offline >/dev/null)
+(cd "$watch_dir" && PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null)
 
 setsid env BUILD_RUNNER_ACCELERATOR_METRICS=1 PUB_CACHE="$pub_cache" \
   RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
@@ -69,7 +74,7 @@ watch_pid=$!
 
 wait_for_initial_build() {
   for _ in $(seq 1 300); do
-    if rg -Fq 'Watching ' "$log_path" && \
+    if grep -Fq 'Watching ' "$log_path" && \
       [[ -f "$watch_dir/lib/model.freezed.dart" ]] && \
       [[ -f "$watch_dir/lib/model.g.dart" ]]; then
       return 0
@@ -85,8 +90,8 @@ wait_for_rebuild() {
   for _ in $(seq 1 300); do
     local rebuild_count
     local completed_count
-    rebuild_count=$(rg -Fc 'Change detected; rebuilding' "$log_path" || true)
-    completed_count=$(rg -Fc 'Build completed (Rust frontend)' "$log_path" || true)
+    rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
+    completed_count=$(grep -Fc 'Build completed (Rust frontend)' "$log_path" || true)
     if ((rebuild_count >= expected_count && completed_count >= expected_count + 1)); then
       return 0
     fi
@@ -102,7 +107,7 @@ cp "$watch_dir/lib/model.g.dart" "$results_dir/model.before.g.dart"
 rm -f -- "$watch_dir/lib/model.g.dart"
 wait_for_rebuild 1
 sleep 1
-(( $(rg -Fc 'Change detected; rebuilding' "$log_path" || true) == 1 )) || \
+(( $(grep -Fc 'Change detected; rebuilding' "$log_path" || true) == 1 )) || \
   fail 'generated output deletion caused multiple rebuild events'
 [[ -f "$watch_dir/lib/model.g.dart" ]] || fail 'Riverpod generated output was not restored'
 cmp "$results_dir/model.before.g.dart" "$watch_dir/lib/model.g.dart" || \
@@ -111,10 +116,10 @@ cmp "$results_dir/model.before.g.dart" "$watch_dir/lib/model.g.dart" || \
 sed -i 's/=> 42;/=> 43;/' "$watch_dir/lib/model.dart"
 wait_for_rebuild 2
 sleep 1
-(( $(rg -Fc 'Change detected; rebuilding' "$log_path" || true) == 2 )) || \
+(( $(grep -Fc 'Change detected; rebuilding' "$log_path" || true) == 2 )) || \
   fail 'source edit caused multiple rebuild events'
 cmp -s "$results_dir/model.before.g.dart" "$watch_dir/lib/model.g.dart" && \
   fail 'source edit did not change Riverpod output'
 
-rg -Fq 'worker_starts_total=1' "$log_path" || fail 'watch did not retain the initial worker'
+grep -Fq 'worker_starts_total=1' "$log_path" || fail 'watch did not retain the initial worker'
 printf 'riverpod-watch-smoke: generated-output-delete=yes source-edit=yes event-count=2\n'

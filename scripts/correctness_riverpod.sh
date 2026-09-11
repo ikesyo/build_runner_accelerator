@@ -17,6 +17,10 @@ test_fixtures_dir="$test_root/fixtures"
 mkdir -p "$test_fixtures_dir"
 ln -s "$repo_root/dart_worker" "$test_root/dart_worker"
 case_filter=${CASE_FILTER:-all}
+pub_get_args=()
+if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
+  pub_get_args+=(--offline)
+fi
 cleanup_paths=()
 stock_dir=
 rust_dir=
@@ -84,11 +88,12 @@ prepare_package() {
   mkdir -p "$directory/lib"
   sed "s/^name: .*/name: $package_name/" \
     "$fixture_dir/pubspec.yaml" >"$directory/pubspec.yaml"
+  cp "$fixture_dir/pubspec.lock" "$directory/pubspec.lock"
   cp "$fixture_dir/build.yaml" "$directory/build.yaml"
   cp "$fixture_dir/lib/model.dart" "$directory/lib/model.dart"
   cp "$fixture_dir/lib/secondary.dart" "$directory/lib/secondary.dart"
   (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get --offline >/dev/null)
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null)
 }
 
 run_stock() {
@@ -112,7 +117,7 @@ run_rust() {
 assert_contains() {
   local file=$1
   local expected=$2
-  rg -Fq -- "$expected" "$file" || fail "${file##*/} does not contain: $expected"
+  grep -Fq -- "$expected" "$file" || fail "${file##*/} does not contain: $expected"
 }
 
 assert_same_file() {

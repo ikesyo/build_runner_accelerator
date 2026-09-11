@@ -171,8 +171,18 @@ stable across those versions.
 
 The native frontend has been validated against workspace fixtures using
 `json_serializable`, `freezed`, `built_value`, `riverpod_generator`, and a small
-arbitrary builder. The fixture set is evidence for compatibility, not a
-built-in catalog: the generic manifest path remains the source of truth.
+arbitrary builder. The tracked current-generator fixtures are pinned to the
+`build_runner 2.16.1` compatibility window:
+
+| Fixture | Generator versions |
+| --- | --- |
+| `fixtures/freezed_app` | `freezed 4.0.1`, `json_serializable 6.14.1` |
+| `fixtures/riverpod_app` | `riverpod_generator 4.0.9`, `freezed 4.0.1`, `json_serializable 6.14.1` |
+
+These fixtures are compared with stock `build_runner` for their respective
+clean, no-op, incremental, failure, deletion, rename, and watch cases. The
+fixture set is evidence for compatibility, not a built-in catalog: the generic
+manifest path remains the source of truth.
 
 The following are deliberately outside the first release baseline:
 

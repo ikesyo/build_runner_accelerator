@@ -135,6 +135,94 @@ jobs:
           BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
             bash scripts/package_smoke.sh
 
+  current-codegen-compatibility:
+    name: Current codegen compatibility
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .pub-cache
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: current-codegen-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dart_worker/pubspec.lock', 'fixtures/freezed_app/pubspec.lock', 'fixtures/riverpod_app/pubspec.lock', 'rust/Cargo.lock') }}
+          restore-keys: |
+            current-codegen-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
+        with:
+          toolchain: stable
+      - name: Prime current generator dependencies
+        shell: bash
+        run: |
+          for fixture in fixtures/freezed_app fixtures/riverpod_app; do
+            (cd "$fixture" && dart --suppress-analytics pub get)
+          done
+      - name: Build native frontend
+        shell: bash
+        run: |
+          cargo build --locked --quiet --manifest-path rust/Cargo.toml
+          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+      - parallel:
+          - name: Freezed correctness (inputs)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              for case_name in generated-output-delete no-op input-delete; do
+                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
+              done
+
+          - name: Freezed correctness (lifecycle)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              for case_name in rename failure affected-actions; do
+                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
+              done
+
+          - name: Freezed correctness (dependencies)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              for case_name in dependency annotation-removal combined-output-removal; do
+                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
+              done
+
+          - name: Freezed correctness (configuration)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              for case_name in builder-options glob-membership empty-options; do
+                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
+              done
+
+          - name: Freezed watch smoke
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: bash scripts/watch_smoke_freezed.sh
+          - name: Riverpod correctness
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: bash scripts/correctness_riverpod.sh
+          - name: Riverpod watch smoke
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: bash scripts/watch_smoke_riverpod.sh
+
   native-build:
     name: Native build (${{ matrix.target_id }})
     runs-on: ${{ matrix.runs_on }}
