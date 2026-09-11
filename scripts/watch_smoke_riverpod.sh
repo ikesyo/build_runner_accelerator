@@ -59,6 +59,7 @@ fi
 mkdir -p "$watch_dir/lib"
 ln -s "$repo_root/dart_worker" "$test_root/dart_worker"
 cp "$fixture_dir/pubspec.yaml" "$watch_dir/pubspec.yaml"
+cp "$fixture_dir/pubspec.lock" "$watch_dir/pubspec.lock"
 cp "$fixture_dir/build.yaml" "$watch_dir/build.yaml"
 cp "$fixture_dir/lib/model.dart" "$watch_dir/lib/model.dart"
 cp "$fixture_dir/lib/secondary.dart" "$watch_dir/lib/secondary.dart"

@@ -88,6 +88,7 @@ prepare_package() {
   mkdir -p "$directory/lib"
   sed "s/^name: .*/name: $package_name/" \
     "$fixture_dir/pubspec.yaml" >"$directory/pubspec.yaml"
+  cp "$fixture_dir/pubspec.lock" "$directory/pubspec.lock"
   cp "$fixture_dir/build.yaml" "$directory/build.yaml"
   cp "$fixture_dir/lib/model.dart" "$directory/lib/model.dart"
   cp "$fixture_dir/lib/secondary.dart" "$directory/lib/secondary.dart"
