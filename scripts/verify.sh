@@ -119,6 +119,18 @@ run_freezed_correctness() {
   fi
 }
 
+run_built_value_correctness() {
+  printf 'verify: correctness: start built_value\n'
+  if bash "$script_dir/correctness_built_value.sh" \
+    >"$results_dir/built_value.log" 2>&1; then
+    grep -E '^built-value-correctness: ' "$results_dir/built_value.log" || true
+  else
+    printf '%s\n' '--- built_value ---' >&2
+    sed -n '1,240p' "$results_dir/built_value.log" >&2
+    return 1
+  fi
+}
+
 run_quick() {
   printf 'verify: level=quick\n'
   (cd "$repo_root/dart_worker" && \
@@ -154,6 +166,9 @@ run_full() {
   fi
   if ! run_freezed_correctness; then
     fail 'Freezed correctness case failed'
+  fi
+  if ! run_built_value_correctness; then
+    fail 'built_value correctness case failed'
   fi
   printf 'verify: correctness: start riverpod\n'
   if CASE_FILTER=all bash "$script_dir/correctness_riverpod.sh" \

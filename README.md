@@ -170,13 +170,9 @@ the worker uses private `build_runner` interfaces whose signatures are not
 stable across those versions.
 
 The native frontend has been validated against workspace fixtures using
-`json_serializable`, `freezed`, `riverpod_generator`, and a small arbitrary
-builder. The fixture set is evidence for compatibility, not a built-in
-catalog: the generic manifest path remains the source of truth.
-
-The current `built_value` example does not pass the native planning baseline.
-Do not use `--mode rust` for that workflow yet; use `--mode dart` while this
-compatibility gap is being resolved.
+`json_serializable`, `freezed`, `built_value`, `riverpod_generator`, and a small
+arbitrary builder. The fixture set is evidence for compatibility, not a
+built-in catalog: the generic manifest path remains the source of truth.
 
 The following are deliberately outside the first release baseline:
 
