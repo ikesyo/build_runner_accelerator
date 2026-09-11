@@ -421,8 +421,8 @@ run_case_glob_membership() {
   printf 'freezed-correctness: glob-membership: pass\n'
 }
 
-run_case_fallback() {
-  local name=fallback
+run_case_empty_options() {
+  local name=empty-options
   setup_case "$name"
   for directory in "$stock_dir" "$rust_dir"; do
     sed -i '/      freezed:/a\        options: {}' "$directory/build.yaml"
@@ -430,8 +430,9 @@ run_case_fallback() {
   run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_source_outputs "$stock_dir" "$rust_dir"
-  assert_contains "$results_dir/$name.rust.change.log" 'using Dart fallback'
-  printf 'freezed-correctness: dart-fallback: pass\n'
+  assert_combining_part "$stock_dir" "$rust_dir"
+  assert_rust_actions "$results_dir/$name.rust.change.log" 4
+  printf 'freezed-correctness: empty-options-native-path: pass\n'
 }
 
 run_selected() {
@@ -453,6 +454,6 @@ run_selected annotation-removal run_case_annotation_removal
 run_selected combined-output-removal run_case_combined_output_removal
 run_selected builder-options run_case_builder_options
 run_selected glob-membership run_case_glob_membership
-run_selected fallback run_case_fallback
+run_selected empty-options run_case_empty_options
 
 printf 'freezed-correctness: cases=%s pass\n' "$case_filter"
