@@ -49,9 +49,9 @@ SHA-256 output hash:
 ## Scope and limitations
 
 This is one Linux x64 environment and one small extracted fixture, not a
-cross-platform or broad open-source compatibility claim. The fixture exercises
-`json_serializable`; other builders and complex output mappings require
-separate validation.
+cross-platform or broad open-source compatibility claim. This benchmark
+exercises `json_serializable`; the separate Freezed and Riverpod fixtures are
+correctness/benchmark probes and are not included in these measurements.
 
 The warm results include the launcher process and the native frontend, while
 the native binary is supplied through `BUILD_RUNNER_ACCELERATOR_BIN`. They do

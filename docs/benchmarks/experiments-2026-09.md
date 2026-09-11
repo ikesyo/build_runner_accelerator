@@ -188,8 +188,11 @@ the foreground build and leaves the script fallback available for a later
 retry. `scripts/correctness_aot_background.sh` verifies the compile gate,
 script fallback, artifact publication, and next-invocation AOT reuse.
 
-The existing `scripts/benchmark_freezed.sh` remains the legacy Freezed 3.x
-stock/accelerator comparison. It is intentionally not combined with this current
-baseline: Freezed 4.0.1 currently resolves through `analyzer_buffer` with an
-Analyzer constraint below the Analyzer major required by build_runner 2.16.1.
+The `scripts/benchmark_freezed.sh` now uses the tracked current fixture:
+Freezed 4.0.1 with `json_serializable` 6.14.1 and `build_runner` 2.16.1.
+The corresponding `scripts/benchmark_riverpod.sh` uses
+`riverpod_generator` 4.0.9 with the same Freezed/JSON stack. They remain
+separate from the current-JSON baseline because they measure different
+generated-output workloads; these are compatibility benchmarks, not
+release-wide performance guarantees.
 
