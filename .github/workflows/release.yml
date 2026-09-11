@@ -4,15 +4,12 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  workflow_call:
+  workflow_dispatch:
     inputs:
       tag:
-        description: Release tag created by tagpr.
+        description: Release tag to build and publish.
         required: true
         type: string
-    secrets:
-      BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY:
-        required: true
 
 permissions:
   contents: read
@@ -219,3 +216,12 @@ jobs:
             release_args+=(--prerelease)
           fi
           gh release create "$RELEASE_TAG" dist/* "${release_args[@]}"
+
+  publish-pub-dev:
+    name: Publish package to pub.dev
+    needs: publish-release
+    permissions:
+      id-token: write
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      environment: pub.dev

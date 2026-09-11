@@ -30,11 +30,20 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release:
-    name: Build and publish tagged release
+    name: Dispatch tagged release
     needs: tagpr
     if: needs.tagpr.outputs.tag != ''
-    uses: ./.github/workflows/release.yml
-    with:
-      tag: ${{ needs.tagpr.outputs.tag }}
-    secrets:
-      BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY: ${{ secrets.BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch release workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.tagpr.outputs.tag }}
+        run: |
+          gh workflow run release.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$RELEASE_TAG" \
+            --field "tag=$RELEASE_TAG"
