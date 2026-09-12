@@ -1,0 +1,50 @@
+name: Core verification
+
+on:
+  schedule:
+    - cron: '0 18 * * *' # 03:00 JST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-verification-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core correctness
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+      VERIFY_LEVEL: full
+      VERIFY_FULL_SUITES: core
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .pub-cache
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: core-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/**/pubspec.lock', 'rust/Cargo.lock') }}
+          restore-keys: |
+            core-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
+        with:
+          toolchain: 1.98.1
+      - name: Build native frontend
+        shell: bash
+        run: |
+          cargo build --locked --quiet --manifest-path rust/Cargo.toml
+          chmod +x rust/target/debug/build_runner_accelerator
+          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+      - name: Run core verification
+        shell: bash
+        run: bash scripts/verify.sh
