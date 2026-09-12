@@ -1,0 +1,322 @@
+name: Current baseline benchmark
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/benchmark-current.yml'
+      - 'scripts/benchmark_current_baseline.sh'
+      - 'scripts/measure_process.py'
+      - 'scripts/run_rust_frontend.sh'
+      - 'scripts/toolchain.sh'
+      - 'scripts/watch_smoke_current_json.sh'
+      - 'fixtures/current_json_app/**'
+      - 'pubspec.lock'
+      - 'pubspec.yaml'
+      - 'rust/**'
+      - 'bin/**'
+      - 'lib/**'
+      - 'dart_worker/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-current-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: Benchmark ${{ matrix.id }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: stock-default
+            lane: stock
+            accelerator_jobs: 1
+            launcher: 0
+          - id: accelerator-jobs-1
+            lane: accelerator
+            accelerator_jobs: 1
+            launcher: 1
+          - id: accelerator-jobs-2
+            lane: accelerator
+            accelerator_jobs: 2
+            launcher: 1
+          - id: accelerator-jobs-4
+            lane: accelerator
+            accelerator_jobs: 4
+            launcher: 1
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .pub-cache
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: benchmark-current-${{ runner.os }}-${{ runner.arch }}-${{ matrix.id }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/current_json_app/pubspec.lock', 'rust/Cargo.lock') }}
+          restore-keys: |
+            benchmark-current-${{ runner.os }}-${{ runner.arch }}-${{ matrix.id }}-
+            benchmark-current-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
+        with:
+          toolchain: 1.98.1
+      - name: Resolve repository packages
+        run: dart pub get
+      - name: Build native release frontend
+        if: matrix.lane == 'accelerator'
+        shell: bash
+        run: |
+          cargo build --locked --release --quiet --manifest-path rust/Cargo.toml
+          chmod +x rust/target/release/build_runner_accelerator
+          echo "BUILD_RUNNER_ACCELERATOR_BIN=$GITHUB_WORKSPACE/rust/target/release/build_runner_accelerator" >> "$GITHUB_ENV"
+      - name: Run current baseline benchmark
+        shell: bash
+        env:
+          LANE: ${{ matrix.lane }}
+          ACCELERATOR_JOBS: ${{ matrix.accelerator_jobs }}
+          ACCELERATOR_LAUNCHER: ${{ matrix.launcher }}
+          REPEATS: '5'
+          CASES: 'clean no-op one-file broad'
+          PUB_GET_OFFLINE: '0'
+          BUILD_RUNNER_ACCELERATOR_METRICS: '1'
+          RESULTS_DIR: ${{ github.workspace }}/benchmark-results/${{ matrix.id }}
+        run: |
+          mkdir -p "$RESULTS_DIR"
+          bash scripts/benchmark_current_baseline.sh 2>&1 | tee "$RESULTS_DIR/benchmark.log"
+      - name: Print benchmark summary
+        shell: bash
+        env:
+          RESULTS_DIR: ${{ github.workspace }}/benchmark-results/${{ matrix.id }}
+        run: |
+          python3 - "$RESULTS_DIR" <<'PY'
+          import json
+          import statistics
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          records = [json.loads(path.read_text(encoding="utf-8"))
+                     for path in sorted(root.glob("*.json"))]
+
+          def stat(case, key):
+              values = [float(record[key]) for record in records
+                        if record.get("case") == case]
+              return statistics.median(values), min(values), max(values)
+
+          def fmt(value):
+              return f"{value:,.0f}"
+
+          lane = records[0]["lane"]
+          parallelism = records[0].get("build_runner_parallelism", "default")
+          lines = [
+              f"### {lane} ({parallelism})",
+              "",
+              "| Case | Wall ms (median; min–max) | User ms | Sys ms | Peak RSS KiB |",
+              "| --- | ---: | ---: | ---: | ---: |",
+          ]
+          for case in ("clean", "no-op", "one-file", "broad"):
+              wall = stat(case, "wall_ms")
+              user = stat(case, "user_ms")
+              system = stat(case, "sys_ms")
+              rss = stat(case, "maxrss")
+              lines.append(
+                  f"| {case} | {fmt(wall[0])} ({fmt(wall[1])}–{fmt(wall[2])}) | "
+                  f"{fmt(user[0])} | {fmt(system[0])} | {fmt(rss[0])} |"
+              )
+          summary = "\n".join(lines) + "\n"
+          print(summary)
+          with open(Path.home() / "benchmark-summary.md", "w", encoding="utf-8") as stream:
+              stream.write(summary)
+          with open(sys.argv[1] + "/summary.md", "w", encoding="utf-8") as stream:
+              stream.write(summary)
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-current-${{ matrix.id }}
+          path: ${{ github.workspace }}/benchmark-results/${{ matrix.id }}
+          if-no-files-found: error
+          retention-days: 14
+
+  watch:
+    name: Watch smoke benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+      BUILD_RUNNER_ACCELERATOR_METRICS: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .pub-cache
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: benchmark-current-watch-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/current_json_app/pubspec.lock', 'rust/Cargo.lock') }}
+          restore-keys: |
+            benchmark-current-watch-${{ runner.os }}-${{ runner.arch }}-
+            benchmark-current-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
+        with:
+          toolchain: 1.98.1
+      - name: Resolve watch dependencies
+        shell: bash
+        run: |
+          dart pub get
+          (cd dart_worker && dart pub get)
+          (cd fixtures/current_json_app && dart pub get)
+      - name: Build native release frontend
+        shell: bash
+        run: |
+          cargo build --locked --release --quiet --manifest-path rust/Cargo.toml
+          chmod +x rust/target/release/build_runner_accelerator
+          echo "BUILD_RUNNER_ACCELERATOR_BIN=$GITHUB_WORKSPACE/rust/target/release/build_runner_accelerator" >> "$GITHUB_ENV"
+      - name: Run paired watch smoke
+        shell: bash
+        env:
+          RESULTS_DIR: ${{ github.workspace }}/benchmark-results/watch
+        run: |
+          set -o pipefail
+          mkdir -p "$RESULTS_DIR"
+          /usr/bin/time -f 'watch_smoke_elapsed_seconds=%e' -o "$RESULTS_DIR/watch.time"             bash scripts/watch_smoke_current_json.sh 2>&1 | tee "$RESULTS_DIR/watch.log"
+          cat "$RESULTS_DIR/watch.time"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-current-watch
+          path: ${{ github.workspace }}/benchmark-results/watch
+          if-no-files-found: error
+          retention-days: 14
+
+  aggregate:
+    name: Aggregate benchmark report
+    needs: [benchmark, watch]
+    if: ${{ needs.benchmark.result == 'success' && needs.watch.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: benchmark-current-*
+          path: artifacts
+          merge-multiple: false
+      - name: Build aggregate report
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import statistics
+          from pathlib import Path
+
+          root = Path("artifacts")
+          records = []
+          for path in sorted(root.rglob("*.json")):
+              try:
+                  record = json.loads(path.read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError):
+                  continue
+              if "lane" in record and "case" in record and "wall_ms" in record:
+                  records.append(record)
+
+          cases = ("clean", "no-op", "one-file", "broad")
+          groups = {}
+          for record in records:
+              key = (
+                  record["lane"],
+                  record.get("build_runner_parallelism", "default"),
+                  record["case"],
+              )
+              groups.setdefault(key, []).append(record)
+
+          def median(key, case):
+              values = groups.get((*key, case), [])
+              return statistics.median(float(record["wall_ms"]) for record in values) if values else None
+
+          def fmt(value):
+              return "—" if value is None else f"{value:,.0f}"
+
+          def speedup(case, parallelism):
+              stock = median(("stock", "default"), case)
+              native = median(("accelerator", parallelism), case)
+              return "—" if not stock or not native else f"{stock / native:.2f}x"
+
+          lines = [
+              "# Current build_runner baseline benchmark",
+              "",
+              "Environment: Dart 3.13.3, Rust 1.98.1, build_runner 2.16.1, "
+              "json_serializable 6.14.1, json_annotation 4.12.0",
+              "Fixture: current_json_app (10 inputs); 5 repeats per case",
+              "Accelerator: project-facing Dart launcher with release native frontend",
+              "",
+              "## Wall time (median ms)",
+              "",
+              "| Case | Stock | Accelerator jobs=1 | Accelerator jobs=2 | Accelerator jobs=4 | Speedup 1/2/4 |",
+              "| --- | ---: | ---: | ---: | ---: | ---: |",
+          ]
+          for case in cases:
+              lines.append(
+                  f"| {case} | {fmt(median(('stock', 'default'), case))} | "
+                  f"{fmt(median(('accelerator', 'jobs:1'), case))} | "
+                  f"{fmt(median(('accelerator', 'jobs:2'), case))} | "
+                  f"{fmt(median(('accelerator', 'jobs:4'), case))} | "
+                  f"{speedup(case, 'jobs:1')} / {speedup(case, 'jobs:2')} / "
+                  f"{speedup(case, 'jobs:4')} |"
+              )
+
+          lines += [
+              "",
+              "## Resources (median)",
+              "",
+              "| Lane | Case | User ms | Sys ms | Peak RSS KiB |",
+              "| --- | --- | ---: | ---: | ---: |",
+          ]
+          for lane, parallelism in (
+              ("stock", "default"),
+              ("accelerator", "jobs:1"),
+              ("accelerator", "jobs:2"),
+              ("accelerator", "jobs:4"),
+          ):
+              for case in cases:
+                  values = groups.get((lane, parallelism, case), [])
+                  if values:
+                      lines.append(
+                          f"| {lane} {parallelism} | {case} | "
+                          f"{statistics.median(float(r['user_ms']) for r in values):,.0f} | "
+                          f"{statistics.median(float(r['sys_ms']) for r in values):,.0f} | "
+                          f"{statistics.median(float(r['maxrss']) for r in values):,.0f} |"
+                      )
+
+          watch_time = next(root.rglob("watch.time"), None)
+          lines += [
+              "",
+              "## Watch smoke",
+              "",
+              "Paired stock/Rust watch smoke passed input-change, output-delete, "
+              "rename, and byte-identical output checks.",
+              f"Elapsed: {watch_time.read_text(encoding='utf-8').strip() if watch_time else 'unavailable'}",
+              "",
+              "Raw JSONL and logs are in the uploaded benchmark artifacts.",
+          ]
+          report = "\n".join(lines) + "\n"
+          Path("benchmark-report.md").write_text(report, encoding="utf-8")
+          print(report)
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-current-report
+          path: benchmark-report.md
+          if-no-files-found: error
+          retention-days: 14
