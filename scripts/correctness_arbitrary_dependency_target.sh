@@ -93,12 +93,12 @@ environment:
   sdk: ">=3.13.0 <4.0.0"
 
 dependencies:
-  build: 4.0.0
+  build: 4.0.10
   dependency_target_package:
     path: packages/dependency_target_package
 
 dev_dependencies:
-  build_runner: 2.7.2
+  build_runner: 2.16.1
   build_runner_accelerator_worker:
     path: ../../dart_worker
 EOF
@@ -131,7 +131,7 @@ environment:
   sdk: ">=3.13.0 <4.0.0"
 
 dependencies:
-  build: 4.0.0
+  build: 4.0.10
 EOF
   cat >"$package_directory/build.yaml" <<'EOF'
 builders:

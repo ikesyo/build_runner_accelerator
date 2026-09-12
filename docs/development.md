@@ -55,7 +55,13 @@ The default verification loop builds the frontend once and reuses it:
 bash scripts/verify.sh
 VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
 VERIFY_LEVEL=full bash scripts/verify.sh
+VERIFY_LEVEL=full VERIFY_FULL_SUITES=compatibility-graph bash scripts/verify.sh
 ```
+
+The full level is the union of `core`, `current-codegen`,
+`compatibility-lifecycle`, `compatibility-graph`, and
+`compatibility-mapping`. `VERIFY_FULL_SUITES` accepts a comma-separated subset
+so CI can shard those suites without maintaining a second list of probes.
 
 Run the relevant fixture scripts when changing graph, worker, watch, or
 builder behavior:

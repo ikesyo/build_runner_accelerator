@@ -13,6 +13,15 @@ cargo_home=$(resolve_toolchain_cargo_home)
 results_dir=$(mktemp -d)
 verify_level=${VERIFY_LEVEL:-quick}
 verify_cases=${VERIFY_CASES:-failure,conditional-dependency}
+verify_full_suites=${VERIFY_FULL_SUITES:-all}
+
+full_suites=(
+  core
+  current-codegen
+  compatibility-lifecycle
+  compatibility-graph
+  compatibility-mapping
+)
 
 all_cases=(
   generated-output-delete
@@ -24,7 +33,7 @@ all_cases=(
   builder-options
   glob-membership
   conditional-dependency
-  fallback
+  empty-options
 )
 
 cleanup() {
@@ -86,6 +95,34 @@ select_cases() {
   done
 }
 
+is_known_full_suite() {
+  local wanted=$1
+  local known
+  for known in "${full_suites[@]}"; do
+    [[ "$wanted" == "$known" ]] && return 0
+  done
+  return 1
+}
+
+select_full_suites() {
+  local raw=$1
+  local item
+  local -a requested
+  if [[ "$raw" == all ]]; then
+    printf '%s\n' "${full_suites[@]}"
+    return 0
+  fi
+
+  IFS=',' read -r -a requested <<<"$raw"
+  ((${#requested[@]} > 0)) || fail 'VERIFY_FULL_SUITES is empty'
+  for item in "${requested[@]}"; do
+    item=${item//[[:space:]]/}
+    [[ -n "$item" ]] || fail "VERIFY_FULL_SUITES contains an empty suite"
+    is_known_full_suite "$item" || fail "unknown full verification suite: $item"
+    printf '%s\n' "$item"
+  done
+}
+
 run_case() {
   local case_name=$1
   CASE_FILTER="$case_name" bash "$script_dir/correctness_json_serializable.sh" \
@@ -131,6 +168,33 @@ run_built_value_correctness() {
   fi
 }
 
+run_riverpod_correctness() {
+  printf 'verify: correctness: start riverpod\n'
+  if CASE_FILTER=all bash "$script_dir/correctness_riverpod.sh" \
+    >"$results_dir/riverpod.log" 2>&1; then
+    grep -E '^riverpod-correctness: ' "$results_dir/riverpod.log" || true
+  else
+    printf '%s\n' '--- riverpod ---' >&2
+    sed -n '1,240p' "$results_dir/riverpod.log" >&2
+    return 1
+  fi
+}
+
+run_script_probe() {
+  local probe_name=$1
+  local script_name=$2
+  local output_prefix=$3
+  local log="$results_dir/$probe_name.log"
+  printf 'verify: compatibility: start %s\n' "$probe_name"
+  if bash "$script_dir/$script_name" >"$log" 2>&1; then
+    grep -F "$output_prefix" "$log" || true
+  else
+    printf '%s\n' "--- $probe_name ---" >&2
+    sed -n '1,260p' "$log" >&2
+    return 1
+  fi
+}
+
 run_quick() {
   printf 'verify: level=quick\n'
   (cd "$repo_root/dart_worker" && \
@@ -157,28 +221,67 @@ run_targeted() {
   fi
 }
 
-run_full() {
+run_core_suite() {
   local -a cases=("${all_cases[@]}")
-  printf 'verify: level=full cases=%s\n' "${#cases[@]}"
-  VERIFY_WATCH=1 run_quick
-  if ! run_cases "${cases[@]}"; then
-    fail 'full correctness case failed'
+  VERIFY_WATCH=0 run_quick
+  run_script_probe watch watch_smoke.sh 'watch-smoke:'
+  run_cases "${cases[@]}"
+  run_built_value_correctness
+}
+
+run_current_codegen_suite() {
+  run_freezed_correctness
+  run_script_probe freezed-watch watch_smoke_freezed.sh 'freezed-watch-smoke:'
+  run_riverpod_correctness
+  run_script_probe riverpod-watch watch_smoke_riverpod.sh 'riverpod-watch-smoke:'
+}
+
+run_compatibility_lifecycle_suite() {
+  run_script_probe lifetime correctness_lifetime_compatibility.sh 'lifetime-compatibility:'
+  run_script_probe post-process correctness_post_process_builder.sh 'post-process-builder:'
+  run_script_probe post-process-watch watch_smoke_post_process_builder.sh 'post-process-builder-watch:'
+}
+
+run_compatibility_graph_suite() {
+  run_script_probe target-cycle correctness_target_cycle.sh 'target-cycle:'
+  run_script_probe dependency-target correctness_arbitrary_dependency_target.sh 'arbitrary-dependency-target:'
+}
+
+run_compatibility_mapping_suite() {
+  run_script_probe capture correctness_capture_builder.sh 'capture-builder:'
+  run_script_probe multi-mapping correctness_multi_mapping_builder.sh 'multi-mapping-builder:'
+}
+
+run_full() {
+  local -a suites
+  local suite
+  local selected
+  if ! selected=$(select_full_suites "$verify_full_suites"); then
+    fail 'invalid VERIFY_FULL_SUITES selection'
   fi
-  if ! run_freezed_correctness; then
-    fail 'Freezed correctness case failed'
-  fi
-  if ! run_built_value_correctness; then
-    fail 'built_value correctness case failed'
-  fi
-  printf 'verify: correctness: start riverpod\n'
-  if CASE_FILTER=all bash "$script_dir/correctness_riverpod.sh" \
-    >"$results_dir/riverpod.log" 2>&1; then
-    rg '^riverpod-correctness: ' "$results_dir/riverpod.log" || true
-  else
-    printf '%s\n' '--- riverpod ---' >&2
-    sed -n '1,240p' "$results_dir/riverpod.log" >&2
-    return 1
-  fi
+  mapfile -t suites <<<"$selected"
+  printf 'verify: level=full suites=%s\n' "$(IFS=,; printf '%s' "${suites[*]}")"
+  for suite in "${suites[@]}"; do
+    printf 'verify: suite: start %s\n' "$suite"
+    case "$suite" in
+      core)
+        run_core_suite
+        ;;
+      current-codegen)
+        run_current_codegen_suite
+        ;;
+      compatibility-lifecycle)
+        run_compatibility_lifecycle_suite
+        ;;
+      compatibility-graph)
+        run_compatibility_graph_suite
+        ;;
+      compatibility-mapping)
+        run_compatibility_mapping_suite
+        ;;
+    esac
+    printf 'verify: suite: pass %s\n' "$suite"
+  done
   if [[ "${VERIFY_BENCHMARK:-0}" == 1 ]]; then
     COUNT=${VERIFY_COUNT:-10} JOBS=${VERIFY_BENCHMARK_JOBS:-1} \
       bash "$script_dir/benchmark_json_serializable.sh"

@@ -20,6 +20,10 @@ workspace_root="$temporary_dir/workspace"
 fixture_root="$workspace_root/fixtures"
 stock_dir="$fixture_root/stock"
 rust_dir="$fixture_root/rust"
+pub_get_args=()
+if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
+  pub_get_args+=(--offline)
+fi
 
 remove_tree() {
   local path=$1
@@ -73,7 +77,7 @@ write_package() {
   cp "$fixture_dir/lib/lifetime_builder.dart" "$directory/lib/lifetime_builder.dart"
   cp "$fixture_dir/lib"/input_*.txt "$directory/lib/"
   (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get --offline \
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" \
     >"$temporary_dir/$(basename "$directory").pub-get.log" 2>&1) \
     || fail "pub get failed for $directory"
 }
