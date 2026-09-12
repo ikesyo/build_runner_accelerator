@@ -1,0 +1,8 @@
+targets:
+  $default:
+    builders:
+      drift_dev:drift_dev:
+        enabled: true
+        generate_for:
+          - lib/**.dart
+          - lib/**.drift

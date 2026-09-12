@@ -95,6 +95,7 @@ run_rust() {
   local log=$2
   PUB_CACHE="$pub_cache" BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
     "$script_dir/run_rust_frontend.sh" build --root "$directory" --dart "$dart_bin" \
+    --jobs 1 \
     >"$log" 2>&1
 }
 
@@ -127,6 +128,10 @@ for input in 01 02 03 04; do
     fail "stock output missing for input_${input}"
   [[ -f "$rust_dir/lib/input_${input}.lifetime.txt" ]] || \
     fail "Rust output missing for input_${input}"
+  [[ -f "$stock_dir/lib/input_${input}.lifetime.final.txt" ]] || \
+    fail "stock final output missing for input_${input}"
+  [[ -f "$rust_dir/lib/input_${input}.lifetime.final.txt" ]] || \
+    fail "Rust final output missing for input_${input}"
 done
 
 stock_instances=$(for file in "$stock_dir"/lib/*.lifetime.txt; do field_values "$file" instance; done | sort -n -u)
@@ -137,28 +142,57 @@ rust_instances=$(for file in "$rust_dir"/lib/*.lifetime.txt; do field_values "$f
 rust_builds=$(for file in "$rust_dir"/lib/*.lifetime.txt; do field_values "$file" build; done | sort -n -u)
 rust_resources=$(for file in "$rust_dir"/lib/*.lifetime.txt; do field_values "$file" resource; done | sort -n -u)
 rust_resource_uses=$(for file in "$rust_dir"/lib/*.lifetime.txt; do field_values "$file" resource_use; done | sort -n -u)
+stock_final_instances=$(for file in "$stock_dir"/lib/*.lifetime.final.txt; do field_values "$file" instance; done | sort -n -u)
+stock_final_builds=$(for file in "$stock_dir"/lib/*.lifetime.final.txt; do field_values "$file" build; done | sort -n -u)
+stock_final_resources=$(for file in "$stock_dir"/lib/*.lifetime.final.txt; do field_values "$file" resource; done | sort -n -u)
+stock_final_resource_uses=$(for file in "$stock_dir"/lib/*.lifetime.final.txt; do field_values "$file" resource_use; done | sort -n -u)
+rust_final_instances=$(for file in "$rust_dir"/lib/*.lifetime.final.txt; do field_values "$file" instance; done | sort -n -u)
+rust_final_builds=$(for file in "$rust_dir"/lib/*.lifetime.final.txt; do field_values "$file" build; done | sort -n -u)
+rust_final_resources=$(for file in "$rust_dir"/lib/*.lifetime.final.txt; do field_values "$file" resource; done | sort -n -u)
+rust_final_resource_uses=$(for file in "$rust_dir"/lib/*.lifetime.final.txt; do field_values "$file" resource_use; done | sort -n -u)
 
 expected_one=1
 expected_sequence=$'1\n2\n3\n4'
+expected_final_resource_sequence=$'5\n6\n7\n8'
 assert_value_set 'stock builder instances' "$expected_one" "$stock_instances"
 assert_value_set 'stock builder build sequence' "$expected_sequence" "$stock_builds"
 assert_value_set 'stock resource instances' "$expected_one" "$stock_resources"
 assert_value_set 'stock resource use sequence' "$expected_sequence" "$stock_resource_uses"
+assert_value_set 'stock final builder instances' "$expected_one" "$stock_final_instances"
+assert_value_set 'stock final builder build sequence' "$expected_sequence" "$stock_final_builds"
+assert_value_set 'stock final resource instances' "$expected_one" "$stock_final_resources"
+assert_value_set \
+  'stock final resource use sequence' \
+  "$expected_final_resource_sequence" \
+  "$stock_final_resource_uses"
 
 printf 'stock: instances=%s builds=%s resources=%s resource_uses=%s\n' \
   "$(tr '\n' ',' <<<"$stock_instances" | sed 's/,$//')" \
   "$(tr '\n' ',' <<<"$stock_builds" | sed 's/,$//')" \
   "$(tr '\n' ',' <<<"$stock_resources" | sed 's/,$//')" \
   "$(tr '\n' ',' <<<"$stock_resource_uses" | sed 's/,$//')"
+printf 'stock-final: instances=%s builds=%s resources=%s resource_uses=%s\n' \
+  "$(tr '\n' ',' <<<"$stock_final_instances" | sed 's/,$//')" \
+  "$(tr '\n' ',' <<<"$stock_final_builds" | sed 's/,$//')" \
+  "$(tr '\n' ',' <<<"$stock_final_resources" | sed 's/,$//')" \
+  "$(tr '\n' ',' <<<"$stock_final_resource_uses" | sed 's/,$//')"
 printf 'rust: instances=%s builds=%s resources=%s resource_uses=%s\n' \
   "$(tr '\n' ',' <<<"$rust_instances" | sed 's/,$//')" \
   "$(tr '\n' ',' <<<"$rust_builds" | sed 's/,$//')" \
   "$(tr '\n' ',' <<<"$rust_resources" | sed 's/,$//')" \
   "$(tr '\n' ',' <<<"$rust_resource_uses" | sed 's/,$//')"
+printf 'rust-final: instances=%s builds=%s resources=%s resource_uses=%s\n' \
+  "$(tr '\n' ',' <<<"$rust_final_instances" | sed 's/,$//')" \
+  "$(tr '\n' ',' <<<"$rust_final_builds" | sed 's/,$//')" \
+  "$(tr '\n' ',' <<<"$rust_final_resources" | sed 's/,$//')" \
+  "$(tr '\n' ',' <<<"$rust_final_resource_uses" | sed 's/,$//')"
 
 for input in 01 02 03 04; do
   cmp "$stock_dir/lib/input_${input}.lifetime.txt" \
     "$rust_dir/lib/input_${input}.lifetime.txt" || \
     fail "post-rebase output mismatch for input_${input}"
+  cmp "$stock_dir/lib/input_${input}.lifetime.final.txt" \
+    "$rust_dir/lib/input_${input}.lifetime.final.txt" || \
+    fail "post-rebase final output mismatch for input_${input}"
 done
 printf 'lifetime-compatibility: PASS (stock match)\n'

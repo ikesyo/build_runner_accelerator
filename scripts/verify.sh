@@ -200,7 +200,7 @@ run_quick() {
   (cd "$repo_root/dart_worker" && \
     PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get)
   (cd "$repo_root" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" analyze dart_worker)
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics analyze dart_worker)
   bash "$script_dir/smoke.sh"
   if [[ "${VERIFY_ARBITRARY_BUILDER:-0}" == 1 ]]; then
     bash "$script_dir/correctness_arbitrary_builder.sh"
@@ -250,6 +250,7 @@ run_compatibility_graph_suite() {
 run_compatibility_mapping_suite() {
   run_script_probe capture correctness_capture_builder.sh 'capture-builder:'
   run_script_probe multi-mapping correctness_multi_mapping_builder.sh 'multi-mapping-builder:'
+  run_script_probe drift correctness_drift.sh 'drift-compatibility:'
 }
 
 run_full() {

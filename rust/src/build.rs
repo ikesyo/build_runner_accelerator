@@ -11,7 +11,10 @@ use crate::metrics::{
     FilesystemMetrics, graph_file_size, print_filesystem_metrics, print_graph_metrics,
     print_pool_metrics, print_workspace_read_metrics, runtime_metrics_enabled, snapshot_summary,
 };
-use crate::plan::{build_specs_for_kind, output_digest, output_path, scoped_action_key};
+use crate::plan::{
+    build_specs_for_kind, build_specs_for_phase, output_digest, output_path,
+    scoped_action_key, validate_unique_outputs,
+};
 use crate::worker::{BuildRequest, WorkerPool};
 use crate::workspace::Workspace;
 use std::collections::{BTreeMap, BTreeSet};
@@ -93,13 +96,52 @@ pub(crate) fn run_with_config(
     // a post-process input (or a normal input for a later phase) while
     // planning this build. Recompute until removing one stale output exposes
     // another stale action.
-    let normal_specs = loop {
-        let specs = build_specs_for_kind(
-            &workspace,
-            &normal_snapshot,
-            &build_config,
-            Some(BuilderKind::Normal),
-        )?;
+    let (normal_specs, normal_planning_snapshot) = loop {
+        let normal_phases = build_config
+            .builders
+            .iter()
+            .filter(|builder| builder.definition.kind == BuilderKind::Normal)
+            .map(|builder| builder.phase)
+            .collect::<BTreeSet<_>>();
+        let mut planning_snapshot = normal_snapshot.clone();
+        let mut specs = Vec::new();
+        for phase in normal_phases {
+            let phase_specs = build_specs_for_phase(
+                &workspace,
+                &planning_snapshot,
+                &build_config,
+                BuilderKind::Normal,
+                phase,
+            )?;
+            for spec in &phase_specs {
+                // Optional builders are outside the dynamic subset today, but
+                // keep this guard aligned with build_runner's lazy output
+                // semantics if they are admitted in the future.
+                if spec.builder.output_is_optional {
+                    continue;
+                }
+                for output in &spec.outputs {
+                    let planned = crate::snapshot::AssetSnapshot {
+                        exists: true,
+                        digest: digest_bytes(b"<planned>"),
+                        size: 0,
+                    };
+                    planning_snapshot
+                        .entry(output.clone())
+                        .and_modify(|entry| {
+                            // A previous action may have tracked this path as
+                            // missing. Once an earlier phase declares it, the
+                            // planned output must become visible again.
+                            if !entry.exists {
+                                *entry = planned.clone();
+                            }
+                        })
+                        .or_insert(planned);
+                }
+            }
+            specs.extend(phase_specs);
+        }
+        validate_unique_outputs(&specs)?;
         let expected_keys = specs
             .iter()
             .map(|spec| scoped_action_key(&spec.target, &spec.builder.id, &spec.input))
@@ -124,27 +166,14 @@ pub(crate) fn run_with_config(
             }
         }
         if !removed {
-            break specs;
+            break (specs, planning_snapshot);
         }
     };
     // A post-process action may consume an output that is created during this
-    // build. Add required normal-builder outputs to the planning snapshot so
-    // those actions are represented before the normal phase commits.
-    let mut post_snapshot = normal_snapshot;
-    for spec in &normal_specs {
-        if spec.builder.output_is_optional {
-            continue;
-        }
-        for output in &spec.outputs {
-            post_snapshot
-                .entry(output.clone())
-                .or_insert(crate::snapshot::AssetSnapshot {
-                    exists: true,
-                    digest: digest_bytes(b"<planned>"),
-                    size: 0,
-                });
-        }
-    }
+    // build. The phase-aware planning snapshot includes outputs declared by all
+    // normal phases, so post-process builders see every output that will exist
+    // when their final phase starts.
+    let post_snapshot = normal_planning_snapshot;
     let post_specs = build_specs_for_kind(
         &workspace,
         &post_snapshot,
@@ -357,136 +386,139 @@ pub(crate) fn run_with_config(
                     .build_parallel(&workspace, &requests, &overlay, &deleted_overlay)?;
 
                 for (spec, result) in phase_specs.into_iter().zip(results) {
-                if result.status != "success" {
-                    return Err(io::Error::other(
-                        result.error.unwrap_or_else(|| "Builder failed".to_owned()),
-                    ));
-                }
-                for diagnostic in &result.diagnostics {
-                    eprintln!("{}: {}", diagnostic.level, diagnostic.message);
-                }
-                if !result.deleted.is_empty() {
-                    if builder.kind != BuilderKind::PostProcess {
-                        return Err(io::Error::other(format!(
-                            "deletePrimaryInput is only supported for post-process builders: {}",
-                            result.deleted.join(", ")
-                        )));
+                    if result.status != "success" {
+                        return Err(io::Error::other(
+                            result.error.unwrap_or_else(|| "Builder failed".to_owned()),
+                        ));
                     }
-                    for deleted in &result.deleted {
-                        if deleted != &spec.input {
+                    for diagnostic in &result.diagnostics {
+                        eprintln!("{}: {}", diagnostic.level, diagnostic.message);
+                    }
+                    if !result.deleted.is_empty() {
+                        if builder.kind != BuilderKind::PostProcess {
                             return Err(io::Error::other(format!(
-                                "post-process builder {} deleted an asset other than its primary input: {}",
-                                spec.builder.id, deleted
+                                "deletePrimaryInput is only supported for post-process builders: {}",
+                                result.deleted.join(", ")
                             )));
                         }
-                        deleted_overlay.insert(deleted.clone());
-                        overlay.remove(deleted);
-                        pending_deletions.push((spec.builder.clone(), deleted.clone()));
+                        for deleted in &result.deleted {
+                            if deleted != &spec.input {
+                                return Err(io::Error::other(format!(
+                                    "post-process builder {} deleted an asset other than its primary input: {}",
+                                    spec.builder.id, deleted
+                                )));
+                            }
+                            deleted_overlay.insert(deleted.clone());
+                            overlay.remove(deleted);
+                            pending_deletions.push((spec.builder.clone(), deleted.clone()));
+                        }
                     }
-                }
 
-                let allowed = spec.outputs.iter().cloned().collect::<BTreeSet<_>>();
-                for generated in &result.outputs {
-                    if builder.kind == BuilderKind::Normal && !allowed.contains(&generated.asset) {
-                        return Err(io::Error::other(format!(
-                            "unexpected output from {}: {}",
-                            spec.builder.id, generated.asset
-                        )));
-                    }
-                    if builder.kind == BuilderKind::PostProcess {
-                        let (package, path) = generated.asset.split_once('|').ok_or_else(|| {
-                            io::Error::other(format!(
-                                "post-process output is not a valid AssetId: {}",
-                                generated.asset
-                            ))
-                        })?;
-                        if package != spec.package
-                            || path.is_empty()
-                            || path.starts_with('/')
-                            || path.contains("..")
-                            || generated.asset == spec.input
+                    let allowed = spec.outputs.iter().cloned().collect::<BTreeSet<_>>();
+                    for generated in &result.outputs {
+                        if builder.kind == BuilderKind::Normal
+                            && !allowed.contains(&generated.asset)
                         {
                             return Err(io::Error::other(format!(
-                                "invalid post-process output from {}: {}",
+                                "unexpected output from {}: {}",
                                 spec.builder.id, generated.asset
                             )));
                         }
-                        let previous_outputs = state
-                            .actions
-                            .get(&scoped_action_key(
-                                &spec.target,
-                                &spec.builder.id,
-                                &spec.input,
-                            ))
-                            .map(|action| action.outputs.contains(&generated.asset))
-                            .unwrap_or(false);
-                        if !previous_outputs
-                            && !deleted_overlay.contains(&generated.asset)
-                            && (overlay.contains_key(&generated.asset)
-                                || workspace.asset_exists_or_cache(&generated.asset)?)
-                        {
-                            return Err(io::Error::other(format!(
-                                "post-process output conflicts with an existing asset: {}",
-                                generated.asset
-                            )));
+                        if builder.kind == BuilderKind::PostProcess {
+                            let (package, path) = generated.asset.split_once('|').ok_or_else(|| {
+                                io::Error::other(format!(
+                                    "post-process output is not a valid AssetId: {}",
+                                    generated.asset
+                                ))
+                            })?;
+                            if package != spec.package
+                                || path.is_empty()
+                                || path.starts_with('/')
+                                || path.contains("..")
+                                || generated.asset == spec.input
+                            {
+                                return Err(io::Error::other(format!(
+                                    "invalid post-process output from {}: {}",
+                                    spec.builder.id, generated.asset
+                                )));
+                            }
+                            let previous_outputs = state
+                                .actions
+                                .get(&scoped_action_key(
+                                    &spec.target,
+                                    &spec.builder.id,
+                                    &spec.input,
+                                ))
+                                .map(|action| action.outputs.contains(&generated.asset))
+                                .unwrap_or(false);
+                            if !previous_outputs
+                                && !deleted_overlay.contains(&generated.asset)
+                                && (overlay.contains_key(&generated.asset)
+                                    || workspace.asset_exists_or_cache(&generated.asset)?)
+                            {
+                                return Err(io::Error::other(format!(
+                                    "post-process output conflicts with an existing asset: {}",
+                                    generated.asset
+                                )));
+                            }
                         }
+                        overlay.insert(generated.asset.clone(), generated.bytes.clone());
+                        deleted_overlay.remove(&generated.asset);
+                        pending_outputs.push((
+                            spec.builder.clone(),
+                            generated.asset.clone(),
+                            generated.bytes.clone(),
+                        ));
                     }
-                    overlay.insert(generated.asset.clone(), generated.bytes.clone());
-                    deleted_overlay.remove(&generated.asset);
-                    pending_outputs.push((
-                        spec.builder.clone(),
-                        generated.asset.clone(),
-                        generated.bytes.clone(),
-                    ));
-                }
-                let mut output_digests = BTreeMap::new();
-                let actual_outputs = result
-                    .outputs
-                    .iter()
-                    .map(|output| output.asset.as_str())
-                    .collect::<BTreeSet<_>>();
-                // build_runner permits a normal builder to declare an output
-                // mapping and then emit no output for a particular input. A
-                // common example is source_gen's shared-part builders: they
-                // skip libraries without generated content. Remove outputs
-                // recorded by the previous action when that happens, just as
-                // build_runner's build state cleanup does.
-                if builder.kind == BuilderKind::Normal || builder.output_is_optional {
-                    if let Some(previous) = state.actions.get(&scoped_action_key(
-                        &spec.target,
-                        &spec.builder.id,
-                        &spec.input,
-                    )) {
-                        for previous_output in &previous.outputs {
-                            if !actual_outputs.contains(previous_output.as_str()) {
-                                deleted_overlay.insert(previous_output.clone());
-                                pending_deletions
-                                    .push((spec.builder.clone(), previous_output.clone()));
+                    let mut output_digests = BTreeMap::new();
+                    let actual_outputs = result
+                        .outputs
+                        .iter()
+                        .map(|output| output.asset.as_str())
+                        .collect::<BTreeSet<_>>();
+                    // build_runner permits a normal builder to declare an output
+                    // mapping and then emit no output for a particular input. A
+                    // common example is source_gen's shared-part builders: they
+                    // skip libraries without generated content. Remove outputs
+                    // recorded by the previous action when that happens, just as
+                    // build_runner's build state cleanup does.
+                    if builder.kind == BuilderKind::Normal || builder.output_is_optional {
+                        if let Some(previous) = state.actions.get(&scoped_action_key(
+                            &spec.target,
+                            &spec.builder.id,
+                            &spec.input,
+                        )) {
+                            for previous_output in &previous.outputs {
+                                if !actual_outputs.contains(previous_output.as_str()) {
+                                    deleted_overlay.insert(previous_output.clone());
+                                    pending_deletions
+                                        .push((spec.builder.clone(), previous_output.clone()));
+                                }
                             }
                         }
                     }
+                    for generated in &result.outputs {
+                        output_digests
+                            .insert(generated.asset.clone(), digest_bytes(&generated.bytes));
+                    }
+                    pending_actions.push((
+                        scoped_action_key(&spec.target, &spec.builder.id, &spec.input),
+                        ActionState {
+                            builder: spec.builder.id.to_owned(),
+                            input: spec.input,
+                            reads: result.reads,
+                            resolver_reads: result.resolver_reads,
+                            glob_reads: result.glob_reads,
+                            outputs: result
+                                .outputs
+                                .into_iter()
+                                .map(|output| output.asset)
+                                .collect(),
+                            output_digests,
+                            status: "success".to_owned(),
+                        },
+                    ));
                 }
-                for generated in &result.outputs {
-                    output_digests.insert(generated.asset.clone(), digest_bytes(&generated.bytes));
-                }
-                pending_actions.push((
-                    scoped_action_key(&spec.target, &spec.builder.id, &spec.input),
-                    ActionState {
-                        builder: spec.builder.id.to_owned(),
-                        input: spec.input,
-                        reads: result.reads,
-                        resolver_reads: result.resolver_reads,
-                        glob_reads: result.glob_reads,
-                        outputs: result
-                            .outputs
-                            .into_iter()
-                            .map(|output| output.asset)
-                            .collect(),
-                        output_digests,
-                        status: "success".to_owned(),
-                    },
-                ));
-            }
 
                 if builder.kind == BuilderKind::Normal && builder.build_to == BuildTo::Source {
                     resolver_needs_reset = true;

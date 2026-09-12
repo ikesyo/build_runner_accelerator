@@ -9,9 +9,24 @@ builders:
     auto_apply: none
     build_to: source
 
+  lifetime_final_builder:
+    import: "package:lifetime_builder_app/lifetime_builder.dart"
+    builder_factories:
+      - lifetimeFinalBuilder
+    build_extensions:
+      ".lifetime.txt":
+        - ".lifetime.final.txt"
+    required_inputs:
+      - ".lifetime.txt"
+    auto_apply: none
+    build_to: source
+
 targets:
   $default:
     builders:
       lifetime_builder_app:lifetime_builder:
+        generate_for:
+          - lib/**/*.txt
+      lifetime_builder_app:lifetime_final_builder:
         generate_for:
           - lib/**/*.txt

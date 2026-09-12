@@ -17,6 +17,9 @@ The following are implemented and covered by the current fixture suite:
   `BuildConfig` resolution.
 - Generic target/package ordering, multiple extension mappings, source/cache
   outputs, and the supported cache-only post-process subset.
+- Runtime factory mapping probes for multi-factory builders, phase-aware
+  generated-input visibility, and resident-worker Builder/Resource lifetime
+  coverage.
 - Stock-vs-native output comparisons for clean, no-op, incremental, failure,
   deletion, rename, and watch cases.
 - A single project-facing Dart launcher with automatic signed native artifact

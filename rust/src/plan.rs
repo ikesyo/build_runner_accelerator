@@ -37,7 +37,7 @@ pub(crate) fn input_candidates(
             if !snapshot.get(asset).is_some_and(|entry| entry.exists) {
                 return None;
             }
-            (if builder.definition.kind == BuilderKind::PostProcess {
+            let matches_extension = if builder.definition.kind == BuilderKind::PostProcess {
                 builder
                     .definition
                     .post_process_input_extensions
@@ -49,35 +49,40 @@ pub(crate) fn input_candidates(
                     .extensions
                     .iter()
                     .any(|extension| extension_matches(extension, path))
-            }
-                && !builder
-                    .definition
-                    .excluded_input_suffixes
-                    .iter()
-                    .any(|suffix| {
-                        if suffix.contains("{{") {
-                            match_capture_pattern(path, suffix, false).is_some()
-                        } else {
-                            path.ends_with(suffix.as_str())
-                        }
-                    })
-                && builder
-                    .generate_for
-                    .iter()
-                    .any(|pattern| matches_glob(pattern, path))
-                && !builder
-                    .generate_for_exclude
-                    .iter()
-                    .any(|pattern| matches_glob(pattern, path))
-                && builder
-                    .target_sources
-                    .iter()
-                    .any(|pattern| matches_glob(pattern, path))
-                && !builder
-                    .target_sources_exclude
-                    .iter()
-                    .any(|pattern| matches_glob(pattern, path)))
-            .then_some(asset.clone())
+            };
+            let excluded = builder
+                .excluded_input_suffixes
+                .iter()
+                .any(|suffix| {
+                    if suffix.contains("{{") {
+                        match_capture_pattern(path, suffix, false).is_some()
+                    } else {
+                        path.ends_with(suffix.as_str())
+                    }
+                });
+            let matches_generate_for = builder
+                .generate_for
+                .iter()
+                .any(|pattern| matches_glob(pattern, path));
+            let excluded_by_generate_for = builder
+                .generate_for_exclude
+                .iter()
+                .any(|pattern| matches_glob(pattern, path));
+            let matches_target_sources = builder
+                .target_sources
+                .iter()
+                .any(|pattern| matches_glob(pattern, path));
+            let excluded_by_target_sources = builder
+                .target_sources_exclude
+                .iter()
+                .any(|pattern| matches_glob(pattern, path));
+            (matches_extension
+                && !excluded
+                && matches_generate_for
+                && !excluded_by_generate_for
+                && matches_target_sources
+                && !excluded_by_target_sources)
+                .then_some(asset.clone())
         })
         .collect()
 }
@@ -88,9 +93,36 @@ pub(crate) fn build_specs_for_kind(
     config: &RustBuildConfig,
     kind: Option<BuilderKind>,
 ) -> io::Result<Vec<BuildSpec>> {
+    build_specs(workspace, snapshot, config, kind, None)
+}
+
+/// Creates the actions for one manifest phase. A later phase receives a
+/// snapshot augmented by the previous phase's declared outputs, matching
+/// build_runner's rule that generated assets become visible only after their
+/// phase completes.
+pub(crate) fn build_specs_for_phase(
+    workspace: &Workspace,
+    snapshot: &Snapshot,
+    config: &RustBuildConfig,
+    kind: BuilderKind,
+    phase: u32,
+) -> io::Result<Vec<BuildSpec>> {
+    build_specs(workspace, snapshot, config, Some(kind), Some(phase))
+}
+
+fn build_specs(
+    workspace: &Workspace,
+    snapshot: &Snapshot,
+    config: &RustBuildConfig,
+    kind: Option<BuilderKind>,
+    phase: Option<u32>,
+) -> io::Result<Vec<BuildSpec>> {
     let mut specs = Vec::new();
     for builder in &config.builders {
         if kind.is_some_and(|expected| builder.definition.kind != expected) {
+            continue;
+        }
+        if phase.is_some_and(|expected| builder.phase != expected) {
             continue;
         }
         for input in input_candidates(workspace, snapshot, builder) {
@@ -117,7 +149,7 @@ pub(crate) fn build_specs_for_kind(
     Ok(specs)
 }
 
-fn validate_unique_outputs(specs: &[BuildSpec]) -> io::Result<()> {
+pub(crate) fn validate_unique_outputs(specs: &[BuildSpec]) -> io::Result<()> {
     let mut owners = BTreeMap::new();
     for spec in specs {
         let action = scoped_action_key(&spec.target, &spec.builder.id, &spec.input);

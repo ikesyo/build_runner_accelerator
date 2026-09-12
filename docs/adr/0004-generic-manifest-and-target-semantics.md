@@ -28,6 +28,11 @@ Use a generated, workspace-specific manifest as the generic boundary:
 - The manifest generator and Rust validator reject shapes outside the
   supported subset. auto uses the Dart fallback for those shapes; rust fails
   explicitly.
+- When official configuration declares multiple factories, or a legacy
+  post-process definition omits reliable input extensions, the generator may
+  instantiate those known factories in an isolated probe using the resolved
+  package config. It records only validated runtime mappings; a failed probe
+  keeps the definition on the fallback path.
 - Popular builder fast paths, if ever added, must remain separate from the
   generic manifest path and must demonstrate a measured benefit.
 
@@ -50,5 +55,6 @@ the design, not an error hidden from users.
 - Reimplement all of build.yaml parsing in Rust: rejected because it duplicates
   official build-runner resolution.
 - Runtime reflection or guessed factory loading: rejected because imports,
-  factory identity, and failure boundaries would be ambiguous.
-
+  factory identity, and failure boundaries would be ambiguous. The bounded
+  probe above is different: it uses the official import and factory identity
+  already present in the manifest, only to validate their declared mapping.

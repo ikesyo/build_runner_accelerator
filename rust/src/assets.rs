@@ -183,6 +183,10 @@ pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> 
                 .unwrap_or_default()
                 .as_bytes(),
         );
+        for suffix in &builder.excluded_input_suffixes {
+            bytes.extend_from_slice(suffix.as_bytes());
+            bytes.push(0);
+        }
         for pattern in &builder.generate_for {
             bytes.extend_from_slice(pattern.as_bytes());
             bytes.push(0);

@@ -48,6 +48,7 @@ pub(crate) struct ConfiguredBuilder {
     pub(crate) package: String,
     pub(crate) target_order: u32,
     pub(crate) phase: u32,
+    pub(crate) excluded_input_suffixes: Vec<String>,
     pub(crate) generate_for: Vec<String>,
     pub(crate) generate_for_exclude: Vec<String>,
     pub(crate) target_sources: Vec<String>,
@@ -206,6 +207,7 @@ pub(crate) fn rust_build_config_from_manifest(
             package: entry.package,
             target_order: entry.target_order,
             phase: entry.phase,
+            excluded_input_suffixes: entry.excluded_input_suffixes,
             generate_for: entry.generate_for,
             generate_for_exclude: entry.generate_for_exclude,
             target_sources: entry.target_sources,
@@ -506,6 +508,44 @@ mod tests {
                 .map(|builder| builder.definition.phase)
                 .collect::<Vec<_>>(),
             vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn dynamic_manifest_preserves_configured_input_exclusions() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 6,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:builder",
+                "input_suffix": ".txt",
+                "output_suffixes": [".gen.txt"],
+                "build_to": "source",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "excluded_input_suffixes": [".later.txt"],
+                "generate_for": ["lib/**/*.txt"]
+            }],
+            "definitions": [{
+                "id": "example:builder",
+                "input_suffix": ".txt",
+                "output_suffixes": [".gen.txt"],
+                "build_to": "source",
+                "phase": 0,
+                "excluded_input_suffixes": [".all.txt"]
+            }]
+        }))
+        .unwrap();
+        let config = rust_build_config_from_manifest(manifest).unwrap();
+        assert_eq!(
+            config.builders[0].excluded_input_suffixes,
+            [".later.txt"]
+        );
+        assert_eq!(
+            config.builders[0].definition.excluded_input_suffixes,
+            [".all.txt"]
         );
     }
 
