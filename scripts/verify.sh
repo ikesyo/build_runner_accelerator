@@ -187,7 +187,10 @@ run_script_probe() {
   local log="$results_dir/$probe_name.log"
   printf 'verify: compatibility: start %s\n' "$probe_name"
   if bash "$script_dir/$script_name" >"$log" 2>&1; then
-    grep -F "$output_prefix" "$log" || true
+    grep -F -- "$output_prefix" "$log" || {
+      printf 'missing expected output: %s\n' "$output_prefix" >&2
+      return 1
+    }
   else
     printf '%s\n' "--- $probe_name ---" >&2
     sed -n '1,260p' "$log" >&2
