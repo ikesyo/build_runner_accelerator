@@ -795,7 +795,7 @@ String _factoryProbeSource(Iterable<_DefinitionInfo> definitions) {
     );
   for (final entry in imports.entries) {
     output.writeln(
-      'import ' + _dartString(entry.key) + ' as ' + entry.value + ';',
+      'import ' + _dartSourceString(entry.key) + ' as ' + entry.value + ';',
     );
   }
   output
@@ -813,12 +813,14 @@ String _factoryProbeSource(Iterable<_DefinitionInfo> definitions) {
     final importPrefix = imports[importUri]!;
     output
       ..writeln('    try {')
-      ..writeln('      result[${_dartString(definition.key)}] = <dynamic>[');
+      ..writeln(
+        '      result[${_dartSourceString(definition.key)}] = <dynamic>[',
+      );
     if (definition.isPostProcess) {
       final factory = definition.postProcess!.builderFactory;
       output
         ..writeln('      <String, dynamic>{')
-        ..writeln('        \'factory\': ${_dartString(factory)},')
+        ..writeln('        \'factory\': ${_dartSourceString(factory)},')
         ..writeln("        'build_extensions': <String, List<String>>{},")
         ..writeln(
           '        \'input_extensions\': _postProcessInputExtensions('
@@ -829,7 +831,7 @@ String _factoryProbeSource(Iterable<_DefinitionInfo> definitions) {
       for (final factory in definition.normal!.builderFactories) {
         output
           ..writeln('      <String, dynamic>{')
-          ..writeln('        \'factory\': ${_dartString(factory)},')
+          ..writeln('        \'factory\': ${_dartSourceString(factory)},')
           ..writeln("        'build_extensions': _builderBuildExtensions(")
           ..writeln(
             '          $importPrefix.$factory('
@@ -1155,7 +1157,7 @@ String _workerSource(Iterable<_CatalogEntry> entries) {
     ..writeln("import 'package:build_runner_accelerator_worker/worker.dart';");
   for (final entry in imports.entries) {
     output.writeln(
-      'import ' + _dartString(entry.key) + ' as ' + entry.value + ';',
+      'import ' + _dartSourceString(entry.key) + ' as ' + entry.value + ';',
     );
   }
   output
@@ -1165,7 +1167,7 @@ String _workerSource(Iterable<_CatalogEntry> entries) {
   for (final entry in sorted.where((entry) => !entry.isPostProcess)) {
     output.writeln(
       '    ' +
-          _dartString(entry.id) +
+          _dartSourceString(entry.id) +
           ': ' +
           imports[entry.importUri]! +
           '.' +
@@ -1179,7 +1181,7 @@ String _workerSource(Iterable<_CatalogEntry> entries) {
   for (final entry in sorted.where((entry) => entry.isPostProcess)) {
     output.writeln(
       '    ' +
-          _dartString(entry.id) +
+          _dartSourceString(entry.id) +
           ': ' +
           imports[entry.importUri]! +
           '.' +
@@ -1193,7 +1195,27 @@ String _workerSource(Iterable<_CatalogEntry> entries) {
   return output.toString();
 }
 
-String _dartString(String value) => jsonEncode(value);
+String _dartSourceString(String value) {
+  final output = StringBuffer("'");
+  for (final codeUnit in value.codeUnits) {
+    if (codeUnit == 0x5c || codeUnit == 0x27 || codeUnit == 0x24) {
+      output
+        ..write('\\')
+        ..writeCharCode(codeUnit);
+    } else if (codeUnit < 0x20 ||
+        codeUnit == 0x7f ||
+        codeUnit == 0x2028 ||
+        codeUnit == 0x2029) {
+      output
+        ..write('\\u')
+        ..write(codeUnit.toRadixString(16).padLeft(4, '0'));
+    } else {
+      output.writeCharCode(codeUnit);
+    }
+  }
+  output.write("'");
+  return output.toString();
+}
 
 _CatalogEntry _catalogEntry(_ManifestDefinition definition) => _CatalogEntry(
   id: definition.id,
