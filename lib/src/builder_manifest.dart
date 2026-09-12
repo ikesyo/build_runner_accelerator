@@ -668,15 +668,11 @@ Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
     await probeFile.writeAsString(_factoryProbeSource(probeDefinitions));
     // Process.start is required here so a misbehaving factory probe can be
     // terminated instead of blocking manifest generation indefinitely.
-    final process = await Process.start(
-      Platform.resolvedExecutable,
-      [
-        '--packages=$packageConfig',
-        probeFile.path,
-        resultFile.path,
-      ],
-      workingDirectory: root,
-    );
+    final process = await Process.start(Platform.resolvedExecutable, [
+      '--packages=$packageConfig',
+      probeFile.path,
+      resultFile.path,
+    ], workingDirectory: root);
     // Consume both pipes while the probe runs; otherwise a verbose probe can
     // block on a full child-process pipe before the timeout is reached.
     unawaited(process.stdout.drain<void>());
