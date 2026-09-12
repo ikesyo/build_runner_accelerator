@@ -37,8 +37,9 @@ The `build_runner` upper bound is intentional: the worker uses private
 `build_runner` interfaces whose signatures changed in 2.15.x and may change
 again in later minor releases. The release workflow validates a minimum solution with Dart
 3.11.0 and `dart pub downgrade`, and a current solution with Dart 3.13.3 and
-`dart pub upgrade`. Rust contributors should use the stable toolchain selected
-by the repository's build environment.
+`dart pub upgrade`. Rust contributors should use the repository-pinned Rust toolchain. The pin
+is defined in `rust-toolchain.toml`; CI and release workflows use the same
+exact version.
 
 ## Local checks
 

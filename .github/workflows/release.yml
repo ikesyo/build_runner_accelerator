@@ -57,9 +57,9 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
         with:
-          toolchain: stable
+          toolchain: 1.98.1
       - name: Rust unit tests
         run: cargo test --manifest-path rust/Cargo.toml
 
@@ -99,9 +99,9 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
         with:
-          toolchain: stable
+          toolchain: 1.98.1
           targets: ${{ matrix.rust_target }}
       - name: Read release version
         shell: bash
