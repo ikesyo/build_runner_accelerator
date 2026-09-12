@@ -1033,7 +1033,13 @@ _ManifestDefinition? _tryConvertPostProcessDefinition(
 
 List<String>? _knownPostProcessInputExtensions(
   PostProcessBuilderDefinition definition,
-) {
+) {  // These package-specific cases are intentional compatibility fallbacks:
+  // build_config leaves inputExtensions unset for these legacy cleanup builders,
+  // while runtime probing adds a measurable startup cost during manifest
+  // generation. Keep the fallback narrow and covered by compatibility fixtures;
+  // unknown post-process builders still use the generic runtime probe. If a
+  // dependency changes its cleanup inputs, update this mapping or restore probing.
+
   if (definition.key == 'source_gen:part_cleanup' &&
       definition.import == 'package:source_gen/builder.dart' &&
       definition.builderFactory == 'partCleanup') {
