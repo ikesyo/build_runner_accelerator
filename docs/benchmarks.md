@@ -65,7 +65,7 @@ The full five-repeat ranges were:
 
 ## Runtime resources
 
-User/system are child CPU milliseconds and RSS is peak KiB.
+The table reports median child CPU milliseconds and median peak RSS in KiB.
 
 | Lane | Case | User ms | Sys ms | Peak RSS KiB |
 | --- | --- | ---: | ---: | ---: |
