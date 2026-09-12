@@ -199,7 +199,8 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
           // their input extensions in build.yaml. Probe the runtime builder in
           // that case (source_gen and drift both use this shape).
           // ignore: deprecated_member_use
-          return info.postProcess!.inputExtensions == null;
+          return info.postProcess!.inputExtensions == null &&
+              _knownPostProcessInputExtensions(info.postProcess!) == null;
         }
         return info.normal!.builderFactories.length > 1;
       })
@@ -757,7 +758,23 @@ String? _findPackageConfigPath(String root) {
 }
 
 String _factoryProbeSource(Iterable<_DefinitionInfo> definitions) {
-  final sorted = definitions.toList()
+  // These values are later emitted into executable Dart source. Keep the
+  // probe boundary as strict as the manifest converter: only package imports
+  // and identifier-shaped factory names may cross it. In particular, a raw
+  // factory value must never reach `$importPrefix.$factory` below.
+  final safeDefinitions = definitions
+      .where((definition) {
+        if (definition.isPostProcess) {
+          final postProcess = definition.postProcess!;
+          return postProcess.import.startsWith('package:') &&
+              _identifier.hasMatch(postProcess.builderFactory);
+        }
+        final normal = definition.normal!;
+        return normal.import.startsWith('package:') &&
+            normal.builderFactories.every(_identifier.hasMatch);
+      })
+      .toList(growable: false);
+  final sorted = safeDefinitions.toList()
     ..sort((left, right) => left.key.compareTo(right.key));
   final imports = <String, String>{};
   for (final definition in sorted) {
@@ -986,25 +1003,12 @@ _ManifestDefinition? _tryConvertPostProcessDefinition(
   );
   // Current source_gen deliberately leaves this legacy config field unset and
   // supplies the extension from the runtime FileDeletingBuilder instead.
-  // Keep the known built-in cleanup builder in the dynamic subset so current
+  // Keep the known built-in cleanup builder in the converted subset so current
   // json_serializable builds can preserve source_gen's .g.part cleanup.
   final inputExtensions =
       configuredInputExtensions ??
       runtimeInputExtensions ??
-      (definition.key == 'source_gen:part_cleanup' &&
-              definition.import == 'package:source_gen/builder.dart' &&
-              definition.builderFactory == 'partCleanup'
-          ? const <String>['.g.part']
-          : definition.key == 'drift_dev:cleanup' &&
-                definition.import ==
-                    'package:drift_dev/integrations/build.dart' &&
-                definition.builderFactory == 'driftCleanup'
-          ? const <String>[
-              '.temp.dart',
-              '.drift_prep.json',
-              '.drift_module.json',
-            ]
-          : null);
+      _knownPostProcessInputExtensions(definition);
   if (inputExtensions == null || inputExtensions.isEmpty) return null;
   if (!definition.import.startsWith('package:')) return null;
   if (!_identifier.hasMatch(definition.builderFactory)) return null;
@@ -1023,6 +1027,26 @@ _ManifestDefinition? _tryConvertPostProcessDefinition(
     outputIsOptional: true,
     requiredInputSuffix: null,
   );
+}
+
+List<String>? _knownPostProcessInputExtensions(
+  PostProcessBuilderDefinition definition,
+) {
+  if (definition.key == 'source_gen:part_cleanup' &&
+      definition.import == 'package:source_gen/builder.dart' &&
+      definition.builderFactory == 'partCleanup') {
+    return const <String>['.g.part'];
+  }
+  if (definition.key == 'drift_dev:cleanup' &&
+      definition.import == 'package:drift_dev/integrations/build.dart' &&
+      definition.builderFactory == 'driftCleanup') {
+    return const <String>[
+      '.temp.dart',
+      '.drift_prep.json',
+      '.drift_module.json',
+    ];
+  }
+  return null;
 }
 
 String _manifestFactoryId(String definitionKey, int factoryIndex, int count) =>

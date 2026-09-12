@@ -159,7 +159,9 @@ setup_case() {
   run_stock "$stock_dir" "$results_dir/$name.stock.initial.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.initial.log"
   assert_outputs "$stock_dir" "$rust_dir"
-  assert_actions "$results_dir/$name.rust.initial.log" 7
+  # The phase-aware planner also schedules builders on generated source
+  # assets, matching build_runner's BuildStepPlan semantics.
+  assert_actions "$results_dir/$name.rust.initial.log" 11
   cp "$rust_dir/.dart_tool/build_runner_accelerator/graph-v3.bin" \
     "$results_dir/$name.graph.before.bin"
   cp "$rust_dir/lib/model.g.dart" "$results_dir/$name.model.before.g.dart"
@@ -181,7 +183,7 @@ run_case_source_edit() {
   run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_outputs "$stock_dir" "$rust_dir"
-  assert_actions "$results_dir/$name.rust.change.log" 4
+  assert_actions "$results_dir/$name.rust.change.log" 6
   cmp -s "$results_dir/$name.model.before.g.dart" "$rust_dir/lib/model.g.dart" && \
     fail 'source edit did not change Riverpod output'
   printf 'riverpod-correctness: source-edit-and-invalidation: pass\n'
@@ -202,7 +204,7 @@ run_case_generated_output_delete() {
   run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_outputs "$stock_dir" "$rust_dir"
-  assert_actions "$results_dir/$name.rust.change.log" 7
+  assert_actions "$results_dir/$name.rust.change.log" 9
   printf 'riverpod-correctness: generated-output-delete: pass\n'
 }
 
