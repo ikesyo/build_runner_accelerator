@@ -1,21 +1,6 @@
 name: Current baseline benchmark
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/benchmark-current.yml'
-      - 'scripts/benchmark_current_baseline.sh'
-      - 'scripts/measure_process.py'
-      - 'scripts/run_rust_frontend.sh'
-      - 'scripts/toolchain.sh'
-      - 'scripts/watch_smoke_current_json.sh'
-      - 'fixtures/current_json_app/**'
-      - 'pubspec.lock'
-      - 'pubspec.yaml'
-      - 'rust/**'
-      - 'bin/**'
-      - 'lib/**'
-      - 'dart_worker/**'
   workflow_dispatch:
 
 permissions:
