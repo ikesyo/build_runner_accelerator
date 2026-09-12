@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,6 +8,8 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 const _manifestVersion = 6;
+const _factoryProbeTimeout = Duration(seconds: 30);
+const _factoryProbeKillGracePeriod = Duration(seconds: 1);
 
 Future<void> generateBuilderManifest(List<String> arguments) async {
   final options = _Arguments.parse(arguments);
@@ -662,12 +665,36 @@ Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
     final probeFile = File(p.join(temporary.path, 'probe.dart'));
     final resultFile = File(p.join(temporary.path, 'result.json'));
     await probeFile.writeAsString(_factoryProbeSource(probeDefinitions));
-    final result = await Process.run(Platform.resolvedExecutable, [
-      '--packages=$packageConfig',
-      probeFile.path,
-      resultFile.path,
-    ], workingDirectory: root);
-    if (result.exitCode != 0 || !resultFile.existsSync()) return const {};
+    // Process.start is required here so a misbehaving factory probe can be
+    // terminated instead of blocking manifest generation indefinitely.
+    final process = await Process.start(
+      Platform.resolvedExecutable,
+      [
+        '--packages=$packageConfig',
+        probeFile.path,
+        resultFile.path,
+      ],
+      workingDirectory: root,
+    );
+    // Consume both pipes while the probe runs; otherwise a verbose probe can
+    // block on a full child-process pipe before the timeout is reached.
+    unawaited(process.stdout.drain<void>());
+    unawaited(process.stderr.drain<void>());
+
+    int exitCode;
+    try {
+      exitCode = await process.exitCode.timeout(_factoryProbeTimeout);
+    } on TimeoutException {
+      process.kill();
+      try {
+        await process.exitCode.timeout(_factoryProbeKillGracePeriod);
+      } on TimeoutException {
+        // The child may be outside our control; the probe still must not
+        // keep manifest generation blocked.
+      }
+      return const {};
+    }
+    if (exitCode != 0 || !resultFile.existsSync()) return const {};
     final decoded = jsonDecode(await resultFile.readAsString());
     if (decoded is! Map) return const {};
 
