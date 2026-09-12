@@ -21,6 +21,10 @@ stock_log="$temporary_dir/stock-watch.log"
 rust_log="$temporary_dir/rust-watch.log"
 stock_pid=
 rust_pid=
+pub_get_args=()
+if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
+  pub_get_args+=(--offline)
+fi
 
 remove_tree() {
   local path=$1
@@ -78,12 +82,13 @@ prepare_package() {
   mkdir -p "$directory/lib"
   cp "$fixture_dir/pubspec.yaml" "$directory/pubspec.yaml"
   cp "$fixture_dir/pubspec.lock" "$directory/pubspec.lock"
+  cp "$fixture_dir/pubspec.lock" "$directory/pubspec.lock"
   cp "$fixture_dir/build.yaml" "$directory/build.yaml"
   cp "$fixture_dir/lib/post_process_builder.dart" \
     "$directory/lib/post_process_builder.dart"
   cp "$fixture_dir/lib/input.txt" "$directory/lib/input.txt"
   (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get --offline >/dev/null) || \
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null) || \
     fail "pub get failed for $directory"
 }
 

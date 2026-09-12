@@ -7,8 +7,7 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 source "$script_dir/toolchain.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
-toolchain_bin=${RUST_TOOLCHAIN_BIN:-"$repo_root/.toolchains/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin"}
-cargo_bin=${CARGO_BIN:-"$toolchain_bin/cargo"}
+cargo_bin=$(resolve_toolchain_cargo)
 rustup_home=$(resolve_toolchain_rustup_home)
 cargo_home=$(resolve_toolchain_cargo_home)
 temporary_dir=$(mktemp -d)
@@ -16,6 +15,10 @@ workspace_root="$temporary_dir/workspace"
 fixture_root="$workspace_root/fixtures"
 stock_dir="$fixture_root/stock"
 rust_dir="$fixture_root/rust"
+pub_get_args=()
+if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
+  pub_get_args+=(--offline)
+fi
 
 remove_tree() {
   local path=$1
@@ -60,11 +63,27 @@ assert_contains() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-[[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
-
 if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
+  [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
+  toolchain_bin=${RUST_TOOLCHAIN_BIN:-}
+  rustc_bin=${RUSTC_BIN:-}
+  if [[ -z "$rustc_bin" && -n "$toolchain_bin" ]]; then
+    rustc_bin="$toolchain_bin/rustc"
+  fi
+  if [[ -z "$rustc_bin" ]]; then
+    cargo_bin_dir=$(dirname -- "$cargo_bin")
+    if [[ -x "$cargo_bin_dir/rustc" ]]; then
+      rustc_bin="$cargo_bin_dir/rustc"
+    else
+      rustc_bin=$(command -v rustc || true)
+    fi
+  fi
+  [[ -x "$rustc_bin" ]] || fail "rustc executable not found: $rustc_bin"
+  if [[ -z "$toolchain_bin" ]]; then
+    toolchain_bin=$(dirname -- "$rustc_bin")
+  fi
   PATH="$toolchain_bin:$PATH" RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-    RUSTUP_TOOLCHAIN=1.98.1 "$cargo_bin" build --quiet \
+    RUSTC="$rustc_bin" "$cargo_bin" build --quiet \
     --manifest-path "$repo_root/rust/Cargo.toml" || fail 'Rust frontend build failed'
   BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
   export BUILD_RUNNER_ACCELERATOR_BIN
@@ -83,13 +102,14 @@ environment:
   sdk: ">=3.13.0 <4.0.0"
 
 dependencies:
-  build: 4.0.0
+  build: 4.0.10
 
 dev_dependencies:
-  build_runner: 2.7.2
+  build_runner: 2.16.1
   build_runner_accelerator_worker:
     path: ../../dart_worker
 EOF
+  cp "$repo_root/fixtures/arbitrary_builder_app/pubspec.lock" "$directory/pubspec.lock"
   cat >"$directory/build.yaml" <<'EOF'
 builders:
   cycle_builder:
@@ -159,7 +179,7 @@ class _CycleBuilder implements Builder {
 EOF
   printf 'a\n' >"$directory/lib/a.txt"
   printf 'b\n' >"$directory/lib/b.txt"
-  (cd "$directory" && PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get --offline >/dev/null) || \
+  (cd "$directory" && PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null) || \
     fail "pub get failed for $directory"
 }
 

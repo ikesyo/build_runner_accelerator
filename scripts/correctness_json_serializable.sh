@@ -347,7 +347,7 @@ run_case_glob_membership() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_same_file "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart"
   assert_contains "$results_dir/$name.rust.change.log" \
-    'Rust frontend: 1 build action(s)'
+    'Rust frontend: 2 build action(s)'
   printf 'correctness: glob-membership: pass\n'
 }
 
@@ -395,12 +395,12 @@ run_case_conditional_dependency() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_same_file "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart"
   assert_contains "$results_dir/$name.rust.change.log" \
-    'Rust frontend: 1 build action(s)'
+    'Rust frontend: 2 build action(s)'
   printf 'correctness: conditional-dependency: pass\n'
 }
 
-run_case_fallback() {
-  local name=fallback
+run_case_empty_options() {
+  local name=empty-options
   setup_case "$name"
   printf '        options: {}\n' >>"$stock_dir/build.yaml"
   printf '        options: {}\n' >>"$rust_dir/build.yaml"
@@ -409,8 +409,8 @@ run_case_fallback() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_same_file "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart"
   assert_contains "$results_dir/$name.rust.change.log" \
-    'using Dart fallback'
-  printf 'correctness: dart-fallback: pass\n'
+    'Rust frontend: 2 build action(s)'
+  printf 'correctness: empty-options-native-path: pass\n'
 }
 
 run_selected() {
@@ -430,6 +430,6 @@ run_selected generate-for run_case_generate_for
 run_selected builder-options run_case_builder_options
 run_selected glob-membership run_case_glob_membership
 run_selected conditional-dependency run_case_conditional_dependency
-run_selected fallback run_case_fallback
+run_selected empty-options run_case_empty_options
 
 printf 'correctness: cases=%s pass\n' "$case_filter"
