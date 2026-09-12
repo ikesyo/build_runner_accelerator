@@ -63,6 +63,22 @@ The full level is the union of `core`, `current-codegen`,
 `compatibility-mapping`. `VERIFY_FULL_SUITES` accepts a comma-separated subset
 so CI can shard those suites without maintaining a second list of probes.
 
+### CI coverage
+
+Pull request CI separates verification by responsibility:
+
+| CI entry | Scope | Frequency |
+| --- | --- | --- |
+| `Baseline integration and package smoke` | Quick verification, arbitrary builder cases, and published-package smoke | Pull requests and pushes to `main` |
+| `Freezed and Riverpod compatibility` | Freezed and Riverpod correctness plus watch smoke | Pull requests and pushes to `main` |
+| `Compatibility suite (lifecycle, graph, mapping)` | `compatibility-lifecycle`, `compatibility-graph`, and `compatibility-mapping`, one selector per parallel step | Pull requests and pushes to `main` |
+| `Core correctness` | The `core` full suite: JSON serializable cases, generic watch smoke, and built_value | Nightly and `workflow_dispatch` |
+
+The compatibility job intentionally selects one `VERIFY_FULL_SUITES` value per
+parallel step. It does not rerun the baseline or current-codegen suites. The
+periodic core workflow uses the canonical `core` selector so the missing core
+coverage is exercised without expanding the required pull-request checks.
+
 Run the relevant fixture scripts when changing graph, worker, watch, or
 builder behavior:
 

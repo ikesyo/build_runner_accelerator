@@ -103,7 +103,7 @@ jobs:
         run: cargo test --locked --manifest-path rust/Cargo.toml
 
   integration:
-    name: Integration verification
+    name: Baseline integration and package smoke
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
@@ -124,19 +124,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
         with:
           toolchain: stable
-      - name: Run correctness verification
-        env:
-          PUB_CACHE: ${{ github.workspace }}/.pub-cache
+      - name: Build native frontend
+        shell: bash
         run: |
           cargo build --locked --quiet --manifest-path rust/Cargo.toml
           chmod +x rust/target/debug/build_runner_accelerator
-          BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
-            VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
-          BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
-            bash scripts/package_smoke.sh
+          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+      - name: Run baseline correctness verification
+        env:
+          PUB_CACHE: ${{ github.workspace }}/.pub-cache
+          VERIFY_ARBITRARY_BUILDER: '1'
+        run: bash scripts/verify.sh
+      - name: Run published package smoke
+        env:
+          PUB_CACHE: ${{ github.workspace }}/.pub-cache
+        run: bash scripts/package_smoke.sh
 
   current-codegen-compatibility:
-    name: Current codegen compatibility
+    name: Freezed and Riverpod compatibility
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     env:
@@ -223,6 +228,55 @@ jobs:
               PUB_GET_OFFLINE: '1'
             run: bash scripts/watch_smoke_riverpod.sh
 
+  compatibility:
+    name: Compatibility suite (lifecycle, graph, mapping)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .pub-cache
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: compatibility-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dart_worker/pubspec.lock', 'fixtures/**/pubspec.lock', 'rust/Cargo.lock') }}
+          restore-keys: |
+            compatibility-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
+        with:
+          toolchain: stable
+      - name: Build native frontend
+        shell: bash
+        run: |
+          cargo build --locked --quiet --manifest-path rust/Cargo.toml
+          chmod +x rust/target/debug/build_runner_accelerator
+          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+      - parallel:
+          - name: "Compatibility: lifecycle"
+            shell: bash
+            env:
+              VERIFY_LEVEL: full
+              VERIFY_FULL_SUITES: compatibility-lifecycle
+            run: bash scripts/verify.sh
+          - name: "Compatibility: graph"
+            shell: bash
+            env:
+              VERIFY_LEVEL: full
+              VERIFY_FULL_SUITES: compatibility-graph
+            run: bash scripts/verify.sh
+          - name: "Compatibility: mapping"
+            shell: bash
+            env:
+              VERIFY_LEVEL: full
+              VERIFY_FULL_SUITES: compatibility-mapping
+            run: bash scripts/verify.sh
   native-build:
     name: Native build (${{ matrix.target_id }})
     runs-on: ${{ matrix.runs_on }}
