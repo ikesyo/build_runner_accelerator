@@ -2,7 +2,9 @@ use crate::assets::{
     add_current_generated_assets, add_tracked_dependency_assets, add_tracked_glob_assets,
     config_digest, write_atomic,
 };
-use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, RustBuildConfig};
+use crate::builder::{
+    BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder, RustBuildConfig,
+};
 use crate::cli::Options;
 use crate::digest::digest_bytes;
 use crate::frontend::{run_dart_fallback, select_frontend, worker_executable};
@@ -341,12 +343,9 @@ pub(crate) fn run_with_config(
         let mut resolver_needs_reset = false;
         let mut initialized_package = first_package;
 
-        for post_process_phase in [false, true] {
-            for configured_builder in &build_config.builders {
-                let builder = configured_builder.definition.as_ref();
-                if (builder.kind == BuilderKind::PostProcess) != post_process_phase {
-                    continue;
-                }
+        for configured_builder_index in execution_order(&build_config.builders) {
+            let configured_builder = &build_config.builders[configured_builder_index];
+            let builder = configured_builder.definition.as_ref();
                 let phase_specs = dirty
                     .iter()
                     .filter(|spec| {
@@ -524,7 +523,6 @@ pub(crate) fn run_with_config(
                     resolver_needs_reset = true;
                 }
             }
-        }
 
         pool_metrics = Some(active_pool.metrics());
     }
@@ -594,6 +592,25 @@ pub(crate) fn run_with_config(
     Ok(())
 }
 
+/// Return the order in which configured builders may observe each other's
+/// outputs. Manifest entries retain target-first ordering for stable planning,
+/// but execution must complete every normal phase before moving to the next
+/// target order so cross-target phase dependencies see fresh overlay outputs.
+fn execution_order(builders: &[ConfiguredBuilder]) -> Vec<usize> {
+    let mut order = (0..builders.len()).collect::<Vec<_>>();
+    order.sort_by(|left_index, right_index| {
+        let left = &builders[*left_index];
+        let right = &builders[*right_index];
+        (left.definition.kind == BuilderKind::PostProcess)
+            .cmp(&(right.definition.kind == BuilderKind::PostProcess))
+            .then_with(|| left.phase.cmp(&right.phase))
+            .then_with(|| left.target_order.cmp(&right.target_order))
+            .then_with(|| left.target.cmp(&right.target))
+            .then_with(|| left.definition.id.cmp(&right.definition.id))
+    });
+    order
+}
+
 fn expand_dirty_dependents(
     dirty: &mut Vec<crate::plan::BuildSpec>,
     specs: &[crate::plan::BuildSpec],
@@ -645,5 +662,60 @@ fn expand_dirty_dependents(
             }
         }
         cursor += 1;
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::execution_order;
+    use crate::builder::{
+        BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder,
+    };
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    fn configured_builder(
+        id: &str,
+        target: &str,
+        target_order: u32,
+        phase: u32,
+    ) -> ConfiguredBuilder {
+        ConfiguredBuilder {
+            definition: Arc::new(BuilderDefinition {
+                id: id.to_owned(),
+                kind: BuilderKind::Normal,
+                extensions: Vec::new(),
+                post_process_input_extensions: Vec::new(),
+                build_to: BuildTo::Source,
+                phase,
+                output_is_optional: false,
+                required_input_suffix: None,
+                excluded_input_suffixes: Vec::new(),
+                applies_builder: None,
+            }),
+            target: target.to_owned(),
+            package: "app".to_owned(),
+            target_order,
+            phase,
+            excluded_input_suffixes: Vec::new(),
+            generate_for: vec!["**".to_owned()],
+            generate_for_exclude: Vec::new(),
+            target_sources: vec!["**".to_owned()],
+            target_sources_exclude: Vec::new(),
+            options: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn execution_order_runs_cross_target_producer_before_consumer() {
+        let builders = vec![
+            // Target 0 consumes an output produced by target 1 in an earlier
+            // phase. Phase order must win over target order.
+            configured_builder("consumer", "app:consumer", 0, 1),
+            configured_builder("producer", "app:producer", 1, 0),
+        ];
+
+        assert_eq!(execution_order(&builders), vec![1, 0]);
     }
 }
