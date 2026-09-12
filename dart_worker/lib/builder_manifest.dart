@@ -1033,7 +1033,8 @@ _ManifestDefinition? _tryConvertPostProcessDefinition(
 
 List<String>? _knownPostProcessInputExtensions(
   PostProcessBuilderDefinition definition,
-) {  // These package-specific cases are intentional compatibility fallbacks:
+) {
+  // These package-specific cases are intentional compatibility fallbacks:
   // build_config leaves inputExtensions unset for these legacy cleanup builders,
   // while runtime probing adds a measurable startup cost during manifest
   // generation. Keep the fallback narrow and covered by compatibility fixtures;
