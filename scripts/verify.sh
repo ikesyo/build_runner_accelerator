@@ -248,6 +248,7 @@ run_compatibility_lifecycle_suite() {
 run_compatibility_graph_suite() {
   run_script_probe target-cycle correctness_target_cycle.sh 'target-cycle:'
   run_script_probe dependency-target correctness_arbitrary_dependency_target.sh 'arbitrary-dependency-target:'
+  run_script_probe applies-builders correctness_applies_builder.sh 'applies-builders:'
 }
 
 run_compatibility_mapping_suite() {

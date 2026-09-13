@@ -1,0 +1,34 @@
+builders:
+  producer:
+    import: "package:applies_builder_app/applies_builder.dart"
+    builder_factories:
+      - producer
+    build_extensions:
+      ".txt":
+        - ".produced.txt"
+    # Keep the ordering contract in applies_builders; the consumer does not
+    # declare required_inputs so this probe exercises that phase edge.
+    applies_builders:
+      - applies_builder_app:consumer
+    auto_apply: none
+    build_to: source
+
+  consumer:
+    import: "package:applies_builder_app/applies_builder.dart"
+    builder_factories:
+      - consumer
+    build_extensions:
+      ".produced.txt":
+        - ".consumed.txt"
+    auto_apply: none
+    build_to: source
+
+targets:
+  $default:
+    sources:
+      include:
+        - lib/**
+    builders:
+      applies_builder_app:producer:
+        generate_for:
+          - lib/**/*.txt

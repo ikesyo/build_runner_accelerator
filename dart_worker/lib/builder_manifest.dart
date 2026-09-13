@@ -620,6 +620,10 @@ List<String> _orderBuilders(
       if (parent.runsBefore.contains(childKey)) {
         addEdge(parentKey, childKey);
       }
+      if (parent.appliesBuilders.contains(childKey)) {
+        // Applied builders consume outputs produced by their parent phase.
+        addEdge(parentKey, childKey);
+      }
       final childGlobal = globalOptions[childKey];
       if (childGlobal != null && childGlobal.runsBefore.contains(parentKey)) {
         addEdge(childKey, parentKey);
