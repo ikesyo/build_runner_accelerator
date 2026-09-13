@@ -612,16 +612,20 @@ List<String> _orderBuilders(
       final childOutputs = child.buildExtensions.values.expand(
         (value) => value,
       );
-      if (parent.requiredInputs.any(
+      final childProvidesRequiredInput = parent.requiredInputs.any(
         (required) => childOutputs.any((output) => output.endsWith(required)),
-      )) {
+      );
+      if (childProvidesRequiredInput) {
         addEdge(childKey, parentKey);
       }
       if (parent.runsBefore.contains(childKey)) {
         addEdge(parentKey, childKey);
       }
-      if (parent.appliesBuilders.contains(childKey)) {
+      if (parent.appliesBuilders.contains(childKey) &&
+          !childProvidesRequiredInput) {
         // Applied builders consume outputs produced by their parent phase.
+        // An existing required-input edge takes precedence when an applied
+        // builder prepares inputs for its parent.
         addEdge(parentKey, childKey);
       }
       final childGlobal = globalOptions[childKey];
