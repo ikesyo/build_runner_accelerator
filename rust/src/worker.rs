@@ -1,3 +1,4 @@
+use crate::builder::BuilderKind;
 use crate::protocol::{
     BINARY_BUILD_RESULT_MAGIC, BuildResult, IncomingFrame, decode_build_batch_result_frame,
     decode_build_result_frame, read_message_with_size, write_binary_frame, write_frame,
@@ -6,6 +7,7 @@ use crate::worker_kernel::{
     WorkerArtifact, background_worker_aot_if_ready, resolve_worker_artifact,
 };
 use crate::workspace::{Workspace, matches_glob};
+use crate::visibility::AssetVisibility;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -222,6 +224,7 @@ impl WorkerClient {
         request: &BuildRequest,
         overlay: &BTreeMap<String, Vec<u8>>,
         deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
     ) -> io::Result<BuildResult> {
         let started = Instant::now();
         let id = self.next_id();
@@ -236,6 +239,7 @@ impl WorkerClient {
             "options": request.options,
             "phase": request.phase,
             "instance_key": request.instance_key,
+            "blocked_assets": request.blocked_assets,
         }))?;
 
         loop {
@@ -243,7 +247,13 @@ impl WorkerClient {
                 IncomingFrame::Json(response) => match response.get("type").and_then(Value::as_str)
                 {
                     Some("asset_request") => {
-                        self.handle_asset_request(workspace, &response, overlay, deleted_overlay)?
+                        self.handle_asset_request(
+                            workspace,
+                            &response,
+                            overlay,
+                            deleted_overlay,
+                            visibility,
+                        )?
                     }
                     Some("build_result") => {
                         return Err(io::Error::other(
@@ -272,6 +282,7 @@ impl WorkerClient {
         requests: &[BuildRequest],
         overlay: &BTreeMap<String, Vec<u8>>,
         deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
     ) -> io::Result<Vec<BuildResult>> {
         let started = Instant::now();
         let id = self.next_id();
@@ -288,6 +299,7 @@ impl WorkerClient {
                     "options": request.options,
                     "phase": request.phase,
                     "instance_key": request.instance_key,
+                    "blocked_assets": request.blocked_assets,
                 })
             })
             .collect::<Vec<_>>();
@@ -303,7 +315,13 @@ impl WorkerClient {
                 IncomingFrame::Json(response) => match response.get("type").and_then(Value::as_str)
                 {
                     Some("asset_request") => {
-                        self.handle_asset_request(workspace, &response, overlay, deleted_overlay)?
+                        self.handle_asset_request(
+                            workspace,
+                            &response,
+                            overlay,
+                            deleted_overlay,
+                            visibility,
+                        )?
                     }
                     Some("build_batch_result") => {
                         return Err(io::Error::other(
@@ -336,6 +354,7 @@ impl WorkerClient {
         request: &Value,
         overlay: &BTreeMap<String, Vec<u8>>,
         deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
     ) -> io::Result<()> {
         let started = Instant::now();
         let id = request
@@ -346,6 +365,15 @@ impl WorkerClient {
             .get("op")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        let phase = request
+            .get("phase")
+            .and_then(Value::as_u64)
+            .unwrap_or_default() as u32;
+        let kind = if request.get("kind").and_then(Value::as_str) == Some("post_process") {
+            BuilderKind::PostProcess
+        } else {
+            BuilderKind::Normal
+        };
         self.metrics.asset_requests += 1;
         let response = match operation {
             "read" => {
@@ -354,18 +382,20 @@ impl WorkerClient {
                     .get("asset")
                     .and_then(Value::as_str)
                     .ok_or_else(|| io::Error::other("read request has no asset"))?;
-                let read_result = if deleted_overlay.contains(asset) {
+                let read_result = if visibility.is_blocked(asset, phase, kind, deleted_overlay) {
                     Err(io::Error::new(
                         io::ErrorKind::NotFound,
                         format!("asset not found: {asset}"),
                     ))
                 } else {
-                    overlay
-                        .get(asset)
-                        .cloned()
-                        .map(Arc::new)
-                        .map(Ok)
-                        .unwrap_or_else(|| workspace.read_asset_or_cache_shared(asset))
+                    if let Some(bytes) = overlay.get(asset) {
+                        Ok(Arc::new(bytes.clone()))
+                    } else {
+                        match visibility.location(asset) {
+                            Some(build_to) => workspace.read_asset_at_shared(asset, build_to),
+                            None => workspace.read_asset_or_cache_shared(asset),
+                        }
+                    }
                 };
                 match read_result {
                     Ok(bytes) => {
@@ -397,8 +427,8 @@ impl WorkerClient {
                     .get("asset")
                     .and_then(Value::as_str)
                     .ok_or_else(|| io::Error::other("can_read request has no asset"))?;
-                let value = !deleted_overlay.contains(asset)
-                    && (overlay.contains_key(asset) || workspace.asset_exists_or_cache(asset)?);
+                let value = !visibility.is_blocked(asset, phase, kind, deleted_overlay)
+                    && asset_exists(workspace, asset, overlay, visibility)?;
                 json!({ "v": 1, "type": "asset_response", "id": id, "ok": true, "value": value })
             }
             "find_assets" => {
@@ -411,13 +441,17 @@ impl WorkerClient {
                     .get("pattern")
                     .and_then(Value::as_str)
                     .unwrap_or("**");
-                let mut assets = workspace
-                    .find_assets(package, pattern)?
-                    .into_iter()
-                    .filter(|asset| !deleted_overlay.contains(asset))
-                    .collect::<Vec<_>>();
+                let mut assets = Vec::new();
+                for asset in workspace.find_assets(package, pattern)? {
+                    if visibility.is_blocked(asset.as_str(), phase, kind, deleted_overlay)
+                        || !asset_exists(workspace, &asset, overlay, visibility)?
+                    {
+                        continue;
+                    }
+                    assets.push(asset);
+                }
                 for asset in overlay.keys() {
-                    if !deleted_overlay.contains(asset) {
+                    if !visibility.is_blocked(asset, phase, kind, deleted_overlay) {
                         if let Some((asset_package, asset_path)) = asset.split_once('|') {
                             if asset_package == package && matches_glob(pattern, asset_path) {
                                 assets.push(asset.clone());
@@ -508,6 +542,21 @@ impl WorkerClient {
     }
 }
 
+fn asset_exists(
+    workspace: &Workspace,
+    asset: &str,
+    overlay: &BTreeMap<String, Vec<u8>>,
+    visibility: &AssetVisibility,
+) -> io::Result<bool> {
+    if overlay.contains_key(asset) {
+        return Ok(true);
+    }
+    match visibility.location(asset) {
+        Some(build_to) => workspace.asset_exists_at(asset, build_to),
+        None => workspace.asset_exists_or_cache(asset),
+    }
+}
+
 fn missing_asset_response(id: u64, asset: &str) -> Value {
     json!({
         "v": 1,
@@ -534,6 +583,7 @@ pub struct BuildRequest {
     pub phase: u32,
     pub instance_key: String,
     pub post_process: bool,
+    pub blocked_assets: Vec<String>,
 }
 
 pub struct WorkerPool {
@@ -782,6 +832,7 @@ impl WorkerPool {
         requests: &[BuildRequest],
         overlay: &BTreeMap<String, Vec<u8>>,
         deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
     ) -> io::Result<Vec<BuildResult>> {
         if requests.is_empty() {
             return Ok(Vec::new());
@@ -802,7 +853,9 @@ impl WorkerPool {
             .unwrap_or(1);
         self.initialize_pending_workers(&root, &package, phase_count)?;
         if self.workers.len() == 1 {
-            return self.workers[0].build_batch(workspace, requests, overlay, deleted_overlay);
+            return self
+                .workers[0]
+                .build_batch(workspace, requests, overlay, deleted_overlay, visibility);
         }
 
         let worker_count = self.workers.len();
@@ -818,7 +871,7 @@ impl WorkerPool {
                 .zip(batches)
                 .map(|(worker, batch)| {
                     scope.spawn(move || {
-                        worker.build_batch(workspace, batch, overlay, deleted_overlay)
+                        worker.build_batch(workspace, batch, overlay, deleted_overlay, visibility)
                     })
                 })
                 .collect::<Vec<_>>();

@@ -17,6 +17,7 @@ use crate::plan::{
 };
 use crate::worker::{BuildRequest, WorkerPool};
 use crate::workspace::Workspace;
+use crate::visibility::AssetVisibility;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
@@ -182,6 +183,7 @@ pub(crate) fn run_with_config(
     )?;
     let mut specs = normal_specs;
     specs.extend(post_specs);
+    let visibility = AssetVisibility::from_specs(&specs, &state, &build_config);
 
     let mut current_output_digests = BTreeMap::new();
     for action in state.actions.values() {
@@ -281,19 +283,16 @@ pub(crate) fn run_with_config(
         })
         .flat_map(|action| action.outputs.iter().cloned())
         .collect::<BTreeSet<_>>();
+    for (_, action) in &deleted_actions {
+        deleted_overlay.extend(action.outputs.iter().cloned());
+    }
     let mut pending_outputs: Vec<(Arc<BuilderDefinition>, String, Vec<u8>)> = Vec::new();
     let mut pending_deletions: Vec<(Arc<BuilderDefinition>, String)> = Vec::new();
     let mut pending_actions = Vec::new();
     if !dirty.is_empty() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
         let worker_command = worker_executable(options, &build_config)?;
-        let phase_count = build_config
-            .builders
-            .iter()
-            .map(|builder| builder.phase)
-            .max()
-            .unwrap_or(0)
-            .saturating_add(1) as usize;
+        let phase_count = build_config.phase_count();
         let mut owned_pool = if worker_pool.is_none() {
             Some(WorkerPool::start(
                 &workspace.root,
@@ -361,6 +360,11 @@ pub(crate) fn run_with_config(
                     phase: spec.phase,
                     instance_key: spec.instance_key.clone(),
                     post_process: builder.kind == BuilderKind::PostProcess,
+                    blocked_assets: visibility.blocked_assets(
+                        spec.phase,
+                        builder.kind,
+                        &deleted_overlay,
+                    ),
                 })
                 .collect::<Vec<_>>();
             if requests.is_empty() {
@@ -380,7 +384,13 @@ pub(crate) fn run_with_config(
                 resolver_needs_reset = false;
             }
             let results = active_pool
-                .build_parallel(&workspace, &requests, &overlay, &deleted_overlay)?;
+                .build_parallel(
+                    &workspace,
+                    &requests,
+                    &overlay,
+                    &deleted_overlay,
+                    &visibility,
+                )?;
 
             for (spec, result) in phase_specs.into_iter().zip(results) {
                 if result.status != "success" {
@@ -491,6 +501,22 @@ pub(crate) fn run_with_config(
                                 pending_deletions
                                     .push((spec.builder.clone(), previous_output.clone()));
                             }
+                        }
+                    }
+                }
+                if builder.kind == BuilderKind::Normal {
+                    // A declared output may already exist on disk even when
+                    // the previous graph did not record it (for example,
+                    // after a graph reset). If this action emits nothing,
+                    // keep that stale file out of later phases and remove it
+                    // at the commit boundary.
+                    for expected in &spec.outputs {
+                        if actual_outputs.contains(expected.as_str()) {
+                            continue;
+                        }
+                        deleted_overlay.insert(expected.clone());
+                        if workspace.asset_exists_at(expected, builder.build_to)? {
+                            pending_deletions.push((spec.builder.clone(), expected.clone()));
                         }
                     }
                 }
@@ -685,7 +711,7 @@ mod tests {
                 build_to: BuildTo::Source,
                 phase,
                 output_is_optional: false,
-                required_input_suffix: None,
+                required_input_suffixes: Vec::new(),
                 excluded_input_suffixes: Vec::new(),
                 applies_builder: None,
             }),

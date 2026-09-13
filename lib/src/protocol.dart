@@ -217,10 +217,17 @@ class FrameWriter {
 }
 
 class RpcSession {
-  RpcSession(this.reader, this.writer);
+  RpcSession(
+    this.reader,
+    this.writer, {
+    required this.phase,
+    required this.postProcess,
+  });
 
   final FrameReader reader;
   final FrameWriter writer;
+  final int phase;
+  final bool postProcess;
   int _nextId = 1000;
 
   Future<JsonMap> call(String op, Map<String, dynamic> parameters) async {
@@ -231,6 +238,11 @@ class RpcSession {
       'id': id,
       'op': op,
       ...parameters,
+      // Rust applies the same phase-aware logical view as the Dart adapter.
+      // Keeping these on every asset request also protects custom workers
+      // which do not consume the build request's blocked_assets hint.
+      'phase': phase,
+      'kind': postProcess ? 'post_process' : 'normal',
     });
     while (true) {
       final response = await reader.next();

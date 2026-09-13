@@ -135,7 +135,12 @@ pub(crate) fn add_tracked_glob_assets(
 
 pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> io::Result<String> {
     let build_yaml = workspace.root.join("build.yaml");
-    let mut bytes = fs::read(build_yaml).unwrap_or_default();
+    // The digest also gates reuse of the private action graph. Bump this
+    // domain marker when the meaning of the graph inputs changes, so a graph
+    // created before the lossless required-input and artifact-visibility
+    // model cannot be reused silently.
+    let mut bytes = b"build-runner-accelerator-config-v2\0".to_vec();
+    bytes.extend_from_slice(&fs::read(build_yaml).unwrap_or_default());
     bytes.extend_from_slice(
         &fs::read(workspace.root.join(".dart_tool/package_config.json")).unwrap_or_default(),
     );
@@ -175,14 +180,12 @@ pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> 
             BuildTo::Cache => 0,
             BuildTo::Source => 1,
         });
-        bytes.extend_from_slice(
-            builder
-                .definition
-                .required_input_suffix
-                .as_deref()
-                .unwrap_or_default()
-                .as_bytes(),
-        );
+        // Keep the full ordered `required_inputs` list in the graph identity.
+        // Separators avoid collisions such as [".ab", ".c"] vs [".a", ".bc"].
+        for suffix in &builder.definition.required_input_suffixes {
+            bytes.extend_from_slice(suffix.as_bytes());
+            bytes.push(0);
+        }
         for suffix in &builder.excluded_input_suffixes {
             bytes.extend_from_slice(suffix.as_bytes());
             bytes.push(0);

@@ -23,8 +23,18 @@ Use a generated, workspace-specific manifest as the generic boundary:
   than parsing all of build.yaml itself.
 - The model carries package/target scope, dependency-owned targets, stable
   target order, strongly connected component phase semantics, source filters,
-  required inputs, optional outputs, normal and supported cache-only
-  post-process builders, and multiple literal/capture extension mappings.
+  the lossless `required_inputs` suffix list, optional outputs, normal and
+  supported cache-only post-process builders, and multiple literal/capture
+  extension mappings.
+- Dart resolves builder order and target/SCC member order into the configured
+  worker phase and target-order fields. Rust preserves that resolved timeline
+  before applying visibility checks; package and target identity therefore
+  cannot be lost when phase numbers are reused.
+- Logical visibility is phase-aware and independent from physical storage:
+  source outputs resolve at package paths, cache outputs resolve in the
+  artifact tree, and stale/deleted outputs remain hidden through the pending
+  transaction overlay. The same visibility rule is applied by the Dart worker
+  adapter and by Rust's asset RPC.
 - The manifest generator and Rust validator reject shapes outside the
   supported subset. auto uses the Dart fallback for those shapes; rust fails
   explicitly.

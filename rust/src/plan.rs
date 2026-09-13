@@ -130,7 +130,7 @@ fn build_specs(
                 builder: builder.definition.clone(),
                 target: builder.target.clone(),
                 package: builder.package.clone(),
-                phase: builder.phase,
+                phase: config.global_phase(builder),
                 instance_key: format!(
                     "{}|{}|{}|{}",
                     builder.target, builder.definition.id, builder.phase, builder.package
@@ -310,7 +310,7 @@ mod tests {
             build_to: BuildTo::Source,
             phase: 0,
             output_is_optional: false,
-            required_input_suffix: None,
+            required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
         });
@@ -336,7 +336,7 @@ mod tests {
             build_to: BuildTo::Source,
             phase: 0,
             output_is_optional: false,
-            required_input_suffix: None,
+            required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
         });
@@ -371,7 +371,7 @@ mod tests {
             build_to: BuildTo::Source,
             phase: 0,
             output_is_optional: false,
-            required_input_suffix: None,
+            required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
         });
@@ -401,7 +401,7 @@ mod tests {
             build_to: BuildTo::Source,
             phase: 0,
             output_is_optional: false,
-            required_input_suffix: None,
+            required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
         });
@@ -428,7 +428,7 @@ mod tests {
             build_to: BuildTo::Source,
             phase: 0,
             output_is_optional: false,
-            required_input_suffix: None,
+            required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
         });

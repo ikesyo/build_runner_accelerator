@@ -100,9 +100,10 @@ class RemoteBuildState extends BuildState {
 }
 
 /// Adapts current build_runner's visibility and Analyzer filesystem hooks to
-/// the Rust-backed ReaderWriter. The empty plan is intentional: Rust plans
-/// declared outputs and phase visibility, while [RemoteAssetReaderWriter]
-/// enforces the current action's blocked-output set.
+/// the Rust-backed ReaderWriter. The empty plan is intentional: Rust owns the
+/// declared-output index, phase visibility, and source/cache location, while
+/// [RemoteAssetReaderWriter] enforces the current action's blocked logical-ID
+/// set for the Dart-facing APIs.
 class RemoteBuilderFilesystem extends BuilderFilesystem {
   RemoteBuilderFilesystem({
     required BuildPackages buildPackages,

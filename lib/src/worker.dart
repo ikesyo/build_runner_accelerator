@@ -401,15 +401,22 @@ Future<JsonMap> _runBuild(
     if (rawAllowedOutputs is! List) {
       throw FormatException('build allowed_outputs must be a list');
     }
-    final blockedAssets = isPostProcess
-        ? <AssetId>{}
-        : rawAllowedOutputs
-              .map((asset) => AssetId.parse(asset as String))
-              .toSet();
+    final rawBlockedAssets = message['blocked_assets'] ?? const <dynamic>[];
+    if (rawBlockedAssets is! List) {
+      throw FormatException('build blocked_assets must be a list');
+    }
+    final blockedAssets = rawBlockedAssets
+        .map((asset) => AssetId.parse(asset as String))
+        .toSet();
     final options = Map<String, dynamic>.from(
       (message['options'] as Map<dynamic, dynamic>?) ?? <dynamic, dynamic>{},
     );
-    final rpc = RpcSession(reader, writer);
+    final rpc = RpcSession(
+      reader,
+      writer,
+      phase: _phaseOf(message),
+      postProcess: isPostProcess,
+    );
     runtime.io.beginAction(
       rpc: rpc,
       package: input.package,
