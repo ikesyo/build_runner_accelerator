@@ -8,8 +8,8 @@ resolution.
 ## Latest run
 
 - Workflow: [Current baseline benchmark](../.github/workflows/benchmark-current.yml)
-- Run: [GitHub Actions run #1](https://github.com/ikesyo/build_runner_accelerator/actions/runs/34686980508)
-- Application commit: `c14bbfda9110e0aa9d7fae3042990440ab8c796f`
+- Run: [GitHub Actions run #5](https://github.com/ikesyo/build_runner_accelerator/actions/runs/34726219732)
+- Application commit: `399f92e7dc14fe94e33c357bdca4e5655b7c2850`
 - Environment: GitHub Actions `ubuntu-24.04`, Linux x64
 - Dart SDK: 3.13.3
 - Rust: 1.98.1
@@ -49,19 +49,19 @@ parenthesized values are the minimum and maximum.
 
 | Case | Stock | Accelerator jobs=1 | Accelerator jobs=2 | Accelerator jobs=4 | Speedup 1/2/4 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| clean | 41,606 | 31,439 | 30,465 | 34,840 | 1.32x / 1.37x / 1.19x |
-| no-op | 1,014 | 410 | 393 | 447 | 2.47x / 2.58x / 2.27x |
-| one-file | 1,050 | 521 | 478 | 553 | 2.01x / 2.20x / 1.90x |
-| broad | 1,057 | 514 | 493 | 543 | 2.06x / 2.15x / 1.95x |
+| clean | 40,205 | 29,716 | 25,513 | 34,881 | 1.35x / 1.58x / 1.15x |
+| no-op | 990 | 395 | 321 | 467 | 2.51x / 3.08x / 2.12x |
+| one-file | 1,022 | 497 | 411 | 564 | 2.06x / 2.49x / 1.81x |
+| broad | 1,025 | 488 | 412 | 567 | 2.10x / 2.49x / 1.81x |
 
 The full five-repeat ranges were:
 
 | Case | Stock range | Accelerator jobs=1 | Accelerator jobs=2 | Accelerator jobs=4 |
 | --- | ---: | ---: | ---: | ---: |
-| clean | 41,390–43,286 | 31,383–31,965 | 29,419–31,303 | 33,247–35,653 |
-| no-op | 1,004–1,120 | 400–411 | 387–465 | 410–467 |
-| one-file | 1,034–1,078 | 517–525 | 464–489 | 547–563 |
-| broad | 1,040–1,105 | 509–520 | 483–520 | 530–562 |
+| clean | 40,048–40,462 | 28,779–30,558 | 25,039–25,868 | 34,528–35,253 |
+| no-op | 983–1,003 | 371–451 | 319–331 | 434–488 |
+| one-file | 1,011–1,037 | 475–506 | 406–418 | 556–579 |
+| broad | 1,015–1,037 | 472–507 | 410–429 | 551–576 |
 
 ## Runtime resources
 
@@ -69,26 +69,26 @@ The table reports median child CPU milliseconds and median peak RSS in KiB.
 
 | Lane | Case | User ms | Sys ms | Peak RSS KiB |
 | --- | --- | ---: | ---: | ---: |
-| stock default | clean | 49,093 | 2,343 | 694,648 |
-| stock default | no-op | 1,024 | 262 | 161,880 |
-| stock default | one-file | 1,060 | 251 | 161,940 |
-| stock default | broad | 1,065 | 256 | 161,972 |
-| accelerator jobs=1 | clean | 35,907 | 2,748 | 634,032 |
-| accelerator jobs=1 | no-op | 626 | 157 | 266,604 |
-| accelerator jobs=1 | one-file | 737 | 210 | 267,188 |
-| accelerator jobs=1 | broad | 739 | 201 | 267,052 |
-| accelerator jobs=2 | clean | 38,332 | 2,238 | 647,596 |
-| accelerator jobs=2 | no-op | 646 | 122 | 266,540 |
-| accelerator jobs=2 | one-file | 795 | 178 | 267,436 |
-| accelerator jobs=2 | broad | 811 | 180 | 267,060 |
-| accelerator jobs=4 | clean | 45,698 | 2,988 | 652,796 |
-| accelerator jobs=4 | no-op | 690 | 161 | 266,036 |
-| accelerator jobs=4 | one-file | 965 | 246 | 266,408 |
-| accelerator jobs=4 | broad | 962 | 246 | 266,152 |
+| stock default | clean | 47,343 | 2,271 | 693,652 |
+| stock default | no-op | 994 | 249 | 164,368 |
+| stock default | one-file | 1,042 | 252 | 161,900 |
+| stock default | broad | 1,027 | 256 | 161,768 |
+| accelerator jobs=1 | clean | 35,211 | 2,012 | 653,176 |
+| accelerator jobs=1 | no-op | 630 | 132 | 266,348 |
+| accelerator jobs=1 | one-file | 757 | 168 | 267,272 |
+| accelerator jobs=1 | broad | 747 | 173 | 267,008 |
+| accelerator jobs=2 | clean | 31,051 | 2,347 | 658,080 |
+| accelerator jobs=2 | no-op | 484 | 128 | 268,460 |
+| accelerator jobs=2 | one-file | 632 | 189 | 267,524 |
+| accelerator jobs=2 | broad | 640 | 177 | 267,972 |
+| accelerator jobs=4 | clean | 46,087 | 3,064 | 651,804 |
+| accelerator jobs=4 | no-op | 718 | 155 | 265,972 |
+| accelerator jobs=4 | one-file | 995 | 237 | 266,052 |
+| accelerator jobs=4 | broad | 976 | 250 | 266,200 |
 
 ## Watch smoke
 
-The paired stock/Rust watch run took 44.47 seconds and passed:
+The paired stock/Rust watch run took 44.99 seconds and passed:
 
 - input change
 - generated-output deletion and restoration
@@ -109,11 +109,11 @@ outputs, and produced the same SHA-256 output hash:
 - `jobs=2` was the best setting for every measured case on this runner.
 - `jobs=4` was slower than `jobs=2`, so the higher worker count is not a
   default candidate for this ten-input fixture.
-- The accelerator improved clean builds by 1.19–1.37x and warm builds by
-  1.90–2.58x, including the project-facing launcher.
-- Incremental accelerator runs used roughly 266–267 MiB peak RSS versus
-  roughly 162 MiB for stock. Clean runs used less peak RSS than stock, but
-  still had substantially higher fixed initialization cost than warm runs.
+- The accelerator improved clean builds by 1.15–1.58x and warm builds by
+  1.81–3.08x, including the project-facing launcher.
+- Incremental accelerator runs used roughly 266–268 MiB peak RSS versus
+  roughly 162 MiB for stock. Clean runs used 651–658 MiB versus 694 MiB for
+  stock, while still completing faster than stock.
 
 ## Scope and limitations
 
