@@ -187,7 +187,10 @@ run_script_probe() {
   local log="$results_dir/$probe_name.log"
   printf 'verify: compatibility: start %s\n' "$probe_name"
   if bash "$script_dir/$script_name" >"$log" 2>&1; then
-    grep -F "$output_prefix" "$log" || true
+    grep -F -- "$output_prefix" "$log" || {
+      printf 'missing expected output: %s\n' "$output_prefix" >&2
+      return 1
+    }
   else
     printf '%s\n' "--- $probe_name ---" >&2
     sed -n '1,260p' "$log" >&2
@@ -200,7 +203,7 @@ run_quick() {
   (cd "$repo_root/dart_worker" && \
     PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get)
   (cd "$repo_root" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" analyze dart_worker)
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics analyze dart_worker)
   bash "$script_dir/smoke.sh"
   if [[ "${VERIFY_ARBITRARY_BUILDER:-0}" == 1 ]]; then
     bash "$script_dir/correctness_arbitrary_builder.sh"
@@ -245,11 +248,13 @@ run_compatibility_lifecycle_suite() {
 run_compatibility_graph_suite() {
   run_script_probe target-cycle correctness_target_cycle.sh 'target-cycle:'
   run_script_probe dependency-target correctness_arbitrary_dependency_target.sh 'arbitrary-dependency-target:'
+  run_script_probe applies-builders correctness_applies_builder.sh 'applies-builders:'
 }
 
 run_compatibility_mapping_suite() {
   run_script_probe capture correctness_capture_builder.sh 'capture-builder:'
   run_script_probe multi-mapping correctness_multi_mapping_builder.sh 'multi-mapping-builder:'
+  run_script_probe drift correctness_drift.sh 'drift-compatibility:'
 }
 
 run_full() {

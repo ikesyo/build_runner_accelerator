@@ -2,7 +2,7 @@ use crate::assets::{
     add_current_generated_assets, add_tracked_dependency_assets, add_tracked_glob_assets,
     config_digest, write_atomic,
 };
-use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, RustBuildConfig};
+use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder, RustBuildConfig};
 use crate::cli::Options;
 use crate::digest::digest_bytes;
 use crate::frontend::{run_dart_fallback, select_frontend, worker_executable};
@@ -11,7 +11,10 @@ use crate::metrics::{
     FilesystemMetrics, graph_file_size, print_filesystem_metrics, print_graph_metrics,
     print_pool_metrics, print_workspace_read_metrics, runtime_metrics_enabled, snapshot_summary,
 };
-use crate::plan::{build_specs_for_kind, output_digest, output_path, scoped_action_key};
+use crate::plan::{
+    build_specs_for_kind, build_specs_for_phase, output_digest, output_path,
+    scoped_action_key, validate_unique_outputs,
+};
 use crate::worker::{BuildRequest, WorkerPool};
 use crate::workspace::Workspace;
 use std::collections::{BTreeMap, BTreeSet};
@@ -93,13 +96,52 @@ pub(crate) fn run_with_config(
     // a post-process input (or a normal input for a later phase) while
     // planning this build. Recompute until removing one stale output exposes
     // another stale action.
-    let normal_specs = loop {
-        let specs = build_specs_for_kind(
-            &workspace,
-            &normal_snapshot,
-            &build_config,
-            Some(BuilderKind::Normal),
-        )?;
+    let (normal_specs, normal_planning_snapshot) = loop {
+        let normal_phases = build_config
+            .builders
+            .iter()
+            .filter(|builder| builder.definition.kind == BuilderKind::Normal)
+            .map(|builder| builder.phase)
+            .collect::<BTreeSet<_>>();
+        let mut planning_snapshot = normal_snapshot.clone();
+        let mut specs = Vec::new();
+        for phase in normal_phases {
+            let phase_specs = build_specs_for_phase(
+                &workspace,
+                &planning_snapshot,
+                &build_config,
+                BuilderKind::Normal,
+                phase,
+            )?;
+            for spec in &phase_specs {
+                // Optional builders are outside the dynamic subset today, but
+                // keep this guard aligned with build_runner's lazy output
+                // semantics if they are admitted in the future.
+                if spec.builder.output_is_optional {
+                    continue;
+                }
+                for output in &spec.outputs {
+                    let planned = crate::snapshot::AssetSnapshot {
+                        exists: true,
+                        digest: digest_bytes(b"<planned>"),
+                        size: 0,
+                    };
+                    planning_snapshot
+                        .entry(output.clone())
+                        .and_modify(|entry| {
+                            // A previous action may have tracked this path as
+                            // missing. Once an earlier phase declares it, the
+                            // planned output must become visible again.
+                            if !entry.exists {
+                                *entry = planned.clone();
+                            }
+                        })
+                        .or_insert(planned);
+                }
+            }
+            specs.extend(phase_specs);
+        }
+        validate_unique_outputs(&specs)?;
         let expected_keys = specs
             .iter()
             .map(|spec| scoped_action_key(&spec.target, &spec.builder.id, &spec.input))
@@ -124,27 +166,14 @@ pub(crate) fn run_with_config(
             }
         }
         if !removed {
-            break specs;
+            break (specs, planning_snapshot);
         }
     };
     // A post-process action may consume an output that is created during this
-    // build. Add required normal-builder outputs to the planning snapshot so
-    // those actions are represented before the normal phase commits.
-    let mut post_snapshot = normal_snapshot;
-    for spec in &normal_specs {
-        if spec.builder.output_is_optional {
-            continue;
-        }
-        for output in &spec.outputs {
-            post_snapshot
-                .entry(output.clone())
-                .or_insert(crate::snapshot::AssetSnapshot {
-                    exists: true,
-                    digest: digest_bytes(b"<planned>"),
-                    size: 0,
-                });
-        }
-    }
+    // build. The phase-aware planning snapshot includes outputs declared by all
+    // normal phases, so post-process builders see every output that will exist
+    // when their final phase starts.
+    let post_snapshot = normal_planning_snapshot;
     let post_specs = build_specs_for_kind(
         &workspace,
         &post_snapshot,
@@ -312,51 +341,48 @@ pub(crate) fn run_with_config(
         let mut resolver_needs_reset = false;
         let mut initialized_package = first_package;
 
-        for post_process_phase in [false, true] {
-            for configured_builder in &build_config.builders {
-                let builder = configured_builder.definition.as_ref();
-                if (builder.kind == BuilderKind::PostProcess) != post_process_phase {
-                    continue;
-                }
-                let phase_specs = dirty
-                    .iter()
-                    .filter(|spec| {
-                        spec.target == configured_builder.target && spec.builder.id == builder.id
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let requests = phase_specs
-                    .iter()
-                    .map(|spec| BuildRequest {
-                        builder: spec.builder.id.to_owned(),
-                        input: spec.input.clone(),
-                        outputs: spec.outputs.clone(),
-                        options: spec.options.clone(),
-                        phase: spec.phase,
-                        instance_key: spec.instance_key.clone(),
-                        post_process: builder.kind == BuilderKind::PostProcess,
-                    })
-                    .collect::<Vec<_>>();
-                if requests.is_empty() {
-                    continue;
-                }
-                if configured_builder.package != initialized_package {
-                    active_pool.initialize(
-                        &workspace.root,
-                        &configured_builder.package,
-                        &config_digest,
-                        phase_count,
-                    )?;
-                    initialized_package = configured_builder.package.clone();
-                    resolver_needs_reset = false;
-                } else if resolver_needs_reset {
-                    active_pool.reset_resolver()?;
-                    resolver_needs_reset = false;
-                }
-                let results = active_pool
-                    .build_parallel(&workspace, &requests, &overlay, &deleted_overlay)?;
+        for configured_builder_index in execution_order(&build_config.builders) {
+            let configured_builder = &build_config.builders[configured_builder_index];
+            let builder = configured_builder.definition.as_ref();
+            let phase_specs = dirty
+                .iter()
+                .filter(|spec| {
+                    spec.target == configured_builder.target && spec.builder.id == builder.id
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let requests = phase_specs
+                .iter()
+                .map(|spec| BuildRequest {
+                    builder: spec.builder.id.to_owned(),
+                    input: spec.input.clone(),
+                    outputs: spec.outputs.clone(),
+                    options: spec.options.clone(),
+                    phase: spec.phase,
+                    instance_key: spec.instance_key.clone(),
+                    post_process: builder.kind == BuilderKind::PostProcess,
+                })
+                .collect::<Vec<_>>();
+            if requests.is_empty() {
+                continue;
+            }
+            if configured_builder.package != initialized_package {
+                active_pool.initialize(
+                    &workspace.root,
+                    &configured_builder.package,
+                    &config_digest,
+                    phase_count,
+                )?;
+                initialized_package = configured_builder.package.clone();
+                resolver_needs_reset = false;
+            } else if resolver_needs_reset {
+                active_pool.reset_resolver()?;
+                resolver_needs_reset = false;
+            }
+            let results = active_pool
+                .build_parallel(&workspace, &requests, &overlay, &deleted_overlay)?;
 
-                for (spec, result) in phase_specs.into_iter().zip(results) {
+            for (spec, result) in phase_specs.into_iter().zip(results) {
                 if result.status != "success" {
                     return Err(io::Error::other(
                         result.error.unwrap_or_else(|| "Builder failed".to_owned()),
@@ -387,7 +413,9 @@ pub(crate) fn run_with_config(
 
                 let allowed = spec.outputs.iter().cloned().collect::<BTreeSet<_>>();
                 for generated in &result.outputs {
-                    if builder.kind == BuilderKind::Normal && !allowed.contains(&generated.asset) {
+                    if builder.kind == BuilderKind::Normal
+                        && !allowed.contains(&generated.asset)
+                    {
                         return Err(io::Error::other(format!(
                             "unexpected output from {}: {}",
                             spec.builder.id, generated.asset
@@ -467,7 +495,8 @@ pub(crate) fn run_with_config(
                     }
                 }
                 for generated in &result.outputs {
-                    output_digests.insert(generated.asset.clone(), digest_bytes(&generated.bytes));
+                    output_digests
+                        .insert(generated.asset.clone(), digest_bytes(&generated.bytes));
                 }
                 pending_actions.push((
                     scoped_action_key(&spec.target, &spec.builder.id, &spec.input),
@@ -488,9 +517,8 @@ pub(crate) fn run_with_config(
                 ));
             }
 
-                if builder.kind == BuilderKind::Normal && builder.build_to == BuildTo::Source {
-                    resolver_needs_reset = true;
-                }
+            if builder.kind == BuilderKind::Normal && builder.build_to == BuildTo::Source {
+                resolver_needs_reset = true;
             }
         }
 
@@ -562,6 +590,25 @@ pub(crate) fn run_with_config(
     Ok(())
 }
 
+/// Return the order in which configured builders may observe each other's
+/// outputs. Manifest entries retain target-first ordering for stable planning,
+/// but execution must complete every normal phase before moving to the next
+/// target order so cross-target phase dependencies see fresh overlay outputs.
+fn execution_order(builders: &[ConfiguredBuilder]) -> Vec<usize> {
+    let mut order = (0..builders.len()).collect::<Vec<_>>();
+    order.sort_by(|left_index, right_index| {
+        let left = &builders[*left_index];
+        let right = &builders[*right_index];
+        (left.definition.kind == BuilderKind::PostProcess)
+            .cmp(&(right.definition.kind == BuilderKind::PostProcess))
+            .then_with(|| left.phase.cmp(&right.phase))
+            .then_with(|| left.target_order.cmp(&right.target_order))
+            .then_with(|| left.target.cmp(&right.target))
+            .then_with(|| left.definition.id.cmp(&right.definition.id))
+    });
+    order
+}
+
 fn expand_dirty_dependents(
     dirty: &mut Vec<crate::plan::BuildSpec>,
     specs: &[crate::plan::BuildSpec],
@@ -613,5 +660,57 @@ fn expand_dirty_dependents(
             }
         }
         cursor += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::execution_order;
+    use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    fn configured_builder(
+        id: &str,
+        target: &str,
+        target_order: u32,
+        phase: u32,
+    ) -> ConfiguredBuilder {
+        ConfiguredBuilder {
+            definition: Arc::new(BuilderDefinition {
+                id: id.to_owned(),
+                kind: BuilderKind::Normal,
+                extensions: Vec::new(),
+                post_process_input_extensions: Vec::new(),
+                build_to: BuildTo::Source,
+                phase,
+                output_is_optional: false,
+                required_input_suffix: None,
+                excluded_input_suffixes: Vec::new(),
+                applies_builder: None,
+            }),
+            target: target.to_owned(),
+            package: "app".to_owned(),
+            target_order,
+            phase,
+            excluded_input_suffixes: Vec::new(),
+            generate_for: vec!["**".to_owned()],
+            generate_for_exclude: Vec::new(),
+            target_sources: vec!["**".to_owned()],
+            target_sources_exclude: Vec::new(),
+            options: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn execution_order_runs_cross_target_producer_before_consumer() {
+        let builders = vec![
+            // Target 0 consumes an output produced by target 1 in an earlier
+            // phase. Phase order must win over target order.
+            configured_builder("consumer", "app:consumer", 0, 1),
+            configured_builder("producer", "app:producer", 1, 0),
+        ];
+
+        assert_eq!(execution_order(&builders), vec![1, 0]);
     }
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,6 +8,8 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 const _manifestVersion = 6;
+const _factoryProbeTimeout = Duration(seconds: 30);
+const _factoryProbeKillGracePeriod = Duration(seconds: 1);
 
 Future<void> generateBuilderManifest(List<String> arguments) async {
   final options = _Arguments.parse(arguments);
@@ -183,10 +186,33 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     return;
   }
 
-  final compatibleDefinitions = <String, _ManifestDefinition>{};
+  // A build.yaml definition may expose more than one factory. build_runner
+  // creates one build phase per factory, and each factory is allowed to
+  // advertise a different buildExtensions map. Keep those factories as
+  // separate manifest definitions so the Rust planner can make the same
+  // per-factory decisions about inputs and outputs.
+  final selectedDefinitionKeys = selected.values
+      .map((builder) => builder.definition.key)
+      .toSet();
+  final probeDefinitions = definitions.values
+      .where((info) {
+        if (!selectedDefinitionKeys.contains(info.key)) return false;
+        if (info.isPostProcess) {
+          // Post-process builders in older build_config versions do not carry
+          // their input extensions in build.yaml. Probe the runtime builder in
+          // that case (source_gen and drift both use this shape).
+          // ignore: deprecated_member_use
+          return info.postProcess!.inputExtensions == null &&
+              _knownPostProcessInputExtensions(info.postProcess!) == null;
+        }
+        return info.normal!.builderFactories.length > 1;
+      })
+      .toList(growable: false);
+  final probedMappings = await _probeFactoryMappings(root, probeDefinitions);
+  final compatibleDefinitions = <String, List<_ManifestDefinition>>{};
   for (final info in definitions.values) {
-    final converted = _tryConvertDefinition(info);
-    if (converted != null) {
+    final converted = _tryConvertDefinition(info, probedMappings[info.key]);
+    if (converted != null && converted.isNotEmpty) {
       compatibleDefinitions[info.key] = converted;
     }
   }
@@ -211,8 +237,8 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   final activeEntries = <Map<String, dynamic>>[];
   final selectedDefinitions = <String>{};
   final allOutputSuffixes = <String>{
-    for (final key in compatibleDefinitions.keys)
-      ...compatibleDefinitions[key]!.outputSuffixes,
+    for (final definitions in compatibleDefinitions.values)
+      for (final definition in definitions) ...definition.outputSuffixes,
   };
   final normalDefinitions = <String, _DefinitionInfo>{
     for (final entry in definitions.entries)
@@ -223,10 +249,16 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     normalDefinitions,
     rootConfig.globalOptions,
   );
-  final builderOrder = <String, int>{
-    for (var index = 0; index < globallyOrderedKeys.length; index++)
-      globallyOrderedKeys[index]: index,
-  };
+  // Flatten the factory phases in the same order as build_runner's phase
+  // creator: definition order first, then factory order within a definition.
+  final builderOrder = <String, int>{};
+  var nextBuilderOrder = 0;
+  for (final key in globallyOrderedKeys) {
+    for (final definition in compatibleDefinitions[key] ?? const []) {
+      if (definition.isPostProcess) continue;
+      builderOrder[definition.id] = nextBuilderOrder++;
+    }
+  }
   for (final target in orderedTargets) {
     final componentIndex = targetOrder.componentIndex[target.target.key]!;
     final memberIndex = targetOrder.memberIndex[target.target.key]!;
@@ -248,39 +280,50 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
             .toList()
           ..sort();
     final orderedKeys = <String>[...normalKeys, ...postProcessKeys];
-    final outputSuffixes = <String>{
-      for (final key in normalKeys)
-        ...compatibleDefinitions[key]!.outputSuffixes,
-    };
     for (final key in orderedKeys) {
       final selectedBuilder = targetBuilders.firstWhere(
         (builder) => builder.definition.key == key,
       );
-      final converted = compatibleDefinitions[key]!;
       final patterns = _patterns(selectedBuilder.generateFor);
-      selectedDefinitions.add(key);
-      activeEntries.add(
-        converted.toJson(
-          generateFor: patterns.include,
-          generateForExclude: patterns.exclude,
-          targetSources: target.sources.include,
-          targetSourcesExclude: target.sources.exclude,
-          options: _jsonMap(selectedBuilder.options),
-          phase: converted.isPostProcess
-              ? 0
-              : builderOrder[key]! * targetOrder.maxComponentSize + memberIndex,
-          target: target.target.key,
-          package: target.package.name,
-          targetOrder: componentIndex,
-          excludedInputSuffixes: outputSuffixes.toList()..sort(),
-        ),
-      );
+      for (final converted in compatibleDefinitions[key]!) {
+        selectedDefinitions.add(converted.id);
+        final excludedInputSuffixes = converted.isPostProcess
+            ? <String>[]
+            : (<String>{
+                for (final candidateKey in normalKeys)
+                  for (final candidate in compatibleDefinitions[candidateKey]!)
+                    if (!candidate.isPostProcess &&
+                        builderOrder[candidate.id]! >=
+                            builderOrder[converted.id]!)
+                      ...candidate.outputSuffixes,
+              }.toList()..sort());
+        activeEntries.add(
+          converted.toJson(
+            generateFor: patterns.include,
+            generateForExclude: patterns.exclude,
+            targetSources: target.sources.include,
+            targetSourcesExclude: target.sources.exclude,
+            options: _jsonMap(selectedBuilder.options),
+            phase: converted.isPostProcess
+                ? 0
+                : builderOrder[converted.id]! * targetOrder.maxComponentSize +
+                      memberIndex,
+            target: target.target.key,
+            package: target.package.name,
+            targetOrder: componentIndex,
+            excludedInputSuffixes: excludedInputSuffixes,
+          ),
+        );
+      }
     }
   }
 
+  final allCompatibleDefinitions = <_ManifestDefinition>[
+    for (final definitions in compatibleDefinitions.values) ...definitions,
+  ]..sort((left, right) => left.id.compareTo(right.id));
   final definitionEntries = <Map<String, dynamic>>[
-    for (final key in compatibleDefinitions.keys.toList()..sort())
-      compatibleDefinitions[key]!.toJson(
+    for (final definition in allCompatibleDefinitions)
+      definition.toJson(
         generateFor: const [],
         generateForExclude: const [],
         targetSources: const [],
@@ -295,8 +338,9 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   ];
 
   final catalogEntries = <_CatalogEntry>[
-    for (final key in selectedDefinitions)
-      _catalogEntry(compatibleDefinitions[key]!),
+    for (final definition in allCompatibleDefinitions)
+      if (selectedDefinitions.contains(definition.id))
+        _catalogEntry(definition),
   ];
 
   await _writeManifest(
@@ -569,15 +613,20 @@ List<String> _orderBuilders(
       final childOutputs = child.buildExtensions.values.expand(
         (value) => value,
       );
-      if (parent.requiredInputs.any(
+      final childProvidesRequiredInput = parent.requiredInputs.any(
         (required) => childOutputs.any((output) => output.endsWith(required)),
-      )) {
+      );
+      if (childProvidesRequiredInput) {
         addEdge(childKey, parentKey);
       }
       if (parent.runsBefore.contains(childKey)) {
         addEdge(parentKey, childKey);
       }
-      if (parent.appliesBuilders.contains(childKey)) {
+      if (parent.appliesBuilders.contains(childKey) &&
+          !childProvidesRequiredInput) {
+        // Applied builders consume outputs produced by their parent phase.
+        // An existing required-input edge takes precedence when an applied
+        // builder prepares inputs for its parent.
         addEdge(parentKey, childKey);
       }
       final childGlobal = globalOptions[childKey];
@@ -608,18 +657,329 @@ List<String> _orderBuilders(
   return result;
 }
 
-_ManifestDefinition? _tryConvertDefinition(_DefinitionInfo info) {
+Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
+  String root,
+  Iterable<_DefinitionInfo> definitions,
+) async {
+  final probeDefinitions = definitions.toList(growable: false);
+  if (probeDefinitions.isEmpty) return const {};
+  final packageConfig = _findPackageConfigPath(root);
+  if (packageConfig == null) return const {};
+
+  Directory? temporary;
+  try {
+    temporary = await Directory.systemTemp.createTemp(
+      'build-runner-accelerator-factory-probe-',
+    );
+    final probeFile = File(p.join(temporary.path, 'probe.dart'));
+    final resultFile = File(p.join(temporary.path, 'result.json'));
+    await probeFile.writeAsString(_factoryProbeSource(probeDefinitions));
+    // Process.start is required here so a misbehaving factory probe can be
+    // terminated instead of blocking manifest generation indefinitely.
+    final process = await Process.start(Platform.resolvedExecutable, [
+      '--packages=$packageConfig',
+      probeFile.path,
+      resultFile.path,
+    ], workingDirectory: root);
+    // Consume both pipes while the probe runs; otherwise a verbose probe can
+    // block on a full child-process pipe before the timeout is reached.
+    unawaited(process.stdout.drain<void>());
+    unawaited(process.stderr.drain<void>());
+
+    int exitCode;
+    try {
+      exitCode = await process.exitCode.timeout(_factoryProbeTimeout);
+    } on TimeoutException {
+      process.kill();
+      try {
+        await process.exitCode.timeout(_factoryProbeKillGracePeriod);
+      } on TimeoutException {
+        // The child may be outside our control; the probe still must not
+        // keep manifest generation blocked.
+      }
+      return const {};
+    }
+    if (exitCode != 0 || !resultFile.existsSync()) return const {};
+    final decoded = jsonDecode(await resultFile.readAsString());
+    if (decoded is! Map) return const {};
+
+    final probed = <String, List<_FactoryMapping>>{};
+    for (final entry in decoded.entries) {
+      final info = probeDefinitions
+          .where((candidate) => candidate.key == entry.key)
+          .firstOrNull;
+      if (info == null || entry.value is! List) continue;
+      final expectedFactories = info.isPostProcess
+          ? <String>[info.postProcess!.builderFactory]
+          : info.normal!.builderFactories;
+      final rawMappings = entry.value as List;
+      if (rawMappings.length != expectedFactories.length) continue;
+      final mappings = <_FactoryMapping>[];
+      var valid = true;
+      for (var index = 0; index < rawMappings.length; index++) {
+        final raw = rawMappings[index];
+        if (raw is! Map || raw['factory'] != expectedFactories[index]) {
+          valid = false;
+          break;
+        }
+        final rawBuildExtensions = raw['build_extensions'];
+        if (rawBuildExtensions is! Map) {
+          valid = false;
+          break;
+        }
+        final buildExtensions = <String, List<String>>{};
+        for (final extension in rawBuildExtensions.entries) {
+          final input = extension.key;
+          final outputs = extension.value;
+          if (input is! String ||
+              outputs is! List ||
+              outputs.any((output) => output is! String)) {
+            valid = false;
+            break;
+          }
+          buildExtensions[input] = outputs.cast<String>();
+        }
+        if (!valid) break;
+        final rawInputExtensions = raw['input_extensions'];
+        final inputExtensions = rawInputExtensions == null
+            ? null
+            : rawInputExtensions is List &&
+                  rawInputExtensions.every((input) => input is String)
+            ? rawInputExtensions.cast<String>()
+            : null;
+        if (raw.containsKey('input_extensions') && inputExtensions == null) {
+          valid = false;
+          break;
+        }
+        mappings.add(
+          _FactoryMapping(
+            factory: raw['factory'] as String,
+            buildExtensions: buildExtensions,
+            inputExtensions: inputExtensions,
+          ),
+        );
+      }
+      if (valid) probed[entry.key as String] = mappings;
+    }
+    return probed;
+  } catch (_) {
+    // A probe is an optimization boundary, not a reason to fail the build.
+    // The caller will leave any definition without a trustworthy probe in
+    // the normal Dart fallback path.
+    return const {};
+  } finally {
+    if (temporary != null && temporary.existsSync()) {
+      await temporary.delete(recursive: true);
+    }
+  }
+}
+
+String? _findPackageConfigPath(String root) {
+  var packageConfigRoot = p.canonicalize(root);
+  while (true) {
+    final candidate = p.join(
+      packageConfigRoot,
+      '.dart_tool',
+      'package_config.json',
+    );
+    if (File(candidate).existsSync()) return candidate;
+    final parent = p.dirname(packageConfigRoot);
+    if (parent == packageConfigRoot) return null;
+    packageConfigRoot = parent;
+  }
+}
+
+String _factoryProbeSource(Iterable<_DefinitionInfo> definitions) {
+  // These values are later emitted into executable Dart source. Keep the
+  // probe boundary as strict as the manifest converter: only package imports
+  // and identifier-shaped factory names may cross it. In particular, a raw
+  // factory value must never reach `$importPrefix.$factory` below.
+  final safeDefinitions = definitions
+      .where((definition) {
+        if (definition.isPostProcess) {
+          final postProcess = definition.postProcess!;
+          return postProcess.import.startsWith('package:') &&
+              _identifier.hasMatch(postProcess.builderFactory);
+        }
+        final normal = definition.normal!;
+        return normal.import.startsWith('package:') &&
+            normal.builderFactories.every(_identifier.hasMatch);
+      })
+      .toList(growable: false);
+  final sorted = safeDefinitions.toList()
+    ..sort((left, right) => left.key.compareTo(right.key));
+  final imports = <String, String>{};
+  for (final definition in sorted) {
+    final importUri = definition.isPostProcess
+        ? definition.postProcess!.import
+        : definition.normal!.import;
+    imports.putIfAbsent(
+      importUri,
+      () => 'builderImport' + imports.length.toString(),
+    );
+  }
+
+  final output = StringBuffer()
+    ..writeln('import \'dart:convert\';')
+    ..writeln('import \'dart:io\';')
+    ..writeln(
+      "import 'package:build/build.dart' show Builder, BuilderOptions, PostProcessBuilder;",
+    );
+  for (final entry in imports.entries) {
+    output.writeln(
+      'import ' + _dartSourceString(entry.key) + ' as ' + entry.value + ';',
+    );
+  }
+  output
+    ..writeln()
+    ..writeln('void main(List<String> args) {')
+    ..writeln('  if (args.length != 1) {')
+    ..writeln('    exitCode = 64;')
+    ..writeln('    return;')
+    ..writeln('  }')
+    ..writeln('  final result = <String, dynamic>{};');
+  for (final definition in sorted) {
+    final importUri = definition.isPostProcess
+        ? definition.postProcess!.import
+        : definition.normal!.import;
+    final importPrefix = imports[importUri]!;
+    output
+      ..writeln('    try {')
+      ..writeln(
+        '      result[${_dartSourceString(definition.key)}] = <dynamic>[',
+      );
+    if (definition.isPostProcess) {
+      final factory = definition.postProcess!.builderFactory;
+      output
+        ..writeln('      <String, dynamic>{')
+        ..writeln('        \'factory\': ${_dartSourceString(factory)},')
+        ..writeln("        'build_extensions': <String, List<String>>{},")
+        ..writeln(
+          '        \'input_extensions\': _postProcessInputExtensions('
+          '$importPrefix.$factory(BuilderOptions(<String, dynamic>{}))),',
+        )
+        ..writeln('      },');
+    } else {
+      for (final factory in definition.normal!.builderFactories) {
+        output
+          ..writeln('      <String, dynamic>{')
+          ..writeln('        \'factory\': ${_dartSourceString(factory)},')
+          ..writeln("        'build_extensions': _builderBuildExtensions(")
+          ..writeln(
+            '          $importPrefix.$factory('
+            'BuilderOptions(<String, dynamic>{}, isRoot: true)),',
+          )
+          ..writeln('        ),')
+          ..writeln('      },');
+      }
+    }
+    output
+      ..writeln('      ];')
+      ..writeln('    } catch (_) {}');
+  }
+  output
+    ..writeln('  File(args.single).writeAsStringSync(jsonEncode(result));')
+    ..writeln('}')
+    ..writeln()
+    ..writeln(
+      'Map<String, List<String>> _builderBuildExtensions(Builder builder) => '
+      '<String, List<String>>{'
+      'for (final entry in builder.buildExtensions.entries) '
+      'entry.key: entry.value.toList(growable: false),'
+      '};',
+    )
+    ..writeln()
+    ..writeln(
+      'List<String> _postProcessInputExtensions(PostProcessBuilder builder) '
+      '=> builder.inputExtensions.toList(growable: false);',
+    );
+  return output.toString();
+}
+
+List<_ManifestDefinition>? _tryConvertDefinition(
+  _DefinitionInfo info,
+  List<_FactoryMapping>? probedMappings,
+) {
   if (info.isPostProcess) {
-    return _tryConvertPostProcessDefinition(info.postProcess!);
+    final runtimeInputExtensions = probedMappings?.length == 1
+        ? probedMappings!.single.inputExtensions
+        : null;
+    final converted = _tryConvertPostProcessDefinition(
+      info.postProcess!,
+      runtimeInputExtensions: runtimeInputExtensions,
+    );
+    return converted == null ? null : [converted];
   }
   final definition = info.normal!;
-  if (definition.builderFactories.length != 1) return null;
   if (!definition.import.startsWith('package:')) return null;
-  if (!_identifier.hasMatch(definition.builderFactories.single)) return null;
-  if (definition.buildExtensions.isEmpty) return null;
+  if (definition.builderFactories.any(
+    (factory) => !_identifier.hasMatch(factory),
+  )) {
+    return null;
+  }
+  if (definition.requiredInputs.length > 1) return null;
+  if (definition.requiredInputs.isNotEmpty &&
+      !_simpleExtension(definition.requiredInputs.single)) {
+    return null;
+  }
+  // Optional builders require build_runner's demand-driven phase semantics,
+  // which the Rust action planner does not model yet.
+  if (definition.isOptional) return null;
 
+  final factoryMappings = definition.builderFactories.length == 1
+      ? <_FactoryMapping>[
+          _FactoryMapping(
+            factory: definition.builderFactories.single,
+            buildExtensions: definition.buildExtensions,
+          ),
+        ]
+      : probedMappings;
+  if (factoryMappings == null ||
+      factoryMappings.length != definition.builderFactories.length) {
+    return null;
+  }
+
+  final converted = <_ManifestDefinition>[];
+  for (
+    var factoryIndex = 0;
+    factoryIndex < factoryMappings.length;
+    factoryIndex++
+  ) {
+    final mapping = factoryMappings[factoryIndex];
+    if (mapping.factory != definition.builderFactories[factoryIndex]) {
+      return null;
+    }
+    final extensions = _manifestExtensions(mapping.buildExtensions);
+    if (extensions == null) return null;
+    converted.add(
+      _ManifestDefinition(
+        id: _manifestFactoryId(
+          definition.key,
+          factoryIndex,
+          definition.builderFactories.length,
+        ),
+        importUri: definition.import,
+        factory: mapping.factory,
+        kind: 'normal',
+        extensions: extensions,
+        inputExtensions: const [],
+        buildTo: definition.buildTo == BuildTo.source ? 'source' : 'cache',
+        outputIsOptional: false,
+        requiredInputSuffix: definition.requiredInputs.isEmpty
+            ? null
+            : definition.requiredInputs.single,
+      ),
+    );
+  }
+  return converted;
+}
+
+List<_ManifestExtension>? _manifestExtensions(
+  Map<String, List<String>> buildExtensions,
+) {
+  if (buildExtensions.isEmpty) return null;
   final extensions = <_ManifestExtension>[];
-  for (final entry in definition.buildExtensions.entries) {
+  for (final entry in buildExtensions.entries) {
     final inputIsAnchored = entry.key.startsWith('^');
     final input = inputIsAnchored ? entry.key.substring(1) : entry.key;
     final captureNames = _captureGroupNames(input);
@@ -662,33 +1022,13 @@ _ManifestDefinition? _tryConvertDefinition(_DefinitionInfo info) {
       ),
     );
   }
-  if (definition.requiredInputs.length > 1) return null;
-  if (definition.requiredInputs.isNotEmpty &&
-      !_simpleExtension(definition.requiredInputs.single)) {
-    return null;
-  }
-  // Optional builders require build_runner's demand-driven phase semantics,
-  // which the Rust action planner does not model yet.
-  if (definition.isOptional) return null;
-
-  return _ManifestDefinition(
-    id: definition.key,
-    importUri: definition.import,
-    factory: definition.builderFactories.single,
-    kind: 'normal',
-    extensions: extensions,
-    inputExtensions: const [],
-    buildTo: definition.buildTo == BuildTo.source ? 'source' : 'cache',
-    outputIsOptional: false,
-    requiredInputSuffix: definition.requiredInputs.isEmpty
-        ? null
-        : definition.requiredInputs.single,
-  );
+  return extensions;
 }
 
 _ManifestDefinition? _tryConvertPostProcessDefinition(
-  PostProcessBuilderDefinition definition,
-) {
+  PostProcessBuilderDefinition definition, {
+  List<String>? runtimeInputExtensions,
+}) {
   // build_config 1.2 exposes this field as deprecated while retaining it for
   // the v1 post-process manifest shape.
   // ignore: deprecated_member_use
@@ -697,15 +1037,12 @@ _ManifestDefinition? _tryConvertPostProcessDefinition(
   );
   // Current source_gen deliberately leaves this legacy config field unset and
   // supplies the extension from the runtime FileDeletingBuilder instead.
-  // Keep the known built-in cleanup builder in the dynamic subset so current
+  // Keep the known built-in cleanup builder in the converted subset so current
   // json_serializable builds can preserve source_gen's .g.part cleanup.
-  final inputExtensions = configuredInputExtensions == null
-      ? definition.key == 'source_gen:part_cleanup' &&
-                definition.import == 'package:source_gen/builder.dart' &&
-                definition.builderFactory == 'partCleanup'
-            ? const <String>['.g.part']
-            : null
-      : configuredInputExtensions;
+  final inputExtensions =
+      configuredInputExtensions ??
+      runtimeInputExtensions ??
+      _knownPostProcessInputExtensions(definition);
   if (inputExtensions == null || inputExtensions.isEmpty) return null;
   if (!definition.import.startsWith('package:')) return null;
   if (!_identifier.hasMatch(definition.builderFactory)) return null;
@@ -724,6 +1061,48 @@ _ManifestDefinition? _tryConvertPostProcessDefinition(
     outputIsOptional: true,
     requiredInputSuffix: null,
   );
+}
+
+List<String>? _knownPostProcessInputExtensions(
+  PostProcessBuilderDefinition definition,
+) {
+  // These package-specific cases are intentional compatibility fallbacks:
+  // build_config leaves inputExtensions unset for these legacy cleanup builders,
+  // while runtime probing adds a measurable startup cost during manifest
+  // generation. Keep the fallback narrow and covered by compatibility fixtures;
+  // unknown post-process builders still use the generic runtime probe. If a
+  // dependency changes its cleanup inputs, update this mapping or restore probing.
+
+  if (definition.key == 'source_gen:part_cleanup' &&
+      definition.import == 'package:source_gen/builder.dart' &&
+      definition.builderFactory == 'partCleanup') {
+    return const <String>['.g.part'];
+  }
+  if (definition.key == 'drift_dev:cleanup' &&
+      definition.import == 'package:drift_dev/integrations/build.dart' &&
+      definition.builderFactory == 'driftCleanup') {
+    return const <String>[
+      '.temp.dart',
+      '.drift_prep.json',
+      '.drift_module.json',
+    ];
+  }
+  return null;
+}
+
+String _manifestFactoryId(String definitionKey, int factoryIndex, int count) =>
+    count == 1 ? definitionKey : '$definitionKey#factory$factoryIndex';
+
+class _FactoryMapping {
+  _FactoryMapping({
+    required this.factory,
+    required this.buildExtensions,
+    this.inputExtensions,
+  });
+
+  final String factory;
+  final Map<String, List<String>> buildExtensions;
+  final List<String>? inputExtensions;
 }
 
 bool _simpleExtension(String value) =>
@@ -817,7 +1196,7 @@ String _workerSource(Iterable<_CatalogEntry> entries) {
     ..writeln("import 'package:build_runner_accelerator/src/worker.dart';");
   for (final entry in imports.entries) {
     output.writeln(
-      'import ' + _dartString(entry.key) + ' as ' + entry.value + ';',
+      'import ' + _dartSourceString(entry.key) + ' as ' + entry.value + ';',
     );
   }
   output
@@ -827,7 +1206,7 @@ String _workerSource(Iterable<_CatalogEntry> entries) {
   for (final entry in sorted.where((entry) => !entry.isPostProcess)) {
     output.writeln(
       '    ' +
-          _dartString(entry.id) +
+          _dartSourceString(entry.id) +
           ': ' +
           imports[entry.importUri]! +
           '.' +
@@ -841,7 +1220,7 @@ String _workerSource(Iterable<_CatalogEntry> entries) {
   for (final entry in sorted.where((entry) => entry.isPostProcess)) {
     output.writeln(
       '    ' +
-          _dartString(entry.id) +
+          _dartSourceString(entry.id) +
           ': ' +
           imports[entry.importUri]! +
           '.' +
@@ -855,7 +1234,27 @@ String _workerSource(Iterable<_CatalogEntry> entries) {
   return output.toString();
 }
 
-String _dartString(String value) => jsonEncode(value);
+String _dartSourceString(String value) {
+  final output = StringBuffer("'");
+  for (final codeUnit in value.codeUnits) {
+    if (codeUnit == 0x5c || codeUnit == 0x27 || codeUnit == 0x24) {
+      output
+        ..write('\\')
+        ..writeCharCode(codeUnit);
+    } else if (codeUnit < 0x20 ||
+        codeUnit == 0x7f ||
+        codeUnit == 0x2028 ||
+        codeUnit == 0x2029) {
+      output
+        ..write('\\u')
+        ..write(codeUnit.toRadixString(16).padLeft(4, '0'));
+    } else {
+      output.writeCharCode(codeUnit);
+    }
+  }
+  output.write("'");
+  return output.toString();
+}
 
 _CatalogEntry _catalogEntry(_ManifestDefinition definition) => _CatalogEntry(
   id: definition.id,
