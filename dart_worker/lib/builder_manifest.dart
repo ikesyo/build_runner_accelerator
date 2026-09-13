@@ -1481,11 +1481,6 @@ class _ManifestDefinition {
     if (target != null) 'target_order': targetOrder,
     'output_is_optional': outputIsOptional,
     'required_input_suffixes': requiredInputSuffixes,
-    // Keep the legacy field for one-entry manifests while consumers migrate
-    // to the lossless list representation.
-    'required_input_suffix': requiredInputSuffixes.length == 1
-        ? requiredInputSuffixes.single
-        : null,
     'excluded_input_suffixes': excludedInputSuffixes,
     'generate_for': generateFor,
     'generate_for_exclude': generateForExclude,

@@ -115,10 +115,6 @@ pub(crate) struct BuilderManifestDefinition {
     pub(crate) output_is_optional: bool,
     #[serde(default)]
     pub(crate) required_input_suffixes: Vec<String>,
-    // v6 manifests emitted before the list-shaped field used this singular
-    // compatibility key. Accept it when the plural field is absent.
-    #[serde(default)]
-    pub(crate) required_input_suffix: Option<String>,
     #[serde(default)]
     pub(crate) excluded_input_suffixes: Vec<String>,
     #[serde(default)]
@@ -426,14 +422,8 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
         });
     }
 
-    let required_input_suffixes = if entry.required_input_suffixes.is_empty() {
-        entry.required_input_suffix.into_iter().collect::<Vec<_>>()
-    } else {
-        entry.required_input_suffixes
-    };
-    let invalid_required_input = |suffix: &str| {
-        invalid_suffix(suffix) || !suffix.starts_with('.')
-    };
+    let required_input_suffixes = entry.required_input_suffixes;
+    let invalid_required_input = |suffix: &str| invalid_suffix(suffix) || !suffix.starts_with('.');
     if entry.id.is_empty()
         || required_input_suffixes
             .iter()
@@ -700,40 +690,6 @@ mod tests {
         assert_eq!(
             config.builders[0].definition.required_input_suffixes,
             [".first", ".second"]
-        );
-    }
-
-    #[test]
-    fn singular_required_input_field_is_accepted_during_manifest_transition() {
-        let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 6,
-            "fingerprint": "fingerprint",
-            "worker_entrypoint": "dynamic_worker.dart",
-            "builders": [{
-                "id": "example:builder",
-                "input_suffix": ".txt",
-                "output_suffixes": [".generated"],
-                "required_input_suffix": ".legacy",
-                "build_to": "cache",
-                "phase": 0,
-                "target": "example:example",
-                "package": "example",
-                "generate_for": ["lib/**/*.txt"]
-            }],
-            "definitions": [{
-                "id": "example:builder",
-                "input_suffix": ".txt",
-                "output_suffixes": [".generated"],
-                "required_input_suffix": ".legacy",
-                "build_to": "cache",
-                "phase": 0
-            }]
-        }))
-        .unwrap();
-        let config = rust_build_config_from_manifest(manifest).unwrap();
-        assert_eq!(
-            config.builders[0].definition.required_input_suffixes,
-            [".legacy"]
         );
     }
 
