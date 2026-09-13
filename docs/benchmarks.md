@@ -111,9 +111,10 @@ outputs, and produced the same SHA-256 output hash:
   default candidate for this ten-input fixture.
 - The accelerator improved clean builds by 1.15–1.58x and warm builds by
   1.81–3.08x, including the project-facing launcher.
-- Incremental accelerator runs used roughly 266–268 MiB peak RSS versus
-  roughly 162 MiB for stock. Clean runs used 651–658 MiB versus 694 MiB for
-  stock, while still completing faster than stock.
+- Incremental accelerator runs used roughly 266–268 thousand KiB peak RSS
+  versus roughly 162 thousand KiB for stock. Clean runs used 652–658 thousand
+  KiB versus 694 thousand KiB for stock, while still completing faster than
+  stock.
 
 ## Scope and limitations
 
