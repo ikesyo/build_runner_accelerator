@@ -220,12 +220,14 @@ class RpcSession {
   RpcSession(
     this.reader,
     this.writer, {
+    required this.buildId,
     required this.phase,
     required this.postProcess,
   });
 
   final FrameReader reader;
   final FrameWriter writer;
+  final int buildId;
   final int phase;
   final bool postProcess;
   int _nextId = 1000;
@@ -238,6 +240,7 @@ class RpcSession {
       'id': id,
       'op': op,
       ...parameters,
+      'build_id': buildId,
       // Rust applies the same phase-aware logical view as the Dart adapter.
       // Keeping these on every asset request also protects custom workers
       // which do not consume the build request's blocked_assets hint.

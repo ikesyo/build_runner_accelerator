@@ -414,6 +414,7 @@ Future<JsonMap> _runBuild(
     final rpc = RpcSession(
       reader,
       writer,
+      buildId: message['id'] as int,
       phase: _phaseOf(message),
       postProcess: isPostProcess,
     );
