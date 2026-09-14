@@ -699,7 +699,7 @@ fn execution_order(builders: &[ConfiguredBuilder]) -> Vec<usize> {
             .then_with(|| left.target_order.cmp(&right.target_order))
             .then_with(|| left.target.cmp(&right.target))
             .then_with(|| left.definition.id.cmp(&right.definition.id))
-            .then_with(|| left.instance_key.cmp(&right.instance_key))
+            .then_with(|| left.package.cmp(&right.package))
     });
     order
 }
