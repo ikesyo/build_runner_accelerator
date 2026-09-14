@@ -897,7 +897,7 @@ String _factoryProbeSource(Iterable<_FactoryProbeRequest> requests) {
           ..writeln('        \'factory\': ${_dartSourceString(factory)},')
           ..writeln("        'build_extensions': _builderBuildExtensions(")
           ..writeln(
-          '          $importPrefix.$factory($builderOptions),'
+            '          $importPrefix.$factory($builderOptions),',
           )
           ..writeln('        ),');
       }
