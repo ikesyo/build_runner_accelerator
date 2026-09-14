@@ -133,8 +133,8 @@ write_package "$rust_dir"
 run_stock "$stock_dir" "$temporary_dir/initial.stock.log"
 run_rust "$rust_dir" "$temporary_dir/initial.rust.log"
 for output in \
-  lib/input.multi \
-  lib/special.multi \
+  lib/input.runtime \
+  lib/special.runtime \
   lib/special.generated.txt; do
   assert_same_file "$stock_dir/$output" "$rust_dir/$output"
 done
@@ -147,7 +147,7 @@ printf 'special changed\n' >"$stock_dir/lib/special.txt"
 printf 'special changed\n' >"$rust_dir/lib/special.txt"
 run_stock "$stock_dir" "$temporary_dir/change.stock.log"
 run_rust "$rust_dir" "$temporary_dir/change.rust.log"
-for output in lib/special.multi lib/special.generated.txt; do
+for output in lib/special.runtime lib/special.generated.txt; do
   assert_same_file "$stock_dir/$output" "$rust_dir/$output"
 done
 assert_contains "$temporary_dir/change.rust.log" 'Rust frontend: 1 build action(s)'
@@ -156,16 +156,16 @@ mv "$stock_dir/lib/input.txt" "$stock_dir/lib/renamed.txt"
 mv "$rust_dir/lib/input.txt" "$rust_dir/lib/renamed.txt"
 run_stock "$stock_dir" "$temporary_dir/rename.stock.log"
 run_rust "$rust_dir" "$temporary_dir/rename.rust.log"
-assert_same_file "$stock_dir/lib/renamed.multi" "$rust_dir/lib/renamed.multi"
-assert_no_file "$stock_dir/lib/input.multi"
-assert_no_file "$rust_dir/lib/input.multi"
+assert_same_file "$stock_dir/lib/renamed.runtime" "$rust_dir/lib/renamed.runtime"
+assert_no_file "$stock_dir/lib/input.runtime"
+assert_no_file "$rust_dir/lib/input.runtime"
 
 rm -f -- "$stock_dir/lib/special.txt" "$rust_dir/lib/special.txt"
 run_stock "$stock_dir" "$temporary_dir/delete.stock.log"
 run_rust "$rust_dir" "$temporary_dir/delete.rust.log"
-assert_no_file "$stock_dir/lib/special.multi"
+assert_no_file "$stock_dir/lib/special.runtime"
 assert_no_file "$stock_dir/lib/special.generated.txt"
-assert_no_file "$rust_dir/lib/special.multi"
+assert_no_file "$rust_dir/lib/special.runtime"
 assert_no_file "$rust_dir/lib/special.generated.txt"
 assert_contains "$temporary_dir/delete.rust.log" 'Rust frontend: 0 build action(s)'
 
