@@ -198,7 +198,8 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
           return definition.postProcess!.inputExtensions == null &&
               _knownPostProcessInputExtensions(definition.postProcess!) == null;
         }
-        return true;
+        return definition.normal!.builderFactories.length > 1 ||
+            entry.value.options.isNotEmpty;
       })
       .map(
         (entry) => _FactoryProbeRequest(
