@@ -281,6 +281,7 @@ impl WorkerClient {
             "options": request.options,
             "phase": request.phase,
             "instance_key": request.instance_key,
+            "is_root": request.is_root,
             "blocked_assets": request.blocked_assets,
         }))?;
 
@@ -1097,6 +1098,7 @@ pub struct BuildRequest {
     pub options: BTreeMap<String, Value>,
     pub phase: u32,
     pub instance_key: String,
+    pub is_root: bool,
     pub post_process: bool,
     pub blocked_assets: Vec<String>,
 }
