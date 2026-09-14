@@ -51,7 +51,11 @@ jobs:
         shell: bash
         run: |
           dart pub ${{ matrix.resolution }}
-          dart format --output=none --set-exit-if-changed lib bin test tool
+          if ! dart format --output=none --set-exit-if-changed lib bin test tool; then
+            dart format lib/src/builder_manifest.dart
+            git diff -- lib/src/builder_manifest.dart
+            exit 1
+          fi
           dart analyze lib bin test tool
           dart test --compiler=source
       - name: Validate publish package
@@ -78,7 +82,11 @@ jobs:
         run: |
           cd dart_worker
           dart pub get
-          dart format --output=none --set-exit-if-changed lib bin
+          if ! dart format --output=none --set-exit-if-changed lib bin; then
+            dart format lib/builder_manifest.dart
+            git diff -- lib/builder_manifest.dart
+            exit 1
+          fi
           dart analyze lib bin
 
   rust:
