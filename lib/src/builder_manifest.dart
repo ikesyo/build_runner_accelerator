@@ -191,16 +191,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   // application with its resolved options so target-local mapping overrides
   // remain lossless and package-specific Rust branches are unnecessary.
   final probeRequests = selected.entries
-      .where((entry) {
-        final definition = entry.value.definition;
-        if (definition.isPostProcess) {
-          // ignore: deprecated_member_use
-          return definition.postProcess!.inputExtensions == null &&
-              _knownPostProcessInputExtensions(definition.postProcess!) == null;
-        }
-        return definition.normal!.builderFactories.length > 1 ||
-            entry.value.options.isNotEmpty;
-      })
+      .where((entry) => _requiresRuntimeProbe(entry.value))
       .map(
         (entry) => _FactoryProbeRequest(
           id: entry.key,
@@ -229,12 +220,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   for (final entry in selected.entries) {
     final selectedBuilder = entry.value;
     final definition = selectedBuilder.definition;
-    final requiresRuntimeProbe = definition.isPostProcess
-        ? // ignore: deprecated_member_use
-          (definition.postProcess!.inputExtensions == null &&
-              _knownPostProcessInputExtensions(definition.postProcess!) == null)
-        : definition.normal!.builderFactories.length > 1 ||
-            selectedBuilder.options.isNotEmpty;
+    final requiresRuntimeProbe = _requiresRuntimeProbe(selectedBuilder);
     final runtimeMappings = probedMappings[entry.key];
     if (requiresRuntimeProbe) {
       if (runtimeMappings == null ||
@@ -702,6 +688,17 @@ List<String> _orderBuilders(
     throw StateError('Builder ordering contains a cycle');
   }
   return result;
+}
+
+bool _requiresRuntimeProbe(_SelectedBuilder selectedBuilder) {
+  final definition = selectedBuilder.definition;
+  if (definition.isPostProcess) {
+    // ignore: deprecated_member_use
+    return definition.postProcess!.inputExtensions == null &&
+        _knownPostProcessInputExtensions(definition.postProcess!) == null;
+  }
+  return definition.normal!.builderFactories.length > 1 ||
+      selectedBuilder.options.isNotEmpty;
 }
 
 Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
