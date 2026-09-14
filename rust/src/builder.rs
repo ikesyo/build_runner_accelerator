@@ -48,6 +48,9 @@ pub(crate) struct ConfiguredBuilder {
     pub(crate) definition: Arc<BuilderDefinition>,
     pub(crate) target: String,
     pub(crate) package: String,
+    /// Whether this configured builder belongs to the root package. This is
+    /// part of BuilderOptions and can affect the runtime output mapping.
+    pub(crate) is_root: bool,
     pub(crate) target_order: u32,
     pub(crate) phase: u32,
     pub(crate) excluded_input_suffixes: Vec<String>,
@@ -175,6 +178,8 @@ pub(crate) struct BuilderManifestDefinition {
     #[serde(default)]
     pub(crate) package: String,
     #[serde(default)]
+    pub(crate) is_root: bool,
+    #[serde(default)]
     pub(crate) target_order: u32,
 }
 
@@ -274,6 +279,7 @@ pub(crate) fn rust_build_config_from_manifest(
             definition,
             target: entry.target,
             package: entry.package,
+            is_root: entry.is_root,
             target_order: entry.target_order,
             phase: entry.phase,
             excluded_input_suffixes: entry.excluded_input_suffixes,
