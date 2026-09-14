@@ -1,3 +1,4 @@
+use crate::builder::BuilderKind;
 use crate::protocol::{
     BINARY_BUILD_RESULT_MAGIC, BuildResult, IncomingFrame, decode_build_batch_result_frame,
     decode_build_result_frame, read_message_with_size, write_binary_frame, write_frame,
@@ -6,6 +7,7 @@ use crate::worker_kernel::{
     WorkerArtifact, background_worker_aot_if_ready, resolve_worker_artifact,
 };
 use crate::workspace::{Workspace, matches_glob};
+use crate::visibility::AssetVisibility;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -222,6 +224,7 @@ impl WorkerClient {
         request: &BuildRequest,
         overlay: &BTreeMap<String, Vec<u8>>,
         deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
     ) -> io::Result<BuildResult> {
         let started = Instant::now();
         let id = self.next_id();
@@ -236,6 +239,7 @@ impl WorkerClient {
             "options": request.options,
             "phase": request.phase,
             "instance_key": request.instance_key,
+            "blocked_assets": request.blocked_assets,
         }))?;
 
         loop {
@@ -243,7 +247,15 @@ impl WorkerClient {
                 IncomingFrame::Json(response) => match response.get("type").and_then(Value::as_str)
                 {
                     Some("asset_request") => {
-                        self.handle_asset_request(workspace, &response, overlay, deleted_overlay)?
+                        self.handle_asset_request(
+                            workspace,
+                            &response,
+                            overlay,
+                            deleted_overlay,
+                            visibility,
+                            request,
+                            id,
+                        )?
                     }
                     Some("build_result") => {
                         return Err(io::Error::other(
@@ -272,6 +284,7 @@ impl WorkerClient {
         requests: &[BuildRequest],
         overlay: &BTreeMap<String, Vec<u8>>,
         deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
     ) -> io::Result<Vec<BuildResult>> {
         let started = Instant::now();
         let id = self.next_id();
@@ -288,6 +301,7 @@ impl WorkerClient {
                     "options": request.options,
                     "phase": request.phase,
                     "instance_key": request.instance_key,
+                    "blocked_assets": request.blocked_assets,
                 })
             })
             .collect::<Vec<_>>();
@@ -303,7 +317,17 @@ impl WorkerClient {
                 IncomingFrame::Json(response) => match response.get("type").and_then(Value::as_str)
                 {
                     Some("asset_request") => {
-                        self.handle_asset_request(workspace, &response, overlay, deleted_overlay)?
+                        let (build_id, active_request) =
+                            batch_asset_request_context(&response, requests)?;
+                        self.handle_asset_request(
+                            workspace,
+                            &response,
+                            overlay,
+                            deleted_overlay,
+                            visibility,
+                            active_request,
+                            build_id,
+                        )?
                     }
                     Some("build_batch_result") => {
                         return Err(io::Error::other(
@@ -323,6 +347,13 @@ impl WorkerClient {
                     if results.len() != requests.len() {
                         return Err(io::Error::other("worker batch result count mismatch"));
                     }
+                    if results
+                        .iter()
+                        .enumerate()
+                        .any(|(index, result)| result.id != index as u64)
+                    {
+                        return Err(io::Error::other("worker batch result id mismatch"));
+                    }
                     self.metrics.build_us += started.elapsed().as_micros() as u64;
                     return Ok(results);
                 }
@@ -336,7 +367,11 @@ impl WorkerClient {
         request: &Value,
         overlay: &BTreeMap<String, Vec<u8>>,
         deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
+        active_request: &BuildRequest,
+        expected_build_id: u64,
     ) -> io::Result<()> {
+        validate_asset_request_context(request, active_request, expected_build_id)?;
         let started = Instant::now();
         let id = request
             .get("id")
@@ -346,6 +381,8 @@ impl WorkerClient {
             .get("op")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        let phase = active_request.phase;
+        let kind = build_request_kind(active_request);
         self.metrics.asset_requests += 1;
         let response = match operation {
             "read" => {
@@ -354,18 +391,20 @@ impl WorkerClient {
                     .get("asset")
                     .and_then(Value::as_str)
                     .ok_or_else(|| io::Error::other("read request has no asset"))?;
-                let read_result = if deleted_overlay.contains(asset) {
+                let read_result = if visibility.is_blocked(asset, phase, kind, deleted_overlay) {
                     Err(io::Error::new(
                         io::ErrorKind::NotFound,
                         format!("asset not found: {asset}"),
                     ))
                 } else {
-                    overlay
-                        .get(asset)
-                        .cloned()
-                        .map(Arc::new)
-                        .map(Ok)
-                        .unwrap_or_else(|| workspace.read_asset_or_cache_shared(asset))
+                    if let Some(bytes) = overlay.get(asset) {
+                        Ok(Arc::new(bytes.clone()))
+                    } else {
+                        match visibility.location(asset) {
+                            Some(build_to) => workspace.read_asset_at_shared(asset, build_to),
+                            None => workspace.read_asset_or_cache_shared(asset),
+                        }
+                    }
                 };
                 match read_result {
                     Ok(bytes) => {
@@ -397,8 +436,8 @@ impl WorkerClient {
                     .get("asset")
                     .and_then(Value::as_str)
                     .ok_or_else(|| io::Error::other("can_read request has no asset"))?;
-                let value = !deleted_overlay.contains(asset)
-                    && (overlay.contains_key(asset) || workspace.asset_exists_or_cache(asset)?);
+                let value = !visibility.is_blocked(asset, phase, kind, deleted_overlay)
+                    && asset_exists(workspace, asset, overlay, visibility)?;
                 json!({ "v": 1, "type": "asset_response", "id": id, "ok": true, "value": value })
             }
             "find_assets" => {
@@ -411,13 +450,17 @@ impl WorkerClient {
                     .get("pattern")
                     .and_then(Value::as_str)
                     .unwrap_or("**");
-                let mut assets = workspace
-                    .find_assets(package, pattern)?
-                    .into_iter()
-                    .filter(|asset| !deleted_overlay.contains(asset))
-                    .collect::<Vec<_>>();
+                let mut assets = Vec::new();
+                for asset in workspace.find_assets(package, pattern)? {
+                    if visibility.is_blocked(asset.as_str(), phase, kind, deleted_overlay)
+                        || !asset_exists(workspace, &asset, overlay, visibility)?
+                    {
+                        continue;
+                    }
+                    assets.push(asset);
+                }
                 for asset in overlay.keys() {
-                    if !deleted_overlay.contains(asset) {
+                    if !visibility.is_blocked(asset, phase, kind, deleted_overlay) {
                         if let Some((asset_package, asset_path)) = asset.split_once('|') {
                             if asset_package == package && matches_glob(pattern, asset_path) {
                                 assets.push(asset.clone());
@@ -508,6 +551,129 @@ impl WorkerClient {
     }
 }
 
+fn asset_exists(
+    workspace: &Workspace,
+    asset: &str,
+    overlay: &BTreeMap<String, Vec<u8>>,
+    visibility: &AssetVisibility,
+) -> io::Result<bool> {
+    if overlay.contains_key(asset) {
+        return Ok(true);
+    }
+    match visibility.location(asset) {
+        Some(build_to) => workspace.asset_exists_at(asset, build_to),
+        None => workspace.asset_exists_or_cache(asset),
+    }
+}
+
+fn build_request_kind(request: &BuildRequest) -> BuilderKind {
+    if request.post_process {
+        BuilderKind::PostProcess
+    } else {
+        BuilderKind::Normal
+    }
+}
+
+fn asset_request_build_id(request: &Value) -> io::Result<u64> {
+    request
+        .get("build_id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "asset request has no build_id"))
+}
+
+fn batch_asset_request_context<'a>(
+    request: &Value,
+    requests: &'a [BuildRequest],
+) -> io::Result<(u64, &'a BuildRequest)> {
+    let build_id = asset_request_build_id(request)?;
+    let index = usize::try_from(build_id).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("asset request build_id is too large: {build_id}"),
+        )
+    })?;
+    let active_request = requests.get(index).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("asset request build_id is out of range: {build_id}"),
+        )
+    })?;
+    Ok((build_id, active_request))
+}
+
+fn validate_asset_request_context(
+    request: &Value,
+    active_request: &BuildRequest,
+    expected_build_id: u64,
+) -> io::Result<()> {
+    let build_id = asset_request_build_id(request)?;
+    if build_id != expected_build_id {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "asset request build_id mismatch: expected {expected_build_id}, got {build_id}"
+            ),
+        ));
+    }
+
+    let phase = request
+        .get("phase")
+        .and_then(Value::as_u64)
+        .and_then(|phase| u32::try_from(phase).ok())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "asset request has invalid phase",
+            )
+        })?;
+    if phase != active_request.phase {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "asset request phase mismatch: expected {}, got {phase}",
+                active_request.phase
+            ),
+        ));
+    }
+
+    let kind = match request.get("kind").and_then(Value::as_str) {
+        Some("normal") => BuilderKind::Normal,
+        Some("post_process") => BuilderKind::PostProcess,
+        Some(kind) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("asset request has invalid kind: {kind}"),
+            ));
+        }
+        None => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "asset request has no kind",
+            ));
+        }
+    };
+    let expected_kind = build_request_kind(active_request);
+    if kind != expected_kind {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "asset request kind mismatch: expected {}, got {}",
+                if expected_kind == BuilderKind::PostProcess {
+                    "post_process"
+                } else {
+                    "normal"
+                },
+                if kind == BuilderKind::PostProcess {
+                    "post_process"
+                } else {
+                    "normal"
+                }
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn missing_asset_response(id: u64, asset: &str) -> Value {
     json!({
         "v": 1,
@@ -534,6 +700,7 @@ pub struct BuildRequest {
     pub phase: u32,
     pub instance_key: String,
     pub post_process: bool,
+    pub blocked_assets: Vec<String>,
 }
 
 pub struct WorkerPool {
@@ -782,6 +949,7 @@ impl WorkerPool {
         requests: &[BuildRequest],
         overlay: &BTreeMap<String, Vec<u8>>,
         deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
     ) -> io::Result<Vec<BuildResult>> {
         if requests.is_empty() {
             return Ok(Vec::new());
@@ -802,7 +970,9 @@ impl WorkerPool {
             .unwrap_or(1);
         self.initialize_pending_workers(&root, &package, phase_count)?;
         if self.workers.len() == 1 {
-            return self.workers[0].build_batch(workspace, requests, overlay, deleted_overlay);
+            return self
+                .workers[0]
+                .build_batch(workspace, requests, overlay, deleted_overlay, visibility);
         }
 
         let worker_count = self.workers.len();
@@ -818,7 +988,7 @@ impl WorkerPool {
                 .zip(batches)
                 .map(|(worker, batch)| {
                     scope.spawn(move || {
-                        worker.build_batch(workspace, batch, overlay, deleted_overlay)
+                        worker.build_batch(workspace, batch, overlay, deleted_overlay, visibility)
                     })
                 })
                 .collect::<Vec<_>>();
@@ -911,10 +1081,24 @@ fn json_build_batch_result_frame_size(id: u64, results: &[BuildResult]) -> io::R
 #[cfg(test)]
 mod tests {
     use super::{
-        balanced_request_ranges, has_capability, is_worker_script, missing_asset_response,
-        target_worker_count,
+        balanced_request_ranges, batch_asset_request_context, has_capability, is_worker_script,
+        missing_asset_response, target_worker_count, validate_asset_request_context, BuildRequest,
     };
     use serde_json::json;
+    use std::collections::BTreeMap;
+
+    fn build_request(phase: u32, post_process: bool) -> BuildRequest {
+        BuildRequest {
+            builder: "example:builder".to_owned(),
+            input: "example|lib/input.txt".to_owned(),
+            outputs: Vec::new(),
+            options: BTreeMap::new(),
+            phase,
+            instance_key: "example".to_owned(),
+            post_process,
+            blocked_assets: Vec::new(),
+        }
+    }
 
     #[test]
     fn worker_count_follows_available_requests() {
@@ -958,6 +1142,49 @@ mod tests {
         assert!(is_worker_script("/tmp/dynamic_worker.dart"));
         assert!(is_worker_script("relative_worker.dart"));
         assert!(!is_worker_script("example_builder:worker"));
+    }
+
+    #[test]
+    fn asset_request_context_must_match_the_rust_build_request() {
+        let active_request = build_request(3, false);
+        assert!(validate_asset_request_context(
+            &json!({"build_id": 7, "phase": 3, "kind": "normal"}),
+            &active_request,
+            7,
+        )
+        .is_ok());
+        assert!(validate_asset_request_context(
+            &json!({"build_id": 7, "phase": 4, "kind": "normal"}),
+            &active_request,
+            7,
+        )
+        .is_err());
+        assert!(validate_asset_request_context(
+            &json!({"build_id": 7, "phase": 3, "kind": "post_process"}),
+            &active_request,
+            7,
+        )
+        .is_err());
+        assert!(validate_asset_request_context(
+            &json!({"build_id": 7, "phase": 3, "kind": "normal"}),
+            &active_request,
+            8,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn batch_asset_request_context_uses_the_matching_build_item() {
+        let requests = vec![build_request(0, false), build_request(3, true)];
+        let (build_id, active_request) = batch_asset_request_context(
+            &json!({"build_id": 1}),
+            &requests,
+        )
+        .unwrap();
+        assert_eq!(build_id, 1);
+        assert_eq!(active_request.phase, 3);
+        assert!(active_request.post_process);
+        assert!(batch_asset_request_context(&json!({"build_id": 2}), &requests).is_err());
     }
 }
 

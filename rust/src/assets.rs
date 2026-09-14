@@ -133,9 +133,22 @@ pub(crate) fn add_tracked_glob_assets(
     Ok(())
 }
 
+fn append_length_prefixed_strings(bytes: &mut Vec<u8>, values: &[String]) {
+    bytes.extend_from_slice(&(values.len() as u64).to_be_bytes());
+    for value in values {
+        bytes.extend_from_slice(&(value.len() as u64).to_be_bytes());
+        bytes.extend_from_slice(value.as_bytes());
+    }
+}
+
 pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> io::Result<String> {
     let build_yaml = workspace.root.join("build.yaml");
-    let mut bytes = fs::read(build_yaml).unwrap_or_default();
+    // The digest also gates reuse of the private action graph. Bump this
+    // domain marker when the meaning of the graph inputs changes, so a graph
+    // created before the lossless required-input and artifact-visibility
+    // model cannot be reused silently.
+    let mut bytes = b"build-runner-accelerator-config-v2\0".to_vec();
+    bytes.extend_from_slice(&fs::read(build_yaml).unwrap_or_default());
     bytes.extend_from_slice(
         &fs::read(workspace.root.join(".dart_tool/package_config.json")).unwrap_or_default(),
     );
@@ -175,14 +188,10 @@ pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> 
             BuildTo::Cache => 0,
             BuildTo::Source => 1,
         });
-        bytes.extend_from_slice(
-            builder
-                .definition
-                .required_input_suffix
-                .as_deref()
-                .unwrap_or_default()
-                .as_bytes(),
-        );
+        // Keep the full ordered `required_inputs` list in the graph identity.
+        // Length-prefix both the collection and each value so its boundaries
+        // cannot collide with another field or another list shape.
+        append_length_prefixed_strings(&mut bytes, &builder.definition.required_input_suffixes);
         for suffix in &builder.excluded_input_suffixes {
             bytes.extend_from_slice(suffix.as_bytes());
             bytes.push(0);
@@ -208,6 +217,27 @@ pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> 
         }
     }
     Ok(digest_bytes(&bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::append_length_prefixed_strings;
+
+    fn encode(values: &[&str]) -> Vec<u8> {
+        let values = values
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<Vec<_>>();
+        let mut bytes = Vec::new();
+        append_length_prefixed_strings(&mut bytes, &values);
+        bytes
+    }
+
+    #[test]
+    fn required_input_suffix_encoding_preserves_collection_boundaries() {
+        assert_ne!(encode(&[]), encode(&[".a"]));
+        assert_ne!(encode(&[".ab", ".c"]), encode(&[".a", ".bc"]));
+    }
 }
 
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {

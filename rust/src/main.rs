@@ -14,6 +14,7 @@ mod watch;
 mod worker;
 mod worker_kernel;
 mod workspace;
+mod visibility;
 
 use std::env;
 use std::io;

@@ -917,9 +917,10 @@ List<_ManifestDefinition>? _tryConvertDefinition(
   )) {
     return null;
   }
-  if (definition.requiredInputs.length > 1) return null;
-  if (definition.requiredInputs.isNotEmpty &&
-      !_simpleExtension(definition.requiredInputs.single)) {
+  final requiredInputSuffixes = definition.requiredInputs.toList(
+    growable: false,
+  );
+  if (requiredInputSuffixes.any((suffix) => !_simpleExtension(suffix))) {
     return null;
   }
   // Optional builders require build_runner's demand-driven phase semantics,
@@ -965,9 +966,7 @@ List<_ManifestDefinition>? _tryConvertDefinition(
         inputExtensions: const [],
         buildTo: definition.buildTo == BuildTo.source ? 'source' : 'cache',
         outputIsOptional: false,
-        requiredInputSuffix: definition.requiredInputs.isEmpty
-            ? null
-            : definition.requiredInputs.single,
+        requiredInputSuffixes: requiredInputSuffixes,
       ),
     );
   }
@@ -1059,7 +1058,7 @@ _ManifestDefinition? _tryConvertPostProcessDefinition(
     inputExtensions: inputExtensions,
     buildTo: 'cache',
     outputIsOptional: true,
-    requiredInputSuffix: null,
+    requiredInputSuffixes: const [],
   );
 }
 
@@ -1428,7 +1427,7 @@ class _ManifestDefinition {
     required this.inputExtensions,
     required this.buildTo,
     required this.outputIsOptional,
-    required this.requiredInputSuffix,
+    required this.requiredInputSuffixes,
   });
 
   final String id;
@@ -1439,7 +1438,7 @@ class _ManifestDefinition {
   final List<String> inputExtensions;
   final String buildTo;
   final bool outputIsOptional;
-  final String? requiredInputSuffix;
+  final List<String> requiredInputSuffixes;
 
   bool get isPostProcess => kind == 'post_process';
 
@@ -1482,7 +1481,7 @@ class _ManifestDefinition {
     if (package != null) 'package': package,
     if (target != null) 'target_order': targetOrder,
     'output_is_optional': outputIsOptional,
-    'required_input_suffix': requiredInputSuffix,
+    'required_input_suffixes': requiredInputSuffixes,
     'excluded_input_suffixes': excludedInputSuffixes,
     'generate_for': generateFor,
     'generate_for_exclude': generateForExclude,

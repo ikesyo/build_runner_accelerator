@@ -36,7 +36,8 @@ pub(crate) struct BuilderDefinition {
     pub(crate) build_to: BuildTo,
     pub(crate) phase: u32,
     pub(crate) output_is_optional: bool,
-    pub(crate) required_input_suffix: Option<String>,
+    /// All `required_inputs` suffixes from build.yaml, kept losslessly.
+    pub(crate) required_input_suffixes: Vec<String>,
     pub(crate) excluded_input_suffixes: Vec<String>,
     pub(crate) applies_builder: Option<String>,
 }
@@ -113,7 +114,7 @@ pub(crate) struct BuilderManifestDefinition {
     #[serde(default)]
     pub(crate) output_is_optional: bool,
     #[serde(default)]
-    pub(crate) required_input_suffix: Option<String>,
+    pub(crate) required_input_suffixes: Vec<String>,
     #[serde(default)]
     pub(crate) excluded_input_suffixes: Vec<String>,
     #[serde(default)]
@@ -139,6 +140,28 @@ pub(crate) struct BuilderManifestDefinition {
 impl RustBuildConfig {
     pub(crate) fn definition(&self, id: &str) -> Option<&BuilderDefinition> {
         self.definitions.get(id).map(Arc::as_ref)
+    }
+
+    /// The manifest generator already resolves builder and target ordering into
+    /// the configured phase number. Keep this accessor as the single boundary
+    /// used by the planner and visibility model.
+    pub(crate) fn global_phase(&self, builder: &ConfiguredBuilder) -> u32 {
+        builder.phase
+    }
+
+    pub(crate) fn phase_count(&self) -> usize {
+        let normal_phase_count = self
+            .builders
+            .iter()
+            .filter(|builder| builder.definition.kind == BuilderKind::Normal)
+            .map(|builder| self.global_phase(builder))
+            .max()
+            .map_or(0, |phase| phase.saturating_add(1) as usize);
+        let has_post_process = self
+            .builders
+            .iter()
+            .any(|builder| builder.definition.kind == BuilderKind::PostProcess);
+        (normal_phase_count + usize::from(has_post_process)).max(1)
     }
 }
 
@@ -272,7 +295,7 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
             build_to: BuildTo::Cache,
             phase: entry.phase,
             output_is_optional: true,
-            required_input_suffix: None,
+            required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
         });
@@ -399,11 +422,12 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
         });
     }
 
+    let required_input_suffixes = entry.required_input_suffixes;
+    let invalid_required_input = |suffix: &str| invalid_suffix(suffix) || !suffix.starts_with('.');
     if entry.id.is_empty()
-        || entry
-            .required_input_suffix
-            .as_deref()
-            .is_some_and(invalid_suffix)
+        || required_input_suffixes
+            .iter()
+            .any(|suffix| invalid_required_input(suffix))
         || entry.excluded_input_suffixes.iter().any(|suffix| {
             if suffix.contains("{{") {
                 invalid_capture_path(suffix) || capture_names(suffix).is_err()
@@ -426,7 +450,7 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
         build_to,
         phase: entry.phase,
         output_is_optional: entry.output_is_optional,
-        required_input_suffix: entry.required_input_suffix,
+        required_input_suffixes,
         excluded_input_suffixes: entry.excluded_input_suffixes,
         applies_builder: entry.applies_builder,
     })
@@ -512,6 +536,60 @@ mod tests {
     }
 
     #[test]
+    fn configured_phase_is_the_global_worker_phase() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 6,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [
+                {
+                    "id": "example:phase-one",
+                    "input_suffix": ".txt",
+                    "output_suffixes": [".one"],
+                    "build_to": "cache",
+                    "phase": 3,
+                    "target_order": 0,
+                    "target": "example:example",
+                    "package": "example",
+                    "generate_for": ["lib/**/*.txt"]
+                },
+                {
+                    "id": "example:phase-two",
+                    "input_suffix": ".txt",
+                    "output_suffixes": [".two"],
+                    "build_to": "cache",
+                    "phase": 7,
+                    "target_order": 0,
+                    "target": "example:example",
+                    "package": "example",
+                    "generate_for": ["lib/**/*.txt"]
+                }
+            ],
+            "definitions": [
+                {
+                    "id": "example:phase-one",
+                    "input_suffix": ".txt",
+                    "output_suffixes": [".one"],
+                    "build_to": "cache",
+                    "phase": 0
+                },
+                {
+                    "id": "example:phase-two",
+                    "input_suffix": ".txt",
+                    "output_suffixes": [".two"],
+                    "build_to": "cache",
+                    "phase": 0
+                }
+            ]
+        }))
+        .unwrap();
+        let config = rust_build_config_from_manifest(manifest).unwrap();
+        assert_eq!(config.global_phase(&config.builders[0]), 3);
+        assert_eq!(config.global_phase(&config.builders[1]), 7);
+        assert_eq!(config.phase_count(), 8);
+    }
+
+    #[test]
     fn dynamic_manifest_preserves_configured_input_exclusions() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
             "version": 6,
@@ -578,6 +656,40 @@ mod tests {
         assert_eq!(
             config.builders[0].definition.extensions[0].output_suffixes,
             vec![".gen.txt", ".meta.txt"]
+        );
+    }
+
+    #[test]
+    fn dynamic_manifest_preserves_all_required_input_suffixes() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 6,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:builder",
+                "input_suffix": ".txt",
+                "output_suffixes": [".generated"],
+                "required_input_suffixes": [".first", ".second"],
+                "build_to": "cache",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["lib/**/*.txt"]
+            }],
+            "definitions": [{
+                "id": "example:builder",
+                "input_suffix": ".txt",
+                "output_suffixes": [".generated"],
+                "required_input_suffixes": [".first", ".second"],
+                "build_to": "cache",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+        let config = rust_build_config_from_manifest(manifest).unwrap();
+        assert_eq!(
+            config.builders[0].definition.required_input_suffixes,
+            [".first", ".second"]
         );
     }
 
