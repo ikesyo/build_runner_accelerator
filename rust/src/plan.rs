@@ -573,4 +573,47 @@ mod tests {
         assert!(error.to_string().contains("builder outputs collide"));
         assert!(error.to_string().contains("app|lib/generated.txt"));
     }
+    #[test]
+    fn empty_output_mapping_is_a_valid_expected_output_plan() {
+        let builder = Arc::new(BuilderDefinition {
+            id: "example:builder".to_owned(),
+            kind: BuilderKind::Normal,
+            extensions: vec![BuilderExtension {
+                input_suffix: ".dart".to_owned(),
+                input_is_exact: false,
+                input_is_capture: false,
+                input_is_anchored: false,
+                output_suffixes: Vec::new(),
+            }],
+            post_process_input_extensions: Vec::new(),
+            build_to: BuildTo::Cache,
+            phase: 0,
+            is_optional: false,
+            output_is_optional: false,
+            required_input_suffixes: Vec::new(),
+            excluded_input_suffixes: Vec::new(),
+            applies_builder: None,
+        });
+        assert_eq!(
+            outputs_for(&builder, "app|lib/model.dart").unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn primary_input_follows_generated_output_chain() {
+        let primary_inputs = BTreeMap::from([
+            ("app|lib/model.g.part".to_owned(), "app|lib/model.dart".to_owned()),
+            (
+                "app|lib/model.g.dart".to_owned(),
+                "app|lib/model.g.part".to_owned(),
+            ),
+        ]);
+        assert_eq!(
+            super::primary_input_for("app|lib/model.g.dart", &primary_inputs),
+            "app|lib/model.dart"
+        );
+    }
+
+
 }
