@@ -187,9 +187,9 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   }
 
   // build.yaml remains the ordering source, while the
-  // instantiated Builder is the expected-output source. Probe every selected
-  // application with its resolved options so target-local mapping overrides
-  // remain lossless and package-specific Rust branches are unnecessary.
+  // instantiated Builder is the expected-output source. Probe selected
+  // multi-factory and option-dependent applications so target-local mapping
+  // overrides remain lossless and package-specific Rust branches are unnecessary.
   final probeRequests = selected.entries
       .where((entry) => _requiresRuntimeProbe(entry.value))
       .map(
