@@ -344,6 +344,7 @@ impl WorkerClient {
                     "options": request.options,
                     "phase": request.phase,
                     "instance_key": request.instance_key,
+                    "is_root": request.is_root,
                     "blocked_assets": request.blocked_assets,
                 })
             })
@@ -430,6 +431,7 @@ impl WorkerClient {
             "options": request.options,
             "phase": request.phase,
             "instance_key": request.instance_key,
+            "is_root": request.is_root,
             "blocked_assets": request.blocked_assets,
         }))?;
 
@@ -494,6 +496,7 @@ impl WorkerClient {
                     "options": request.options,
                     "phase": request.phase,
                     "instance_key": request.instance_key,
+                    "is_root": request.is_root,
                     "blocked_assets": request.blocked_assets,
                 })
             })
