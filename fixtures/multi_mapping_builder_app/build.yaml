@@ -20,3 +20,5 @@ targets:
       multi_mapping_builder_app:multi_mapping_builder:
         generate_for:
           - lib/**/*.txt
+        options:
+          suffix: ".runtime"
