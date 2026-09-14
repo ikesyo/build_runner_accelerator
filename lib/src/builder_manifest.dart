@@ -729,7 +729,7 @@ Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
     // Consume both pipes while the probe runs; otherwise a verbose probe can
     // block on a full child-process pipe before the timeout is reached.
     unawaited(process.stdout.drain<void>());
-    final stderrOutput = process.stderr.transform(utf8.decoder).join();
+    unawaited(process.stderr.drain<void>());
 
     int exitCode;
     try {
@@ -744,11 +744,7 @@ Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
       }
       return const {};
     }
-    final probeStderr = await stderrOutput;
-    if (exitCode != 0 || !resultFile.existsSync()) {
-      if (probeStderr.isNotEmpty) stderr.write(probeStderr);
-      return const {};
-    }
+    if (exitCode != 0 || !resultFile.existsSync()) return const {};
     final decoded = jsonDecode(await resultFile.readAsString());
     if (decoded is! Map) return const {};
 
@@ -909,11 +905,7 @@ String _factoryProbeSource(Iterable<_FactoryProbeRequest> requests) {
     }
     output
       ..writeln('      ];')
-      ..writeln('    } catch (error, stack) {')
-      ..writeln('      stderr.writeln(error);')
-      ..writeln('      stderr.writeln(stack);')
-      ..writeln('      rethrow;')
-      ..writeln('    }');
+      ..writeln('    } catch (_) {}');
   }
   output
     ..writeln('  File(args.single).writeAsStringSync(jsonEncode(result));')
