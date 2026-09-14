@@ -472,9 +472,8 @@ Future<_PackageGraph> _loadPackageGraph(String packagePath) async {
   for (final package in orderedPackages.where((p) => p.name != rootName)) {
     final pubspec = _pubspecForPath(package.root.toFilePath());
     packages[package.name]!.dependencies.addAll(
-      _depsFromYaml(
-        pubspec,
-      ).map((name) => packageNode(name, parent: package.name)),
+      _depsFromYaml(pubspec)
+          .map((name) => packageNode(name, parent: package.name)),
     );
   }
 
@@ -1298,9 +1297,7 @@ String _workerSource(Iterable<_CatalogEntry> entries) {
     ..writeln(
       "import 'package:build/build.dart' show BuilderFactory, PostProcessBuilderFactory;",
     )
-    ..writeln(
-      "import 'package:build_runner_accelerator_worker/worker.dart';",
-    );
+    ..writeln("import 'package:build_runner_accelerator_worker/worker.dart';");
   for (final entry in imports.entries) {
     output.writeln(
       'import ' + _dartSourceString(entry.key) + ' as ' + entry.value + ';',
