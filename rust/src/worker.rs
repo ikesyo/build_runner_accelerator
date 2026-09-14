@@ -701,7 +701,7 @@ impl WorkerClient {
             options: spec.options.clone(),
             phase: spec.phase,
             instance_key: spec.instance_key.clone(),
-            is_root: true,
+            is_root: spec.is_root,
             post_process: false,
             blocked_assets: visibility.blocked_assets(
                 spec.phase,
