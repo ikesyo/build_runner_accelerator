@@ -903,7 +903,8 @@ String _factoryProbeSource(Iterable<_FactoryProbeRequest> requests) {
           ..writeln(
             '          $importPrefix.$factory($builderOptions),',
           )
-          ..writeln('        ),');
+          ..writeln('        ),')
+          ..writeln('      },');
       }
     }
     output
