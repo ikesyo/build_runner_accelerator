@@ -10,6 +10,7 @@ pub_cache=$(resolve_toolchain_pub_cache)
 cargo_bin=$(resolve_toolchain_cargo)
 rustup_home=$(resolve_toolchain_rustup_home)
 cargo_home=$(resolve_toolchain_cargo_home)
+mapping_jobs=${MULTI_MAPPING_JOBS:-2}
 fixture_dir="$repo_root/fixtures/multi_mapping_builder_app"
 lockfile_source="$repo_root/fixtures/arbitrary_builder_app/pubspec.lock"
 temporary_dir=$(mktemp -d)
@@ -122,7 +123,7 @@ run_rust() {
   local log=$2
   PUB_CACHE="$pub_cache" BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
     "$script_dir/run_rust_frontend.sh" build --root "$directory" --dart "$dart_bin" \
-    >"$log" 2>&1
+    --jobs "$mapping_jobs" >"$log" 2>&1
 }
 
 mkdir -p "$fixture_root"
@@ -169,4 +170,4 @@ assert_no_file "$rust_dir/lib/special.runtime"
 assert_no_file "$rust_dir/lib/special.generated.txt"
 assert_contains "$temporary_dir/delete.rust.log" 'Rust frontend: 0 build action(s)'
 
-printf 'multi-mapping-builder: union=yes no-op=yes change=yes rename=yes delete=yes\n'
+printf 'multi-mapping-builder: union=yes no-op=yes change=yes rename=yes delete=yes jobs=%s\n' "$mapping_jobs"
