@@ -1298,7 +1298,9 @@ String _workerSource(Iterable<_CatalogEntry> entries) {
     ..writeln(
       "import 'package:build/build.dart' show BuilderFactory, PostProcessBuilderFactory;",
     )
-    ..writeln("import 'package:build_runner_accelerator_worker/worker.dart';");
+    ..writeln(
+      "import 'package:build_runner_accelerator_worker/worker.dart';",
+    );
   for (final entry in imports.entries) {
     output.writeln(
       'import ' + _dartSourceString(entry.key) + ' as ' + entry.value + ';',
