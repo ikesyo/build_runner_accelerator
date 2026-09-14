@@ -998,6 +998,7 @@ mod tests {
                 "phase": 0,
                 "target": "example:example",
                 "package": "example",
+                "is_root": false,
                 "generate_for": ["**"],
                 "runtime_mapping": {
                     "extensions": [{
@@ -1016,9 +1017,10 @@ mod tests {
         })).unwrap();
 
         let config = rust_build_config_from_manifest(manifest).unwrap();
+        assert!(!config.builders[0].is_root);
         assert_eq!(
             config.builders[0].definition.extensions[0].output_suffixes,
-            [".".to_owned() + "static"]
+            [".static".to_owned()]
         );
         assert_eq!(
             config.builders[0]
