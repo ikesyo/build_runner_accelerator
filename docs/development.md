@@ -86,6 +86,7 @@ builder behavior:
 ```bash
 bash scripts/watch_smoke.sh
 bash scripts/benchmark_matrix.sh
+BUILDERS=optional bash scripts/benchmark_matrix.sh
 ```
 
 For performance changes, enable

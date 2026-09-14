@@ -241,8 +241,10 @@ run_current_codegen_suite() {
 
 run_compatibility_lifecycle_suite() {
   run_script_probe lifetime correctness_lifetime_compatibility.sh 'lifetime-compatibility:'
+  run_script_probe optional-builder correctness_optional_builder.sh 'optional-builder: PASS'
   run_script_probe post-process correctness_post_process_builder.sh 'post-process-builder:'
   run_script_probe post-process-watch watch_smoke_post_process_builder.sh 'post-process-builder-watch:'
+  run_script_probe optional-builder-watch watch_smoke_optional_builder.sh 'optional-builder-watch:'
 }
 
 run_compatibility_graph_suite() {

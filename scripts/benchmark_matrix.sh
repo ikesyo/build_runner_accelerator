@@ -38,6 +38,10 @@ run_builder() {
       JOBS="$jobs" BUILD_RUNNER_ACCELERATOR_METRICS="$metrics" \
         bash "$script_dir/benchmark_riverpod.sh"
       ;;
+    optional)
+      JOBS="$jobs" BUILD_RUNNER_ACCELERATOR_METRICS="$metrics" \
+        bash "$script_dir/benchmark_optional_builder.sh"
+      ;;
     *)
       fail "unknown builder: $builder"
       ;;

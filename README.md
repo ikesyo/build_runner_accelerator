@@ -171,7 +171,8 @@ stable across those versions.
 
 The native frontend has been validated against workspace fixtures using
 `json_serializable`, `freezed`, `built_value`, `riverpod_generator`, and a small
-arbitrary builder. The tracked current-generator fixtures are pinned to the
+arbitrary builder, and demand-driven `is_optional` builders. The tracked
+current-generator fixtures are pinned to the
 `build_runner 2.16.1` compatibility window:
 
 | Fixture | Generator versions |
@@ -187,8 +188,9 @@ manifest path remains the source of truth.
 The following are deliberately outside the first release baseline:
 
 - complete `build.yaml` and `build_runner` semantic compatibility;
-- unsupported manifest shapes, optional builders, and external-process
-  builders;
+- unsupported manifest shapes and external-process builders;
+- optional-builder shapes that require semantics beyond the supported
+  demand-driven read/find-assets path;
 - exact resolver dependency selection for every conditional import/export;
 - automatic worker-count selection;
 - chunking of a single build-result frame larger than the protocol limit;

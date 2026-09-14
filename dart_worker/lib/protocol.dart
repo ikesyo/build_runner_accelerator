@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 typedef JsonMap = Map<String, dynamic>;
+typedef RpcControlMessageHandler = Future<void> Function(JsonMap message);
 
 const List<int> _binaryAssetResponseMagic = <int>[0x42, 0x52, 0x41, 0x42];
 const List<int> _binaryBuildResultMagic = <int>[0x42, 0x52, 0x41, 0x52];
@@ -223,6 +224,7 @@ class RpcSession {
     required this.buildId,
     required this.phase,
     required this.postProcess,
+    this.onControlMessage,
   });
 
   final FrameReader reader;
@@ -230,6 +232,7 @@ class RpcSession {
   final int buildId;
   final int phase;
   final bool postProcess;
+  final RpcControlMessageHandler? onControlMessage;
   int _nextId = 1000;
 
   Future<JsonMap> call(String op, Map<String, dynamic> parameters) async {
@@ -251,6 +254,14 @@ class RpcSession {
       final response = await reader.next();
       if (response == null) {
         throw const FormatException('Rust frontend exited during RPC');
+      }
+      if (response['type'] == 'build') {
+        final handler = onControlMessage;
+        if (handler == null) {
+          throw StateError('Unexpected nested build request during asset RPC');
+        }
+        await handler(response);
+        continue;
       }
       if (response['type'] != 'asset_response' || response['id'] != id) {
         throw StateError(

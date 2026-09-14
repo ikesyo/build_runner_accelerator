@@ -139,6 +139,7 @@ mod tests {
                 post_process_input_extensions: Vec::new(),
                 build_to,
                 phase,
+                is_optional: false,
                 output_is_optional: false,
                 required_input_suffixes: Vec::new(),
                 excluded_input_suffixes: Vec::new(),

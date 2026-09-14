@@ -1,0 +1,21 @@
+builders:
+  optional_builder:
+    import: "package:optional_builder_app/optional_builder.dart"
+    builder_factories:
+      - optionalBuilder
+    build_extensions:
+      ".txt":
+        - ".optional.txt"
+    auto_apply: none
+    is_optional: true
+    build_to: source
+
+targets:
+  $default:
+    sources:
+      include:
+        - lib/**
+    builders:
+      optional_builder_app:optional_builder:
+        generate_for:
+          - lib/**/*.txt

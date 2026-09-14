@@ -73,6 +73,7 @@ Future<void> runWorker({
                 'asset-rpc-v1',
                 'asset-rpc-binary-read-v1',
                 'build-result-binary-v1',
+                'optional-builder-demand-v1',
                 'build-runner-current-v1',
               ],
             });
@@ -343,6 +344,43 @@ Future<void> _handleBuild(
   );
 }
 
+Future<void> _handleNestedBuild(
+  JsonMap message,
+  FrameReader reader,
+  FrameWriter writer,
+  _WorkerRuntime runtime,
+  Map<String, BuilderFactory> builderCatalog,
+  Map<String, PostProcessBuilderFactory> postProcessCatalog,
+) async {
+  try {
+    await writer.sendBuildResult(
+      await _runBuild(
+        message,
+        reader,
+        writer,
+        runtime,
+        builderCatalog,
+        postProcessCatalog,
+      ),
+    );
+  } catch (error, stack) {
+    await writer.sendBuildResult(<String, dynamic>{
+      'v': 1,
+      'type': 'build_result',
+      'id': message['id'],
+      'status': 'error',
+      'outputs': <dynamic>[],
+      'deleted': <String>[],
+      'reads': <String>[],
+      'resolver_reads': <String>[],
+      'glob_reads': <dynamic>[],
+      'diagnostics': <dynamic>[],
+      'error': '$error',
+      'stack': '$stack',
+    });
+  }
+}
+
 Future<void> _handleBuildBatch(
   JsonMap message,
   FrameReader reader,
@@ -395,6 +433,7 @@ Future<JsonMap> _runBuild(
     input: inputName,
     resolverProfile: runtime.resolverProfile,
   );
+  var actionStarted = false;
   try {
     final input = AssetId.parse(inputName);
     final rawAllowedOutputs = message['allowed_outputs'] ?? const <dynamic>[];
@@ -417,6 +456,14 @@ Future<JsonMap> _runBuild(
       buildId: message['id'] as int,
       phase: _phaseOf(message),
       postProcess: isPostProcess,
+      onControlMessage: (nested) => _handleNestedBuild(
+        nested,
+        reader,
+        writer,
+        runtime,
+        builderCatalog,
+        postProcessCatalog,
+      ),
     );
     runtime.io.beginAction(
       rpc: rpc,
@@ -424,6 +471,7 @@ Future<JsonMap> _runBuild(
       primaryInput: isPostProcess ? input : null,
       blockedAssets: blockedAssets,
     );
+    actionStarted = true;
     final resolver = _metricsEnabled
         ? _ProfilingResolvers(runtime.resolver, runtime, profile)
         : runtime.resolver;
@@ -547,6 +595,7 @@ Future<JsonMap> _runBuild(
       'diagnostics': <dynamic>[],
     };
   } finally {
+    if (actionStarted) runtime.io.endAction();
     profile.emit();
   }
 }
