@@ -701,6 +701,7 @@ impl WorkerClient {
             options: spec.options.clone(),
             phase: spec.phase,
             instance_key: spec.instance_key.clone(),
+            is_root: true,
             post_process: false,
             blocked_assets: visibility.blocked_assets(
                 spec.phase,
@@ -1555,6 +1556,7 @@ mod tests {
             options: BTreeMap::new(),
             phase,
             instance_key: "example".to_owned(),
+            is_root: true,
             post_process,
             blocked_assets: Vec::new(),
         }
