@@ -428,6 +428,10 @@ Future<JsonMap> _runBuild(
   final builderId = message['builder'] as String;
   final inputName = message['input'] as String;
   final isPostProcess = message['kind'] == 'post_process';
+  final rawIsRoot = message['is_root'];
+  // Old protocol frames omitted is_root and the worker historically treated
+  // those applications as root builders. Preserve that default.
+  final isRoot = rawIsRoot is bool ? rawIsRoot : true;
   final profile = _BuildProfile(
     builder: builderId,
     input: inputName,
@@ -488,7 +492,9 @@ Future<JsonMap> _runBuild(
       var postProcessBuilder = runtime.postProcessBuilders[instanceKey];
       if (postProcessBuilder == null) {
         final factoryTimer = Stopwatch()..start();
-        postProcessBuilder = factory(BuilderOptions(options));
+        postProcessBuilder = factory(
+          BuilderOptions(options, isRoot: isRoot),
+        );
         profile.factoryUs = factoryTimer.elapsedMicroseconds;
         runtime.postProcessBuilders[instanceKey] = postProcessBuilder;
       }
@@ -511,7 +517,7 @@ Future<JsonMap> _runBuild(
       var builder = runtime.builders[instanceKey];
       if (builder == null) {
         final factoryTimer = Stopwatch()..start();
-        builder = factory(BuilderOptions(options, isRoot: true));
+        builder = factory(BuilderOptions(options, isRoot: isRoot));
         profile.factoryUs = factoryTimer.elapsedMicroseconds;
         runtime.builders[instanceKey] = builder;
       }
