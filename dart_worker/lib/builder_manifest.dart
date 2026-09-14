@@ -186,50 +186,70 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     return;
   }
 
-  // A build.yaml definition may expose more than one factory. build_runner
-  // creates one build phase per factory, and each factory is allowed to
-  // advertise a different buildExtensions map. Keep those factories as
-  // separate manifest definitions so the Rust planner can make the same
-  // per-factory decisions about inputs and outputs.
-  final selectedDefinitionKeys = selected.values
-      .map((builder) => builder.definition.key)
-      .toSet();
-  final probeDefinitions = definitions.values
-      .where((info) {
-        if (!selectedDefinitionKeys.contains(info.key)) return false;
-        if (info.isPostProcess) {
-          // Post-process builders in older build_config versions do not carry
-          // their input extensions in build.yaml. Probe the runtime builder in
-          // that case (source_gen and drift both use this shape).
+    // build.yaml remains the ordering source, while the
+  // instantiated Builder is the expected-output source. Probe every selected
+  // application with its resolved options so target-local mapping overrides
+  // remain lossless and package-specific Rust branches are unnecessary.
+  final probeRequests = selected.entries
+      .where((entry) {
+        final definition = entry.value.definition;
+        if (definition.isPostProcess) {
           // ignore: deprecated_member_use
-          return info.postProcess!.inputExtensions == null &&
-              _knownPostProcessInputExtensions(info.postProcess!) == null;
+          return definition.postProcess!.inputExtensions == null &&
+              _knownPostProcessInputExtensions(definition.postProcess!) == null;
         }
-        return info.normal!.builderFactories.length > 1;
+        return true;
       })
+      .map(
+        (entry) => _FactoryProbeRequest(
+          id: entry.key,
+          definition: entry.value.definition,
+          options: _jsonMap(entry.value.options),
+          isRoot: entry.value.target.package.isRoot,
+        ),
+      )
       .toList(growable: false);
-  final probedMappings = await _probeFactoryMappings(root, probeDefinitions);
+  final probedMappings = await _probeFactoryMappings(root, probeRequests);
+  final canonicalMappings = <String, List<_FactoryMapping>>{};
+  for (final request in probeRequests) {
+    final mappings = probedMappings[request.id];
+    if (mappings != null) {
+      canonicalMappings.putIfAbsent(request.definition.key, () => mappings);
+    }
+  }
   final compatibleDefinitions = <String, List<_ManifestDefinition>>{};
   for (final info in definitions.values) {
-    final converted = _tryConvertDefinition(info, probedMappings[info.key]);
+    final converted = _tryConvertDefinition(info, canonicalMappings[info.key]);
     if (converted != null && converted.isNotEmpty) {
       compatibleDefinitions[info.key] = converted;
     }
   }
 
-  for (final selectedBuilder in selected.values) {
-    if (selectedBuilder.options.containsKey('build_extensions')) {
-      if (!selectedBuilder.definition.isPostProcess) {
+  for (final entry in selected.entries) {
+    final selectedBuilder = entry.value;
+    final definition = selectedBuilder.definition;
+    final requiresRuntimeProbe = !definition.isPostProcess ||
+        // ignore: deprecated_member_use
+        (definition.postProcess!.inputExtensions == null &&
+            _knownPostProcessInputExtensions(definition.postProcess!) == null);
+    final runtimeMappings = probedMappings[entry.key];
+    if (requiresRuntimeProbe) {
+      if (runtimeMappings == null ||
+          !compatibleDefinitions.containsKey(definition.key) ||
+          compatibleDefinitions[definition.key]!.any(
+            (converted) =>
+                _runtimeMappingJson(definition, runtimeMappings, converted) ==
+                null,
+          )) {
         throw StateError(
-          'Builder options that override build_extensions are not supported: ' +
-              selectedBuilder.definition.key,
+          'Builder runtime mapping is outside the supported subset: ' +
+              definition.key,
         );
       }
     }
-    if (!compatibleDefinitions.containsKey(selectedBuilder.definition.key)) {
+    if (!compatibleDefinitions.containsKey(definition.key)) {
       throw StateError(
-        'Builder is outside the dynamic worker subset: ' +
-            selectedBuilder.definition.key,
+        'Builder is outside the dynamic worker subset: ' + definition.key,
       );
     }
   }
@@ -773,45 +793,30 @@ Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
   }
 }
 
-String? _findPackageConfigPath(String root) {
-  var packageConfigRoot = p.canonicalize(root);
-  while (true) {
-    final candidate = p.join(
-      packageConfigRoot,
-      '.dart_tool',
-      'package_config.json',
-    );
-    if (File(candidate).existsSync()) return candidate;
-    final parent = p.dirname(packageConfigRoot);
-    if (parent == packageConfigRoot) return null;
-    packageConfigRoot = parent;
-  }
-}
-
-String _factoryProbeSource(Iterable<_DefinitionInfo> definitions) {
+String _factoryProbeSource(Iterable<_FactoryProbeRequest> requests) {
   // These values are later emitted into executable Dart source. Keep the
   // probe boundary as strict as the manifest converter: only package imports
   // and identifier-shaped factory names may cross it. In particular, a raw
-  // factory value must never reach `$importPrefix.$factory` below.
-  final safeDefinitions = definitions
-      .where((definition) {
-        if (definition.isPostProcess) {
-          final postProcess = definition.postProcess!;
+  // factory value must never reach the importPrefix.factory expression below.
+  final safeRequests = requests
+      .where((request) {
+        if (request.definition.isPostProcess) {
+          final postProcess = request.definition.postProcess!;
           return postProcess.import.startsWith('package:') &&
               _identifier.hasMatch(postProcess.builderFactory);
         }
-        final normal = definition.normal!;
+        final normal = request.definition.normal!;
         return normal.import.startsWith('package:') &&
             normal.builderFactories.every(_identifier.hasMatch);
       })
       .toList(growable: false);
-  final sorted = safeDefinitions.toList()
-    ..sort((left, right) => left.key.compareTo(right.key));
+  final sorted = safeRequests.toList()
+    ..sort((left, right) => left.id.compareTo(right.id));
   final imports = <String, String>{};
-  for (final definition in sorted) {
-    final importUri = definition.isPostProcess
-        ? definition.postProcess!.import
-        : definition.normal!.import;
+  for (final request in sorted) {
+    final importUri = request.definition.isPostProcess
+        ? request.definition.postProcess!.import
+        : request.definition.normal!.import;
     imports.putIfAbsent(
       importUri,
       () => 'builderImport' + imports.length.toString(),
@@ -837,39 +842,39 @@ String _factoryProbeSource(Iterable<_DefinitionInfo> definitions) {
     ..writeln('    return;')
     ..writeln('  }')
     ..writeln('  final result = <String, dynamic>{};');
-  for (final definition in sorted) {
-    final importUri = definition.isPostProcess
-        ? definition.postProcess!.import
-        : definition.normal!.import;
+  for (final request of sorted) {
+    final importUri = request.definition.isPostProcess
+        ? request.definition.postProcess!.import
+        : request.definition.normal!.import;
     final importPrefix = imports[importUri]!;
+    final optionsLiteral = _dartSourceString(jsonEncode(request.options));
+    final builderOptions = 'BuilderOptions('
+        'Map<String, dynamic>.from(jsonDecode($optionsLiteral) as Map), '
+        'isRoot: ${request.isRoot})';
     output
       ..writeln('    try {')
-      ..writeln(
-        '      result[${_dartSourceString(definition.key)}] = <dynamic>[',
-      );
-    if (definition.isPostProcess) {
-      final factory = definition.postProcess!.builderFactory;
+      ..writeln('      result[${_dartSourceString(request.id)}] = <dynamic>[');
+    if (request.definition.isPostProcess) {
+      final factory = request.definition.postProcess!.builderFactory;
       output
         ..writeln('      <String, dynamic>{')
         ..writeln('        \'factory\': ${_dartSourceString(factory)},')
         ..writeln("        'build_extensions': <String, List<String>>{},")
         ..writeln(
           '        \'input_extensions\': _postProcessInputExtensions('
-          '$importPrefix.$factory(BuilderOptions(<String, dynamic>{}))),',
+          '$importPrefix.$factory($builderOptions)),'
         )
         ..writeln('      },');
     } else {
-      for (final factory in definition.normal!.builderFactories) {
+      for (final factory in request.definition.normal!.builderFactories) {
         output
           ..writeln('      <String, dynamic>{')
           ..writeln('        \'factory\': ${_dartSourceString(factory)},')
           ..writeln("        'build_extensions': _builderBuildExtensions(")
           ..writeln(
-            '          $importPrefix.$factory('
-            'BuilderOptions(<String, dynamic>{}, isRoot: true)),',
+          '          $importPrefix.$factory($builderOptions),'
           )
-          ..writeln('        ),')
-          ..writeln('      },');
+          ..writeln('        ),');
       }
     }
     output
@@ -893,6 +898,69 @@ String _factoryProbeSource(Iterable<_DefinitionInfo> definitions) {
       '=> builder.inputExtensions.toList(growable: false);',
     );
   return output.toString();
+}
+
+String? _findPackageConfigPath(String root) {
+  var packageConfigRoot = p.canonicalize(root);
+  while (true) {
+    final candidate = p.join(
+      packageConfigRoot,
+      '.dart_tool',
+      'package_config.json',
+    );
+    if (File(candidate).existsSync()) return candidate;
+    final parent = p.dirname(packageConfigRoot);
+    if (parent == packageConfigRoot) return null;
+    packageConfigRoot = parent;
+  }
+}
+
+_FactoryMapping? _factoryMappingFor(
+  _DefinitionInfo info,
+  List<_FactoryMapping>? mappings,
+  _ManifestDefinition definition,
+) {
+  if (mappings == null) return null;
+  final index = info.isPostProcess
+      ? 0
+      : info.normal!.builderFactories.indexOf(definition.factory);
+  if (index < 0 || index >= mappings.length) return null;
+  return mappings[index];
+}
+
+Map<String, dynamic>? _runtimeMappingJson(
+  _DefinitionInfo info,
+  List<_FactoryMapping>? mappings,
+  _ManifestDefinition definition,
+) {
+  final mapping = _factoryMappingFor(info, mappings, definition);
+  if (mapping == null) return null;
+  if (info.isPostProcess) {
+    final inputExtensions = mapping.inputExtensions;
+    if (inputExtensions == null) return null;
+    return <String, dynamic>{'input_extensions': inputExtensions};
+  }
+  final extensions = _manifestExtensions(mapping.buildExtensions);
+  if (extensions == null) return null;
+  return <String, dynamic>{
+    'extensions': [for (final extension in extensions) extension.toJson()],
+  };
+}
+
+List<String> _runtimeOutputSuffixes(
+  _DefinitionInfo info,
+  List<_FactoryMapping>? mappings,
+  _ManifestDefinition definition,
+) {
+  final mapping = _factoryMappingFor(info, mappings, definition);
+  if (mapping == null || info.isPostProcess) {
+    return definition.outputSuffixes;
+  }
+  final extensions = _manifestExtensions(mapping.buildExtensions);
+  if (extensions == null) return definition.outputSuffixes;
+  return <String>[
+    for (final extension in extensions) ...extension.outputSuffixes,
+  ];
 }
 
 List<_ManifestDefinition>? _tryConvertDefinition(
@@ -922,14 +990,15 @@ List<_ManifestDefinition>? _tryConvertDefinition(
   if (requiredInputSuffixes.any((suffix) => !_simpleExtension(suffix))) {
     return null;
   }
-  final factoryMappings = definition.builderFactories.length == 1
-      ? <_FactoryMapping>[
-          _FactoryMapping(
-            factory: definition.builderFactories.single,
-            buildExtensions: definition.buildExtensions,
-          ),
-        ]
-      : probedMappings;
+  final factoryMappings = probedMappings ??
+      (definition.builderFactories.length == 1
+          ? <_FactoryMapping>[
+              _FactoryMapping(
+                factory: definition.builderFactories.single,
+                buildExtensions: definition.buildExtensions,
+              ),
+            ]
+          : null);
   if (factoryMappings == null ||
       factoryMappings.length != definition.builderFactories.length) {
     return null;
@@ -984,8 +1053,7 @@ List<_ManifestExtension>? _manifestExtensions(
             ? !_simpleCapturePath(input)
             : inputIsExact
             ? !_simplePath(input)
-            : !_simpleExtension(input)) ||
-        entry.value.isEmpty) {
+            : !_simpleExtension(input))) {
       return null;
     }
     final outputSuffixes = entry.value
@@ -1088,6 +1156,20 @@ List<String>? _knownPostProcessInputExtensions(
 
 String _manifestFactoryId(String definitionKey, int factoryIndex, int count) =>
     count == 1 ? definitionKey : '$definitionKey#factory$factoryIndex';
+
+class _FactoryProbeRequest {
+  _FactoryProbeRequest({
+    required this.id,
+    required this.definition,
+    required this.options,
+    required this.isRoot,
+  });
+
+  final String id;
+  final _DefinitionInfo definition;
+  final Map<String, dynamic> options;
+  final bool isRoot;
+}
 
 class _FactoryMapping {
   _FactoryMapping({
@@ -1457,6 +1539,8 @@ class _ManifestDefinition {
     required List<String> targetSources,
     required List<String> targetSourcesExclude,
     required Map<String, dynamic> options,
+    bool isRoot = false,
+    Map<String, dynamic>? runtimeMapping,
     required int phase,
     required String? target,
     required String? package,
@@ -1488,6 +1572,8 @@ class _ManifestDefinition {
     'target_sources': targetSources,
     'target_sources_exclude': targetSourcesExclude,
     'options': options,
+    if (target != null) 'is_root': isRoot,
+    if (runtimeMapping != null) 'runtime_mapping': runtimeMapping,
   };
 }
 
