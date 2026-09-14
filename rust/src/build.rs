@@ -306,6 +306,8 @@ pub(crate) fn run_with_config(
         .filter(|spec| spec.builder.is_optional && spec.builder.kind == BuilderKind::Normal)
         .flat_map(|spec| spec.outputs.iter().map(|output| (output.clone(), spec.clone())))
         .collect::<BTreeMap<_, _>>();
+    let lazy_demand_possible =
+        !lazy_force_keys.is_empty() && !lazy_specs_by_output.is_empty();
     let mut lazy_state = LazyBuildState::new(lazy_force_keys);
     if !dirty.is_empty() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
@@ -349,7 +351,7 @@ pub(crate) fn run_with_config(
             &first_package,
             &config_digest,
             phase_count,
-            !lazy_specs_by_output.is_empty(),
+            lazy_demand_possible,
         )?;
 
         // Source outputs remain in the Rust overlay until the transaction commits.
@@ -395,7 +397,7 @@ pub(crate) fn run_with_config(
                     &configured_builder.package,
                     &config_digest,
                     phase_count,
-                    !lazy_specs_by_output.is_empty(),
+                    lazy_demand_possible,
                 )?;
                 initialized_package = configured_builder.package.clone();
                 resolver_needs_reset = false;
@@ -403,7 +405,7 @@ pub(crate) fn run_with_config(
                 active_pool.reset_resolver()?;
                 resolver_needs_reset = false;
             }
-            let results = if lazy_specs_by_output.is_empty() {
+            let results = if !lazy_demand_possible {
                 active_pool.build_parallel(
                     &workspace,
                     &requests,

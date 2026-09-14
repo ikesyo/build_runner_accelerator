@@ -5,6 +5,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+jobs=${JOBS:-1}
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 cargo_bin=$(resolve_toolchain_cargo)
@@ -83,7 +84,7 @@ run_rust() {
   local directory=$1
   PUB_CACHE="$pub_cache" RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
     "$script_dir/run_rust_frontend.sh" build --root "$directory" --dart "$dart_bin" \
-    --mode rust
+    --mode rust --jobs "$jobs"
 }
 
 measure() {
