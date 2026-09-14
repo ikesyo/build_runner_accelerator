@@ -27,9 +27,12 @@ input when a later phase consumes a generated output.
 
 The Dart manifest generator remains the compatibility boundary and source of
 truth for package graph and build configuration semantics. For each selected
-builder application, it instantiates the configured factory with the resolved
-options and BuilderOptions.isRoot, then serializes a validated runtime mapping
-into the application entry.
+application that needs runtime data—normal builders with multiple factories or
+resolved options, and post-process builders without a validated input
+extension list—it instantiates the configured factory with the resolved options
+and BuilderOptions.isRoot, then serializes a validated runtime mapping into the
+application entry. A single-factory normal builder with no resolved options
+uses its validated build.yaml mapping directly.
 
 The Rust side consumes that normalized mapping generically. It does not
 identify built_value, source_gen, or any other package by name. A configured
@@ -59,6 +62,8 @@ Rust branch is not an allowed substitute for a failed normalization.
 
 The built_value fixture is compared against stock for generated source and
 cache outputs, non-triggered inputs, and removal of outputs after the input
-stops being a built_value library. Generic Rust tests cover multiple mappings,
+stops being a built_value library. Its single-factory, no-option case uses the
+validated static mapping; option-dependent and multi-factory cases exercise the
+runtime probe boundary. Generic Rust tests cover multiple mappings,
 capture/literal paths, runtime overrides, empty expected-output lists, output
 collisions, and multi-phase primary-input chains.
