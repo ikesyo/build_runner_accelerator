@@ -867,7 +867,7 @@ String _factoryProbeSource(Iterable<_FactoryProbeRequest> requests) {
     ..writeln('    return;')
     ..writeln('  }')
     ..writeln('  final result = <String, dynamic>{};');
-  for (final request of sorted) {
+  for (final request in sorted) {
     final importUri = request.definition.isPostProcess
         ? request.definition.postProcess!.import
         : request.definition.normal!.import;
