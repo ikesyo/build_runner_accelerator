@@ -167,11 +167,12 @@ pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> 
             crate::builder::BuilderKind::Normal => 0,
             crate::builder::BuilderKind::PostProcess => 1,
         });
-        for input_extension in &builder.definition.post_process_input_extensions {
+        let effective_definition = builder.effective_definition();
+        for input_extension in &effective_definition.post_process_input_extensions {
             bytes.extend_from_slice(input_extension.as_bytes());
             bytes.push(0);
         }
-        for extension in &builder.definition.extensions {
+        for extension in &effective_definition.extensions {
             bytes.extend_from_slice(extension.input_suffix.as_bytes());
             bytes.push(u8::from(extension.input_is_exact));
             bytes.push(u8::from(extension.input_is_capture));
