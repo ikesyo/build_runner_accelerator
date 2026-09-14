@@ -908,7 +908,11 @@ String _factoryProbeSource(Iterable<_FactoryProbeRequest> requests) {
     }
     output
       ..writeln('      ];')
-      ..writeln('    } catch (_) {}');
+      ..writeln('    } catch (error, stack) {')
+      ..writeln('      stderr.writeln(error);')
+      ..writeln('      stderr.writeln(stack);')
+      ..writeln('      rethrow;')
+      ..writeln('    }');
   }
   output
     ..writeln('  File(args.single).writeAsStringSync(jsonEncode(result));')
