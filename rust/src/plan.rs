@@ -41,6 +41,23 @@ pub(crate) fn input_candidates(
     input_candidates_with_primary_inputs(workspace, snapshot, builder, &BTreeMap::new())
 }
 
+fn primary_input_for<'a>(
+    asset: &'a str,
+    primary_inputs: &'a BTreeMap<String, String>,
+) -> &'a str {
+    let mut current = asset;
+    // A later phase can consume an output produced by an earlier phase. Follow
+    // the declared-output chain so targetSources remains anchored to the
+    // original primary input, as it is in build_runner.
+    for _ in 0..=primary_inputs.len() {
+        let Some(next) = primary_inputs.get(current) else {
+            break;
+        };
+        current = next;
+    }
+    current
+}
+
 pub(crate) fn input_candidates_with_primary_inputs(
     _workspace: &Workspace,
     snapshot: &Snapshot,
@@ -85,7 +102,7 @@ pub(crate) fn input_candidates_with_primary_inputs(
                 .generate_for_exclude
                 .iter()
                 .any(|pattern| matches_glob(pattern, path));
-            let primary_input = primary_inputs.get(asset).unwrap_or(asset);
+            let primary_input = primary_input_for(asset, primary_inputs);
             let primary_path = primary_input
                 .split_once('|')
                 .map(|(_, path)| path)
@@ -253,10 +270,12 @@ pub(crate) fn outputs_for(builder: &BuilderDefinition, input: &str) -> io::Resul
         .ok_or_else(|| io::Error::other(format!("invalid AssetId: {input}")))?;
     let mut outputs = Vec::new();
     let mut seen = BTreeSet::new();
+    let mut matched_extension = false;
     for extension in &builder.extensions {
         if !extension_matches(extension, path) {
             continue;
         }
+        matched_extension = true;
         for suffix in &extension.output_suffixes {
             let output = output_for(extension, input, suffix)?;
             if !seen.insert(output.clone()) {
@@ -272,7 +291,7 @@ pub(crate) fn outputs_for(builder: &BuilderDefinition, input: &str) -> io::Resul
             outputs.push(output);
         }
     }
-    if outputs.is_empty() {
+    if !matched_extension {
         return Err(io::Error::other(format!(
             "input does not match any build extension: {input}"
         )));
