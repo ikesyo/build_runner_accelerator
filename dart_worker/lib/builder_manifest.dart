@@ -228,7 +228,8 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   for (final entry in selected.entries) {
     final selectedBuilder = entry.value;
     final definition = selectedBuilder.definition;
-    final requiresRuntimeProbe = !definition.isPostProcess ||
+    final requiresRuntimeProbe =
+        !definition.isPostProcess ||
         // ignore: deprecated_member_use
         (definition.postProcess!.inputExtensions == null &&
             _knownPostProcessInputExtensions(definition.postProcess!) == null);
@@ -877,7 +878,8 @@ String _factoryProbeSource(Iterable<_FactoryProbeRequest> requests) {
         : request.definition.normal!.import;
     final importPrefix = imports[importUri]!;
     final optionsLiteral = _dartSourceString(jsonEncode(request.options));
-    final builderOptions = 'BuilderOptions('
+    final builderOptions =
+        'BuilderOptions('
         'Map<String, dynamic>.from(jsonDecode($optionsLiteral) as Map), '
         'isRoot: ${request.isRoot})';
     output
@@ -891,7 +893,7 @@ String _factoryProbeSource(Iterable<_FactoryProbeRequest> requests) {
         ..writeln("        'build_extensions': <String, List<String>>{},")
         ..writeln(
           '        \'input_extensions\': _postProcessInputExtensions('
-          '$importPrefix.$factory($builderOptions)),'
+          '$importPrefix.$factory($builderOptions)),',
         )
         ..writeln('      },');
     } else {
@@ -900,9 +902,7 @@ String _factoryProbeSource(Iterable<_FactoryProbeRequest> requests) {
           ..writeln('      <String, dynamic>{')
           ..writeln('        \'factory\': ${_dartSourceString(factory)},')
           ..writeln("        'build_extensions': _builderBuildExtensions(")
-          ..writeln(
-            '          $importPrefix.$factory($builderOptions),',
-          )
+          ..writeln('          $importPrefix.$factory($builderOptions),')
           ..writeln('        ),')
           ..writeln('      },');
       }
@@ -1024,7 +1024,8 @@ List<_ManifestDefinition>? _tryConvertDefinition(
   if (requiredInputSuffixes.any((suffix) => !_simpleExtension(suffix))) {
     return null;
   }
-  final factoryMappings = probedMappings ??
+  final factoryMappings =
+      probedMappings ??
       (definition.builderFactories.length == 1
           ? <_FactoryMapping>[
               _FactoryMapping(
@@ -1084,10 +1085,10 @@ List<_ManifestExtension>? _manifestExtensions(
     final inputIsCapture = captureNames != null;
     final inputIsExact = inputIsAnchored && !inputIsCapture;
     if ((inputIsCapture
-            ? !_simpleCapturePath(input)
-            : inputIsExact
-            ? !_simplePath(input)
-            : !_simpleExtension(input))) {
+        ? !_simpleCapturePath(input)
+        : inputIsExact
+        ? !_simplePath(input)
+        : !_simpleExtension(input))) {
       return null;
     }
     final outputSuffixes = entry.value
