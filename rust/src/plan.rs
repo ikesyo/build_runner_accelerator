@@ -260,10 +260,6 @@ pub(crate) fn validate_unique_outputs(specs: &[BuildSpec]) -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) fn scoped_action_key(target: &str, builder: &str, input: &str) -> String {
-    format!("{target}|{builder}|{input}")
-}
-
 pub(crate) fn outputs_for(builder: &BuilderDefinition, input: &str) -> io::Result<Vec<String>> {
     let (_, path) = input
         .split_once('|')
