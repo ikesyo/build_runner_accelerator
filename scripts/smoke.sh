@@ -30,8 +30,8 @@ fi
 
 (cd "$worker_dir" && \
   PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" && \
-  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics format lib bin
-  git -C "$repo_root" diff -- dart_worker/lib/builder_manifest.dart)
+  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics format \
+    --output=none --set-exit-if-changed lib bin)
 (cd "$fixture_dir" && \
   PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}")
 
