@@ -51,8 +51,7 @@ jobs:
         shell: bash
         run: |
           dart pub ${{ matrix.resolution }}
-          dart format lib bin test tool
-          git diff -- lib/src/builder_manifest.dart
+          dart format --output=none --set-exit-if-changed lib bin test tool
           dart analyze lib bin test tool
           dart test --compiler=source
       - name: Validate publish package
