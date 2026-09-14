@@ -82,9 +82,8 @@ class _RemoteIoState {
       _actions.isEmpty ? _idleOutputs : _active.outputs;
   Set<AssetId> get observedReads =>
       _actions.isEmpty ? _idleObservedReads : _active.observedReads;
-  Set<AssetId> get observedGlobResults => _actions.isEmpty
-      ? _idleObservedGlobResults
-      : _active.observedGlobResults;
+  Set<AssetId> get observedGlobResults =>
+      _actions.isEmpty ? _idleObservedGlobResults : _active.observedGlobResults;
   Set<ObservedGlob> get observedGlobs =>
       _actions.isEmpty ? _idleObservedGlobs : _active.observedGlobs;
 }
