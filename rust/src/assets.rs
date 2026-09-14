@@ -162,6 +162,7 @@ pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> 
         bytes.push(0);
         bytes.extend_from_slice(&builder.target_order.to_be_bytes());
         bytes.extend_from_slice(&builder.phase.to_be_bytes());
+        bytes.push(u8::from(builder.is_root));
         bytes.extend_from_slice(builder.definition.id.as_bytes());
         bytes.push(match builder.definition.kind {
             crate::builder::BuilderKind::Normal => 0,
