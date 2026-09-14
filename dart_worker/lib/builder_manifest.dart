@@ -186,7 +186,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     return;
   }
 
-    // build.yaml remains the ordering source, while the
+  // build.yaml remains the ordering source, while the
   // instantiated Builder is the expected-output source. Probe every selected
   // application with its resolved options so target-local mapping overrides
   // remain lossless and package-specific Rust branches are unnecessary.
@@ -299,6 +299,23 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
             .map((builder) => builder.definition.key)
             .toList()
           ..sort();
+    final runtimeOutputSuffixes = <String, List<String>>{};
+    for (final candidateBuilder in targetBuilders) {
+      final candidateMappings =
+          probedMappings[_selectedKey(
+            target.target.key,
+            candidateBuilder.definition.key,
+          )];
+      for (final candidate
+          in compatibleDefinitions[candidateBuilder.definition.key] ??
+              const <_ManifestDefinition>[]) {
+        runtimeOutputSuffixes[candidate.id] = _runtimeOutputSuffixes(
+          candidateBuilder.definition,
+          candidateMappings,
+          candidate,
+        );
+      }
+    }
     final orderedKeys = <String>[...normalKeys, ...postProcessKeys];
     for (final key in orderedKeys) {
       final selectedBuilder = targetBuilders.firstWhere(
@@ -315,7 +332,8 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
                     if (!candidate.isPostProcess &&
                         builderOrder[candidate.id]! >=
                             builderOrder[converted.id]!)
-                      ...candidate.outputSuffixes,
+                      ...(runtimeOutputSuffixes[candidate.id] ??
+                          candidate.outputSuffixes),
               }.toList()..sort());
         activeEntries.add(
           converted.toJson(
@@ -324,6 +342,12 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
             targetSources: target.sources.include,
             targetSourcesExclude: target.sources.exclude,
             options: _jsonMap(selectedBuilder.options),
+            isRoot: target.package.isRoot,
+            runtimeMapping: _runtimeMappingJson(
+              selectedBuilder.definition,
+              probedMappings[_selectedKey(target.target.key, key)],
+              converted,
+            ),
             phase: converted.isPostProcess
                 ? 0
                 : builderOrder[converted.id]! * targetOrder.maxComponentSize +
@@ -447,8 +471,9 @@ Future<_PackageGraph> _loadPackageGraph(String packagePath) async {
   for (final package in orderedPackages.where((p) => p.name != rootName)) {
     final pubspec = _pubspecForPath(package.root.toFilePath());
     packages[package.name]!.dependencies.addAll(
-      _depsFromYaml(pubspec)
-          .map((name) => packageNode(name, parent: package.name)),
+      _depsFromYaml(
+        pubspec,
+      ).map((name) => packageNode(name, parent: package.name)),
     );
   }
 
@@ -778,13 +803,13 @@ Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
           ),
         );
       }
-      if (valid) probed[entry.key as String] = mappings;
+      if (valid) probed[request.id] = mappings;
     }
     return probed;
   } catch (_) {
     // A probe is an optimization boundary, not a reason to fail the build.
-    // The caller will leave any definition without a trustworthy probe in
-    // the normal Dart fallback path.
+    // The caller treats a missing selected request as an unsupported manifest
+    // and falls back to stock Dart build_runner in auto mode.
     return const {};
   } finally {
     if (temporary != null && temporary.existsSync()) {
@@ -872,7 +897,7 @@ String _factoryProbeSource(Iterable<_FactoryProbeRequest> requests) {
           ..writeln('        \'factory\': ${_dartSourceString(factory)},')
           ..writeln("        'build_extensions': _builderBuildExtensions(")
           ..writeln(
-          '          $importPrefix.$factory($builderOptions),'
+            '          $importPrefix.$factory($builderOptions),',
           )
           ..writeln('        ),');
       }
