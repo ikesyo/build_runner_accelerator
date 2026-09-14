@@ -24,12 +24,31 @@ pub(crate) struct BuildSpec {
     pub(crate) options: BTreeMap<String, Value>,
 }
 
+impl BuildSpec {
+    /// The graph identity includes the configured builder instance. A single
+    /// builder factory may be applied to multiple targets/phases, and those
+    /// actions must never overwrite one another in the persisted graph.
+    pub(crate) fn action_key(&self) -> String {
+        format!("{}|{}|{}", self.target, self.instance_key, self.input)
+    }
+}
+
 pub(crate) fn input_candidates(
-    _workspace: &Workspace,
+    workspace: &Workspace,
     snapshot: &Snapshot,
     builder: &ConfiguredBuilder,
 ) -> BTreeSet<String> {
+    input_candidates_with_primary_inputs(workspace, snapshot, builder, &BTreeMap::new())
+}
+
+pub(crate) fn input_candidates_with_primary_inputs(
+    _workspace: &Workspace,
+    snapshot: &Snapshot,
+    builder: &ConfiguredBuilder,
+    primary_inputs: &BTreeMap<String, String>,
+) -> BTreeSet<String> {
     let prefix = format!("{}|", builder.package);
+    let definition = builder.effective_definition();
     snapshot
         .keys()
         .filter_map(|asset| {
@@ -37,15 +56,13 @@ pub(crate) fn input_candidates(
             if !snapshot.get(asset).is_some_and(|entry| entry.exists) {
                 return None;
             }
-            let matches_extension = if builder.definition.kind == BuilderKind::PostProcess {
-                builder
-                    .definition
+            let matches_extension = if definition.kind == BuilderKind::PostProcess {
+                definition
                     .post_process_input_extensions
                     .iter()
                     .any(|extension| path.ends_with(extension))
             } else {
-                builder
-                    .definition
+                definition
                     .extensions
                     .iter()
                     .any(|extension| extension_matches(extension, path))
@@ -68,14 +85,19 @@ pub(crate) fn input_candidates(
                 .generate_for_exclude
                 .iter()
                 .any(|pattern| matches_glob(pattern, path));
+            let primary_input = primary_inputs.get(asset).unwrap_or(asset);
+            let primary_path = primary_input
+                .split_once('|')
+                .map(|(_, path)| path)
+                .unwrap_or(primary_input);
             let matches_target_sources = builder
                 .target_sources
                 .iter()
-                .any(|pattern| matches_glob(pattern, path));
+                .any(|pattern| matches_glob(pattern, primary_path));
             let excluded_by_target_sources = builder
                 .target_sources_exclude
                 .iter()
-                .any(|pattern| matches_glob(pattern, path));
+                .any(|pattern| matches_glob(pattern, primary_path));
             (matches_extension
                 && !excluded
                 && matches_generate_for
@@ -93,7 +115,30 @@ pub(crate) fn build_specs_for_kind(
     config: &RustBuildConfig,
     kind: Option<BuilderKind>,
 ) -> io::Result<Vec<BuildSpec>> {
-    build_specs(workspace, snapshot, config, kind, None)
+    build_specs_for_kind_with_primary_inputs(
+        workspace,
+        snapshot,
+        config,
+        kind,
+        &BTreeMap::new(),
+    )
+}
+
+pub(crate) fn build_specs_for_kind_with_primary_inputs(
+    workspace: &Workspace,
+    snapshot: &Snapshot,
+    config: &RustBuildConfig,
+    kind: Option<BuilderKind>,
+    primary_inputs: &BTreeMap<String, String>,
+) -> io::Result<Vec<BuildSpec>> {
+    build_specs(
+        workspace,
+        snapshot,
+        config,
+        kind,
+        None,
+        Some(primary_inputs),
+    )
 }
 
 /// Creates the actions for one manifest phase. A later phase receives a
@@ -107,7 +152,32 @@ pub(crate) fn build_specs_for_phase(
     kind: BuilderKind,
     phase: u32,
 ) -> io::Result<Vec<BuildSpec>> {
-    build_specs(workspace, snapshot, config, Some(kind), Some(phase))
+    build_specs_for_phase_with_primary_inputs(
+        workspace,
+        snapshot,
+        config,
+        kind,
+        phase,
+        &BTreeMap::new(),
+    )
+}
+
+pub(crate) fn build_specs_for_phase_with_primary_inputs(
+    workspace: &Workspace,
+    snapshot: &Snapshot,
+    config: &RustBuildConfig,
+    kind: BuilderKind,
+    phase: u32,
+    primary_inputs: &BTreeMap<String, String>,
+) -> io::Result<Vec<BuildSpec>> {
+    build_specs(
+        workspace,
+        snapshot,
+        config,
+        Some(kind),
+        Some(phase),
+        Some(primary_inputs),
+    )
 }
 
 fn build_specs(
@@ -116,30 +186,39 @@ fn build_specs(
     config: &RustBuildConfig,
     kind: Option<BuilderKind>,
     phase: Option<u32>,
+    primary_inputs: Option<&BTreeMap<String, String>>,
 ) -> io::Result<Vec<BuildSpec>> {
     let mut specs = Vec::new();
+    let empty_primary_inputs = BTreeMap::new();
+    let primary_inputs = primary_inputs.unwrap_or(&empty_primary_inputs);
     for builder in &config.builders {
-        if kind.is_some_and(|expected| builder.definition.kind != expected) {
+        let definition = builder.effective_definition();
+        if kind.is_some_and(|expected| definition.kind != expected) {
             continue;
         }
         if phase.is_some_and(|expected| builder.phase != expected) {
             continue;
         }
-        for input in input_candidates(workspace, snapshot, builder) {
+        for input in input_candidates_with_primary_inputs(
+            workspace,
+            snapshot,
+            builder,
+            primary_inputs,
+        ) {
             specs.push(BuildSpec {
-                builder: builder.definition.clone(),
+                builder: definition.clone(),
                 target: builder.target.clone(),
                 package: builder.package.clone(),
                 phase: config.global_phase(builder),
                 instance_key: format!(
                     "{}|{}|{}|{}",
-                    builder.target, builder.definition.id, builder.phase, builder.package
+                    builder.target, definition.id, builder.phase, builder.package
                 ),
                 input: input.clone(),
-                outputs: if builder.definition.kind == BuilderKind::PostProcess {
+                outputs: if definition.kind == BuilderKind::PostProcess {
                     Vec::new()
                 } else {
-                    outputs_for(&builder.definition, &input)?
+                    outputs_for(&definition, &input)?
                 },
                 options: builder.options.clone(),
             });
@@ -152,7 +231,7 @@ fn build_specs(
 pub(crate) fn validate_unique_outputs(specs: &[BuildSpec]) -> io::Result<()> {
     let mut owners = BTreeMap::new();
     for spec in specs {
-        let action = scoped_action_key(&spec.target, &spec.builder.id, &spec.input);
+        let action = spec.action_key();
         for output in &spec.outputs {
             if let Some(previous) = owners.insert(output.clone(), action.clone()) {
                 return Err(io::Error::other(format!(
@@ -180,9 +259,17 @@ pub(crate) fn outputs_for(builder: &BuilderDefinition, input: &str) -> io::Resul
         }
         for suffix in &extension.output_suffixes {
             let output = output_for(extension, input, suffix)?;
-            if seen.insert(output.clone()) {
-                outputs.push(output);
+            if !seen.insert(output.clone()) {
+                return Err(io::Error::other(format!(
+                    "builder declares duplicate output for {input}: {output}"
+                )));
             }
+            if output == input {
+                return Err(io::Error::other(format!(
+                    "builder declares an output identical to its input: {input}"
+                )));
+            }
+            outputs.push(output);
         }
     }
     if outputs.is_empty() {
