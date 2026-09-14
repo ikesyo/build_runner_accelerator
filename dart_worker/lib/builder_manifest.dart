@@ -229,11 +229,12 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   for (final entry in selected.entries) {
     final selectedBuilder = entry.value;
     final definition = selectedBuilder.definition;
-    final requiresRuntimeProbe =
-        !definition.isPostProcess ||
-        // ignore: deprecated_member_use
-        (definition.postProcess!.inputExtensions == null &&
-            _knownPostProcessInputExtensions(definition.postProcess!) == null);
+    final requiresRuntimeProbe = definition.isPostProcess
+        ? // ignore: deprecated_member_use
+          (definition.postProcess!.inputExtensions == null &&
+              _knownPostProcessInputExtensions(definition.postProcess!) == null)
+        : definition.normal!.builderFactories.length > 1 ||
+            selectedBuilder.options.isNotEmpty;
     final runtimeMappings = probedMappings[entry.key];
     if (requiresRuntimeProbe) {
       if (runtimeMappings == null ||
