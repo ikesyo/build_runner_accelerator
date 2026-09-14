@@ -801,6 +801,7 @@ mod tests {
             }),
             target: target.to_owned(),
             package: "app".to_owned(),
+            is_root: true,
             target_order,
             phase,
             excluded_input_suffixes: Vec::new(),
