@@ -1,0 +1,66 @@
+builders:
+  optional_builder:
+    import: "package:optional_builder_app/optional_builder.dart"
+    builder_factories:
+      - optionalBuilder
+    build_extensions:
+      ".txt":
+        - ".optional.txt"
+    auto_apply: none
+    is_optional: true
+    build_to: source
+
+  secondary_consumer:
+    import: "package:optional_builder_app/optional_builder.dart"
+    builder_factories:
+      - secondaryConsumer
+    build_extensions:
+      "^lib/input.txt":
+        - "lib/input.final.txt"
+    required_inputs:
+      - ".optional.txt"
+    auto_apply: none
+    build_to: source
+
+  primary_consumer:
+    import: "package:optional_builder_app/optional_builder.dart"
+    builder_factories:
+      - primaryConsumer
+    build_extensions:
+      ".optional.txt":
+        - ".primary.txt"
+    required_inputs:
+      - ".optional.txt"
+    auto_apply: none
+    build_to: source
+
+  glob_consumer:
+    import: "package:optional_builder_app/optional_builder.dart"
+    builder_factories:
+      - globConsumer
+    build_extensions:
+      "^lib/input.txt":
+        - "lib/input.glob.txt"
+    required_inputs:
+      - ".optional.txt"
+    auto_apply: none
+    build_to: source
+
+targets:
+  $default:
+    sources:
+      include:
+        - lib/**
+    builders:
+      optional_builder_app:optional_builder:
+        generate_for:
+          - lib/**/*.txt
+      optional_builder_app:secondary_consumer:
+        generate_for:
+          - lib/input.txt
+      optional_builder_app:primary_consumer:
+        generate_for:
+          - lib/**/*.optional.txt
+      optional_builder_app:glob_consumer:
+        generate_for:
+          - lib/input.txt

@@ -922,10 +922,6 @@ List<_ManifestDefinition>? _tryConvertDefinition(
   if (requiredInputSuffixes.any((suffix) => !_simpleExtension(suffix))) {
     return null;
   }
-  // Optional builders require build_runner's demand-driven phase semantics,
-  // which the Rust action planner does not model yet.
-  if (definition.isOptional) return null;
-
   final factoryMappings = definition.builderFactories.length == 1
       ? <_FactoryMapping>[
           _FactoryMapping(
@@ -965,6 +961,7 @@ List<_ManifestDefinition>? _tryConvertDefinition(
         inputExtensions: const [],
         buildTo: definition.buildTo == BuildTo.source ? 'source' : 'cache',
         outputIsOptional: false,
+        isOptional: definition.isOptional,
         requiredInputSuffixes: requiredInputSuffixes,
       ),
     );
@@ -1057,6 +1054,7 @@ _ManifestDefinition? _tryConvertPostProcessDefinition(
     inputExtensions: inputExtensions,
     buildTo: 'cache',
     outputIsOptional: true,
+    isOptional: false,
     requiredInputSuffixes: const [],
   );
 }
@@ -1426,6 +1424,7 @@ class _ManifestDefinition {
     required this.inputExtensions,
     required this.buildTo,
     required this.outputIsOptional,
+    required this.isOptional,
     required this.requiredInputSuffixes,
   });
 
@@ -1437,6 +1436,7 @@ class _ManifestDefinition {
   final List<String> inputExtensions;
   final String buildTo;
   final bool outputIsOptional;
+  final bool isOptional;
   final List<String> requiredInputSuffixes;
 
   bool get isPostProcess => kind == 'post_process';
@@ -1479,6 +1479,7 @@ class _ManifestDefinition {
     if (target != null) 'target': target,
     if (package != null) 'package': package,
     if (target != null) 'target_order': targetOrder,
+    'is_optional': isOptional,
     'output_is_optional': outputIsOptional,
     'required_input_suffixes': requiredInputSuffixes,
     'excluded_input_suffixes': excludedInputSuffixes,

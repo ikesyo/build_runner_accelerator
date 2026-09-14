@@ -35,6 +35,7 @@ pub(crate) struct BuilderDefinition {
     pub(crate) post_process_input_extensions: Vec<String>,
     pub(crate) build_to: BuildTo,
     pub(crate) phase: u32,
+    pub(crate) is_optional: bool,
     pub(crate) output_is_optional: bool,
     /// All `required_inputs` suffixes from build.yaml, kept losslessly.
     pub(crate) required_input_suffixes: Vec<String>,
@@ -111,6 +112,8 @@ pub(crate) struct BuilderManifestDefinition {
     pub(crate) input_extensions: Vec<String>,
     pub(crate) build_to: String,
     pub(crate) phase: u32,
+    #[serde(default)]
+    pub(crate) is_optional: bool,
     #[serde(default)]
     pub(crate) output_is_optional: bool,
     #[serde(default)]
@@ -294,6 +297,7 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
             post_process_input_extensions: entry.input_extensions,
             build_to: BuildTo::Cache,
             phase: entry.phase,
+            is_optional: false,
             output_is_optional: true,
             required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
@@ -449,6 +453,7 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
         post_process_input_extensions: Vec::new(),
         build_to,
         phase: entry.phase,
+        is_optional: entry.is_optional,
         output_is_optional: entry.output_is_optional,
         required_input_suffixes,
         excluded_input_suffixes: entry.excluded_input_suffixes,
@@ -691,6 +696,37 @@ mod tests {
             config.builders[0].definition.required_input_suffixes,
             [".first", ".second"]
         );
+    }
+
+    #[test]
+    fn dynamic_manifest_preserves_optional_builder_flag() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 6,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:optional",
+                "input_suffix": ".txt",
+                "output_suffixes": [".optional.txt"],
+                "is_optional": true,
+                "build_to": "source",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["lib/**/*.txt"]
+            }],
+            "definitions": [{
+                "id": "example:optional",
+                "input_suffix": ".txt",
+                "output_suffixes": [".optional.txt"],
+                "is_optional": true,
+                "build_to": "source",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+        let config = rust_build_config_from_manifest(manifest).unwrap();
+        assert!(config.builders[0].definition.is_optional);
     }
 
     #[test]

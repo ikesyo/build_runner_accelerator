@@ -147,7 +147,7 @@ pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> 
     // domain marker when the meaning of the graph inputs changes, so a graph
     // created before the lossless required-input and artifact-visibility
     // model cannot be reused silently.
-    let mut bytes = b"build-runner-accelerator-config-v2\0".to_vec();
+    let mut bytes = b"build-runner-accelerator-config-v3\0".to_vec();
     bytes.extend_from_slice(&fs::read(build_yaml).unwrap_or_default());
     bytes.extend_from_slice(
         &fs::read(workspace.root.join(".dart_tool/package_config.json")).unwrap_or_default(),
@@ -183,6 +183,7 @@ pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> 
             bytes.push(0);
         }
         bytes.extend_from_slice(&builder.definition.phase.to_be_bytes());
+        bytes.push(u8::from(builder.definition.is_optional));
         bytes.push(u8::from(builder.definition.output_is_optional));
         bytes.push(match builder.definition.build_to {
             BuildTo::Cache => 0,

@@ -22,6 +22,9 @@ Use the version 1 protocol in [protocol/v1.md](../../protocol/v1.md):
 - The worker must advertise asset-rpc-binary-read-v1 and
   build-result-binary-v1; JSON fallback for those successful payloads is not
   part of v1.
+- The worker advertises optional-builder-demand-v1 when it supports nested
+  demand-driven actions. Rust uses this capability only for manifests that
+  contain optional builders.
 - Both endpoints enforce a 256 MiB complete-frame limit.
 - Worker stdout is reserved for frames. Human diagnostics go to stderr.
 - A worker remains resident across actions and watch builds. Resolver state can
@@ -50,4 +53,3 @@ process cleanup.
   costs and changes resource lifetime behavior.
 - An unframed shared stdout stream: rejected because diagnostics could corrupt
   the protocol.
-

@@ -20,6 +20,8 @@ The following are implemented and covered by the current fixture suite:
 - Runtime factory mapping probes for multi-factory builders, phase-aware
   generated-input visibility, and resident-worker Builder/Resource lifetime
   coverage.
+- Demand-driven execution for compatible normal `is_optional` builders when a
+  later action reads or uses their declared output.
 - Stock-vs-native output comparisons for clean, no-op, incremental, failure,
   deletion, rename, and watch cases.
 - A single project-facing Dart launcher with automatic signed native artifact

@@ -26,6 +26,10 @@ Use a generated, workspace-specific manifest as the generic boundary:
   the lossless `required_inputs` suffix list, optional outputs, normal and
   supported cache-only post-process builders, and multiple literal/capture
   extension mappings.
+- Compatible normal `is_optional` builders remain in the action plan but are
+  omitted from eager execution. A later action's asset read can request the
+  exact optional action through the resident worker, preserving the same
+  phase-aware overlay and transaction boundary.
 - Dart resolves builder order and target/SCC member order into the configured
   worker phase and target-order fields. Rust preserves that resolved timeline
   before applying visibility checks; package and target identity therefore

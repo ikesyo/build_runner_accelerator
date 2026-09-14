@@ -17,20 +17,35 @@ import 'protocol.dart';
 /// [ReaderWriter]. The Rust side processes a worker's batch sequentially, so
 /// changing the action view between requests is safe and lets the same
 /// [BuilderFilesystem] remain attached to the resolver's analysis model.
+class _RemoteActionState {
+  _RemoteActionState({
+    required this.rpc,
+    required this.package,
+    required this.primaryInput,
+    required this.blockedAssets,
+  });
+
+  final RpcSession rpc;
+  final String package;
+  final AssetId? primaryInput;
+  final Set<AssetId> blockedAssets;
+  final Map<AssetId, Uint8List> outputs = <AssetId, Uint8List>{};
+  final Set<AssetId> observedReads = <AssetId>{};
+  final Set<AssetId> observedGlobResults = <AssetId>{};
+  final Set<ObservedGlob> observedGlobs = <ObservedGlob>{};
+}
+
 class _RemoteIoState {
   _RemoteIoState({required this.readCache, required this.readableCache});
 
   final Map<AssetId, List<int>> readCache;
   final Set<AssetId> readableCache;
-
-  RpcSession? rpc;
-  String package = '';
-  AssetId? primaryInput;
-  Set<AssetId> blockedAssets = <AssetId>{};
-  final Map<AssetId, Uint8List> outputs = <AssetId, Uint8List>{};
-  final Set<AssetId> observedReads = <AssetId>{};
-  final Set<AssetId> observedGlobResults = <AssetId>{};
-  final Set<ObservedGlob> observedGlobs = <ObservedGlob>{};
+  final List<_RemoteActionState> _actions = <_RemoteActionState>[];
+  final Map<AssetId, Uint8List> _idleOutputs = <AssetId, Uint8List>{};
+  final Set<AssetId> _idleObservedReads = <AssetId>{};
+  final Set<AssetId> _idleObservedGlobResults = <AssetId>{};
+  final Set<ObservedGlob> _idleObservedGlobs = <ObservedGlob>{};
+  final Set<AssetId> _idleBlockedAssets = <AssetId>{};
 
   void beginAction({
     required RpcSession rpc,
@@ -38,17 +53,40 @@ class _RemoteIoState {
     required AssetId? primaryInput,
     required Set<AssetId> blockedAssets,
   }) {
-    this.rpc = rpc;
-    this.package = package;
-    this.primaryInput = primaryInput;
-    this.blockedAssets = blockedAssets;
-    outputs.clear();
-    observedReads.clear();
-    observedGlobResults.clear();
-    observedGlobs.clear();
+    _actions.add(
+      _RemoteActionState(
+        rpc: rpc,
+        package: package,
+        primaryInput: primaryInput,
+        blockedAssets: blockedAssets,
+      ),
+    );
   }
 
-  RpcSession get activeRpc => rpc ?? (throw StateError('Remote IO is idle'));
+  void endAction() {
+    if (_actions.isEmpty) throw StateError('Remote IO is idle');
+    _actions.removeLast();
+  }
+
+  _RemoteActionState get _active {
+    if (_actions.isEmpty) throw StateError('Remote IO is idle');
+    return _actions.last;
+  }
+
+  RpcSession get activeRpc => _active.rpc;
+  String get package => _actions.isEmpty ? '' : _active.package;
+  AssetId? get primaryInput => _actions.isEmpty ? null : _active.primaryInput;
+  Set<AssetId> get blockedAssets =>
+      _actions.isEmpty ? _idleBlockedAssets : _active.blockedAssets;
+  Map<AssetId, Uint8List> get outputs =>
+      _actions.isEmpty ? _idleOutputs : _active.outputs;
+  Set<AssetId> get observedReads =>
+      _actions.isEmpty ? _idleObservedReads : _active.observedReads;
+  Set<AssetId> get observedGlobResults => _actions.isEmpty
+      ? _idleObservedGlobResults
+      : _active.observedGlobResults;
+  Set<ObservedGlob> get observedGlobs =>
+      _actions.isEmpty ? _idleObservedGlobs : _active.observedGlobs;
 }
 
 /// A current build_runner [ReaderWriter] whose file operations are served by
@@ -90,6 +128,8 @@ class RemoteAssetReaderWriter extends ReaderWriter {
     primaryInput: primaryInput,
     blockedAssets: blockedAssets,
   );
+
+  void endAction() => _state.endAction();
 
   @override
   Future<bool> canRead(AssetId id, {bool inArtifactTree = false}) async {
