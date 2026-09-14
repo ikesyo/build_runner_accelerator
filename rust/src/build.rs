@@ -297,11 +297,7 @@ pub(crate) fn run_with_config(
     let mut deleted_overlay = dirty
         .iter()
         .filter_map(|spec| {
-            state.actions.get(&scoped_action_key(
-                &spec.target,
-                &spec.builder.id,
-                &spec.input,
-            ))
+            state.actions.get(&spec.action_key())
         })
         .flat_map(|action| action.outputs.iter().cloned())
         .collect::<BTreeSet<_>>();
@@ -610,13 +606,7 @@ fn record_build_result(
                     spec.builder.id, generated.asset
                 )));
             }
-            let previous_outputs = state
-                .actions
-                .get(&scoped_action_key(
-                    &spec.target,
-                    &spec.builder.id,
-                    &spec.input,
-                ))
+            let previous_outputs = state.actions.get(&spec.action_key())
                 .map(|action| action.outputs.contains(&generated.asset))
                 .unwrap_or(false);
             if !previous_outputs
@@ -648,11 +638,7 @@ fn record_build_result(
     // then emit no output for a particular input. Remove outputs recorded by
     // the previous action when that happens.
     if builder.kind == BuilderKind::Normal || builder.output_is_optional {
-        if let Some(previous) = state.actions.get(&scoped_action_key(
-            &spec.target,
-            &spec.builder.id,
-            &spec.input,
-        )) {
+        if let Some(previous) = state.actions.get(&spec.action_key()) {
             for previous_output in &previous.outputs {
                 if !actual_outputs.contains(previous_output.as_str()) {
                     deleted_overlay.insert(previous_output.clone());
@@ -748,11 +734,7 @@ fn expand_dirty_dependents(
         .collect::<BTreeSet<_>>();
     let mut cursor = 0;
     while cursor < dirty.len() {
-        let source_key = scoped_action_key(
-            &dirty[cursor].target,
-            &dirty[cursor].builder.id,
-            &dirty[cursor].input,
-        );
+        let source_key = dirty[cursor].action_key();
         if let Some(action) = state.actions.get(&source_key) {
             for output in &action.outputs {
                 for dependent_key in dependents_by_asset
@@ -801,7 +783,6 @@ mod tests {
             }),
             target: target.to_owned(),
             package: "app".to_owned(),
-            is_root: true,
             target_order,
             phase,
             excluded_input_suffixes: Vec::new(),
