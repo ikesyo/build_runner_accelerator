@@ -147,6 +147,7 @@ mod tests {
             }),
             target: "app:app".to_owned(),
             package: "app".to_owned(),
+            is_root: true,
             phase,
             instance_key: id.to_owned(),
             input: "app|lib/input.txt".to_owned(),
