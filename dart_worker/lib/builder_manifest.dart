@@ -678,10 +678,10 @@ List<String> _orderBuilders(
 
 Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
   String root,
-  Iterable<_DefinitionInfo> definitions,
+  Iterable<_FactoryProbeRequest> requests,
 ) async {
-  final probeDefinitions = definitions.toList(growable: false);
-  if (probeDefinitions.isEmpty) return const {};
+  final probeRequests = requests.toList(growable: false);
+  if (probeRequests.isEmpty) return const {};
   final packageConfig = _findPackageConfigPath(root);
   if (packageConfig == null) return const {};
 
@@ -692,7 +692,7 @@ Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
     );
     final probeFile = File(p.join(temporary.path, 'probe.dart'));
     final resultFile = File(p.join(temporary.path, 'result.json'));
-    await probeFile.writeAsString(_factoryProbeSource(probeDefinitions));
+    await probeFile.writeAsString(_factoryProbeSource(probeRequests));
     // Process.start is required here so a misbehaving factory probe can be
     // terminated instead of blocking manifest generation indefinitely.
     final process = await Process.start(Platform.resolvedExecutable, [
@@ -724,13 +724,13 @@ Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
 
     final probed = <String, List<_FactoryMapping>>{};
     for (final entry in decoded.entries) {
-      final info = probeDefinitions
-          .where((candidate) => candidate.key == entry.key)
+      final request = probeRequests
+          .where((candidate) => candidate.id == entry.key)
           .firstOrNull;
-      if (info == null || entry.value is! List) continue;
-      final expectedFactories = info.isPostProcess
-          ? <String>[info.postProcess!.builderFactory]
-          : info.normal!.builderFactories;
+      if (request == null || entry.value is! List) continue;
+      final expectedFactories = request.definition.isPostProcess
+          ? <String>[request.definition.postProcess!.builderFactory]
+          : request.definition.normal!.builderFactories;
       final rawMappings = entry.value as List;
       if (rawMappings.length != expectedFactories.length) continue;
       final mappings = <_FactoryMapping>[];
