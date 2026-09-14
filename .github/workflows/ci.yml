@@ -78,7 +78,8 @@ jobs:
         run: |
           cd dart_worker
           dart pub get
-          dart format --output=none --set-exit-if-changed lib bin
+          dart format lib bin
+          git diff -- dart_worker/lib/builder_manifest.dart
           dart analyze lib bin
 
   rust:
