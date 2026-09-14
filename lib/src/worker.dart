@@ -492,9 +492,7 @@ Future<JsonMap> _runBuild(
       var postProcessBuilder = runtime.postProcessBuilders[instanceKey];
       if (postProcessBuilder == null) {
         final factoryTimer = Stopwatch()..start();
-        postProcessBuilder = factory(
-          BuilderOptions(options, isRoot: isRoot),
-        );
+        postProcessBuilder = factory(BuilderOptions(options, isRoot: isRoot));
         profile.factoryUs = factoryTimer.elapsedMicroseconds;
         runtime.postProcessBuilders[instanceKey] = postProcessBuilder;
       }
