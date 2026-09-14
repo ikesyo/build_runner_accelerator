@@ -1,12 +1,18 @@
 import 'package:build/build.dart';
 
-Builder multiMappingBuilder(BuilderOptions options) => _MultiMappingBuilder();
+Builder multiMappingBuilder(BuilderOptions options) => _MultiMappingBuilder(
+  options.config['suffix'] as String? ?? '.multi',
+);
 
 class _MultiMappingBuilder implements Builder {
+  _MultiMappingBuilder(this._suffix);
+
+  final String _suffix;
+
   @override
-  Map<String, List<String>> get buildExtensions => const {
-    '.txt': ['.multi'],
-    '^lib/special.txt': ['lib/special.generated.txt'],
+  Map<String, List<String>> get buildExtensions => <String, List<String>>{
+    '.txt': <String>[_suffix],
+    '^lib/special.txt': <String>['lib/special.generated.txt'],
   };
 
   @override
