@@ -24,6 +24,10 @@ class _TriggerBuilder implements Builder {
     }
     final input = await buildStep.readAsString(buildStep.inputId);
     await buildStep.writeAsString(buildStep.allowedOutputs.single, 'triggered:$input');
+    if (_options.config['failAfterWrite'] == true &&
+        buildStep.inputId.path == 'lib/annotation_input.dart') {
+      throw StateError('trigger builder failure');
+    }
   }
 }
 

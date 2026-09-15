@@ -101,7 +101,7 @@ prepare_package() {
       "$directory/build.yaml"
   elif [[ "$variant" == failure ]]; then
     sed -i \
-      -e '/^      trigger_builder_app:trigger_builder:$/a\        options:\n          fail: true' \
+      -e '/^      trigger_builder_app:trigger_builder:$/a\        options:\n          failAfterWrite: true' \
       -e '/^      trigger_builder_app:optional_trigger_builder:$/a\        enabled: false' \
       -e '/^      trigger_builder_app:producer:$/a\        enabled: false' \
       -e '/^      trigger_builder_app:generated_consumer:$/a\        enabled: false' \
@@ -290,6 +290,8 @@ if run_rust "$rust_dir" "$temporary_dir/failure.rust.log"; then
 fi
 assert_contains "$temporary_dir/failure.stock.log" 'trigger builder failure'
 assert_contains "$temporary_dir/failure.rust.log" 'trigger builder failure'
+assert_no_file "$stock_dir/lib/annotation_input.triggered.dart"
+assert_no_file "$rust_dir/lib/annotation_input.triggered.dart"
 assert_no_file "$stock_dir/lib/optional_input.optional.triggered.dart"
 assert_no_file "$rust_dir/lib/optional_input.optional.triggered.dart"
 assert_no_file "$stock_dir/lib/optional_input.consumer.txt"
