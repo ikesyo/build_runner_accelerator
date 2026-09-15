@@ -1,5 +1,5 @@
 use crate::pattern::{capture_names, validate_capture_output};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io;
@@ -27,6 +27,12 @@ pub(crate) struct BuilderExtension {
     pub(crate) output_suffixes: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct BuilderTrigger {
+    pub(crate) kind: String,
+    pub(crate) value: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BuilderDefinition {
     pub(crate) id: String,
@@ -41,6 +47,7 @@ pub(crate) struct BuilderDefinition {
     pub(crate) required_input_suffixes: Vec<String>,
     pub(crate) excluded_input_suffixes: Vec<String>,
     pub(crate) applies_builder: Option<String>,
+    pub(crate) triggers: Vec<BuilderTrigger>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -89,6 +96,7 @@ pub(crate) struct RustBuildConfig {
     pub(crate) builders: Vec<ConfiguredBuilder>,
     pub(crate) worker_entrypoint: Option<PathBuf>,
     pub(crate) manifest_signature: Option<String>,
+    pub(crate) trigger_digest: Option<String>,
     pub(crate) definitions: BTreeMap<String, Arc<BuilderDefinition>>,
 }
 
@@ -97,6 +105,8 @@ pub(crate) struct BuilderManifestFile {
     pub(crate) version: u32,
     pub(crate) fingerprint: String,
     pub(crate) worker_entrypoint: String,
+    #[serde(default)]
+    pub(crate) trigger_digest: String,
     #[serde(default)]
     pub(crate) builders: Vec<BuilderManifestDefinition>,
     #[serde(default)]
@@ -181,6 +191,8 @@ pub(crate) struct BuilderManifestDefinition {
     pub(crate) is_root: bool,
     #[serde(default)]
     pub(crate) target_order: u32,
+    #[serde(default)]
+    pub(crate) triggers: Vec<BuilderTrigger>,
 }
 
 impl RustBuildConfig {
@@ -214,7 +226,7 @@ impl RustBuildConfig {
 pub(crate) fn rust_build_config_from_manifest(
     manifest: BuilderManifestFile,
 ) -> io::Result<RustBuildConfig> {
-    if manifest.version != 6 {
+    if manifest.version != 7 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unsupported builder manifest version: {}", manifest.version),
@@ -305,6 +317,7 @@ pub(crate) fn rust_build_config_from_manifest(
         builders,
         worker_entrypoint: Some(PathBuf::from(manifest.worker_entrypoint)),
         manifest_signature: Some(manifest.fingerprint),
+        trigger_digest: Some(manifest.trigger_digest),
         definitions,
     })
 }
@@ -320,6 +333,7 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
             ));
         }
     };
+    validate_triggers(&entry.id, kind, &entry.triggers)?;
     if kind == BuilderKind::PostProcess {
         let invalid_extension = |value: &str| {
             value.is_empty()
@@ -353,6 +367,7 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
             required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
+            triggers: entry.triggers,
         });
     }
     let build_to = match entry.build_to.as_str() {
@@ -509,7 +524,58 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
         required_input_suffixes,
         excluded_input_suffixes: entry.excluded_input_suffixes,
         applies_builder: entry.applies_builder,
+        triggers: entry.triggers,
     })
+}
+
+fn validate_triggers(
+    builder_id: &str,
+    kind: BuilderKind,
+    triggers: &[BuilderTrigger],
+) -> io::Result<()> {
+    if kind == BuilderKind::PostProcess && !triggers.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unsupported triggers for post-process builder: {builder_id}"),
+        ));
+    }
+    for trigger in triggers {
+        let valid = match trigger.kind.as_str() {
+            "import" => valid_import_trigger(&trigger.value),
+            "annotation" => valid_annotation_trigger(&trigger.value),
+            _ => false,
+        };
+        if !valid {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unsupported trigger for {builder_id}: {} {}",
+                    trigger.kind, trigger.value
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn valid_import_trigger(value: &str) -> bool {
+    let mut characters = value.chars();
+    characters
+        .next()
+        .is_some_and(|character| character.is_ascii_lowercase())
+        && characters.all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '_' | '/' | '.')
+        })
+}
+
+fn valid_annotation_trigger(value: &str) -> bool {
+    let mut characters = value.chars();
+    characters
+        .next()
+        .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 fn runtime_mapping_from_manifest(
@@ -576,7 +642,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_builder_phase_order() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 6,
+            "version": 7,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [
@@ -641,7 +707,7 @@ mod tests {
     #[test]
     fn configured_phase_is_the_global_worker_phase() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 6,
+            "version": 7,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [
@@ -695,7 +761,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_configured_input_exclusions() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 6,
+            "version": 7,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -733,7 +799,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_multiple_outputs() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 6,
+            "version": 7,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -765,7 +831,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_all_required_input_suffixes() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 6,
+            "version": 7,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -799,7 +865,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_optional_builder_flag() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 6,
+            "version": 7,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -828,9 +894,90 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_manifest_preserves_trigger_metadata_and_digest() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 7,
+            "fingerprint": "fingerprint",
+            "trigger_digest": "trigger-digest",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:trigger",
+                "input_suffix": ".dart",
+                "output_suffixes": [".generated.dart"],
+                "build_to": "source",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["lib/**/*.dart"],
+                "triggers": [
+                    {"kind": "import", "value": "example/marker.dart"},
+                    {"kind": "annotation", "value": "Marker"}
+                ]
+            }],
+            "definitions": [{
+                "id": "example:trigger",
+                "input_suffix": ".dart",
+                "output_suffixes": [".generated.dart"],
+                "build_to": "source",
+                "phase": 0,
+                "triggers": [
+                    {"kind": "import", "value": "example/marker.dart"},
+                    {"kind": "annotation", "value": "Marker"}
+                ]
+            }]
+        }))
+        .unwrap();
+        let config = rust_build_config_from_manifest(manifest).unwrap();
+        assert_eq!(config.trigger_digest.as_deref(), Some("trigger-digest"));
+        assert_eq!(
+            config.builders[0].definition.triggers,
+            vec![
+                super::BuilderTrigger {
+                    kind: "import".to_owned(),
+                    value: "example/marker.dart".to_owned(),
+                },
+                super::BuilderTrigger {
+                    kind: "annotation".to_owned(),
+                    value: "Marker".to_owned(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn dynamic_manifest_rejects_unsupported_trigger_kind() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 7,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:trigger",
+                "input_suffix": ".dart",
+                "output_suffixes": [".generated.dart"],
+                "build_to": "source",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["lib/**/*.dart"]
+            }],
+            "definitions": [{
+                "id": "example:trigger",
+                "input_suffix": ".dart",
+                "output_suffixes": [".generated.dart"],
+                "build_to": "source",
+                "phase": 0,
+                "triggers": [{"kind": "library", "value": "example/marker.dart"}]
+            }]
+        }))
+        .unwrap();
+        let error = rust_build_config_from_manifest(manifest).unwrap_err();
+        assert!(error.to_string().contains("unsupported trigger"));
+    }
+
+    #[test]
     fn dynamic_manifest_accepts_multiple_extension_mappings() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 6,
+            "version": 7,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -885,7 +1032,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_accepts_post_process_definition() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 6,
+            "version": 7,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -922,7 +1069,7 @@ mod tests {
     #[test]
     fn singular_output_field_is_accepted_during_manifest_transition() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 6,
+            "version": 7,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -954,7 +1101,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_accepts_capture_mapping() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 6,
+            "version": 7,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -987,7 +1134,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_per_application_runtime_mapping() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 6,
+            "version": 7,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{

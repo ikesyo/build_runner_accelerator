@@ -3,11 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:build_config/build_config.dart';
+import 'package:build_runner/src/build_plan/build_triggers.dart'
+    show AnnotationBuildTrigger, BuildTriggers, ImportBuildTrigger;
+import 'package:built_collection/built_collection.dart';
 import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
-const _manifestVersion = 6;
+const _manifestVersion = 7;
 const _factoryProbeTimeout = Duration(seconds: 30);
 const _factoryProbeKillGracePeriod = Duration(seconds: 1);
 
@@ -25,6 +28,20 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       package.path,
     );
   }
+
+  // Keep build_runner's parser and package-wide aggregation as the source of
+  // truth. The Rust side receives only this normalized, analyzer-independent
+  // representation; it never parses build.yaml trigger strings itself.
+  final buildTriggers = BuildTriggers.fromConfigs(
+    BuiltMap<String, BuildConfig>.from(configs),
+  );
+  if (buildTriggers.warningsByPackage.isNotEmpty) {
+    throw StateError(
+      'Unsupported build trigger configuration:\n${buildTriggers.renderWarnings}',
+    );
+  }
+  final normalizedTriggers = _normalizedTriggers(buildTriggers);
+  final triggerDigest = buildTriggers.digest.toString();
 
   final rootConfig = configs[packageGraph.root.name];
   if (rootConfig == null) {
@@ -182,6 +199,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       builders: const [],
       definitions: const [],
       workerSource: _workerSource(const []),
+      triggerDigest: triggerDigest,
     );
     return;
   }
@@ -211,7 +229,11 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   }
   final compatibleDefinitions = <String, List<_ManifestDefinition>>{};
   for (final info in definitions.values) {
-    final converted = _tryConvertDefinition(info, canonicalMappings[info.key]);
+    final converted = _tryConvertDefinition(
+      info,
+      canonicalMappings[info.key],
+      triggers: normalizedTriggers[info.key] ?? const [],
+    );
     if (converted != null && converted.isNotEmpty) {
       compatibleDefinitions[info.key] = converted;
     }
@@ -381,6 +403,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     builders: activeEntries,
     definitions: definitionEntries,
     workerSource: _workerSource(catalogEntries),
+    triggerDigest: triggerDigest,
   );
 }
 
@@ -987,10 +1010,40 @@ List<String> _runtimeOutputSuffixes(
   ];
 }
 
+Map<String, List<_ManifestTrigger>> _normalizedTriggers(
+  BuildTriggers buildTriggers,
+) {
+  final result = <String, List<_ManifestTrigger>>{};
+  for (final entry in buildTriggers.triggers.entries) {
+    final triggers = <_ManifestTrigger>[];
+    for (final trigger in entry.value) {
+      if (trigger is ImportBuildTrigger) {
+        triggers.add(_ManifestTrigger(kind: 'import', value: trigger.import));
+      } else if (trigger is AnnotationBuildTrigger) {
+        triggers.add(
+          _ManifestTrigger(kind: 'annotation', value: trigger.annotation),
+        );
+      } else {
+        throw StateError(
+          'Unsupported build trigger type for ${entry.key}: '
+          '${trigger.runtimeType}',
+        );
+      }
+    }
+    triggers.sort((left, right) {
+      final kind = left.kind.compareTo(right.kind);
+      return kind != 0 ? kind : left.value.compareTo(right.value);
+    });
+    result[entry.key] = triggers;
+  }
+  return result;
+}
+
 List<_ManifestDefinition>? _tryConvertDefinition(
   _DefinitionInfo info,
-  List<_FactoryMapping>? probedMappings,
-) {
+  List<_FactoryMapping>? probedMappings, {
+  required List<_ManifestTrigger> triggers,
+}) {
   if (info.isPostProcess) {
     final runtimeInputExtensions = probedMappings?.length == 1
         ? probedMappings!.single.inputExtensions
@@ -998,6 +1051,7 @@ List<_ManifestDefinition>? _tryConvertDefinition(
     final converted = _tryConvertPostProcessDefinition(
       info.postProcess!,
       runtimeInputExtensions: runtimeInputExtensions,
+      triggers: triggers,
     );
     return converted == null ? null : [converted];
   }
@@ -1057,6 +1111,7 @@ List<_ManifestDefinition>? _tryConvertDefinition(
         outputIsOptional: false,
         isOptional: definition.isOptional,
         requiredInputSuffixes: requiredInputSuffixes,
+        triggers: triggers,
       ),
     );
   }
@@ -1116,7 +1171,9 @@ List<_ManifestExtension>? _manifestExtensions(
 _ManifestDefinition? _tryConvertPostProcessDefinition(
   PostProcessBuilderDefinition definition, {
   List<String>? runtimeInputExtensions,
+  required List<_ManifestTrigger> triggers,
 }) {
+  if (triggers.isNotEmpty) return null;
   // build_config 1.2 exposes this field as deprecated while retaining it for
   // the v1 post-process manifest shape.
   // ignore: deprecated_member_use
@@ -1149,6 +1206,7 @@ _ManifestDefinition? _tryConvertPostProcessDefinition(
     outputIsOptional: true,
     isOptional: false,
     requiredInputSuffixes: const [],
+    triggers: const [],
   );
 }
 
@@ -1371,6 +1429,7 @@ Future<void> _writeManifest(
   required Iterable<Map<String, dynamic>> builders,
   required Iterable<Map<String, dynamic>> definitions,
   required String workerSource,
+  required String triggerDigest,
 }) async {
   final manifestFile = File(options.manifest);
   final workerFile = File(options.workerEntrypoint);
@@ -1380,6 +1439,7 @@ Future<void> _writeManifest(
   final manifest = <String, dynamic>{
     'version': _manifestVersion,
     'fingerprint': options.fingerprint,
+    'trigger_digest': triggerDigest,
     'worker_entrypoint': workerFile.absolute.path,
     'builders': builders.toList(),
     'definitions': definitions.toList(),
@@ -1521,6 +1581,18 @@ class _ManifestExtension {
   };
 }
 
+class _ManifestTrigger {
+  const _ManifestTrigger({required this.kind, required this.value});
+
+  final String kind;
+  final String value;
+
+  Map<String, String> toJson() => <String, String>{
+    'kind': kind,
+    'value': value,
+  };
+}
+
 class _ManifestDefinition {
   _ManifestDefinition({
     required this.id,
@@ -1533,6 +1605,7 @@ class _ManifestDefinition {
     required this.outputIsOptional,
     required this.isOptional,
     required this.requiredInputSuffixes,
+    required this.triggers,
   });
 
   final String id;
@@ -1545,6 +1618,7 @@ class _ManifestDefinition {
   final bool outputIsOptional;
   final bool isOptional;
   final List<String> requiredInputSuffixes;
+  final List<_ManifestTrigger> triggers;
 
   bool get isPostProcess => kind == 'post_process';
 
@@ -1591,6 +1665,7 @@ class _ManifestDefinition {
     'is_optional': isOptional,
     'output_is_optional': outputIsOptional,
     'required_input_suffixes': requiredInputSuffixes,
+    'triggers': [for (final trigger in triggers) trigger.toJson()],
     'excluded_input_suffixes': excludedInputSuffixes,
     'generate_for': generateFor,
     'generate_for_exclude': generateForExclude,

@@ -1,0 +1,100 @@
+builders:
+  trigger_builder:
+    import: "package:trigger_builder_app/trigger_builder.dart"
+    builder_factories:
+      - triggerBuilder
+    build_extensions:
+      ".dart":
+        - ".triggered.dart"
+    auto_apply: none
+    build_to: source
+    defaults:
+      options:
+        run_only_if_triggered: true
+
+  optional_trigger_builder:
+    import: "package:trigger_builder_app/trigger_builder.dart"
+    builder_factories:
+      - optionalTriggerBuilder
+    build_extensions:
+      ".dart":
+        - ".optional.triggered.dart"
+    auto_apply: none
+    is_optional: true
+    build_to: source
+    defaults:
+      options:
+        run_only_if_triggered: true
+
+  producer:
+    import: "package:trigger_builder_app/trigger_builder.dart"
+    builder_factories:
+      - producerBuilder
+    build_extensions:
+      "^lib/seed.dart":
+        - "lib/generated_input.trigger.dart"
+    auto_apply: none
+    build_to: source
+
+  generated_consumer:
+    import: "package:trigger_builder_app/trigger_builder.dart"
+    builder_factories:
+      - generatedConsumer
+    build_extensions:
+      "^lib/generated_input.trigger.dart":
+        - "lib/generated_input.consumer.dart"
+    auto_apply: none
+    build_to: source
+    required_inputs:
+      - ".trigger.dart"
+    defaults:
+      options:
+        run_only_if_triggered: true
+
+  optional_consumer:
+    import: "package:trigger_builder_app/trigger_builder.dart"
+    builder_factories:
+      - optionalConsumer
+    build_extensions:
+      "^lib/optional_input.dart":
+        - "lib/optional_input.consumer.txt"
+    required_inputs:
+      - ".optional.triggered.dart"
+    auto_apply: none
+    build_to: source
+
+triggers:
+  trigger_builder_app:trigger_builder:
+    - import trigger_builder_app/trigger_marker.dart
+    - annotation Deprecated
+  trigger_builder_app:optional_trigger_builder:
+    - import trigger_builder_app/trigger_marker.dart
+    - annotation Deprecated
+  trigger_builder_app:generated_consumer:
+    - annotation TriggerMarker
+
+targets:
+  $default:
+    sources:
+      include:
+        - lib/**
+    builders:
+      trigger_builder_app:trigger_builder:
+        generate_for:
+          - lib/import_input.dart
+          - lib/annotation_input.dart
+          - lib/both_input.dart
+          - lib/plain_input.dart
+          - lib/part_host.dart
+      trigger_builder_app:optional_trigger_builder:
+        generate_for:
+          - lib/optional_input.dart
+      trigger_builder_app:producer:
+        generate_for:
+          - lib/seed.dart
+      trigger_builder_app:generated_consumer:
+        generate_for:
+          - lib/generated_input.trigger.dart
+      trigger_builder_app:optional_consumer:
+        generate_for:
+          - lib/optional_input.dart

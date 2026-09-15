@@ -283,6 +283,7 @@ impl WorkerClient {
             "instance_key": request.instance_key,
             "is_root": request.is_root,
             "blocked_assets": request.blocked_assets,
+            "triggers": request.triggers,
         }))?;
 
         loop {
@@ -346,6 +347,7 @@ impl WorkerClient {
                     "instance_key": request.instance_key,
                     "is_root": request.is_root,
                     "blocked_assets": request.blocked_assets,
+                    "triggers": request.triggers,
                 })
             })
             .collect::<Vec<_>>();
@@ -433,6 +435,7 @@ impl WorkerClient {
             "instance_key": request.instance_key,
             "is_root": request.is_root,
             "blocked_assets": request.blocked_assets,
+            "triggers": request.triggers,
         }))?;
 
         loop {
@@ -498,6 +501,7 @@ impl WorkerClient {
                     "instance_key": request.instance_key,
                     "is_root": request.is_root,
                     "blocked_assets": request.blocked_assets,
+                    "triggers": request.triggers,
                 })
             })
             .collect::<Vec<_>>();
@@ -711,6 +715,7 @@ impl WorkerClient {
                 BuilderKind::Normal,
                 deleted_overlay,
             ),
+            triggers: spec.builder.triggers.clone(),
         };
         let result = self.build_lazy(
             workspace,
@@ -723,7 +728,7 @@ impl WorkerClient {
         );
         lazy.building_keys.remove(&key);
         let result = result?;
-        if result.status != "success" {
+        if result.status != "success" && result.status != "not_triggered" {
             return Err(io::Error::other(
                 result
                     .error
@@ -1105,6 +1110,7 @@ pub struct BuildRequest {
     pub is_root: bool,
     pub post_process: bool,
     pub blocked_assets: Vec<String>,
+    pub triggers: Vec<crate::builder::BuilderTrigger>,
 }
 
 pub struct WorkerPool {
@@ -1562,6 +1568,7 @@ mod tests {
             is_root: true,
             post_process,
             blocked_assets: Vec::new(),
+            triggers: Vec::new(),
         }
     }
 

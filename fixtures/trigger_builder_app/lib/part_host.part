@@ -1,0 +1,4 @@
+part of 'part_host.dart';
+
+@Deprecated('part annotation trigger')
+class PartInput {}
