@@ -125,6 +125,16 @@ class RemoteBuilderFilesystem extends BuilderFilesystem {
   final RemoteAssetReaderWriter _remoteReaderWriter;
 
   @override
+  void checkInvalidInput(AssetId id) {
+    if (buildPackages[id.package] == null) {
+      throw PackageNotFoundException(id.package);
+    }
+    // Rust owns the source/output index and visibility rules. The Dart
+    // BuildConfigs adapter is intentionally empty, so its normal input-glob
+    // check would reject readable source parts before the remote RPC runs.
+  }
+
+  @override
   Future<bool> isReadable(
     AssetId id,
     int phase, {
@@ -140,7 +150,6 @@ class RemoteBuilderFilesystem extends BuilderFilesystem {
       rethrow;
     }
     if (Placeholders.isPlaceholderPath(id.path)) return false;
-    if (!buildState.isKnownAsset(id)) return false;
     return _remoteReaderWriter.canRead(
       id,
       inArtifactTree: buildState.isInArtifactTree(id),

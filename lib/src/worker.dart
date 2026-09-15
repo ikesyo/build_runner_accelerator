@@ -18,6 +18,7 @@ import 'protocol.dart';
 import 'remote_build_step.dart';
 import 'resolver_host.dart';
 import 'resolver_reads.dart';
+import 'trigger_evaluator.dart';
 
 final _metricsEnabled =
     Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1';
@@ -454,6 +455,16 @@ Future<JsonMap> _runBuild(
     final options = Map<String, dynamic>.from(
       (message['options'] as Map<dynamic, dynamic>?) ?? <dynamic, dynamic>{},
     );
+    final rawTriggers = message['triggers'] ?? const <dynamic>[];
+    if (rawTriggers is! List) {
+      throw FormatException('build triggers must be a list');
+    }
+    final triggers = rawTriggers
+        .map(NormalizedBuildTrigger.fromJson)
+        .toList(growable: false);
+    if (isPostProcess && triggers.isNotEmpty) {
+      throw StateError('triggers are unsupported for post-process builders');
+    }
     final rpc = RpcSession(
       reader,
       writer,
@@ -476,14 +487,29 @@ Future<JsonMap> _runBuild(
       blockedAssets: blockedAssets,
     );
     actionStarted = true;
-    final resolver = _metricsEnabled
-        ? _ProfilingResolvers(runtime.resolver, runtime, profile)
-        : runtime.resolver;
-    final runBuilderTimer = Stopwatch()..start();
     final deleted = <AssetId>{};
     BuildStepImpl? step;
+    InputTracker? triggerInputTracker;
+    var triggered = true;
+    if (!isPostProcess && options['run_only_if_triggered'] == true) {
+      triggerInputTracker = InputTracker(
+        runtime.io.filesystem,
+        primaryInput: input,
+        builderLabel: builderId,
+      );
+      triggered = await evaluateBuildTriggers(
+        triggers: triggers,
+        primaryInput: input,
+        phase: _phaseOf(message),
+        filesystem: runtime.buildFilesystem,
+        inputTracker: triggerInputTracker,
+      );
+    }
+    final runBuilderTimer = Stopwatch()..start();
 
-    if (isPostProcess) {
+    if (!triggered) {
+      profile.status = 'not_triggered';
+    } else if (isPostProcess) {
       final factory = postProcessCatalog[builderId];
       if (factory == null) {
         throw StateError('Unknown post-process builder: $builderId');
@@ -507,6 +533,9 @@ Future<JsonMap> _runBuild(
         await postProcessStep.complete();
       }
     } else {
+      final resolver = _metricsEnabled
+          ? _ProfilingResolvers(runtime.resolver, runtime, profile)
+          : runtime.resolver;
       final factory = builderCatalog[builderId];
       if (factory == null) {
         throw StateError('Unknown builder: $builderId');
@@ -544,30 +573,36 @@ Future<JsonMap> _runBuild(
     }
     profile.runBuilderUs = runBuilderTimer.elapsedMicroseconds;
 
-    final resolverReadsTimer = Stopwatch()..start();
-    await collectResolverReads(runtime.io, runtime.packageConfig);
-    profile.resolverReadsUs = resolverReadsTimer.elapsedMicroseconds;
+    if (triggered) {
+      final resolverReadsTimer = Stopwatch()..start();
+      await collectResolverReads(runtime.io, runtime.packageConfig);
+      profile.resolverReadsUs = resolverReadsTimer.elapsedMicroseconds;
+    }
 
     final resultAssemblyTimer = Stopwatch()..start();
-    final outputEntries = isPostProcess
-        ? runtime.io.outputs.entries
-        : step!.outputs.entries.map(
-            (entry) => MapEntry(entry.key, entry.value.bytes),
-          );
     final outputs = <Map<String, dynamic>>[
-      for (final entry in outputEntries)
-        <String, dynamic>{'asset': entry.key.toString(), 'bytes': entry.value},
+      if (isPostProcess)
+        for (final entry in runtime.io.outputs.entries)
+          <String, dynamic>{'asset': entry.key.toString(), 'bytes': entry.value}
+      else if (step != null)
+        for (final entry in step.outputs.entries)
+          <String, dynamic>{
+            'asset': entry.key.toString(),
+            'bytes': entry.value.bytes,
+          },
     ];
     final reads = <String>{
       input.toString(),
+      if (triggerInputTracker != null)
+        ...triggerInputTracker.inputs.map((id) => id.toString()),
       if (step != null) ...step.inputTracker.inputs.map((id) => id.toString()),
       ...runtime.io.observedReads.map((id) => id.toString()),
       ...runtime.io.observedGlobResults.map((id) => id.toString()),
     }.toList()..sort();
     final resolverReads = <String>{
-      if (step != null)
+      if (triggered && step != null)
         ...step.inputTracker.resolverEntrypoints.map((id) => id.toString()),
-      ...runtime.io.observedReads.map((id) => id.toString()),
+      if (triggered) ...runtime.io.observedReads.map((id) => id.toString()),
     }.toList()..sort();
     final globReads = runtime.io.observedGlobs.toList()
       ..sort((left, right) {
@@ -581,12 +616,12 @@ Future<JsonMap> _runBuild(
     profile.readCount = reads.length;
     profile.resolverReadCount = resolverReads.length;
     profile.globCount = globReads.length;
-    profile.status = 'success';
+    profile.status = triggered ? 'success' : 'not_triggered';
     return <String, dynamic>{
       'v': 1,
       'type': 'build_result',
       'id': message['id'],
-      'status': 'success',
+      'status': profile.status,
       'outputs': outputs,
       'deleted': <String>[for (final asset in deleted) asset.toString()]
         ..sort(),
