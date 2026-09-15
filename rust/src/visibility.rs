@@ -144,6 +144,7 @@ mod tests {
                 required_input_suffixes: Vec::new(),
                 excluded_input_suffixes: Vec::new(),
                 applies_builder: None,
+                triggers: Vec::new(),
             }),
             target: "app:app".to_owned(),
             package: "app".to_owned(),
@@ -166,6 +167,7 @@ mod tests {
             builders: Vec::new(),
             worker_entrypoint: None,
             manifest_signature: None,
+            trigger_digest: None,
             definitions: BTreeMap::new(),
         };
         let empty = BTreeSet::new();

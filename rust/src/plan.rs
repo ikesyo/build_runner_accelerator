@@ -418,6 +418,7 @@ mod tests {
             required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
+            triggers: Vec::new(),
         });
         assert_eq!(
             outputs_for(&builder, "app|lib/model.dart").unwrap(),
@@ -445,6 +446,7 @@ mod tests {
             required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
+            triggers: Vec::new(),
         });
         assert_eq!(
             outputs_for(&builder, "app|lib/special.txt").unwrap(),
@@ -481,6 +483,7 @@ mod tests {
             required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
+            triggers: Vec::new(),
         });
         assert_eq!(
             outputs_for(&builder, "app|lib/input.txt").unwrap(),
@@ -512,6 +515,7 @@ mod tests {
             required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
+            triggers: Vec::new(),
         });
         assert_eq!(
             outputs_for(&builder, "app|assets/nested/input.txt").unwrap(),
@@ -540,6 +544,7 @@ mod tests {
             required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
+            triggers: Vec::new(),
         });
         let second = Arc::new(BuilderDefinition {
             id: "example:second".to_owned(),
@@ -593,6 +598,7 @@ mod tests {
             required_input_suffixes: Vec::new(),
             excluded_input_suffixes: Vec::new(),
             applies_builder: None,
+            triggers: Vec::new(),
         });
         assert_eq!(
             outputs_for(&builder, "app|lib/model.dart").unwrap(),

@@ -393,6 +393,7 @@ pub(crate) fn run_with_config(
                         builder.kind,
                         &deleted_overlay,
                     ),
+                    triggers: spec.builder.triggers.clone(),
                 })
                 .collect::<Vec<_>>();
             if requests.is_empty() {
@@ -552,10 +553,16 @@ fn record_build_result(
     pending_actions: &mut Vec<(String, ActionState)>,
 ) -> io::Result<()> {
     let builder = spec.builder.as_ref();
-    if result.status != "success" {
+    if result.status != "success" && result.status != "not_triggered" {
         return Err(io::Error::other(
             result.error.unwrap_or_else(|| "Builder failed".to_owned()),
         ));
+    }
+    if result.status == "not_triggered" && builder.kind != BuilderKind::Normal {
+        return Err(io::Error::other(format!(
+            "trigger skip is only supported for normal builders: {}",
+            spec.builder.id
+        )));
     }
     for diagnostic in &result.diagnostics {
         eprintln!("{}: {}", diagnostic.level, diagnostic.message);
@@ -678,7 +685,7 @@ fn record_build_result(
                 .map(|output| output.asset)
                 .collect(),
             output_digests,
-            status: "success".to_owned(),
+            status: result.status,
         },
     ));
     Ok(())
@@ -780,6 +787,7 @@ mod tests {
                 required_input_suffixes: Vec::new(),
                 excluded_input_suffixes: Vec::new(),
                 applies_builder: None,
+                triggers: Vec::new(),
             }),
             target: target.to_owned(),
             package: "app".to_owned(),
