@@ -102,8 +102,8 @@ jobs:
       - name: Rust unit tests
         run: cargo test --locked --manifest-path rust/Cargo.toml
 
-  integration:
-    name: Baseline integration and package smoke
+  integration-baseline:
+    name: 'Integration: baseline smoke'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     steps:
@@ -130,22 +130,14 @@ jobs:
           cargo build --locked --quiet --manifest-path rust/Cargo.toml
           chmod +x rust/target/debug/build_runner_accelerator
           echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
-      - name: Run baseline correctness verification
+      - name: Run baseline smoke
         env:
           PUB_CACHE: ${{ github.workspace }}/.pub-cache
-          VERIFY_ARBITRARY_BUILDER: '1'
-        run: bash scripts/verify.sh
-      - name: Run built_value compatibility fixture
-        env:
-          PUB_CACHE: ${{ github.workspace }}/.pub-cache
-        run: bash scripts/correctness_built_value.sh
-      - name: Run published package smoke
-        env:
-          PUB_CACHE: ${{ github.workspace }}/.pub-cache
-        run: bash scripts/package_smoke.sh
+          SMOKE_SKIP_RUST_TESTS: '1'
+        run: bash scripts/smoke.sh
 
-  current-codegen-compatibility:
-    name: Freezed and Riverpod compatibility
+  integration-trigger:
+    name: 'Integration: trigger builder'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     env:
@@ -159,9 +151,157 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             rust/target
-          key: current-codegen-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dart_worker/pubspec.lock', 'fixtures/freezed_app/pubspec.lock', 'fixtures/riverpod_app/pubspec.lock', 'rust/Cargo.lock') }}
+          key: integration-trigger-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/**/pubspec.lock', 'rust/Cargo.lock') }}
           restore-keys: |
-            current-codegen-${{ runner.os }}-${{ runner.arch }}-
+            integration-trigger-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
+        with:
+          toolchain: 1.98.1
+      - name: Build native frontend
+        shell: bash
+        run: |
+          cargo build --locked --quiet --manifest-path rust/Cargo.toml
+          chmod +x rust/target/debug/build_runner_accelerator
+          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+      - name: Prime trigger-builder dependencies
+        shell: bash
+        run: |
+          (cd dart_worker && dart --suppress-analytics pub get)
+          (cd fixtures/trigger_builder_app && dart --suppress-analytics pub get)
+      - parallel:
+          - name: Trigger correctness (detection and generated chain)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              TRIGGER_CASE_GROUP: core
+            run: bash scripts/correctness_trigger_builder.sh
+          - name: Trigger correctness (optional, deletion, rename)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              TRIGGER_CASE_GROUP: lifecycle
+            run: bash scripts/correctness_trigger_builder.sh
+          - name: Trigger correctness (config and failure recovery)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              TRIGGER_CASE_GROUP: recovery
+            run: bash scripts/correctness_trigger_builder.sh
+
+  integration-arbitrary:
+    name: 'Integration: arbitrary builder'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .pub-cache
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: integration-arbitrary-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/**/pubspec.lock', 'rust/Cargo.lock') }}
+          restore-keys: |
+            integration-arbitrary-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
+        with:
+          toolchain: 1.98.1
+      - name: Build native frontend
+        shell: bash
+        run: |
+          cargo build --locked --quiet --manifest-path rust/Cargo.toml
+          chmod +x rust/target/debug/build_runner_accelerator
+          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+      - name: Prime arbitrary-builder dependencies
+        shell: bash
+        run: |
+          (cd dart_worker && dart --suppress-analytics pub get)
+          (cd fixtures/arbitrary_builder_app && dart --suppress-analytics pub get)
+      - parallel:
+          - name: Arbitrary correctness (output lifecycle)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              CASE_FILTER: generated-output-delete,input-delete,rename
+            run: bash scripts/correctness_arbitrary_builder.sh
+          - name: Arbitrary correctness (failure and affected actions)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              CASE_FILTER: failure-recovery,affected-actions,output-conflict
+            run: bash scripts/correctness_arbitrary_builder.sh
+          - name: Arbitrary correctness (source filters)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              CASE_FILTER: exclude-glob,target-sources,exact-extension
+            run: bash scripts/correctness_arbitrary_builder.sh
+
+  integration-fixtures:
+    name: 'Integration: built_value and package smoke'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .pub-cache
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: integration-fixtures-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/**/pubspec.lock', 'rust/Cargo.lock') }}
+          restore-keys: |
+            integration-fixtures-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
+        with:
+          toolchain: 1.98.1
+      - name: Build native frontend
+        shell: bash
+        run: |
+          cargo build --locked --quiet --manifest-path rust/Cargo.toml
+          chmod +x rust/target/debug/build_runner_accelerator
+          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+      - parallel:
+          - name: built_value compatibility fixture
+            shell: bash
+            run: bash scripts/correctness_built_value.sh
+          - name: Published package smoke
+            shell: bash
+            run: bash scripts/package_smoke.sh
+
+  current-codegen-compatibility:
+    name: Freezed compatibility
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .pub-cache
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: current-codegen-freezed-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dart_worker/pubspec.lock', 'fixtures/freezed_app/pubspec.lock', 'rust/Cargo.lock') }}
+          restore-keys: |
+            current-codegen-freezed-${{ runner.os }}-${{ runner.arch }}-
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
         with:
           sdk: '3.13.3'
@@ -171,9 +311,7 @@ jobs:
       - name: Prime current generator dependencies
         shell: bash
         run: |
-          for fixture in fixtures/freezed_app fixtures/riverpod_app; do
-            (cd "$fixture" && dart --suppress-analytics pub get)
-          done
+          (cd fixtures/freezed_app && dart --suppress-analytics pub get)
       - name: Build native frontend
         shell: bash
         run: |
@@ -221,11 +359,58 @@ jobs:
             env:
               PUB_GET_OFFLINE: '1'
             run: bash scripts/watch_smoke_freezed.sh
-          - name: Riverpod correctness
+
+  current-codegen-riverpod:
+    name: Riverpod compatibility
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .pub-cache
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: current-codegen-riverpod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dart_worker/pubspec.lock', 'fixtures/riverpod_app/pubspec.lock', 'rust/Cargo.lock') }}
+          restore-keys: |
+            current-codegen-riverpod-${{ runner.os }}-${{ runner.arch }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
+        with:
+          toolchain: 1.98.1
+      - name: Prime current generator dependencies
+        shell: bash
+        run: |
+          cd fixtures/riverpod_app
+          dart --suppress-analytics pub get
+      - name: Build native frontend
+        shell: bash
+        run: |
+          cargo build --locked --quiet --manifest-path rust/Cargo.toml
+          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+      - parallel:
+          - name: Riverpod correctness (no-op and source edit)
             shell: bash
             env:
               PUB_GET_OFFLINE: '1'
-            run: bash scripts/correctness_riverpod.sh
+            run: |
+              for case_name in no-op source-edit; do
+                CASE_FILTER="$case_name" bash scripts/correctness_riverpod.sh
+              done
+          - name: Riverpod correctness (output delete and failure)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              for case_name in generated-output-delete failure; do
+                CASE_FILTER="$case_name" bash scripts/correctness_riverpod.sh
+              done
           - name: Riverpod watch smoke
             shell: bash
             env:
@@ -263,24 +448,34 @@ jobs:
           chmod +x rust/target/debug/build_runner_accelerator
           echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
       - parallel:
-          - name: "Compatibility: lifecycle"
+          - name: "Compatibility: lifetime"
             shell: bash
-            env:
-              VERIFY_LEVEL: full
-              VERIFY_FULL_SUITES: compatibility-lifecycle
-            run: bash scripts/verify.sh
+            run: bash scripts/correctness_lifetime_compatibility.sh
+          - name: "Compatibility: optional Builder"
+            shell: bash
+            run: bash scripts/correctness_optional_builder.sh
+          - name: "Compatibility: post-process Builder"
+            shell: bash
+            run: |
+              bash scripts/correctness_post_process_builder.sh
+              bash scripts/watch_smoke_post_process_builder.sh
+          - name: "Compatibility: optional and trigger watch"
+            shell: bash
+            run: |
+              bash scripts/watch_smoke_optional_builder.sh
+              bash scripts/watch_smoke_trigger_builder.sh
           - name: "Compatibility: graph"
             shell: bash
-            env:
-              VERIFY_LEVEL: full
-              VERIFY_FULL_SUITES: compatibility-graph
-            run: bash scripts/verify.sh
+            run: |
+              bash scripts/correctness_target_cycle.sh
+              bash scripts/correctness_arbitrary_dependency_target.sh
+              bash scripts/correctness_applies_builder.sh
           - name: "Compatibility: mapping"
             shell: bash
-            env:
-              VERIFY_LEVEL: full
-              VERIFY_FULL_SUITES: compatibility-mapping
-            run: bash scripts/verify.sh
+            run: |
+              bash scripts/correctness_capture_builder.sh
+              bash scripts/correctness_multi_mapping_builder.sh
+              bash scripts/correctness_drift.sh
   native-build:
     name: Native build (${{ matrix.target_id }})
     runs-on: ${{ matrix.runs_on }}

@@ -35,8 +35,12 @@ fi
 (cd "$fixture_dir" && \
   PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}")
 
-RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-  "$cargo_bin" test --manifest-path "$repo_root/rust/Cargo.toml"
+if [[ "${SMOKE_SKIP_RUST_TESTS:-0}" == 1 ]]; then
+  printf 'smoke: rust-unit-tests=covered-by-rust-job\n'
+else
+  RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
+    "$cargo_bin" test --manifest-path "$repo_root/rust/Cargo.toml"
+fi
 
 if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
   RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \

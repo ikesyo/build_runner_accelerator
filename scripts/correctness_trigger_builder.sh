@@ -17,6 +17,11 @@ test_root="$temporary_dir/workspace"
 test_fixtures_dir="$test_root/fixtures"
 stock_dir=
 rust_dir=
+case_group=${TRIGGER_CASE_GROUP:-all}
+pub_get_args=()
+if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
+  pub_get_args+=(--offline)
+fi
 
 remove_tree() {
   local path=$1
@@ -44,6 +49,14 @@ fail() {
   done
   exit 1
 }
+
+case "$case_group" in
+  all|core|lifecycle|recovery)
+    ;;
+  *)
+    fail "unknown TRIGGER_CASE_GROUP: $case_group"
+    ;;
+esac
 
 assert_same_file() {
   local expected=$1
@@ -93,6 +106,7 @@ prepare_package() {
   local variant=${2:-default}
   mkdir -p "$directory/lib"
   cp "$fixture_dir/pubspec.yaml" "$directory/pubspec.yaml"
+  cp "$fixture_dir/pubspec.lock" "$directory/pubspec.lock"
   cp "$fixture_dir/build.yaml" "$directory/build.yaml"
   cp "$fixture_dir/lib"/* "$directory/lib/"
   if [[ "$variant" == no-demand ]]; then
@@ -109,7 +123,8 @@ prepare_package() {
       "$directory/build.yaml"
   fi
   (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null) || \
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get \
+      --enforce-lockfile "${pub_get_args[@]}" >/dev/null) || \
     fail "pub get failed for $directory"
 }
 
@@ -161,22 +176,23 @@ fi
 mkdir -p "$test_fixtures_dir"
 ln -s "$worker_dir" "$test_root/dart_worker"
 
-setup_pair initial
-run_pair initial
-assert_pair_outputs \
-  lib/import_input.triggered.dart \
-  lib/annotation_input.triggered.dart \
-  lib/both_input.triggered.dart \
-  lib/part_host.triggered.dart \
-  lib/generated_input.trigger.dart \
-  lib/generated_input.consumer.dart \
-  lib/optional_input.optional.triggered.dart \
-  lib/optional_input.consumer.txt
-assert_no_file "$stock_dir/lib/plain_input.triggered.dart"
-assert_no_file "$rust_dir/lib/plain_input.triggered.dart"
-assert_native_not_triggered plain_input.dart "$temporary_dir/initial.rust.log"
-assert_contains "$temporary_dir/initial.rust.log" '"status":"not_triggered"'
-printf 'trigger-builder: initial: import=yes annotation=yes both=yes part=yes generated-chain=yes optional=yes plain-skip=yes jobs=2\n'
+if [[ "$case_group" == all || "$case_group" == core ]]; then
+  setup_pair initial
+  run_pair initial
+  assert_pair_outputs \
+    lib/import_input.triggered.dart \
+    lib/annotation_input.triggered.dart \
+    lib/both_input.triggered.dart \
+    lib/part_host.triggered.dart \
+    lib/generated_input.trigger.dart \
+    lib/generated_input.consumer.dart \
+    lib/optional_input.optional.triggered.dart \
+    lib/optional_input.consumer.txt
+  assert_no_file "$stock_dir/lib/plain_input.triggered.dart"
+  assert_no_file "$rust_dir/lib/plain_input.triggered.dart"
+  assert_native_not_triggered plain_input.dart "$temporary_dir/initial.rust.log"
+  assert_contains "$temporary_dir/initial.rust.log" '"status":"not_triggered"'
+  printf 'trigger-builder: initial: import=yes annotation=yes both=yes part=yes generated-chain=yes optional=yes plain-skip=yes jobs=2\n'
 
 for directory in "$stock_dir" "$rust_dir"; do
   rm -f -- "$directory/lib/part_host.part"
@@ -251,15 +267,17 @@ done
 run_pair generated-output-delete
 assert_pair_outputs \
   lib/generated_input.trigger.dart lib/generated_input.consumer.dart
-printf 'trigger-builder: generated-output-delete: restored=yes\n'
+  printf 'trigger-builder: generated-output-delete: restored=yes\n'
+fi
 
-setup_pair no-demand no-demand
-run_pair no-demand
-assert_no_file "$stock_dir/lib/optional_input.optional.triggered.dart"
-assert_no_file "$rust_dir/lib/optional_input.optional.triggered.dart"
-assert_no_file "$stock_dir/lib/optional_input.consumer.txt"
-assert_no_file "$rust_dir/lib/optional_input.consumer.txt"
-printf 'trigger-builder: optional-undemanded: skipped=yes\n'
+if [[ "$case_group" == all || "$case_group" == lifecycle ]]; then
+  setup_pair no-demand no-demand
+  run_pair no-demand
+  assert_no_file "$stock_dir/lib/optional_input.optional.triggered.dart"
+  assert_no_file "$rust_dir/lib/optional_input.optional.triggered.dart"
+  assert_no_file "$stock_dir/lib/optional_input.consumer.txt"
+  assert_no_file "$rust_dir/lib/optional_input.consumer.txt"
+  printf 'trigger-builder: optional-undemanded: skipped=yes\n'
 
 setup_pair delete
 run_pair delete-initial
@@ -284,20 +302,22 @@ run_pair rename
 assert_pair_outputs lib/renamed_input.triggered.dart
 assert_no_file "$stock_dir/lib/import_input.triggered.dart"
 assert_no_file "$rust_dir/lib/import_input.triggered.dart"
-printf 'trigger-builder: rename: new-output=yes stale-output-removed=yes\n'
+  printf 'trigger-builder: rename: new-output=yes stale-output-removed=yes\n'
+fi
 
-setup_pair trigger-config
-run_pair trigger-config-initial
-for directory in "$stock_dir" "$rust_dir"; do
-  sed -i 's/annotation Deprecated$/annotation TriggerMarker/' \
-    "$directory/build.yaml"
-done
-run_pair trigger-config-changed
-assert_no_file "$stock_dir/lib/annotation_input.triggered.dart"
-assert_no_file "$rust_dir/lib/annotation_input.triggered.dart"
-assert_native_not_triggered annotation_input.dart \
-  "$temporary_dir/trigger-config-changed.rust.log"
-printf 'trigger-builder: trigger-config-digest: incremental-invalidated=yes\n'
+if [[ "$case_group" == all || "$case_group" == recovery ]]; then
+  setup_pair trigger-config
+  run_pair trigger-config-initial
+  for directory in "$stock_dir" "$rust_dir"; do
+    sed -i 's/annotation Deprecated$/annotation TriggerMarker/' \
+      "$directory/build.yaml"
+  done
+  run_pair trigger-config-changed
+  assert_no_file "$stock_dir/lib/annotation_input.triggered.dart"
+  assert_no_file "$rust_dir/lib/annotation_input.triggered.dart"
+  assert_native_not_triggered annotation_input.dart \
+    "$temporary_dir/trigger-config-changed.rust.log"
+  printf 'trigger-builder: trigger-config-digest: incremental-invalidated=yes\n'
 
 setup_pair failure failure
 if run_stock "$stock_dir" "$temporary_dir/failure.stock.log"; then
@@ -323,6 +343,7 @@ done
 run_pair failure-recovery
 assert_pair_outputs \
   lib/optional_input.optional.triggered.dart lib/optional_input.consumer.txt
-printf 'trigger-builder: failure-recovery: atomic=yes\n'
+  printf 'trigger-builder: failure-recovery: atomic=yes\n'
+fi
 
 printf 'trigger-builder: PASS\n'

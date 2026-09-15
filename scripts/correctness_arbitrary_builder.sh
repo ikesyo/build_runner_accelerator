@@ -16,6 +16,10 @@ temporary_dir=$(mktemp -d)
 test_root="$temporary_dir/workspace"
 test_fixtures_dir="$test_root/fixtures"
 case_filter=${CASE_FILTER:-all}
+pub_get_args=()
+if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
+  pub_get_args+=(--offline)
+fi
 stock_dir=
 rust_dir=
 no_op_checked=0
@@ -42,6 +46,53 @@ fail() {
   exit 1
 }
 
+all_cases=(
+  generated-output-delete
+  input-delete
+  rename
+  failure-recovery
+  affected-actions
+  exclude-glob
+  target-sources
+  exact-extension
+  output-conflict
+)
+
+case_selected() {
+  local wanted=$1
+  local item
+  local -a requested
+  [[ "$case_filter" == all ]] && return 0
+  IFS=',' read -r -a requested <<<"$case_filter"
+  for item in "${requested[@]}"; do
+    item=${item//[[:space:]]/}
+    [[ "$item" == "$wanted" ]] && return 0
+  done
+  return 1
+}
+
+validate_case_filter() {
+  [[ "$case_filter" == all ]] && return 0
+  local item known
+  local -a requested
+  IFS=',' read -r -a requested <<<"$case_filter"
+  ((${#requested[@]} > 0)) || fail 'CASE_FILTER is empty'
+  for item in "${requested[@]}"; do
+    item=${item//[[:space:]]/}
+    [[ -n "$item" ]] || fail 'CASE_FILTER contains an empty case'
+    known=0
+    for known_case in "${all_cases[@]}"; do
+      if [[ "$item" == "$known_case" ]]; then
+        known=1
+        break
+      fi
+    done
+    ((known == 1)) || fail "unknown CASE_FILTER case: $item"
+  done
+}
+
+validate_case_filter
+
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 
 if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
@@ -53,8 +104,8 @@ if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
 fi
 [[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || fail "Rust frontend binary is not executable"
 
-(cd "$worker_dir" && \
-  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null)
+  (cd "$worker_dir" && \
+  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null)
 
 mkdir -p "$test_fixtures_dir"
 ln -s "$worker_dir" "$test_root/dart_worker"
@@ -119,7 +170,7 @@ prepare_package() {
   printf 'ignored\n' >"$directory/lib/ignored.txt"
   printf 'target ignored\n' >"$directory/lib/target-ignored.txt"
   (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null)
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null)
 }
 
 setup_case() {
@@ -376,7 +427,7 @@ run_case_output_conflict() {
 run_selected() {
   local name=$1
   shift
-  if [[ "$case_filter" == all || "$case_filter" == "$name" ]]; then
+  if case_selected "$name"; then
     "$@"
   fi
 }
