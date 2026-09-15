@@ -477,16 +477,9 @@ jobs:
               CASE_FILTER=failure,rename bash scripts/correctness_optional_builder.sh
           - name: "Compatibility: post-process Builder"
             shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
             run: |
               bash scripts/correctness_post_process_builder.sh
-          - name: "Compatibility: post-process Builder watch"
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: |
-              bash scripts/watch_smoke_post_process_builder.sh
+              PUB_GET_OFFLINE=1 bash scripts/watch_smoke_post_process_builder.sh
           - name: "Compatibility: optional and trigger watch"
             shell: bash
             run: |
