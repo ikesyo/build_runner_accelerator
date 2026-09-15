@@ -93,10 +93,11 @@ Future<List<CompilationUnit>> _readCompilationUnits({
       Uri.parse(directive.uri.stringValue!),
       from: primaryInput,
     );
+    // Track missing parts so they can invalidate this action when they appear.
+    inputTracker.add(partId);
     if (!await filesystem.isReadable(partId, phase, catchInvalidInputs: true)) {
       continue;
     }
-    inputTracker.add(partId);
     final partSource = (await filesystem.contentOf(partId)).stringValue();
     result.add(
       parseString(content: partSource, throwIfDiagnostics: false).unit,

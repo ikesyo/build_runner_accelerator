@@ -179,6 +179,23 @@ assert_contains "$temporary_dir/initial.rust.log" '"status":"not_triggered"'
 printf 'trigger-builder: initial: import=yes annotation=yes both=yes part=yes generated-chain=yes optional=yes plain-skip=yes jobs=2\n'
 
 for directory in "$stock_dir" "$rust_dir"; do
+  rm -f -- "$directory/lib/part_host.part"
+done
+run_pair part-annotation-missing
+assert_no_file "$stock_dir/lib/part_host.triggered.dart"
+assert_no_file "$rust_dir/lib/part_host.triggered.dart"
+assert_native_not_triggered part_host.dart "$temporary_dir/part-annotation-missing.rust.log"
+printf 'trigger-builder: missing-part-reappears: skipped-while-missing=yes\n'
+
+for directory in "$stock_dir" "$rust_dir"; do
+  printf "part of 'part_host.dart';\n@Deprecated('part annotation trigger')\nclass PartInput {}\n" \
+    >"$directory/lib/part_host.part"
+done
+run_pair part-annotation-appears
+assert_pair_outputs lib/part_host.triggered.dart
+printf 'trigger-builder: missing-part-reappears: dependency-tracked=yes restored=yes\n'
+
+for directory in "$stock_dir" "$rust_dir"; do
   sed -i '/package:trigger_builder_app\/trigger_marker.dart/d' \
     "$directory/lib/import_input.dart"
 done
