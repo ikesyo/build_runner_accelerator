@@ -192,7 +192,7 @@ for directory in "$stock_dir" "$rust_dir"; do
   printf 'class AnnotationInput {}\n' >"$directory/lib/annotation_input.dart"
 done
 run_pair annotation-disabled
-assert_no_file "$stock_dir/lib/annotation_input.triggered.dart"
+assert_contains "$stock_dir/lib/annotation_input.triggered.dart" 'triggered:@Deprecated'
 assert_no_file "$rust_dir/lib/annotation_input.triggered.dart"
 assert_native_not_triggered annotation_input.dart "$temporary_dir/annotation-disabled.rust.log"
 printf 'trigger-builder: annotation-disable: stale-output-removed=yes\n'
