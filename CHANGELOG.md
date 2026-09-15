@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.2.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.1.0...v0.2.0) - 2026-09-15
+
+- feat: support demand-driven optional builders by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/17
+- feat: align runtime output planning with build_runner by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/19
+- ci: set up Rust for tagpr workflow by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/20
+- fix: update Cargo.lock during tagpr releases by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/21
+- feat: support build_runner trigger semantics by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/22
+- ci: parallelize and deduplicate verification jobs by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/23
+
 ## [v0.1.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.1.0-dev.1...v0.1.0) - 2026-09-14
 
 - chore: automate releases with tagpr by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/7
