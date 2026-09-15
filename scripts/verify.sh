@@ -168,6 +168,18 @@ run_built_value_correctness() {
   fi
 }
 
+run_trigger_correctness() {
+  printf 'verify: correctness: start trigger_builder\n'
+  if bash "$script_dir/correctness_trigger_builder.sh" \
+    >"$results_dir/trigger_builder.log" 2>&1; then
+    grep -E '^trigger-builder: ' "$results_dir/trigger_builder.log" || true
+  else
+    printf '%s\n' '--- trigger_builder ---' >&2
+    sed -n '1,260p' "$results_dir/trigger_builder.log" >&2
+    return 1
+  fi
+}
+
 run_riverpod_correctness() {
   printf 'verify: correctness: start riverpod\n'
   if CASE_FILTER=all bash "$script_dir/correctness_riverpod.sh" \
@@ -205,6 +217,7 @@ run_quick() {
   (cd "$repo_root" && \
     PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics analyze dart_worker)
   bash "$script_dir/smoke.sh"
+  run_trigger_correctness
   if [[ "${VERIFY_ARBITRARY_BUILDER:-0}" == 1 ]]; then
     bash "$script_dir/correctness_arbitrary_builder.sh"
   fi
@@ -212,6 +225,7 @@ run_quick() {
     bash "$script_dir/watch_smoke.sh"
     bash "$script_dir/watch_smoke_freezed.sh"
     bash "$script_dir/watch_smoke_riverpod.sh"
+    bash "$script_dir/watch_smoke_trigger_builder.sh"
   fi
 }
 
@@ -245,6 +259,7 @@ run_compatibility_lifecycle_suite() {
   run_script_probe post-process correctness_post_process_builder.sh 'post-process-builder:'
   run_script_probe post-process-watch watch_smoke_post_process_builder.sh 'post-process-builder-watch:'
   run_script_probe optional-builder-watch watch_smoke_optional_builder.sh 'optional-builder-watch:'
+  run_script_probe trigger-builder-watch watch_smoke_trigger_builder.sh 'trigger-builder-watch:'
 }
 
 run_compatibility_graph_suite() {

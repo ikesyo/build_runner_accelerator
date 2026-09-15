@@ -1,0 +1,3 @@
+class TriggerMarker {
+  const TriggerMarker();
+}
