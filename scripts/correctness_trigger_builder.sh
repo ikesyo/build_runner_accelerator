@@ -238,3 +238,112 @@ done
 run_pair part-annotation-disabled
 assert_no_file "$stock_dir/lib/part_host.triggered.dart"
 assert_no_file "$rust_dir/lib/part_host.triggered.dart"
+assert_native_not_triggered part_host.dart "$temporary_dir/part-annotation-disabled.rust.log"
+printf 'trigger-builder: part-annotation-disable: dependency-tracked=yes stale-output-removed=yes\n'
+
+for directory in "$stock_dir" "$rust_dir"; do
+  sed -i '/package:trigger_builder_app\/trigger_marker.dart/d' \
+    "$directory/lib/optional_input.dart"
+done
+run_pair optional-trigger-disabled
+assert_no_file "$stock_dir/lib/optional_input.optional.triggered.dart"
+assert_no_file "$rust_dir/lib/optional_input.optional.triggered.dart"
+assert_pair_outputs lib/optional_input.consumer.txt
+assert_contains "$rust_dir/lib/optional_input.consumer.txt" 'optional-present:false'
+printf 'trigger-builder: optional-and-trigger: independent-skip-state=yes\n'
+
+for directory in "$stock_dir" "$rust_dir"; do
+  printf '// seed-v2\nclass Seed {}\n' >"$directory/lib/seed.dart"
+done
+run_pair generated-input-change
+assert_pair_outputs \
+  lib/generated_input.trigger.dart lib/generated_input.consumer.dart
+assert_contains "$rust_dir/lib/generated_input.trigger.dart" 'seed-v2'
+printf 'trigger-builder: generated-input-change: downstream-retriggered=yes\n'
+
+for directory in "$stock_dir" "$rust_dir"; do
+  rm -f -- "$directory/lib/generated_input.trigger.dart"
+done
+run_pair generated-output-delete
+assert_pair_outputs \
+  lib/generated_input.trigger.dart lib/generated_input.consumer.dart
+  printf 'trigger-builder: generated-output-delete: restored=yes\n'
+fi
+
+if [[ "$case_group" == all || "$case_group" == lifecycle ]]; then
+  setup_pair no-demand no-demand
+  run_pair no-demand
+  assert_no_file "$stock_dir/lib/optional_input.optional.triggered.dart"
+  assert_no_file "$rust_dir/lib/optional_input.optional.triggered.dart"
+  assert_no_file "$stock_dir/lib/optional_input.consumer.txt"
+  assert_no_file "$rust_dir/lib/optional_input.consumer.txt"
+  printf 'trigger-builder: optional-undemanded: skipped=yes\n'
+
+setup_pair delete
+run_pair delete-initial
+for directory in "$stock_dir" "$rust_dir"; do
+  rm -f -- "$directory/lib/seed.dart"
+done
+run_pair delete
+assert_no_file "$stock_dir/lib/generated_input.trigger.dart"
+assert_no_file "$stock_dir/lib/generated_input.consumer.dart"
+assert_no_file "$rust_dir/lib/generated_input.trigger.dart"
+assert_no_file "$rust_dir/lib/generated_input.consumer.dart"
+printf 'trigger-builder: deletion: generated-chain-removed=yes\n'
+
+setup_pair rename
+run_pair rename-initial
+for directory in "$stock_dir" "$rust_dir"; do
+  mv "$directory/lib/import_input.dart" "$directory/lib/renamed_input.dart"
+  sed -i 's/lib\/import_input.dart/lib\/renamed_input.dart/g' \
+    "$directory/build.yaml"
+done
+run_pair rename
+assert_pair_outputs lib/renamed_input.triggered.dart
+assert_no_file "$stock_dir/lib/import_input.triggered.dart"
+assert_no_file "$rust_dir/lib/import_input.triggered.dart"
+  printf 'trigger-builder: rename: new-output=yes stale-output-removed=yes\n'
+fi
+
+if [[ "$case_group" == all || "$case_group" == recovery ]]; then
+  setup_pair trigger-config
+  run_pair trigger-config-initial
+  for directory in "$stock_dir" "$rust_dir"; do
+    sed -i 's/annotation Deprecated$/annotation TriggerMarker/' \
+      "$directory/build.yaml"
+  done
+  run_pair trigger-config-changed
+  assert_no_file "$stock_dir/lib/annotation_input.triggered.dart"
+  assert_no_file "$rust_dir/lib/annotation_input.triggered.dart"
+  assert_native_not_triggered annotation_input.dart \
+    "$temporary_dir/trigger-config-changed.rust.log"
+  printf 'trigger-builder: trigger-config-digest: incremental-invalidated=yes\n'
+
+setup_pair failure failure
+if run_stock "$stock_dir" "$temporary_dir/failure.stock.log"; then
+  fail 'stock trigger failure unexpectedly succeeded'
+fi
+if run_rust "$rust_dir" "$temporary_dir/failure.rust.log"; then
+  fail 'Rust trigger failure unexpectedly succeeded'
+fi
+assert_contains "$temporary_dir/failure.stock.log" 'trigger builder failure'
+assert_contains "$temporary_dir/failure.rust.log" 'trigger builder failure'
+assert_contains "$stock_dir/lib/annotation_input.triggered.dart" 'triggered:@Deprecated'
+assert_no_file "$rust_dir/lib/annotation_input.triggered.dart"
+assert_no_file "$stock_dir/lib/optional_input.optional.triggered.dart"
+assert_no_file "$rust_dir/lib/optional_input.optional.triggered.dart"
+assert_no_file "$stock_dir/lib/optional_input.consumer.txt"
+assert_no_file "$rust_dir/lib/optional_input.consumer.txt"
+for directory in "$stock_dir" "$rust_dir"; do
+  sed -i \
+    -e '/^        options:$/,+1d' \
+    -e '/^        enabled: false$/d' \
+    "$directory/build.yaml"
+done
+run_pair failure-recovery
+assert_pair_outputs \
+  lib/optional_input.optional.triggered.dart lib/optional_input.consumer.txt
+  printf 'trigger-builder: failure-recovery: atomic=yes\n'
+fi
+
+printf 'trigger-builder: PASS\n'
