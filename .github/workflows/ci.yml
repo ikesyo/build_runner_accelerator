@@ -447,39 +447,18 @@ jobs:
           cargo build --locked --quiet --manifest-path rust/Cargo.toml
           chmod +x rust/target/debug/build_runner_accelerator
           echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
-      - name: Prime optional and post-process dependencies
-        shell: bash
-        run: |
-          (cd dart_worker && dart --suppress-analytics pub get)
-          (cd fixtures/optional_builder_app && dart --suppress-analytics pub get)
-          (cd fixtures/post_process_builder_app && dart --suppress-analytics pub get)
       - parallel:
           - name: "Compatibility: lifetime"
             shell: bash
             run: bash scripts/correctness_lifetime_compatibility.sh
-          - name: "Compatibility: optional Builder (demand and no-demand)"
+          - name: "Compatibility: optional Builder"
             shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: |
-              CASE_FILTER=demand,no-demand bash scripts/correctness_optional_builder.sh
-          - name: "Compatibility: optional Builder (incremental and delete)"
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: |
-              CASE_FILTER=incremental,delete bash scripts/correctness_optional_builder.sh
-          - name: "Compatibility: optional Builder (failure and rename)"
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: |
-              CASE_FILTER=failure,rename bash scripts/correctness_optional_builder.sh
+            run: bash scripts/correctness_optional_builder.sh
           - name: "Compatibility: post-process Builder"
             shell: bash
             run: |
               bash scripts/correctness_post_process_builder.sh
-              PUB_GET_OFFLINE=1 bash scripts/watch_smoke_post_process_builder.sh
+              bash scripts/watch_smoke_post_process_builder.sh
           - name: "Compatibility: optional and trigger watch"
             shell: bash
             run: |

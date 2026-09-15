@@ -19,10 +19,6 @@ test_fixtures_dir="$test_root/fixtures"
 stock_dir=
 rust_dir=
 case_filter=${CASE_FILTER:-all}
-pub_get_args=()
-if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
-  pub_get_args+=(--offline)
-fi
 
 remove_tree() {
   local path=$1
@@ -94,7 +90,7 @@ prepare_package() {
   cp "$fixture_dir/lib/optional_builder.dart" "$directory/lib/optional_builder.dart"
   cp "$fixture_dir/lib/input.txt" "$directory/lib/input.txt"
   (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null) || \
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null) || \
     fail "pub get failed for $directory"
 }
 
@@ -143,16 +139,7 @@ assert_contains() {
 }
 
 should_run() {
-  local wanted=$1
-  local item
-  local -a requested
-  [[ "$case_filter" == all ]] && return 0
-  IFS=',' read -r -a requested <<<"$case_filter"
-  for item in "${requested[@]}"; do
-    item=${item//[[:space:]]/}
-    [[ "$item" == "$wanted" ]] && return 0
-  done
-  return 1
+  [[ "$case_filter" == all || "$case_filter" == "$1" ]]
 }
 
 if should_run demand; then
