@@ -10,6 +10,7 @@ pub_cache=$(resolve_toolchain_pub_cache)
 cargo_bin=$(resolve_toolchain_cargo)
 rustup_home=$(resolve_toolchain_rustup_home)
 cargo_home=$(resolve_toolchain_cargo_home)
+mapping_jobs=${MULTI_MAPPING_JOBS:-2}
 fixture_dir="$repo_root/fixtures/multi_mapping_builder_app"
 lockfile_source="$repo_root/fixtures/arbitrary_builder_app/pubspec.lock"
 temporary_dir=$(mktemp -d)
@@ -122,7 +123,7 @@ run_rust() {
   local log=$2
   PUB_CACHE="$pub_cache" BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
     "$script_dir/run_rust_frontend.sh" build --root "$directory" --dart "$dart_bin" \
-    >"$log" 2>&1
+    --jobs "$mapping_jobs" >"$log" 2>&1
 }
 
 mkdir -p "$fixture_root"
@@ -133,8 +134,8 @@ write_package "$rust_dir"
 run_stock "$stock_dir" "$temporary_dir/initial.stock.log"
 run_rust "$rust_dir" "$temporary_dir/initial.rust.log"
 for output in \
-  lib/input.multi \
-  lib/special.multi \
+  lib/input.runtime \
+  lib/special.runtime \
   lib/special.generated.txt; do
   assert_same_file "$stock_dir/$output" "$rust_dir/$output"
 done
@@ -147,7 +148,7 @@ printf 'special changed\n' >"$stock_dir/lib/special.txt"
 printf 'special changed\n' >"$rust_dir/lib/special.txt"
 run_stock "$stock_dir" "$temporary_dir/change.stock.log"
 run_rust "$rust_dir" "$temporary_dir/change.rust.log"
-for output in lib/special.multi lib/special.generated.txt; do
+for output in lib/special.runtime lib/special.generated.txt; do
   assert_same_file "$stock_dir/$output" "$rust_dir/$output"
 done
 assert_contains "$temporary_dir/change.rust.log" 'Rust frontend: 1 build action(s)'
@@ -156,17 +157,17 @@ mv "$stock_dir/lib/input.txt" "$stock_dir/lib/renamed.txt"
 mv "$rust_dir/lib/input.txt" "$rust_dir/lib/renamed.txt"
 run_stock "$stock_dir" "$temporary_dir/rename.stock.log"
 run_rust "$rust_dir" "$temporary_dir/rename.rust.log"
-assert_same_file "$stock_dir/lib/renamed.multi" "$rust_dir/lib/renamed.multi"
-assert_no_file "$stock_dir/lib/input.multi"
-assert_no_file "$rust_dir/lib/input.multi"
+assert_same_file "$stock_dir/lib/renamed.runtime" "$rust_dir/lib/renamed.runtime"
+assert_no_file "$stock_dir/lib/input.runtime"
+assert_no_file "$rust_dir/lib/input.runtime"
 
 rm -f -- "$stock_dir/lib/special.txt" "$rust_dir/lib/special.txt"
 run_stock "$stock_dir" "$temporary_dir/delete.stock.log"
 run_rust "$rust_dir" "$temporary_dir/delete.rust.log"
-assert_no_file "$stock_dir/lib/special.multi"
+assert_no_file "$stock_dir/lib/special.runtime"
 assert_no_file "$stock_dir/lib/special.generated.txt"
-assert_no_file "$rust_dir/lib/special.multi"
+assert_no_file "$rust_dir/lib/special.runtime"
 assert_no_file "$rust_dir/lib/special.generated.txt"
 assert_contains "$temporary_dir/delete.rust.log" 'Rust frontend: 0 build action(s)'
 
-printf 'multi-mapping-builder: union=yes no-op=yes change=yes rename=yes delete=yes\n'
+printf 'multi-mapping-builder: union=yes no-op=yes change=yes rename=yes delete=yes jobs=%s\n' "$mapping_jobs"

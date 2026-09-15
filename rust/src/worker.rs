@@ -6,7 +6,7 @@ use crate::protocol::{
 use crate::worker_kernel::{
     WorkerArtifact, background_worker_aot_if_ready, resolve_worker_artifact,
 };
-use crate::plan::{BuildSpec, scoped_action_key};
+use crate::plan::BuildSpec;
 use crate::workspace::{Workspace, matches_glob};
 use crate::visibility::AssetVisibility;
 use serde_json::{Value, json};
@@ -281,6 +281,7 @@ impl WorkerClient {
             "options": request.options,
             "phase": request.phase,
             "instance_key": request.instance_key,
+            "is_root": request.is_root,
             "blocked_assets": request.blocked_assets,
         }))?;
 
@@ -343,6 +344,7 @@ impl WorkerClient {
                     "options": request.options,
                     "phase": request.phase,
                     "instance_key": request.instance_key,
+                    "is_root": request.is_root,
                     "blocked_assets": request.blocked_assets,
                 })
             })
@@ -429,6 +431,7 @@ impl WorkerClient {
             "options": request.options,
             "phase": request.phase,
             "instance_key": request.instance_key,
+            "is_root": request.is_root,
             "blocked_assets": request.blocked_assets,
         }))?;
 
@@ -493,6 +496,7 @@ impl WorkerClient {
                     "options": request.options,
                     "phase": request.phase,
                     "instance_key": request.instance_key,
+                    "is_root": request.is_root,
                     "blocked_assets": request.blocked_assets,
                 })
             })
@@ -679,7 +683,7 @@ impl WorkerClient {
         else {
             return Ok(());
         };
-        let key = scoped_action_key(&spec.target, &spec.builder.id, &spec.input);
+        let key = spec.action_key();
         if lazy.built_keys.contains(&key) || !lazy.force_keys.contains(&key) {
             return Ok(());
         }
@@ -700,6 +704,7 @@ impl WorkerClient {
             options: spec.options.clone(),
             phase: spec.phase,
             instance_key: spec.instance_key.clone(),
+            is_root: spec.is_root,
             post_process: false,
             blocked_assets: visibility.blocked_assets(
                 spec.phase,
@@ -1097,6 +1102,7 @@ pub struct BuildRequest {
     pub options: BTreeMap<String, Value>,
     pub phase: u32,
     pub instance_key: String,
+    pub is_root: bool,
     pub post_process: bool,
     pub blocked_assets: Vec<String>,
 }
@@ -1553,6 +1559,7 @@ mod tests {
             options: BTreeMap::new(),
             phase,
             instance_key: "example".to_owned(),
+            is_root: true,
             post_process,
             blocked_assets: Vec::new(),
         }

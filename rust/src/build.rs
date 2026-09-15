@@ -12,8 +12,9 @@ use crate::metrics::{
     print_pool_metrics, print_workspace_read_metrics, runtime_metrics_enabled, snapshot_summary,
 };
 use crate::plan::{
-    BuildSpec, build_specs_for_kind, build_specs_for_phase, output_digest, output_path,
-    scoped_action_key, validate_unique_outputs,
+    BuildSpec, build_specs_for_kind_with_primary_inputs,
+    build_specs_for_phase_with_primary_inputs, output_digest, output_path,
+    validate_unique_outputs,
 };
 use crate::protocol::BuildResult;
 use crate::worker::{BuildRequest, LazyBuildState, WorkerPool};
@@ -98,7 +99,7 @@ pub(crate) fn run_with_config(
     // a post-process input (or a normal input for a later phase) while
     // planning this build. Recompute until removing one stale output exposes
     // another stale action.
-    let (normal_specs, normal_planning_snapshot) = loop {
+    let (normal_specs, normal_planning_snapshot, normal_primary_inputs) = loop {
         let normal_phases = build_config
             .builders
             .iter()
@@ -107,16 +108,24 @@ pub(crate) fn run_with_config(
             .collect::<BTreeSet<_>>();
         let mut planning_snapshot = normal_snapshot.clone();
         let mut specs = Vec::new();
+        // build_runner applies targetSources to the original primary input
+        // after following declared-output edges. Keep that relation for every
+        // planned phase, including cache outputs which are not source files.
+        let mut primary_inputs = BTreeMap::new();
         for phase in normal_phases {
-            let phase_specs = build_specs_for_phase(
+            let phase_specs = build_specs_for_phase_with_primary_inputs(
                 &workspace,
                 &planning_snapshot,
                 &build_config,
                 BuilderKind::Normal,
                 phase,
+                &primary_inputs,
             )?;
             for spec in &phase_specs {
                 for output in &spec.outputs {
+                    primary_inputs
+                        .entry(output.clone())
+                        .or_insert_with(|| spec.input.clone());
                     let planned = crate::snapshot::AssetSnapshot {
                         exists: true,
                         digest: digest_bytes(b"<planned>"),
@@ -140,7 +149,7 @@ pub(crate) fn run_with_config(
         validate_unique_outputs(&specs)?;
         let expected_keys = specs
             .iter()
-            .map(|spec| scoped_action_key(&spec.target, &spec.builder.id, &spec.input))
+            .map(|spec| spec.action_key())
             .collect::<BTreeSet<_>>();
         let expected_outputs = specs
             .iter()
@@ -162,7 +171,7 @@ pub(crate) fn run_with_config(
             }
         }
         if !removed {
-            break (specs, planning_snapshot);
+            break (specs, planning_snapshot, primary_inputs);
         }
     };
     // A post-process action may consume an output that is created during this
@@ -170,11 +179,12 @@ pub(crate) fn run_with_config(
     // normal phases, so post-process builders see every output that will exist
     // when their final phase starts.
     let post_snapshot = normal_planning_snapshot;
-    let post_specs = build_specs_for_kind(
+    let post_specs = build_specs_for_kind_with_primary_inputs(
         &workspace,
         &post_snapshot,
         &build_config,
         Some(BuilderKind::PostProcess),
+        &normal_primary_inputs,
     )?;
     let mut specs = normal_specs;
     specs.extend(post_specs);
@@ -200,7 +210,7 @@ pub(crate) fn run_with_config(
             }
         }
 
-        let key = scoped_action_key(&spec.target, &spec.builder.id, &spec.input);
+        let key = spec.action_key();
         let needs_build = match state.actions.get(&key) {
             Some(action) if state.is_compatible(&config_digest) => {
                 state.changed_since_previous(action, &current_snapshot, &current_output_digests)
@@ -217,11 +227,11 @@ pub(crate) fn run_with_config(
     expand_dirty_dependents(&mut dirty_roots, &specs, &state);
     let mut dirty_keys = dirty
         .iter()
-        .map(|spec| scoped_action_key(&spec.target, &spec.builder.id, &spec.input))
+        .map(|spec| spec.action_key())
         .collect::<BTreeSet<_>>();
     let mut lazy_force_keys = BTreeSet::new();
     for spec in dirty_roots {
-        let key = scoped_action_key(&spec.target, &spec.builder.id, &spec.input);
+        let key = spec.action_key();
         if spec.builder.is_optional {
             lazy_force_keys.insert(key);
         } else if dirty_keys.insert(key) {
@@ -232,7 +242,7 @@ pub(crate) fn run_with_config(
 
     let expected_keys: BTreeSet<String> = specs
         .iter()
-        .map(|spec| scoped_action_key(&spec.target, &spec.builder.id, &spec.input))
+        .map(|spec| spec.action_key())
         .collect();
     let deleted_actions: Vec<(String, ActionState)> = state
         .actions
@@ -287,11 +297,7 @@ pub(crate) fn run_with_config(
     let mut deleted_overlay = dirty
         .iter()
         .filter_map(|spec| {
-            state.actions.get(&scoped_action_key(
-                &spec.target,
-                &spec.builder.id,
-                &spec.input,
-            ))
+            state.actions.get(&spec.action_key())
         })
         .flat_map(|action| action.outputs.iter().cloned())
         .collect::<BTreeSet<_>>();
@@ -380,6 +386,7 @@ pub(crate) fn run_with_config(
                     options: spec.options.clone(),
                     phase: spec.phase,
                     instance_key: spec.instance_key.clone(),
+                    is_root: configured_builder.is_root,
                     post_process: builder.kind == BuilderKind::PostProcess,
                     blocked_assets: visibility.blocked_assets(
                         spec.phase,
@@ -599,13 +606,7 @@ fn record_build_result(
                     spec.builder.id, generated.asset
                 )));
             }
-            let previous_outputs = state
-                .actions
-                .get(&scoped_action_key(
-                    &spec.target,
-                    &spec.builder.id,
-                    &spec.input,
-                ))
+            let previous_outputs = state.actions.get(&spec.action_key())
                 .map(|action| action.outputs.contains(&generated.asset))
                 .unwrap_or(false);
             if !previous_outputs
@@ -637,11 +638,7 @@ fn record_build_result(
     // then emit no output for a particular input. Remove outputs recorded by
     // the previous action when that happens.
     if builder.kind == BuilderKind::Normal || builder.output_is_optional {
-        if let Some(previous) = state.actions.get(&scoped_action_key(
-            &spec.target,
-            &spec.builder.id,
-            &spec.input,
-        )) {
+        if let Some(previous) = state.actions.get(&spec.action_key()) {
             for previous_output in &previous.outputs {
                 if !actual_outputs.contains(previous_output.as_str()) {
                     deleted_overlay.insert(previous_output.clone());
@@ -668,7 +665,7 @@ fn record_build_result(
         output_digests.insert(generated.asset.clone(), digest_bytes(&generated.bytes));
     }
     pending_actions.push((
-        scoped_action_key(&spec.target, &spec.builder.id, &spec.input),
+        spec.action_key(),
         ActionState {
             builder: spec.builder.id.to_owned(),
             input: spec.input.clone(),
@@ -702,6 +699,7 @@ fn execution_order(builders: &[ConfiguredBuilder]) -> Vec<usize> {
             .then_with(|| left.target_order.cmp(&right.target_order))
             .then_with(|| left.target.cmp(&right.target))
             .then_with(|| left.definition.id.cmp(&right.definition.id))
+            .then_with(|| left.package.cmp(&right.package))
     });
     order
 }
@@ -715,7 +713,7 @@ fn expand_dirty_dependents(
         .iter()
         .map(|spec| {
             (
-                scoped_action_key(&spec.target, &spec.builder.id, &spec.input),
+                spec.action_key(),
                 spec.clone(),
             )
         })
@@ -732,15 +730,11 @@ fn expand_dirty_dependents(
 
     let mut dirty_keys = dirty
         .iter()
-        .map(|spec| scoped_action_key(&spec.target, &spec.builder.id, &spec.input))
+        .map(|spec| spec.action_key())
         .collect::<BTreeSet<_>>();
     let mut cursor = 0;
     while cursor < dirty.len() {
-        let source_key = scoped_action_key(
-            &dirty[cursor].target,
-            &dirty[cursor].builder.id,
-            &dirty[cursor].input,
-        );
+        let source_key = dirty[cursor].action_key();
         if let Some(action) = state.actions.get(&source_key) {
             for output in &action.outputs {
                 for dependent_key in dependents_by_asset
@@ -789,6 +783,7 @@ mod tests {
             }),
             target: target.to_owned(),
             package: "app".to_owned(),
+            is_root: true,
             target_order,
             phase,
             excluded_input_suffixes: Vec::new(),
@@ -797,6 +792,8 @@ mod tests {
             target_sources: vec!["**".to_owned()],
             target_sources_exclude: Vec::new(),
             options: BTreeMap::new(),
+            runtime_extensions: None,
+            runtime_post_process_input_extensions: None,
         }
     }
 

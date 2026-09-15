@@ -17,9 +17,10 @@ The following are implemented and covered by the current fixture suite:
   `BuildConfig` resolution.
 - Generic target/package ordering, multiple extension mappings, source/cache
   outputs, and the supported cache-only post-process subset.
-- Runtime factory mapping probes for multi-factory builders, phase-aware
-  generated-input visibility, and resident-worker Builder/Resource lifetime
-  coverage.
+- Runtime expected-output mapping probes for selected applications that
+  need runtime data (including multi-factory and option-dependent builders),
+  phase-aware generated-input visibility, and resident-worker Builder/Resource
+  lifetime coverage.
 - Demand-driven execution for compatible normal `is_optional` builders when a
   later action reads or uses their declared output.
 - Stock-vs-native output comparisons for clean, no-op, incremental, failure,
@@ -42,7 +43,9 @@ The following are implemented and covered by the current fixture suite:
 ## Post-release research
 
 - [ ] Expand the manifest subset toward complete `build.yaml` semantics while
-  preserving the automatic Dart fallback.
+  preserving the automatic Dart fallback. Explicit trigger evaluation,
+  `build_extensions: {"": ...}`, full post-process behavior, and workspace
+  semantics remain separate follow-ups.
 - [ ] Compare conditional import/export dependency selection with stock
   `build_runner` before attempting a more precise invalidation rule.
 - [ ] Evaluate chunked build-result frames for outputs beyond the v1 frame

@@ -48,6 +48,9 @@ pub(crate) struct ConfiguredBuilder {
     pub(crate) definition: Arc<BuilderDefinition>,
     pub(crate) target: String,
     pub(crate) package: String,
+    /// Whether this configured builder belongs to the root package. This is
+    /// part of BuilderOptions and can affect the runtime output mapping.
+    pub(crate) is_root: bool,
     pub(crate) target_order: u32,
     pub(crate) phase: u32,
     pub(crate) excluded_input_suffixes: Vec<String>,
@@ -56,6 +59,29 @@ pub(crate) struct ConfiguredBuilder {
     pub(crate) target_sources: Vec<String>,
     pub(crate) target_sources_exclude: Vec<String>,
     pub(crate) options: BTreeMap<String, Value>,
+    /// A per-application runtime mapping. The static definition remains the
+    /// build.yaml ordering/identity source, while this mapping is the exact
+    /// Builder instance configuration used for planning.
+    pub(crate) runtime_extensions: Option<Vec<BuilderExtension>>,
+    pub(crate) runtime_post_process_input_extensions: Option<Vec<String>>,
+}
+
+impl ConfiguredBuilder {
+    pub(crate) fn effective_definition(&self) -> Arc<BuilderDefinition> {
+        if self.runtime_extensions.is_none()
+            && self.runtime_post_process_input_extensions.is_none()
+        {
+            return self.definition.clone();
+        }
+        let mut definition = (*self.definition).clone();
+        if let Some(extensions) = &self.runtime_extensions {
+            definition.extensions = extensions.clone();
+        }
+        if let Some(input_extensions) = &self.runtime_post_process_input_extensions {
+            definition.post_process_input_extensions = input_extensions.clone();
+        }
+        Arc::new(definition)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -90,6 +116,14 @@ pub(crate) struct BuilderManifestExtension {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub(crate) struct BuilderManifestRuntime {
+    #[serde(default)]
+    pub(crate) extensions: Option<Vec<BuilderManifestExtension>>,
+    #[serde(default)]
+    pub(crate) input_extensions: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub(crate) struct BuilderManifestDefinition {
     pub(crate) id: String,
     #[serde(default = "default_builder_kind")]
@@ -110,6 +144,13 @@ pub(crate) struct BuilderManifestDefinition {
     pub(crate) extensions: Vec<BuilderManifestExtension>,
     #[serde(default)]
     pub(crate) input_extensions: Vec<String>,
+    /// Runtime mapping captured from the factory with the resolved options.
+    ///
+    /// build.yaml controls ordering, but build_runner plans expected outputs
+    /// from the instantiated Builder. Keep that distinction explicit at the
+    /// manifest boundary so Rust never guesses package-specific behavior.
+    #[serde(default)]
+    pub(crate) runtime_mapping: Option<BuilderManifestRuntime>,
     pub(crate) build_to: String,
     pub(crate) phase: u32,
     #[serde(default)]
@@ -136,6 +177,8 @@ pub(crate) struct BuilderManifestDefinition {
     pub(crate) target: String,
     #[serde(default)]
     pub(crate) package: String,
+    #[serde(default)]
+    pub(crate) is_root: bool,
     #[serde(default)]
     pub(crate) target_order: u32,
 }
@@ -227,10 +270,16 @@ pub(crate) fn rust_build_config_from_manifest(
                 format!("configured builder has no target scope: {}", entry.id),
             ));
         }
+        let (runtime_extensions, runtime_post_process_input_extensions) =
+            match entry.runtime_mapping.clone() {
+                Some(mapping) => runtime_mapping_from_manifest(&entry, mapping)?,
+                None => (None, None),
+            };
         builders.push(ConfiguredBuilder {
             definition,
             target: entry.target,
             package: entry.package,
+            is_root: entry.is_root,
             target_order: entry.target_order,
             phase: entry.phase,
             excluded_input_suffixes: entry.excluded_input_suffixes,
@@ -239,6 +288,8 @@ pub(crate) fn rust_build_config_from_manifest(
             target_sources: entry.target_sources,
             target_sources_exclude: entry.target_sources_exclude,
             options: entry.options,
+            runtime_extensions,
+            runtime_post_process_input_extensions,
         });
     }
     builders.sort_by_key(|builder| {
@@ -411,7 +462,7 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
                 invalid_suffix(suffix)
             }
         });
-        if invalid_input || manifest_extension.output_suffixes.is_empty() || invalid_output {
+        if invalid_input || invalid_output {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unsupported build extension metadata for {}", entry.id),
@@ -459,6 +510,53 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
         excluded_input_suffixes: entry.excluded_input_suffixes,
         applies_builder: entry.applies_builder,
     })
+}
+
+fn runtime_mapping_from_manifest(
+    entry: &BuilderManifestDefinition,
+    mapping: BuilderManifestRuntime,
+) -> io::Result<(Option<Vec<BuilderExtension>>, Option<Vec<String>>)> {
+    let invalid = |message: &str| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid runtime mapping for {}: {message}", entry.id),
+        )
+    };
+    match entry.kind.as_str() {
+        "normal" => {
+            if mapping.input_extensions.is_some() {
+                return Err(invalid("normal builders cannot carry input_extensions"));
+            }
+            let extensions = mapping
+                .extensions
+                .ok_or_else(|| invalid("normal builders require extensions"))?;
+            let mut runtime_entry = entry.clone();
+            runtime_entry.extensions = extensions;
+            runtime_entry.input_suffix.clear();
+            runtime_entry.output_suffixes.clear();
+            runtime_entry.output_suffix = None;
+            runtime_entry.runtime_mapping = None;
+            let runtime = dynamic_builder_definition(runtime_entry)?;
+            Ok((Some(runtime.extensions), None))
+        }
+        "post_process" => {
+            if mapping.extensions.is_some() {
+                return Err(invalid("post-process builders cannot carry extensions"));
+            }
+            let input_extensions = mapping
+                .input_extensions
+                .ok_or_else(|| invalid("post-process builders require input_extensions"))?;
+            let mut runtime_entry = entry.clone();
+            runtime_entry.kind = "post_process".to_owned();
+            runtime_entry.extensions = Vec::new();
+            runtime_entry.input_extensions = input_extensions;
+            runtime_entry.runtime_mapping = None;
+            runtime_entry.build_to = "cache".to_owned();
+            let runtime = dynamic_builder_definition(runtime_entry)?;
+            Ok((None, Some(runtime.post_process_input_extensions)))
+        }
+        kind => Err(invalid(&format!("unsupported builder kind: {kind}"))),
+    }
 }
 
 fn default_input_match() -> String {
@@ -886,4 +984,51 @@ mod tests {
         assert!(config.builders[0].definition.extensions[0].input_is_capture);
         assert!(config.builders[0].definition.extensions[0].input_is_anchored);
     }
+    #[test]
+    fn dynamic_manifest_preserves_per_application_runtime_mapping() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 6,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:builder",
+                "input_suffix": ".dart",
+                "output_suffixes": [".static"],
+                "build_to": "cache",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "is_root": false,
+                "generate_for": ["**"],
+                "runtime_mapping": {
+                    "extensions": [{
+                        "input_suffix": ".dart",
+                        "output_suffixes": [".runtime"]
+                    }]
+                }
+            }],
+            "definitions": [{
+                "id": "example:builder",
+                "input_suffix": ".dart",
+                "output_suffixes": [".static"],
+                "build_to": "cache",
+                "phase": 0
+            }]
+        })).unwrap();
+
+        let config = rust_build_config_from_manifest(manifest).unwrap();
+        assert!(!config.builders[0].is_root);
+        assert_eq!(
+            config.builders[0].definition.extensions[0].output_suffixes,
+            [".static".to_owned()]
+        );
+        assert_eq!(
+            config.builders[0]
+                .effective_definition()
+                .extensions[0]
+                .output_suffixes,
+            [".runtime"]
+        );
+    }
+
 }

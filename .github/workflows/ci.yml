@@ -135,6 +135,10 @@ jobs:
           PUB_CACHE: ${{ github.workspace }}/.pub-cache
           VERIFY_ARBITRARY_BUILDER: '1'
         run: bash scripts/verify.sh
+      - name: Run built_value compatibility fixture
+        env:
+          PUB_CACHE: ${{ github.workspace }}/.pub-cache
+        run: bash scripts/correctness_built_value.sh
       - name: Run published package smoke
         env:
           PUB_CACHE: ${{ github.workspace }}/.pub-cache
