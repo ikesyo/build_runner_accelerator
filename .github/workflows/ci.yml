@@ -140,6 +140,8 @@ jobs:
     name: 'Integration: trigger builder'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -164,15 +166,37 @@ jobs:
           cargo build --locked --quiet --manifest-path rust/Cargo.toml
           chmod +x rust/target/debug/build_runner_accelerator
           echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
-      - name: Run trigger-builder correctness
-        env:
-          PUB_CACHE: ${{ github.workspace }}/.pub-cache
-        run: bash scripts/correctness_trigger_builder.sh
+      - name: Prime trigger-builder dependencies
+        shell: bash
+        run: |
+          (cd dart_worker && dart --suppress-analytics pub get)
+          (cd fixtures/trigger_builder_app && dart --suppress-analytics pub get)
+      - parallel:
+          - name: Trigger correctness (detection and generated chain)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              TRIGGER_CASE_GROUP: core
+            run: bash scripts/correctness_trigger_builder.sh
+          - name: Trigger correctness (optional, deletion, rename)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              TRIGGER_CASE_GROUP: lifecycle
+            run: bash scripts/correctness_trigger_builder.sh
+          - name: Trigger correctness (config and failure recovery)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              TRIGGER_CASE_GROUP: recovery
+            run: bash scripts/correctness_trigger_builder.sh
 
   integration-arbitrary:
     name: 'Integration: arbitrary builder'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -197,10 +221,30 @@ jobs:
           cargo build --locked --quiet --manifest-path rust/Cargo.toml
           chmod +x rust/target/debug/build_runner_accelerator
           echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
-      - name: Run arbitrary-builder correctness
-        env:
-          PUB_CACHE: ${{ github.workspace }}/.pub-cache
-        run: bash scripts/correctness_arbitrary_builder.sh
+      - name: Prime arbitrary-builder dependencies
+        shell: bash
+        run: |
+          (cd dart_worker && dart --suppress-analytics pub get)
+          (cd fixtures/arbitrary_builder_app && dart --suppress-analytics pub get)
+      - parallel:
+          - name: Arbitrary correctness (output lifecycle)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              CASE_FILTER: generated-output-delete,input-delete,rename
+            run: bash scripts/correctness_arbitrary_builder.sh
+          - name: Arbitrary correctness (failure and affected actions)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              CASE_FILTER: failure-recovery,affected-actions,output-conflict
+            run: bash scripts/correctness_arbitrary_builder.sh
+          - name: Arbitrary correctness (source filters)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              CASE_FILTER: exclude-glob,target-sources,exact-extension
+            run: bash scripts/correctness_arbitrary_builder.sh
 
   integration-fixtures:
     name: 'Integration: built_value and package smoke'
@@ -403,17 +447,45 @@ jobs:
           cargo build --locked --quiet --manifest-path rust/Cargo.toml
           chmod +x rust/target/debug/build_runner_accelerator
           echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+      - name: Prime optional and post-process dependencies
+        shell: bash
+        run: |
+          (cd dart_worker && dart --suppress-analytics pub get)
+          (cd fixtures/optional_builder_app && dart --suppress-analytics pub get)
+          (cd fixtures/post_process_builder_app && dart --suppress-analytics pub get)
       - parallel:
           - name: "Compatibility: lifetime"
             shell: bash
             run: bash scripts/correctness_lifetime_compatibility.sh
-          - name: "Compatibility: optional Builder"
+          - name: "Compatibility: optional Builder (demand and no-demand)"
             shell: bash
-            run: bash scripts/correctness_optional_builder.sh
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              CASE_FILTER=demand,no-demand bash scripts/correctness_optional_builder.sh
+          - name: "Compatibility: optional Builder (incremental and delete)"
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              CASE_FILTER=incremental,delete bash scripts/correctness_optional_builder.sh
+          - name: "Compatibility: optional Builder (failure and rename)"
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              CASE_FILTER=failure,rename bash scripts/correctness_optional_builder.sh
           - name: "Compatibility: post-process Builder"
             shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
             run: |
               bash scripts/correctness_post_process_builder.sh
+          - name: "Compatibility: post-process Builder watch"
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
               bash scripts/watch_smoke_post_process_builder.sh
           - name: "Compatibility: optional and trigger watch"
             shell: bash
