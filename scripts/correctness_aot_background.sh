@@ -9,11 +9,11 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 fixture_dir="$repo_root/fixtures/current_json_app"
 dart_bin=$(resolve_toolchain_dart)
 dart_sdk=$(resolve_toolchain_dart_sdk)
 pub_cache=$(resolve_toolchain_pub_cache)
-fast_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-"$repo_root/rust/target/debug/build_runner_accelerator"}
 temporary_dir=$(mktemp -d)
 workspace_root="$temporary_dir/workspace"
 rust_dir="$workspace_root/fixtures/rust"
@@ -69,14 +69,15 @@ wait_for_file() {
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 [[ -d "$dart_sdk/lib" ]] || fail "Dart SDK not found: $dart_sdk"
-[[ -x "$fast_bin" ]] || fail "Rust frontend is not executable: $fast_bin"
+worker_ensure_frontend || fail 'Rust frontend build failed'
+fast_bin="$BUILD_RUNNER_ACCELERATOR_BIN"
 
 mkdir -p "$rust_dir/lib"
 cp "$fixture_dir/pubspec.yaml" "$rust_dir/pubspec.yaml"
 cp "$fixture_dir/pubspec.lock" "$rust_dir/pubspec.lock"
 cp "$fixture_dir/build.yaml" "$rust_dir/build.yaml"
 cp "$fixture_dir/lib"/*.dart "$rust_dir/lib/"
-ln -s "$repo_root/dart_worker" "$workspace_root/dart_worker"
+worker_attach "$workspace_root"
 
 (cd "$rust_dir" && PUB_CACHE="$pub_cache" "$dart_bin" \
   --suppress-analytics pub get --offline >/dev/null) || fail 'pub get failed'
@@ -100,7 +101,7 @@ EOF
 chmod 755 "$dart_wrapper"
 
 BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background DART_SDK="$dart_sdk" \
-  BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" "$script_dir/run_rust_frontend.sh" \
+  BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" worker_run_frontend \
   build --root "$rust_dir" --dart "$dart_wrapper" --mode rust \
   >"$first_log" 2>&1 &
 first_pid=$!
@@ -132,7 +133,7 @@ rm -f -- "$script_started" "$compile_started"
 touch "$fail_compile"
 printf '\n// background AOT failure probe\n' >>"$rust_dir/lib/model_01.dart"
 BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background DART_SDK="$dart_sdk" \
-  BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" "$script_dir/run_rust_frontend.sh" \
+  BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" worker_run_frontend \
   build --root "$rust_dir" --dart "$dart_wrapper" --mode rust \
   >"$failure_log" 2>&1 || fail 'failed background build did not fall back'
 wait_for_file "$compile_started" 600 || fail 'failed background compile did not start'
@@ -155,7 +156,7 @@ rm -f -- "$fail_compile" "$compile_started" "$script_started"
 rm -f -- "$aot_path" "$aot_path.d" "$aot_path.sdk"
 printf '\n// background AOT retry probe\n' >>"$rust_dir/lib/model_01.dart"
 BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background DART_SDK="$dart_sdk" \
-  BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" "$script_dir/run_rust_frontend.sh" \
+  BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" worker_run_frontend \
   build --root "$rust_dir" --dart "$dart_wrapper" --mode rust \
   >"$retry_log" 2>&1 || fail 'background retry build failed'
 wait_for_file "$aot_path" 1200 || fail 'background AOT retry did not publish an executable'
@@ -165,7 +166,7 @@ wait_for_file "$aot_path" 1200 || fail 'background AOT retry did not publish an 
 rm -f -- "$script_started"
 printf '\n// background AOT reuse probe\n' >>"$rust_dir/lib/model_01.dart"
 BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background DART_SDK="$dart_sdk" \
-  BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" "$script_dir/run_rust_frontend.sh" \
+  BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" worker_run_frontend \
   build --root "$rust_dir" --dart "$dart_wrapper" --mode rust \
   >"$second_log" 2>&1 || fail 'AOT reuse build failed'
 [[ -f "$rust_dir/lib/model_01.g.dart" ]] || \

@@ -5,11 +5,9 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
-cargo_bin=$(resolve_toolchain_cargo)
-rustup_home=$(resolve_toolchain_rustup_home)
-cargo_home=$(resolve_toolchain_cargo_home)
 results_dir=$(mktemp -d)
 verify_level=${VERIFY_LEVEL:-quick}
 verify_cases=${VERIFY_CASES:-failure,conditional-dependency}
@@ -50,22 +48,7 @@ fail() {
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 
-prepare_rust_binary() {
-  if [[ -n "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
-    [[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
-      fail "BUILD_RUNNER_ACCELERATOR_BIN is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
-    return 0
-  fi
-  [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
-  (cd "$repo_root" && \
-    RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-      "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml")
-  local binary="$repo_root/rust/target/debug/build_runner_accelerator"
-  [[ -x "$binary" ]] || fail "Rust frontend binary was not built: $binary"
-  export BUILD_RUNNER_ACCELERATOR_BIN="$binary"
-}
-
-prepare_rust_binary
+worker_ensure_frontend || fail 'Rust frontend build failed'
 
 is_known_case() {
   local wanted=$1
@@ -212,10 +195,10 @@ run_script_probe() {
 
 run_quick() {
   printf 'verify: level=quick\n'
-  (cd "$repo_root/dart_worker" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get)
+  worker_prepare
   (cd "$repo_root" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics analyze dart_worker)
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics analyze \
+      "$worker_package_dir")
   bash "$script_dir/smoke.sh"
   run_trigger_correctness
   if [[ "${VERIFY_ARBITRARY_BUILDER:-0}" == 1 ]]; then

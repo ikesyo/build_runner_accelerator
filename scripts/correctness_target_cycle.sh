@@ -5,11 +5,9 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
-cargo_bin=$(resolve_toolchain_cargo)
-rustup_home=$(resolve_toolchain_rustup_home)
-cargo_home=$(resolve_toolchain_cargo_home)
 temporary_dir=$(mktemp -d)
 workspace_root="$temporary_dir/workspace"
 fixture_root="$workspace_root/fixtures"
@@ -63,33 +61,7 @@ assert_contains() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
-  [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
-  toolchain_bin=${RUST_TOOLCHAIN_BIN:-}
-  rustc_bin=${RUSTC_BIN:-}
-  if [[ -z "$rustc_bin" && -n "$toolchain_bin" ]]; then
-    rustc_bin="$toolchain_bin/rustc"
-  fi
-  if [[ -z "$rustc_bin" ]]; then
-    cargo_bin_dir=$(dirname -- "$cargo_bin")
-    if [[ -x "$cargo_bin_dir/rustc" ]]; then
-      rustc_bin="$cargo_bin_dir/rustc"
-    else
-      rustc_bin=$(command -v rustc || true)
-    fi
-  fi
-  [[ -x "$rustc_bin" ]] || fail "rustc executable not found: $rustc_bin"
-  if [[ -z "$toolchain_bin" ]]; then
-    toolchain_bin=$(dirname -- "$rustc_bin")
-  fi
-  PATH="$toolchain_bin:$PATH" RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-    RUSTC="$rustc_bin" "$cargo_bin" build --quiet \
-    --manifest-path "$repo_root/rust/Cargo.toml" || fail 'Rust frontend build failed'
-  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
-  export BUILD_RUNNER_ACCELERATOR_BIN
-fi
-[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
-  fail "Rust frontend binary is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
+worker_ensure_frontend || fail 'Rust frontend build failed'
 
 write_package() {
   local directory=$1
@@ -193,13 +165,12 @@ run_stock() {
 run_rust() {
   local directory=$1
   local log=$2
-  PUB_CACHE="$pub_cache" BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
-    "$script_dir/run_rust_frontend.sh" build --root "$directory" --dart "$dart_bin" \
+  worker_run_frontend build --root "$directory" --dart "$dart_bin" \
     >"$log" 2>&1
 }
 
 mkdir -p "$fixture_root"
-ln -s "$repo_root/dart_worker" "$workspace_root/dart_worker"
+worker_attach "$workspace_root"
 write_package "$stock_dir"
 write_package "$rust_dir"
 

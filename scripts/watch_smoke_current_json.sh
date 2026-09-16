@@ -5,9 +5,9 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
-worker_dir="$repo_root/dart_worker"
 fixture_dir="$repo_root/fixtures/current_json_app"
 temporary_dir=$(mktemp -d)
 workspace_root="$temporary_dir/workspace"
@@ -31,17 +31,9 @@ remove_tree() {
   find "$path" -depth -type d -empty -delete
 }
 
-stop_process_group() {
-  local pid=$1
-  [[ -n "$pid" ]] || return 0
-  kill -- -"$pid" 2>/dev/null || true
-  kill "$pid" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
-}
-
 cleanup() {
-  stop_process_group "$stock_pid"
-  stop_process_group "$rust_pid"
+  worker_stop_process_group "$stock_pid"
+  worker_stop_process_group "$rust_pid"
   remove_tree "$temporary_dir"
 }
 trap cleanup EXIT INT TERM
@@ -58,11 +50,7 @@ fail() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
-  fail 'BUILD_RUNNER_ACCELERATOR_BIN is required for the Rust watch smoke test'
-fi
-[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
-  fail "Rust frontend is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
+worker_ensure_frontend || fail 'Rust frontend build failed'
 
 prepare_package() {
   local directory=$1
@@ -77,23 +65,20 @@ prepare_package() {
 }
 
 mkdir -p "$fixture_root"
-ln -s "$worker_dir" "$workspace_root/dart_worker"
+worker_attach "$workspace_root"
 prepare_package "$stock_dir"
 prepare_package "$rust_dir"
 
-(
-  cd "$stock_dir"
-  exec setsid env PUB_CACHE="$pub_cache" \
-    "$dart_bin" --suppress-analytics run build_runner watch
-) >"$stock_log" 2>&1 &
-stock_pid=$!
+worker_start_process_group_in_dir "$stock_dir" "$stock_log" \
+  env PUB_CACHE="$pub_cache" \
+  "$dart_bin" --suppress-analytics run build_runner watch
+stock_pid=$worker_last_pid
 
-setsid env BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
-  PUB_CACHE="$pub_cache" \
-  "$script_dir/run_rust_frontend.sh" \
-  watch --root "$rust_dir" --dart "$dart_bin" --interval-ms 200 --mode rust \
-  >"$rust_log" 2>&1 &
-rust_pid=$!
+worker_start_frontend_process_group "$rust_log" \
+  BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
+  PUB_CACHE="$pub_cache" -- \
+  watch --root "$rust_dir" --dart "$dart_bin" --interval-ms 200 --mode rust
+rust_pid=$worker_last_pid
 
 wait_for_path() {
   local path=$1

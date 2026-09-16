@@ -5,11 +5,9 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
-cargo_bin=$(resolve_toolchain_cargo)
-rustup_home=$(resolve_toolchain_rustup_home)
-cargo_home=$(resolve_toolchain_cargo_home)
 fixture_dir="$repo_root/fixtures/freezed_app"
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-freezed-watch-root.XXXXXX")
 watch_dir="$test_root/fixtures/watch"
@@ -29,11 +27,7 @@ remove_tree() {
 }
 
 cleanup() {
-  if [[ -n "$watch_pid" ]]; then
-    kill -- "-$watch_pid" 2>/dev/null || true
-    kill "$watch_pid" 2>/dev/null || true
-    wait "$watch_pid" 2>/dev/null || true
-  fi
+  worker_stop_process_group "$watch_pid"
   remove_tree "$test_root"
   remove_tree "$results_dir"
 }
@@ -48,20 +42,10 @@ fail() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
-  [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
-  (cd "$repo_root" && \
-    RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-      "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml") || \
-    fail 'Rust frontend build failed'
-  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
-  export BUILD_RUNNER_ACCELERATOR_BIN
-fi
-[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
-  fail "Rust frontend binary is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
+worker_ensure_frontend || fail 'Rust frontend build failed'
 
 mkdir -p "$watch_dir/lib"
-ln -s "$repo_root/dart_worker" "$test_root/dart_worker"
+worker_attach "$test_root"
 cp "$fixture_dir/pubspec.yaml" "$watch_dir/pubspec.yaml"
 cp "$fixture_dir/pubspec.lock" "$watch_dir/pubspec.lock"
 cp "$fixture_dir/build.yaml" "$watch_dir/build.yaml"
@@ -70,13 +54,11 @@ cp "$fixture_dir/lib/serializable.dart" "$watch_dir/lib/serializable.dart"
 (cd "$watch_dir" && \
   PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null)
 
-setsid env BUILD_RUNNER_ACCELERATOR_METRICS=1 PUB_CACHE="$pub_cache" \
-  RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-  BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
-  "$script_dir/run_rust_frontend.sh" \
-  watch --root "$watch_dir" --dart "$dart_bin" --interval-ms 200 \
-  >"$log_path" 2>&1 &
-watch_pid=$!
+worker_start_frontend_process_group "$log_path" \
+  BUILD_RUNNER_ACCELERATOR_METRICS=1 PUB_CACHE="$pub_cache" \
+  BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" -- \
+  watch --root "$watch_dir" --dart "$dart_bin" --interval-ms 200
+watch_pid=$worker_last_pid
 
 wait_for_initial_build() {
   for _ in $(seq 1 300); do

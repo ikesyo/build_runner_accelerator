@@ -5,12 +5,9 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
-cargo_bin=$(resolve_toolchain_cargo)
-rustup_home=$(resolve_toolchain_rustup_home)
-cargo_home=$(resolve_toolchain_cargo_home)
-worker_dir="$repo_root/dart_worker"
 fixture_dir="$repo_root/fixtures/optional_builder_app"
 lockfile_source="$fixture_dir/pubspec.lock"
 temporary_dir=$(mktemp -d)
@@ -50,19 +47,10 @@ fail() {
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 [[ -f "$fixture_dir/build.yaml" ]] || fail "fixture not found: $fixture_dir"
 
-if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
-  [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
-  RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-    "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml" || \
-    fail 'Rust frontend build failed'
-  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
-  export BUILD_RUNNER_ACCELERATOR_BIN
-fi
-[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
-  fail "Rust frontend is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
+worker_ensure_frontend || fail 'Rust frontend build failed'
 
 mkdir -p "$test_fixtures_dir"
-ln -s "$worker_dir" "$test_root/dart_worker"
+worker_attach "$test_root"
 
 run_stock() {
   local directory=$1
@@ -75,8 +63,7 @@ run_stock() {
 run_rust() {
   local directory=$1
   local log=$2
-  PUB_CACHE="$pub_cache" RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-    "$script_dir/run_rust_frontend.sh" build --root "$directory" --dart "$dart_bin" \
+  worker_run_frontend build --root "$directory" --dart "$dart_bin" \
     --mode rust >"$log" 2>&1
 }
 

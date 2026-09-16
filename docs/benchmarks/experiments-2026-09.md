@@ -163,7 +163,7 @@ synchronous prewarm, and cache save:
 ```sh
 key=$(scripts/aot_cache_key.sh "$PWD")
 scripts/aot_prewarm.sh "$PWD"
-BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 scripts/run_rust_frontend.sh \
+BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 scripts/worker.sh run-frontend \
   build --root "$PWD" --mode rust
 ```
 
@@ -195,4 +195,3 @@ The corresponding `scripts/benchmark_riverpod.sh` uses
 separate from the current-JSON baseline because they measure different
 generated-output workloads; these are compatibility benchmarks, not
 release-wide performance guarantees.
-

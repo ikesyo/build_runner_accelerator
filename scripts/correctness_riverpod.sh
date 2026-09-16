@@ -5,17 +5,15 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
-cargo_bin=$(resolve_toolchain_cargo)
-rustup_home=$(resolve_toolchain_rustup_home)
-cargo_home=$(resolve_toolchain_cargo_home)
 fixture_dir="$repo_root/fixtures/riverpod_app"
 results_dir=$(mktemp -d)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-riverpod-root.XXXXXX")
 test_fixtures_dir="$test_root/fixtures"
 mkdir -p "$test_fixtures_dir"
-ln -s "$repo_root/dart_worker" "$test_root/dart_worker"
+worker_attach "$test_root"
 case_filter=${CASE_FILTER:-all}
 pub_get_args=()
 if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
@@ -54,25 +52,7 @@ fail() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" && ! -x "$cargo_bin" ]]; then
-  fail "Cargo executable not found: $cargo_bin"
-fi
-
-prepare_rust_binary() {
-  if [[ -n "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
-    [[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
-      fail "BUILD_RUNNER_ACCELERATOR_BIN is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
-    return 0
-  fi
-  (cd "$repo_root" && \
-    RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-      "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml")
-  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
-  export BUILD_RUNNER_ACCELERATOR_BIN
-  [[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || fail 'Rust frontend binary was not built'
-}
-
-prepare_rust_binary
+worker_ensure_frontend || fail 'Rust frontend build failed'
 
 new_package_dir() {
   local role=$1
@@ -107,11 +87,8 @@ run_stock() {
 run_rust() {
   local directory=$1
   local log=$2
-  (cd "$repo_root" && \
-    PUB_CACHE="$pub_cache" RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-      BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
-      "$repo_root/scripts/run_rust_frontend.sh" \
-      build --root "$directory" --dart "$dart_bin" --jobs 1 >"$log" 2>&1)
+  worker_run_frontend \
+    build --root "$directory" --dart "$dart_bin" --jobs 1 >"$log" 2>&1
 }
 
 assert_contains() {

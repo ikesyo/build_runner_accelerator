@@ -39,32 +39,25 @@ jobs:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/setup-worker
         with:
-          path: |
-            .pub-cache
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: benchmark-current-${{ runner.os }}-${{ runner.arch }}-${{ matrix.id }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/current_json_app/pubspec.lock', 'rust/Cargo.lock') }}
-          restore-keys: |
-            benchmark-current-${{ runner.os }}-${{ runner.arch }}-${{ matrix.id }}-
-            benchmark-current-${{ runner.os }}-${{ runner.arch }}-
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
-        with:
-          sdk: '3.13.3'
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
-        with:
-          toolchain: 1.98.1
+          cache-scope: benchmark-current-${{ matrix.id }}
+          cache-inputs: |
+            pubspec.lock
+            dart_worker/pubspec.lock
+            fixtures/current_json_app/pubspec.lock
+            rust/Cargo.lock
+            scripts/benchmark_current_baseline.sh
+            scripts/worker.sh
+          setup-rust: 'true'
       - name: Resolve repository packages
-        run: dart pub get
+        shell: bash
+        run: |
+          dart pub get
       - name: Build native release frontend
         if: matrix.lane == 'accelerator'
         shell: bash
-        run: |
-          cargo build --locked --release --quiet --manifest-path rust/Cargo.toml
-          chmod +x rust/target/release/build_runner_accelerator
-          echo "BUILD_RUNNER_ACCELERATOR_BIN=$GITHUB_WORKSPACE/rust/target/release/build_runner_accelerator" >> "$GITHUB_ENV"
+        run: bash scripts/worker.sh build-frontend --release
       - name: Run current baseline benchmark
         shell: bash
         env:
@@ -142,35 +135,24 @@ jobs:
       BUILD_RUNNER_ACCELERATOR_METRICS: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/setup-worker
         with:
-          path: |
-            .pub-cache
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: benchmark-current-watch-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/current_json_app/pubspec.lock', 'rust/Cargo.lock') }}
-          restore-keys: |
-            benchmark-current-watch-${{ runner.os }}-${{ runner.arch }}-
-            benchmark-current-${{ runner.os }}-${{ runner.arch }}-
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
-        with:
-          sdk: '3.13.3'
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
-        with:
-          toolchain: 1.98.1
+          cache-scope: benchmark-current-watch
+          cache-inputs: |
+            pubspec.lock
+            dart_worker/pubspec.lock
+            fixtures/current_json_app/pubspec.lock
+            rust/Cargo.lock
+            scripts/watch_smoke_current_json.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
+          frontend-profile: release
       - name: Resolve watch dependencies
         shell: bash
         run: |
           dart pub get
-          (cd dart_worker && dart pub get)
           (cd fixtures/current_json_app && dart pub get)
-      - name: Build native release frontend
-        shell: bash
-        run: |
-          cargo build --locked --release --quiet --manifest-path rust/Cargo.toml
-          chmod +x rust/target/release/build_runner_accelerator
-          echo "BUILD_RUNNER_ACCELERATOR_BIN=$GITHUB_WORKSPACE/rust/target/release/build_runner_accelerator" >> "$GITHUB_ENV"
       - name: Run paired watch smoke
         shell: bash
         env:

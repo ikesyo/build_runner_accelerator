@@ -5,16 +5,13 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
-cargo_bin=$(resolve_toolchain_cargo)
-rustup_home=$(resolve_toolchain_rustup_home)
-cargo_home=$(resolve_toolchain_cargo_home)
 jobs=${JOBS:-1}
 count=${COUNT:-10}
 io_metrics=${IO_METRICS:-0}
 strace_bin=${STRACE_BIN:-}
-worker_dir="$repo_root/dart_worker"
 fixture_dir="$repo_root/fixtures/json_serializable_${count}_app"
 state_path="$fixture_dir/.dart_tool/build_runner_accelerator/graph-v3.bin"
 results_dir=$(mktemp -d)
@@ -37,33 +34,9 @@ if [[ "$count" != 10 || ! -f "$fixture_dir/pubspec.yaml" ]]; then
   bash "$script_dir/generate_json_serializable_fixture.sh" "$count" "$fixture_dir"
 fi
 
-prepare_rust_binary() {
-  if [[ -n "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
-    [[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || {
-      printf 'Rust frontend binary is not executable: %s\n' "$BUILD_RUNNER_ACCELERATOR_BIN" >&2
-      exit 1
-    }
-    return 0
-  fi
-  [[ -x "$cargo_bin" ]] || {
-    printf 'Cargo executable not found: %s\n' "$cargo_bin" >&2
-    exit 1
-  }
-  (cd "$repo_root" && \
-    RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-      "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml")
-  local binary="$repo_root/rust/target/debug/build_runner_accelerator"
-  [[ -x "$binary" ]] || {
-    printf 'Rust frontend binary was not built: %s\n' "$binary" >&2
-    exit 1
-  }
-  export BUILD_RUNNER_ACCELERATOR_BIN="$binary"
-}
+worker_ensure_frontend || exit 1
 
-prepare_rust_binary
-
-(cd "$worker_dir" && \
-  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get)
+worker_prepare
 (cd "$fixture_dir" && \
   PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get)
 
@@ -101,8 +74,7 @@ run_stock() {
 }
 
 run_frontend() {
-  PUB_CACHE="$pub_cache" RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-    run_traced "$script_dir/run_rust_frontend.sh" \
+  run_traced "$script_dir/worker.sh" run-frontend \
     build --root "$fixture_dir" --dart "$dart_bin" --jobs "$jobs"
 }
 

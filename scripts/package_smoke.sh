@@ -5,6 +5,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 fixture_dir="$repo_root/fixtures/json_serializable_app"
@@ -28,14 +29,11 @@ fail() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-[[ -n "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]] || \
-  fail 'BUILD_RUNNER_ACCELERATOR_BIN is required'
-[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
-  fail "Rust frontend binary is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
+worker_ensure_frontend || fail 'Rust frontend build failed'
 
 # Keep the published-package path dependency in a temporary target project.
 mkdir -p "$workspace_dir"
-ln -s "$repo_root/dart_worker" "$test_root/dart_worker"
+worker_attach "$test_root"
 sed \
   -e 's/build_runner_accelerator_worker/build_runner_accelerator/' \
   -e "s|path: ../../dart_worker|path: $repo_root|" \
