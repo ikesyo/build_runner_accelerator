@@ -1,7 +1,6 @@
 # Repository-only development and release inputs.
 /.github/
 /AGENTS.md
-/dart_worker/
 /docs/
 /fixtures/
 /protocol/

@@ -90,9 +90,9 @@ write_package_pubspec() {
     '    path: packages/dependency_builder_package' \
     '' \
     'dev_dependencies:' \
-    '  build_runner: 2.7.2' \
-    '  build_runner_accelerator_worker:' \
-    '    path: ../../dart_worker' >"$directory/pubspec.yaml"
+    '  build_runner: 2.16.1' \
+    '  build_runner_accelerator:' \
+    '    path: ../..' >"$directory/pubspec.yaml"
 }
 
 write_dependency_pubspec() {

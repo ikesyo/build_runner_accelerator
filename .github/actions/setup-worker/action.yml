@@ -11,8 +11,6 @@ inputs:
     default: |
       pubspec.yaml
       pubspec.lock
-      dart_worker/pubspec.yaml
-      dart_worker/pubspec.lock
       rust/Cargo.toml
       rust/Cargo.lock
   dart-version:
@@ -40,7 +38,7 @@ runs:
   using: composite
   steps:
     - id: versions
-      name: Resolve worker toolchain versions
+      name: Resolve Dart package dependencies
       shell: bash
       env:
         DART_VERSION_INPUT: ${{ inputs.dart-version }}
@@ -64,8 +62,6 @@ runs:
           scripts/run_rust_frontend.sh
           pubspec.yaml
           pubspec.lock
-          dart_worker/pubspec.yaml
-          dart_worker/pubspec.lock
           rust/Cargo.toml
           rust/Cargo.lock
           rust-toolchain.toml

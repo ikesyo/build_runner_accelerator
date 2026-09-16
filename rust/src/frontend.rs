@@ -110,46 +110,33 @@ fn generate_manifest(
 ) -> io::Result<()> {
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     let mut command = Command::new(dart_binary);
-    let mut generator_found = false;
-    for worker_package in [
-        "build_runner_accelerator",
-        "build_runner_accelerator_worker",
-    ] {
-        let Ok(worker_package_root) = workspace.package_root(worker_package) else {
-            continue;
-        };
-        let generator = [
-            "tool/generate_builder_manifest.dart",
-            "bin/generate_builder_manifest.dart",
-        ]
-        .into_iter()
-        .map(|path| worker_package_root.join(path))
-        .find(|path| path.is_file());
-        let Some(generator) = generator else {
-            continue;
-        };
-        // Running the package's internal tool directly avoids an implicit
-        // pub resolution step. The workspace has already been resolved, so
-        // reuse its package config for deterministic/offline manifest
-        // generation in CI and installed packages.
-        command
-            .arg(format!(
-                "--packages={}",
-                workspace
-                    .root
-                    .join(".dart_tool/package_config.json")
-                    .display()
-            ))
-            .arg(generator);
-        generator_found = true;
-        break;
-    }
-    if !generator_found {
-        return Err(io::Error::new(
+    let package_root = workspace.package_root("build_runner_accelerator")?;
+    let generator = [
+        "tool/generate_builder_manifest.dart",
+        "bin/generate_builder_manifest.dart",
+    ]
+    .into_iter()
+    .map(|path| package_root.join(path))
+    .find(|path| path.is_file())
+    .ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
-            "manifest generator not found in the resolved package roots",
-        ));
-    }
+            "manifest generator not found in build_runner_accelerator package",
+        )
+    })?;
+    // Running the package's internal tool directly avoids an implicit
+    // pub resolution step. The workspace has already been resolved, so
+    // reuse its package config for deterministic/offline manifest
+    // generation in CI and installed packages.
+    command
+        .arg(format!(
+            "--packages={}",
+            workspace
+                .root
+                .join(".dart_tool/package_config.json")
+                .display()
+        ))
+        .arg(generator);
     let status = command
         .arg("--root")
         .arg(&workspace.root)

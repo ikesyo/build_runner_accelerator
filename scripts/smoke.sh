@@ -29,7 +29,7 @@ if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" && ! -x "$cargo_bin" ]]; then
 fi
 
 worker_prepare "${pub_get_args[@]}" >/dev/null || fail 'worker pub get failed'
-(cd "$worker_package_dir" && \
+(cd "$root_package_dir" && \
   PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics format \
     --output=none --set-exit-if-changed lib bin)
 (cd "$fixture_dir" && \

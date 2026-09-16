@@ -78,8 +78,8 @@ dependencies:
 
 dev_dependencies:
   build_runner: 2.16.1
-  build_runner_accelerator_worker:
-    path: ../../dart_worker
+  build_runner_accelerator:
+    path: ../..
 EOF
   cp "$repo_root/fixtures/arbitrary_builder_app/pubspec.lock" "$directory/pubspec.lock"
   cat >"$directory/build.yaml" <<'EOF'

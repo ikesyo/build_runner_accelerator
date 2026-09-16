@@ -14,6 +14,10 @@ workspace_dir="$test_root/fixtures"
 stock_dir="$workspace_dir/stock"
 accelerator_dir="$workspace_dir/accelerator"
 accelerator_pubspec="$test_root/accelerator-pubspec.yaml"
+pub_get_args=()
+if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
+  pub_get_args+=(--offline)
+fi
 
 cleanup() {
   [[ -e "$test_root" ]] || return 0
@@ -35,8 +39,7 @@ worker_ensure_frontend || fail 'Rust frontend build failed'
 mkdir -p "$workspace_dir"
 worker_attach "$test_root"
 sed \
-  -e 's/build_runner_accelerator_worker/build_runner_accelerator/' \
-  -e "s|path: ../../dart_worker|path: $repo_root|" \
+  -e "s|path: \.\./\.\.|path: $repo_root|" \
   "$fixture_dir/pubspec.yaml" >"$accelerator_pubspec"
 
 prepare_package() {
@@ -47,7 +50,7 @@ prepare_package() {
   cp "$fixture_dir/build.yaml" "$directory/build.yaml"
   cp "$fixture_dir/lib/model.dart" "$directory/lib/model.dart"
   (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null)
+    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null)
 }
 
 prepare_package "$stock_dir" "$fixture_dir/pubspec.yaml"

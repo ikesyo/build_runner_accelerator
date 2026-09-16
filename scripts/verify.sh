@@ -198,7 +198,7 @@ run_quick() {
   worker_prepare
   (cd "$repo_root" && \
     PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics analyze \
-      "$worker_package_dir")
+      lib bin test tool)
   bash "$script_dir/smoke.sh"
   run_trigger_correctness
   if [[ "${VERIFY_ARBITRARY_BUILDER:-0}" == 1 ]]; then
