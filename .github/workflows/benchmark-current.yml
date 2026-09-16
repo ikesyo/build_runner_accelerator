@@ -50,14 +50,12 @@ jobs:
             scripts/benchmark_current_baseline.sh
             scripts/worker.sh
           setup-rust: 'true'
+          build-frontend: ${{ matrix.lane == 'accelerator' }}
+          frontend-profile: release
       - name: Resolve repository packages
         shell: bash
         run: |
           dart pub get
-      - name: Build native release frontend
-        if: matrix.lane == 'accelerator'
-        shell: bash
-        run: bash scripts/worker.sh build-frontend --release
       - name: Run current baseline benchmark
         shell: bash
         env:
