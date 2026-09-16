@@ -5,13 +5,9 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
-toolchain_bin=${RUST_TOOLCHAIN_BIN:-"$repo_root/.toolchains/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin"}
-cargo_bin=${CARGO_BIN:-"$toolchain_bin/cargo"}
-rustup_home=$(resolve_toolchain_rustup_home)
-cargo_home=$(resolve_toolchain_cargo_home)
-worker_dir="$repo_root/dart_worker"
 builder_source="$repo_root/fixtures/arbitrary_dependency_app/lib/dependency_builder.dart"
 lock_source="$repo_root/fixtures/arbitrary_dependency_app/pubspec.lock"
 temporary_dir=$(mktemp -d)
@@ -72,24 +68,12 @@ assert_no_file() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-[[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
+worker_ensure_frontend || fail 'Rust frontend build failed'
 
-if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
-  PATH="$toolchain_bin:$PATH" RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-    "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml" || \
-    fail 'Rust frontend build failed'
-  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
-  export BUILD_RUNNER_ACCELERATOR_BIN
-fi
-[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
-  fail "Rust frontend binary is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
-
-(cd "$worker_dir" && \
-  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null) || \
-  fail 'worker pub get failed'
+worker_prepare >/dev/null || fail 'worker pub get failed'
 
 mkdir -p "$fixture_root"
-ln -s "$worker_dir" "$workspace_root/dart_worker"
+worker_attach "$workspace_root"
 
 write_package_pubspec() {
   local directory=$1
@@ -204,8 +188,7 @@ run_stock() {
 run_rust() {
   local directory=$1
   local log=$2
-  PATH="$toolchain_bin:$PATH" RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-    "$script_dir/run_rust_frontend.sh" \
+  worker_run_frontend \
     build --root "$directory" --dart "$dart_bin" >"$log" 2>&1
 }
 

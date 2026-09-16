@@ -9,6 +9,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 fixture_dir="$repo_root/fixtures/current_json_app"
 measure_script="$script_dir/measure_process.py"
 dart_bin=$(resolve_toolchain_dart)
@@ -26,11 +27,6 @@ lane=${LANE:-stock}
 accelerator_jobs=${ACCELERATOR_JOBS:-1}
 accelerator_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-}
 accelerator_launcher=${ACCELERATOR_LAUNCHER:-0}
-toolchain_bin=${RUST_TOOLCHAIN_BIN:-"$repo_root/.toolchains/rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin"}
-cargo_bin=${CARGO_BIN:-"$toolchain_bin/cargo"}
-rustc_bin=${RUSTC_BIN:-"$toolchain_bin/rustc"}
-rustup_home=$(resolve_toolchain_rustup_home)
-cargo_home=$(resolve_toolchain_cargo_home)
 
 fail() {
   printf 'current-baseline: FAIL: %s\n' "$*" >&2
@@ -114,16 +110,12 @@ for mode in "${modes[@]}"; do
 done
 
 if [[ "$lane" == accelerator && -z "$accelerator_bin" ]]; then
-  [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
-  [[ -x "$rustc_bin" ]] || fail "rustc executable not found: $rustc_bin"
-  PATH="$toolchain_bin:$PATH" RUSTUP_HOME="$rustup_home" \
-    CARGO_HOME="$cargo_home" RUSTC="$rustc_bin" \
-    "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml" || \
-    fail 'Rust frontend build failed'
-  accelerator_bin="$repo_root/rust/target/debug/build_runner_accelerator"
+  worker_ensure_frontend || fail 'Rust frontend build failed'
+  accelerator_bin="$BUILD_RUNNER_ACCELERATOR_BIN"
 fi
 if [[ "$lane" == accelerator ]]; then
   [[ -x "$accelerator_bin" ]] || fail "Rust frontend is not executable: $accelerator_bin"
+  export BUILD_RUNNER_ACCELERATOR_BIN="$accelerator_bin"
 fi
 
 printf 'dart_bin=%s\n' "$dart_bin" >"$metadata_file"
@@ -211,7 +203,8 @@ build_command() {
         env
         "PUB_CACHE=$pub_cache"
         "BUILD_RUNNER_ACCELERATOR_BIN=$accelerator_bin"
-        "$script_dir/run_rust_frontend.sh"
+        "$script_dir/worker.sh"
+        run-frontend
         build
         --root
         .
@@ -326,9 +319,7 @@ for mode in "${modes[@]}"; do
   build_command "$mode"
   mode_root="$work_root/$mode"
   mkdir -p "$mode_root"
-  if [[ ! -e "$mode_root/dart_worker" && ! -L "$mode_root/dart_worker" ]]; then
-    ln -s "$repo_root/dart_worker" "$mode_root/dart_worker"
-  fi
+  worker_attach "$mode_root"
   for ((repeat_index = 1; repeat_index <= repeat_count; repeat_index++)); do
     for case_name in "${cases[@]}"; do
       package_dir="$work_root/$mode/r$repeat_index/$case_name"

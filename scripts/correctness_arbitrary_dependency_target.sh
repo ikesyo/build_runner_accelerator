@@ -5,6 +5,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 temporary_dir=$(mktemp -d)
@@ -61,26 +62,12 @@ assert_contains() {
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 
-if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
-  cargo_bin=$(resolve_toolchain_cargo)
-  rustup_home=$(resolve_toolchain_rustup_home)
-  cargo_home=$(resolve_toolchain_cargo_home)
-  [[ -x "$cargo_bin" ]] || fail "Cargo executable not found: $cargo_bin"
-  RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-    "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml" || \
-    fail 'Rust frontend build failed'
-  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
-  export BUILD_RUNNER_ACCELERATOR_BIN
-fi
-[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || \
-  fail "Rust frontend binary is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
+worker_ensure_frontend || fail 'Rust frontend build failed'
 
-(cd "$repo_root/dart_worker" && \
-  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null) || \
-  fail 'worker pub get failed'
+worker_prepare >/dev/null || fail 'worker pub get failed'
 
 mkdir -p "$fixture_root"
-ln -s "$repo_root/dart_worker" "$workspace_root/dart_worker"
+worker_attach "$workspace_root"
 
 write_root_pubspec() {
   local directory=$1
@@ -181,7 +168,7 @@ run_stock() {
 run_rust() {
   local directory=$1
   local log=$2
-  "$script_dir/run_rust_frontend.sh" \
+  worker_run_frontend \
     build --root "$directory" --dart "$dart_bin" --mode rust >"$log" 2>&1
 }
 
@@ -204,7 +191,7 @@ rust_root_cache="$rust_dir/.dart_tool/build_runner_accelerator/cache/arbitrary_d
 assert_same_file "$stock_root_cache" "$rust_root_cache"
 assert_contains "$temporary_dir/rust.initial.log" 'Rust frontend: 2 build action(s)'
 
-if ! "$script_dir/run_rust_frontend.sh" build --root "$rust_dir" --dart "$dart_bin" \
+if ! worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
     --mode rust >"$temporary_dir/rust.no-op.log" 2>&1; then
   fail 'Rust no-op build failed'
 fi
@@ -215,7 +202,7 @@ printf 'changed dependency\n' >"$rust_dir/packages/dependency_target_package/lib
 if ! run_stock "$stock_dir" "$temporary_dir/stock.dependency-change.log"; then
   fail 'stock dependency input-change build failed'
 fi
-if ! "$script_dir/run_rust_frontend.sh" build --root "$rust_dir" --dart "$dart_bin" \
+if ! worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
     --mode rust >"$temporary_dir/rust.dependency-change.log" 2>&1; then
   fail 'Rust dependency input-change build failed'
 fi
@@ -228,7 +215,7 @@ printf 'changed root\n' >"$rust_dir/lib/root.txt"
 if ! run_stock "$stock_dir" "$temporary_dir/stock.root-change.log"; then
   fail 'stock root input-change build failed'
 fi
-if ! "$script_dir/run_rust_frontend.sh" build --root "$rust_dir" --dart "$dart_bin" \
+if ! worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
     --mode rust >"$temporary_dir/rust.root-change.log" 2>&1; then
   fail 'Rust root input-change build failed'
 fi

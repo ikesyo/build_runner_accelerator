@@ -7,9 +7,9 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
-fast_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-"$repo_root/rust/target/debug/build_runner_accelerator"}
 fixture_dir="$repo_root/fixtures/current_json_app"
 temporary_dir=$(mktemp -d)
 workspace_root="$temporary_dir/workspace"
@@ -47,14 +47,15 @@ fail() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-[[ -x "$fast_bin" ]] || fail "Rust frontend is not executable: $fast_bin"
+worker_ensure_frontend || fail 'Rust frontend build failed'
+fast_bin="$BUILD_RUNNER_ACCELERATOR_BIN"
 
 mkdir -p "$rust_dir/lib"
 cp "$fixture_dir/pubspec.yaml" "$rust_dir/pubspec.yaml"
 cp "$fixture_dir/pubspec.lock" "$rust_dir/pubspec.lock"
 cp "$fixture_dir/build.yaml" "$rust_dir/build.yaml"
 cp "$fixture_dir/lib"/*.dart "$rust_dir/lib/"
-ln -s "$repo_root/dart_worker" "$workspace_root/dart_worker"
+worker_attach "$workspace_root"
 
 (cd "$rust_dir" && PUB_CACHE="$pub_cache" "$dart_bin" \
   --suppress-analytics pub get --offline >/dev/null) || fail 'pub get failed'
@@ -62,7 +63,7 @@ ln -s "$repo_root/dart_worker" "$workspace_root/dart_worker"
 run_rust() {
   local log=$1
   BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" \
-    "$script_dir/run_rust_frontend.sh" build --root "$rust_dir" \
+    worker_run_frontend build --root "$rust_dir" \
     --dart "$dart_bin" --mode rust >"$log" 2>&1
 }
 

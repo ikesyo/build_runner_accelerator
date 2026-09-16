@@ -3,6 +3,8 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
+source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 count=${COUNT:-10}
 jobs=${JOBS:-1}
 builders=${BUILDERS:-json,freezed,riverpod}
@@ -18,10 +20,7 @@ fail() {
 
 [[ "$repeat" =~ ^[1-9][0-9]*$ ]] || fail "REPEAT must be a positive integer: $repeat"
 
-if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" && -x "$repo_root/rust/target/debug/build_runner_accelerator" ]]; then
-  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
-  export BUILD_RUNNER_ACCELERATOR_BIN
-fi
+worker_ensure_frontend || fail 'Rust frontend build failed'
 
 run_builder() {
   local builder=$1

@@ -5,9 +5,9 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
-worker_dir="$repo_root/dart_worker"
 fixture_dir="$repo_root/fixtures/arbitrary_builder_app"
 temporary_dir=$(mktemp -d)
 test_root="$temporary_dir/workspace"
@@ -43,10 +43,7 @@ fail() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
-  fail 'BUILD_RUNNER_ACCELERATOR_BIN is required; build the Rust frontend first'
-fi
-[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || fail "Rust frontend is not executable: $BUILD_RUNNER_ACCELERATOR_BIN"
+worker_ensure_frontend || fail 'Rust frontend build failed'
 
 prepare_package() {
   local directory=$1
@@ -71,9 +68,7 @@ run_stock() {
 run_rust() {
   local directory=$1
   local log=$2
-  PUB_CACHE="$pub_cache" \
-    BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
-    "$script_dir/run_rust_frontend.sh" \
+  worker_run_frontend \
     build --root "$directory" --dart "$dart_bin" >"$log" 2>&1
 }
 
@@ -90,7 +85,7 @@ assert_no_file() {
 }
 
 mkdir -p "$test_fixtures_dir"
-ln -s "$worker_dir" "$test_root/dart_worker"
+worker_attach "$test_root"
 prepare_package "$stock_dir"
 prepare_package "$rust_dir"
 

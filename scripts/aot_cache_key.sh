@@ -9,14 +9,11 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
-fast_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-"$repo_root/rust/target/debug/build_runner_accelerator"}
 workspace_root=${1:-"$PWD"}
 
-[[ -x "$fast_bin" ]] || {
-  printf 'Rust frontend is not executable: %s\n' "$fast_bin" >&2
-  exit 1
-}
+worker_require_frontend
 
-BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" "$script_dir/run_rust_frontend.sh" \
+worker_run_frontend \
   aot-cache-key --root "$workspace_root" --dart "$dart_bin" --mode rust

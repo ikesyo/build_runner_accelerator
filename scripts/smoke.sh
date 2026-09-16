@@ -5,12 +5,12 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 cargo_bin=$(resolve_toolchain_cargo)
 rustup_home=$(resolve_toolchain_rustup_home)
 cargo_home=$(resolve_toolchain_cargo_home)
-worker_dir="$repo_root/dart_worker"
 fixture_dir="$repo_root/fixtures/json_serializable_app"
 state_path="$fixture_dir/.dart_tool/build_runner_accelerator/graph-v3.bin"
 temporary_dir=$(mktemp -d)
@@ -28,8 +28,8 @@ if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" && ! -x "$cargo_bin" ]]; then
   exit 1
 fi
 
-(cd "$worker_dir" && \
-  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" && \
+worker_prepare "${pub_get_args[@]}" >/dev/null || fail 'worker pub get failed'
+(cd "$worker_package_dir" && \
   PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics format \
     --output=none --set-exit-if-changed lib bin)
 (cd "$fixture_dir" && \
@@ -42,16 +42,7 @@ else
     "$cargo_bin" test --manifest-path "$repo_root/rust/Cargo.toml"
 fi
 
-if [[ -z "${BUILD_RUNNER_ACCELERATOR_BIN:-}" ]]; then
-  RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-    "$cargo_bin" build --quiet --manifest-path "$repo_root/rust/Cargo.toml"
-  BUILD_RUNNER_ACCELERATOR_BIN="$repo_root/rust/target/debug/build_runner_accelerator"
-  export BUILD_RUNNER_ACCELERATOR_BIN
-fi
-[[ -x "$BUILD_RUNNER_ACCELERATOR_BIN" ]] || {
-  printf 'Rust frontend binary is not executable: %s\n' "$BUILD_RUNNER_ACCELERATOR_BIN" >&2
-  exit 1
-}
+worker_ensure_frontend || fail 'Rust frontend build failed'
 
 baseline_output="$temporary_dir/model.g.dart.baseline"
 (cd "$fixture_dir" && \
@@ -64,9 +55,7 @@ if [[ -f "$state_path" ]]; then
 fi
 
 run_frontend() {
-  PUB_CACHE="$pub_cache" RUSTUP_HOME="$rustup_home" CARGO_HOME="$cargo_home" \
-    "$script_dir/run_rust_frontend.sh" \
-    build --root "$fixture_dir" --dart "$dart_bin"
+  worker_run_frontend build --root "$fixture_dir" --dart "$dart_bin"
 }
 
 run_frontend

@@ -9,10 +9,10 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
 fixture_dir="$repo_root/fixtures/current_json_app"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
-fast_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-"$repo_root/rust/target/debug/build_runner_accelerator"}
 temporary_dir=$(mktemp -d)
 workspace_parent="$temporary_dir/workspaces"
 workspace_a="$workspace_parent/a"
@@ -49,10 +49,11 @@ fail() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-[[ -x "$fast_bin" ]] || fail "Rust frontend is not executable: $fast_bin"
+worker_ensure_frontend || fail 'Rust frontend build failed'
+fast_bin="$BUILD_RUNNER_ACCELERATOR_BIN"
 
 mkdir -p "$workspace_parent"
-ln -s "$repo_root/dart_worker" "$temporary_dir/dart_worker"
+worker_attach "$temporary_dir"
 
 setup_workspace() {
   local root=$1
@@ -70,7 +71,7 @@ run_runner() {
   local log=$2
   shift 2
   BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" \
-    "$script_dir/run_rust_frontend.sh" \
+    worker_run_frontend \
     "$@" --root "$root" --dart "$dart_bin" --mode rust >"$log" 2>&1
 }
 

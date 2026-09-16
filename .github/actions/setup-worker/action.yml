@@ -1,0 +1,127 @@
+name: Set up Dart worker
+description: Set up the pinned worker SDK, Rust toolchain, cache, and optional frontend build.
+
+inputs:
+  cache-scope:
+    description: Isolated cache namespace for this job.
+    required: true
+  cache-inputs:
+    description: Newline-separated lockfiles and inputs that affect the worker cache.
+    required: false
+    default: |
+      pubspec.yaml
+      pubspec.lock
+      dart_worker/pubspec.yaml
+      dart_worker/pubspec.lock
+      rust/Cargo.toml
+      rust/Cargo.lock
+  dart-version:
+    description: Optional override for the worker Dart SDK.
+    required: false
+    default: ''
+  setup-rust:
+    description: Install the repository Rust toolchain.
+    required: false
+    default: 'true'
+  build-frontend:
+    description: Build and export BUILD_RUNNER_ACCELERATOR_BIN.
+    required: false
+    default: 'false'
+  frontend-profile:
+    description: Rust frontend profile, debug or release.
+    required: false
+    default: debug
+  rust-target:
+    description: Optional Rust target triple for the frontend build.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - id: versions
+      name: Resolve worker toolchain versions
+      shell: bash
+      env:
+        DART_VERSION_INPUT: ${{ inputs.dart-version }}
+        CACHE_INPUTS: ${{ inputs.cache-inputs }}
+      run: |
+        set -euo pipefail
+        source .github/worker-toolchain.env
+        dart_version="${DART_VERSION_INPUT:-$DART_WORKER_SDK_VERSION}"
+        rust_version=$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml | head -n 1)
+        [[ -n "$dart_version" ]] || { echo 'worker Dart SDK version is empty' >&2; exit 1; }
+        [[ -n "$rust_version" ]] || { echo 'Rust version is missing from rust-toolchain.toml' >&2; exit 1; }
+        printf 'dart=%s\n' "$dart_version" >>"$GITHUB_OUTPUT"
+        printf 'rust=%s\n' "$rust_version" >>"$GITHUB_OUTPUT"
+        printf 'PUB_CACHE=%s/.pub-cache\n' "$GITHUB_WORKSPACE" >>"$GITHUB_ENV"
+
+        files=(
+          .github/actions/setup-worker/action.yml
+          .github/worker-toolchain.env
+          scripts/worker.sh
+          scripts/toolchain.sh
+          scripts/run_rust_frontend.sh
+          pubspec.yaml
+          pubspec.lock
+          dart_worker/pubspec.yaml
+          dart_worker/pubspec.lock
+          rust/Cargo.toml
+          rust/Cargo.lock
+          rust-toolchain.toml
+        )
+        while IFS= read -r pattern; do
+          [[ -n "$pattern" ]] || continue
+          for path in $pattern; do
+            [[ -f "$path" ]] && files+=("$path")
+          done
+        done <<<"$CACHE_INPUTS"
+        digest=$(
+          printf '%s\n' "${files[@]}" |
+            sort -u |
+            while IFS= read -r path; do sha256sum "$path"; done |
+            sha256sum |
+            awk '{print $1}'
+        )
+        printf 'digest=%s\n' "$digest" >>"$GITHUB_OUTPUT"
+
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          .pub-cache
+          ~/.cargo/registry
+          ~/.cargo/git
+          rust/target
+        key: worker-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ steps.versions.outputs.rust }}-${{ steps.versions.outputs.digest }}
+        restore-keys: |
+          worker-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ steps.versions.outputs.rust }}-
+          worker-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-
+
+    - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+      with:
+        sdk: ${{ steps.versions.outputs.dart }}
+        # The matcher file is relative to setup-dart's own action directory;
+        # it is not present when setup-dart is nested in this local action.
+        problem-matcher: false
+
+    - name: Resolve Dart worker dependencies
+      shell: bash
+      run: bash scripts/worker.sh pub-get
+
+    - if: inputs.setup-rust == 'true'
+      uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
+      with:
+        toolchain: ${{ steps.versions.outputs.rust }}
+        targets: ${{ inputs.rust-target }}
+
+    - if: inputs.build-frontend == 'true'
+      name: Build native frontend
+      shell: bash
+      env:
+        FRONTEND_PROFILE: ${{ inputs.frontend-profile }}
+        RUST_TARGET: ${{ inputs.rust-target }}
+      run: |
+        set -euo pipefail
+        args=(--profile "$FRONTEND_PROFILE")
+        [[ -n "$RUST_TARGET" ]] && args+=(--target "$RUST_TARGET")
+        bash scripts/worker.sh build-frontend "${args[@]}"

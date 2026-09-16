@@ -64,20 +64,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/setup-worker
         with:
-          path: ~/.pub-cache
-          key: pub-worker-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dart_worker/pubspec.yaml', 'dart_worker/pubspec.lock') }}
-          restore-keys: |
-            pub-worker-${{ runner.os }}-${{ runner.arch }}-
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
-        with:
-          sdk: '3.13.3'
+          cache-scope: dart-worker
+          setup-rust: 'false'
       - name: Analyze and format worker
         shell: bash
         run: |
           cd dart_worker
-          dart pub get
           dart format --output=none --set-exit-if-changed lib bin
           dart analyze lib bin
 
@@ -108,28 +102,17 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/setup-worker
         with:
-          path: |
-            .pub-cache
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: integration-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/**/pubspec.lock', 'rust/Cargo.lock') }}
-          restore-keys: |
-            integration-${{ runner.os }}-${{ runner.arch }}-
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
-        with:
-          sdk: '3.13.3'
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
-        with:
-          toolchain: 1.98.1
-      - name: Build native frontend
-        shell: bash
-        run: |
-          cargo build --locked --quiet --manifest-path rust/Cargo.toml
-          chmod +x rust/target/debug/build_runner_accelerator
-          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+          cache-scope: integration-baseline
+          cache-inputs: |
+            pubspec.lock
+            dart_worker/pubspec.lock
+            fixtures/**/pubspec.lock
+            rust/Cargo.lock
+            scripts/smoke.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
       - name: Run baseline smoke
         env:
           PUB_CACHE: ${{ github.workspace }}/.pub-cache
@@ -144,32 +127,21 @@ jobs:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/setup-worker
         with:
-          path: |
-            .pub-cache
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: integration-trigger-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/**/pubspec.lock', 'rust/Cargo.lock') }}
-          restore-keys: |
-            integration-trigger-${{ runner.os }}-${{ runner.arch }}-
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
-        with:
-          sdk: '3.13.3'
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
-        with:
-          toolchain: 1.98.1
-      - name: Build native frontend
-        shell: bash
-        run: |
-          cargo build --locked --quiet --manifest-path rust/Cargo.toml
-          chmod +x rust/target/debug/build_runner_accelerator
-          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+          cache-scope: integration-trigger
+          cache-inputs: |
+            pubspec.lock
+            dart_worker/pubspec.lock
+            fixtures/**/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_trigger_builder.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
       - name: Prime trigger-builder dependencies
         shell: bash
         run: |
-          (cd dart_worker && dart --suppress-analytics pub get)
           (cd fixtures/trigger_builder_app && dart --suppress-analytics pub get)
       - parallel:
           - name: Trigger correctness (detection and generated chain)
@@ -199,32 +171,21 @@ jobs:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/setup-worker
         with:
-          path: |
-            .pub-cache
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: integration-arbitrary-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/**/pubspec.lock', 'rust/Cargo.lock') }}
-          restore-keys: |
-            integration-arbitrary-${{ runner.os }}-${{ runner.arch }}-
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
-        with:
-          sdk: '3.13.3'
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
-        with:
-          toolchain: 1.98.1
-      - name: Build native frontend
-        shell: bash
-        run: |
-          cargo build --locked --quiet --manifest-path rust/Cargo.toml
-          chmod +x rust/target/debug/build_runner_accelerator
-          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+          cache-scope: integration-arbitrary
+          cache-inputs: |
+            pubspec.lock
+            dart_worker/pubspec.lock
+            fixtures/**/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_arbitrary_builder.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
       - name: Prime arbitrary-builder dependencies
         shell: bash
         run: |
-          (cd dart_worker && dart --suppress-analytics pub get)
           (cd fixtures/arbitrary_builder_app && dart --suppress-analytics pub get)
       - parallel:
           - name: Arbitrary correctness (output lifecycle)
@@ -254,28 +215,19 @@ jobs:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/setup-worker
         with:
-          path: |
-            .pub-cache
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: integration-fixtures-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock', 'dart_worker/pubspec.lock', 'fixtures/**/pubspec.lock', 'rust/Cargo.lock') }}
-          restore-keys: |
-            integration-fixtures-${{ runner.os }}-${{ runner.arch }}-
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
-        with:
-          sdk: '3.13.3'
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
-        with:
-          toolchain: 1.98.1
-      - name: Build native frontend
-        shell: bash
-        run: |
-          cargo build --locked --quiet --manifest-path rust/Cargo.toml
-          chmod +x rust/target/debug/build_runner_accelerator
-          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+          cache-scope: integration-fixtures
+          cache-inputs: |
+            pubspec.lock
+            dart_worker/pubspec.lock
+            fixtures/**/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_built_value.sh
+            scripts/package_smoke.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
       - parallel:
           - name: built_value compatibility fixture
             shell: bash
@@ -292,31 +244,22 @@ jobs:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/setup-worker
         with:
-          path: |
-            .pub-cache
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: current-codegen-freezed-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dart_worker/pubspec.lock', 'fixtures/freezed_app/pubspec.lock', 'rust/Cargo.lock') }}
-          restore-keys: |
-            current-codegen-freezed-${{ runner.os }}-${{ runner.arch }}-
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
-        with:
-          sdk: '3.13.3'
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
-        with:
-          toolchain: 1.98.1
+          cache-scope: current-codegen-freezed
+          cache-inputs: |
+            dart_worker/pubspec.lock
+            fixtures/freezed_app/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_freezed.sh
+            scripts/watch_smoke_freezed.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
       - name: Prime current generator dependencies
         shell: bash
         run: |
           (cd fixtures/freezed_app && dart --suppress-analytics pub get)
-      - name: Build native frontend
-        shell: bash
-        run: |
-          cargo build --locked --quiet --manifest-path rust/Cargo.toml
-          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
       - parallel:
           - name: Freezed correctness (inputs)
             shell: bash
@@ -368,32 +311,23 @@ jobs:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/setup-worker
         with:
-          path: |
-            .pub-cache
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: current-codegen-riverpod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dart_worker/pubspec.lock', 'fixtures/riverpod_app/pubspec.lock', 'rust/Cargo.lock') }}
-          restore-keys: |
-            current-codegen-riverpod-${{ runner.os }}-${{ runner.arch }}-
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
-        with:
-          sdk: '3.13.3'
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
-        with:
-          toolchain: 1.98.1
+          cache-scope: current-codegen-riverpod
+          cache-inputs: |
+            dart_worker/pubspec.lock
+            fixtures/riverpod_app/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_riverpod.sh
+            scripts/watch_smoke_riverpod.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
       - name: Prime current generator dependencies
         shell: bash
         run: |
           cd fixtures/riverpod_app
           dart --suppress-analytics pub get
-      - name: Build native frontend
-        shell: bash
-        run: |
-          cargo build --locked --quiet --manifest-path rust/Cargo.toml
-          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
       - parallel:
           - name: Riverpod correctness (no-op and source edit)
             shell: bash
@@ -425,28 +359,18 @@ jobs:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/setup-worker
         with:
-          path: |
-            .pub-cache
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: compatibility-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dart_worker/pubspec.lock', 'fixtures/**/pubspec.lock', 'rust/Cargo.lock') }}
-          restore-keys: |
-            compatibility-${{ runner.os }}-${{ runner.arch }}-
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
-        with:
-          sdk: '3.13.3'
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
-        with:
-          toolchain: 1.98.1
-      - name: Build native frontend
-        shell: bash
-        run: |
-          cargo build --locked --quiet --manifest-path rust/Cargo.toml
-          chmod +x rust/target/debug/build_runner_accelerator
-          echo "BUILD_RUNNER_ACCELERATOR_BIN=$PWD/rust/target/debug/build_runner_accelerator" >> "$GITHUB_ENV"
+          cache-scope: compatibility
+          cache-inputs: |
+            dart_worker/pubspec.lock
+            fixtures/**/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_*.sh
+            scripts/watch_smoke_*.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
       - parallel:
           - name: "Compatibility: lifetime"
             shell: bash
