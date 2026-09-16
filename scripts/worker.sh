@@ -85,7 +85,23 @@ worker_attach_root_package() {
   # checkout root. Project the root package at that parent to keep the path
   # dependency valid without changing the package under test.
   if [[ -e "$root_pubspec" ]]; then
-    if grep -Eq '^name:[[:space:]]*build_runner_accelerator[[:space:]]*$' "$root_pubspec"; then
+    # Accept the usual YAML scalar spellings without bootstrapping a Dart
+    # package parser before this workspace is ready for `dart pub get`.
+    if awk '
+      !seen && /^name:[[:space:]]*/ {
+        seen = 1
+        value = $0
+        sub(/^name:[[:space:]]*/, "", value)
+        sub(/[[:space:]]+#.*$/, "", value)
+        sub(/[[:space:]]+$/, "", value)
+        if (value == "build_runner_accelerator" ||
+            value == "\"build_runner_accelerator\"" ||
+            value == sprintf("%cbuild_runner_accelerator%c", 39, 39)) {
+          found = 1
+        }
+      }
+      END { exit(found ? 0 : 1) }
+    ' "$root_pubspec"; then
       return 0
     fi
     worker_fail "workspace root already contains a different package pubspec: $root_pubspec"
