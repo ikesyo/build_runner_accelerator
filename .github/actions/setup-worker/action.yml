@@ -100,6 +100,9 @@ runs:
     - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
       with:
         sdk: ${{ steps.versions.outputs.dart }}
+        # The matcher file is relative to setup-dart's own action directory;
+        # it is not present when setup-dart is nested in this local action.
+        problem-matcher: false
 
     - name: Resolve Dart worker dependencies
       shell: bash
