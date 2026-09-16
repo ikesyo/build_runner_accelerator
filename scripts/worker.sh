@@ -84,7 +84,13 @@ worker_attach_root_package() {
   # workspaces attach dart_worker as a symlink, so its parent is not the
   # checkout root. Project the root package at that parent to keep the path
   # dependency valid without changing the package under test.
-  [[ -e "$root_pubspec" ]] && return 0
+  if [[ -e "$root_pubspec" ]]; then
+    if grep -Eq '^name:[[:space:]]*build_runner_accelerator[[:space:]]*$' "$root_pubspec"; then
+      return 0
+    fi
+    worker_fail "workspace root already contains a different package pubspec: $root_pubspec"
+    return 1
+  fi
   if [[ -e "$root_lib" || -L "$root_lib" ]]; then
     worker_fail "workspace already contains a lib directory without pubspec.yaml: $workspace_root"
     return 1
