@@ -75,11 +75,63 @@ worker_prepare() {
   worker_pub_get "$worker_package_dir" "$@"
 }
 
+worker_attach_root_package() {
+  local workspace_root=$1
+  local root_pubspec="$workspace_root/pubspec.yaml"
+  local root_lib="$workspace_root/lib"
+
+  # dart_worker depends on the repository package via `path: ..`. Temporary
+  # workspaces attach dart_worker as a symlink, so its parent is not the
+  # checkout root. Project the root package at that parent to keep the path
+  # dependency valid without changing the package under test.
+  if [[ -e "$root_pubspec" ]]; then
+    # Accept the usual YAML scalar spellings without bootstrapping a Dart
+    # package parser before this workspace is ready for `dart pub get`.
+    if awk '
+      !seen && /^name:[[:space:]]*/ {
+        seen = 1
+        value = $0
+        sub(/^name:[[:space:]]*/, "", value)
+        sub(/[[:space:]]+#.*$/, "", value)
+        sub(/[[:space:]]+$/, "", value)
+        if (value == "build_runner_accelerator" ||
+            value == "\"build_runner_accelerator\"" ||
+            value == sprintf("%cbuild_runner_accelerator%c", 39, 39)) {
+          found = 1
+        }
+      }
+      END { exit(found ? 0 : 1) }
+    ' "$root_pubspec"; then
+      return 0
+    fi
+    worker_fail "workspace root already contains a different package pubspec: $root_pubspec"
+    return 1
+  fi
+  if [[ -e "$root_lib" || -L "$root_lib" ]]; then
+    worker_fail "workspace already contains a lib directory without pubspec.yaml: $workspace_root"
+    return 1
+  fi
+  mkdir -p -- "$root_lib" || {
+    worker_fail "cannot create root package lib directory: $root_lib"
+    return 1
+  }
+  cp -- "$repo_root/pubspec.yaml" "$root_pubspec" || {
+    worker_fail "cannot attach root package pubspec: $root_pubspec"
+    return 1
+  }
+  cp -R -- "$repo_root/lib/." "$root_lib/" || {
+    worker_fail "cannot attach root package sources: $root_lib"
+    return 1
+  }
+}
+
 worker_attach() {
   local workspace_root=$1
   local link="$workspace_root/$worker_link_name"
   worker_require_package || return 1
   mkdir -p -- "$workspace_root"
+
+  worker_attach_root_package "$workspace_root" || return 1
 
   if [[ -L "$link" ]]; then
     local actual_target expected_target
@@ -314,7 +366,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 usage: scripts/worker.sh <prepare|attach|validate|build-frontend|run-frontend> [args]
 
 prepare/pub-get: resolve the pinned Dart worker package and run pub get.
-attach: attach the canonical dart_worker package to a temporary workspace.
+attach: attach the canonical dart_worker package and root source to a temporary workspace.
 validate: validate the worker package and Dart executable without mutation.
 build-frontend: build the Rust frontend and export its binary path.
 run-frontend: run the Rust frontend through the canonical worker launcher.
