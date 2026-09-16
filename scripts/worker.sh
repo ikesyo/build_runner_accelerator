@@ -279,10 +279,8 @@ worker_start_frontend_process_group() {
 worker_stop_process_group() {
   local pid=${1:-}
   [[ -n "$pid" ]] || return 0
-  kill -0 "$pid" 2>/dev/null && {
-    kill -- -"$pid" 2>/dev/null || true
-    kill "$pid" 2>/dev/null || true
-  }
+  kill -- -"$pid" 2>/dev/null || true
+  kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
 }
 
