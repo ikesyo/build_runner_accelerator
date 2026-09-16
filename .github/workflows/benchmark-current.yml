@@ -44,7 +44,6 @@ jobs:
           cache-scope: benchmark-current-${{ matrix.id }}
           cache-inputs: |
             pubspec.lock
-            dart_worker/pubspec.lock
             fixtures/current_json_app/pubspec.lock
             rust/Cargo.lock
             scripts/benchmark_current_baseline.sh
@@ -138,7 +137,6 @@ jobs:
           cache-scope: benchmark-current-watch
           cache-inputs: |
             pubspec.lock
-            dart_worker/pubspec.lock
             fixtures/current_json_app/pubspec.lock
             rust/Cargo.lock
             scripts/watch_smoke_current_json.sh

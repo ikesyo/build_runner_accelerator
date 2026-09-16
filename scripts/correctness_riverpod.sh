@@ -40,7 +40,6 @@ cleanup() {
   for path in "${cleanup_paths[@]}"; do
     remove_tree "$path"
   done
-  find "$test_root" -maxdepth 1 -type l -name dart_worker -delete
   remove_tree "$test_root"
   remove_tree "$results_dir"
 }

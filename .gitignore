@@ -3,7 +3,6 @@
 .pub-cache/
 rust/target/
 
-dart_worker/.dart_tool/
 .dart_tool/
 build/
 fixtures/*/.dart_tool/

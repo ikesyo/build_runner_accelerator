@@ -58,23 +58,6 @@ jobs:
         if: matrix.resolution == 'upgrade'
         run: dart pub publish --dry-run
 
-  dart-worker:
-    name: Dart worker
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-worker
-        with:
-          cache-scope: dart-worker
-          setup-rust: 'false'
-      - name: Analyze and format worker
-        shell: bash
-        run: |
-          cd dart_worker
-          dart format --output=none --set-exit-if-changed lib bin
-          dart analyze lib bin
-
   rust:
     name: Rust unit tests
     runs-on: ubuntu-24.04
@@ -107,7 +90,6 @@ jobs:
           cache-scope: integration-baseline
           cache-inputs: |
             pubspec.lock
-            dart_worker/pubspec.lock
             fixtures/**/pubspec.lock
             rust/Cargo.lock
             scripts/smoke.sh
@@ -132,7 +114,6 @@ jobs:
           cache-scope: integration-trigger
           cache-inputs: |
             pubspec.lock
-            dart_worker/pubspec.lock
             fixtures/**/pubspec.lock
             rust/Cargo.lock
             scripts/correctness_trigger_builder.sh
@@ -176,7 +157,6 @@ jobs:
           cache-scope: integration-arbitrary
           cache-inputs: |
             pubspec.lock
-            dart_worker/pubspec.lock
             fixtures/**/pubspec.lock
             rust/Cargo.lock
             scripts/correctness_arbitrary_builder.sh
@@ -220,7 +200,6 @@ jobs:
           cache-scope: integration-fixtures
           cache-inputs: |
             pubspec.lock
-            dart_worker/pubspec.lock
             fixtures/**/pubspec.lock
             rust/Cargo.lock
             scripts/correctness_built_value.sh
@@ -248,7 +227,6 @@ jobs:
         with:
           cache-scope: current-codegen-freezed
           cache-inputs: |
-            dart_worker/pubspec.lock
             fixtures/freezed_app/pubspec.lock
             rust/Cargo.lock
             scripts/correctness_freezed.sh
@@ -315,7 +293,6 @@ jobs:
         with:
           cache-scope: current-codegen-riverpod
           cache-inputs: |
-            dart_worker/pubspec.lock
             fixtures/riverpod_app/pubspec.lock
             rust/Cargo.lock
             scripts/correctness_riverpod.sh
@@ -363,7 +340,6 @@ jobs:
         with:
           cache-scope: compatibility
           cache-inputs: |
-            dart_worker/pubspec.lock
             fixtures/**/pubspec.lock
             rust/Cargo.lock
             scripts/correctness_*.sh

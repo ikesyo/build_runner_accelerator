@@ -14,9 +14,7 @@ fi
 
 : "${repo_root:?repo_root must be set before using worker.sh}"
 
-worker_package_dir=${BUILD_RUNNER_ACCELERATOR_WORKER_DIR:-"$repo_root/dart_worker"}
-worker_package_name=build_runner_accelerator_worker
-worker_link_name=dart_worker
+root_package_dir="$repo_root"
 worker_dart_bin=${DART_BIN:-$(resolve_toolchain_dart)}
 worker_pub_cache=${PUB_CACHE:-$(resolve_toolchain_pub_cache)}
 worker_rustup_home=${RUSTUP_HOME:-$(resolve_toolchain_rustup_home)}
@@ -28,16 +26,16 @@ worker_fail() {
 }
 
 worker_require_package() {
-  if [[ ! -d "$worker_package_dir" ]]; then
-    worker_fail "worker package directory not found: $worker_package_dir"
+  if [[ ! -d "$root_package_dir" ]]; then
+    worker_fail "Dart package directory not found: $root_package_dir"
     return 1
   fi
-  if [[ ! -f "$worker_package_dir/pubspec.yaml" ]]; then
-    worker_fail "worker pubspec not found: $worker_package_dir/pubspec.yaml"
+  if [[ ! -f "$root_package_dir/pubspec.yaml" ]]; then
+    worker_fail "Dart package pubspec not found: $root_package_dir/pubspec.yaml"
     return 1
   fi
-  if [[ ! -f "$worker_package_dir/pubspec.lock" ]]; then
-    worker_fail "worker lockfile not found: $worker_package_dir/pubspec.lock"
+  if [[ ! -f "$root_package_dir/pubspec.lock" ]]; then
+    worker_fail "Dart package lockfile not found: $root_package_dir/pubspec.lock"
     return 1
   fi
   if [[ ! -f "$worker_dart_bin" || ! -x "$worker_dart_bin" ]]; then
@@ -47,7 +45,7 @@ worker_require_package() {
 }
 
 worker_pub_get() {
-  local directory=${1:-$worker_package_dir}
+  local directory=${1:-$root_package_dir}
   if (($# > 0)); then
     shift
   fi
@@ -55,7 +53,7 @@ worker_pub_get() {
     worker_fail "pub workspace not found: $directory"
     return 1
   fi
-  local lock_dir="$worker_package_dir/.dart_tool"
+  local lock_dir="$root_package_dir/.dart_tool"
   local lock_file="$lock_dir/worker-pub-get.lock"
   mkdir -p -- "$lock_dir" || {
     worker_fail "cannot create worker pub lock directory: $lock_dir"
@@ -72,18 +70,18 @@ worker_pub_get() {
 
 worker_prepare() {
   worker_require_package || return 1
-  worker_pub_get "$worker_package_dir" "$@"
+  worker_pub_get "$root_package_dir" "$@"
 }
 
 worker_attach_root_package() {
   local workspace_root=$1
   local root_pubspec="$workspace_root/pubspec.yaml"
   local root_lib="$workspace_root/lib"
+  local root_tool="$workspace_root/tool"
 
-  # dart_worker depends on the repository package via `path: ..`. Temporary
-  # workspaces attach dart_worker as a symlink, so its parent is not the
-  # checkout root. Project the root package at that parent to keep the path
-  # dependency valid without changing the package under test.
+  # Fixture packages depend on the repository package via `path: ../..`.
+  # Project the root package into temporary workspaces so that dependency
+  # resolution and manifest generation see the same package sources.
   if [[ -e "$root_pubspec" ]]; then
     # Accept the usual YAML scalar spellings without bootstrapping a Dart
     # package parser before this workspace is ready for `dart pub get`.
@@ -107,12 +105,12 @@ worker_attach_root_package() {
     worker_fail "workspace root already contains a different package pubspec: $root_pubspec"
     return 1
   fi
-  if [[ -e "$root_lib" || -L "$root_lib" ]]; then
-    worker_fail "workspace already contains a lib directory without pubspec.yaml: $workspace_root"
+  if [[ -e "$root_lib" || -L "$root_lib" || -e "$root_tool" || -L "$root_tool" ]]; then
+    worker_fail "workspace already contains root package sources without pubspec.yaml: $workspace_root"
     return 1
   fi
-  mkdir -p -- "$root_lib" || {
-    worker_fail "cannot create root package lib directory: $root_lib"
+  mkdir -p -- "$root_lib" "$root_tool" || {
+    worker_fail "cannot create root package source directories: $workspace_root"
     return 1
   }
   cp -- "$repo_root/pubspec.yaml" "$root_pubspec" || {
@@ -123,41 +121,18 @@ worker_attach_root_package() {
     worker_fail "cannot attach root package sources: $root_lib"
     return 1
   }
+  cp -R -- "$repo_root/tool/." "$root_tool/" || {
+    worker_fail "cannot attach root package tools: $root_tool"
+    return 1
+  }
 }
 
 worker_attach() {
   local workspace_root=$1
-  local link="$workspace_root/$worker_link_name"
   worker_require_package || return 1
   mkdir -p -- "$workspace_root"
 
   worker_attach_root_package "$workspace_root" || return 1
-
-  if [[ -L "$link" ]]; then
-    local actual_target expected_target
-    actual_target=$(cd -- "$link" && pwd -P) || {
-      worker_fail "worker link is not a directory: $link"
-      return 1
-    }
-    expected_target=$(cd -- "$worker_package_dir" && pwd -P) || {
-      worker_fail "worker package directory is not accessible: $worker_package_dir"
-      return 1
-    }
-    [[ "$actual_target" == "$expected_target" ]] || {
-      worker_fail "worker link points to $actual_target, expected $expected_target"
-      return 1
-    }
-  elif [[ -e "$link" ]]; then
-    worker_fail "worker link destination already exists: $link"
-    return 1
-  else
-    ln -s -- "$worker_package_dir" "$link"
-  fi
-
-  if [[ ! -f "$link/pubspec.yaml" ]]; then
-    worker_fail "attached worker does not expose pubspec.yaml: $link"
-    return 1
-  fi
 }
 
 worker_require_frontend() {
@@ -365,9 +340,9 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
       cat >&2 <<'EOF'
 usage: scripts/worker.sh <prepare|attach|validate|build-frontend|run-frontend> [args]
 
-prepare/pub-get: resolve the pinned Dart worker package and run pub get.
-attach: attach the canonical dart_worker package and root source to a temporary workspace.
-validate: validate the worker package and Dart executable without mutation.
+prepare/pub-get: resolve the root Dart package and run pub get.
+attach: attach the canonical root package to a temporary workspace.
+validate: validate the root Dart package and Dart executable without mutation.
 build-frontend: build the Rust frontend and export its binary path.
 run-frontend: run the Rust frontend through the canonical worker launcher.
 EOF

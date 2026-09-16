@@ -90,19 +90,12 @@ packages:
     source: hosted
     version: "2.16.1"
   build_runner_accelerator:
-    dependency: transitive
+    dependency: "direct dev"
     description:
       path: "../.."
       relative: true
     source: path
     version: "0.1.0"
-  build_runner_accelerator_worker:
-    dependency: "direct dev"
-    description:
-      path: "../../dart_worker"
-      relative: true
-    source: path
-    version: "0.0.0"
   built_collection:
     dependency: transitive
     description:

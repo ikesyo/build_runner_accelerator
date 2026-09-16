@@ -28,7 +28,6 @@ jobs:
           cache-scope: core
           cache-inputs: |
             pubspec.lock
-            dart_worker/pubspec.lock
             fixtures/**/pubspec.lock
             rust/Cargo.lock
             scripts/verify.sh
