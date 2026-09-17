@@ -845,11 +845,7 @@ fn expand_dirty_dependents(
             // skipped before it could discover an output. This preserves an
             // edge for a producer that may emit an output in this build while
             // treating a successful no-output action as having no outputs.
-            Some(action)
-                if matches!(
-                    action.status.as_str(),
-                    "not_triggered" | "skipped_missing_input"
-                ) => specs_by_key
+            Some(action) if action.status == "not_triggered" => specs_by_key
                 .get(&source_key)
                 .map(|spec| spec.outputs.clone())
                 .unwrap_or_default(),
