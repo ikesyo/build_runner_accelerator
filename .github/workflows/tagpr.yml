@@ -31,6 +31,11 @@ jobs:
         uses: Songmu/tagpr@d1b8138b7a31075141b6cd64103de9485ced7ac9 # v1.20.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # tagpr does not propagate postVersionCommand's exit status.
+      - name: Verify generated release metadata
+        run: |
+          python3 scripts/sync_readme_install_version.py --check
+          cargo metadata --manifest-path rust/Cargo.toml --locked --no-deps >/dev/null
 
   release:
     name: Dispatch tagged release
