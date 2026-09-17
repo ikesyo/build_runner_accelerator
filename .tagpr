@@ -3,8 +3,8 @@
     releaseBranch = main
     # Keep pubspec.yaml first: tagpr uses the first file to determine the tag.
     versionFile = pubspec.yaml,lib/src/launcher.dart,rust/Cargo.toml
-    # Keep Cargo.lock in sync after tagpr bumps Cargo.toml.
-    postVersionCommand = cargo update --manifest-path rust/Cargo.toml --workspace
+    # Keep Cargo.lock and the README installation version in sync after version bumps.
+    postVersionCommand = cargo update --manifest-path rust/Cargo.toml --workspace && python3 scripts/sync_readme_install_version.py
     vPrefix = true
     changelog = true
     changelogFile = CHANGELOG.md

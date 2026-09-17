@@ -13,18 +13,18 @@ delete, rename, and watch semantics.
 
 ## Installation
 
-The first public release is the `0.1.0-dev.1` pre-release. Add it to the
+The current package version is `0.1.0`. Add it to the
 target project's `dev_dependencies`:
 
 ```bash
-dart pub add dev:build_runner_accelerator:^0.1.0-dev.1
+dart pub add dev:build_runner_accelerator:^0.1.0
 ```
 
 Or add the dependency explicitly:
 
 ```yaml
 dev_dependencies:
-  build_runner_accelerator: ^0.1.0-dev.1
+  build_runner_accelerator: ^0.1.0
 ```
 
 Run the project-local executable in the same place where you would normally
