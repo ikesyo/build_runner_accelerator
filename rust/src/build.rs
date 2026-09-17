@@ -186,6 +186,15 @@ pub(crate) fn run_with_config(
         Some(BuilderKind::PostProcess),
         &normal_primary_inputs,
     )?;
+    let generated_output_locations = normal_specs
+        .iter()
+        .flat_map(|spec| {
+            spec.outputs
+                .iter()
+                .cloned()
+                .map(|output| (output, (spec.builder.build_to, spec.builder.is_optional)))
+        })
+        .collect::<BTreeMap<String, (BuildTo, bool)>>();
     let mut specs = normal_specs;
     specs.extend(post_specs);
     let visibility = AssetVisibility::from_specs(&specs, &state, &build_config);
@@ -377,7 +386,36 @@ pub(crate) fn run_with_config(
                 })
                 .cloned()
                 .collect::<Vec<_>>();
-            let requests = phase_specs
+            let mut runnable_phase_specs = Vec::with_capacity(phase_specs.len());
+            for spec in phase_specs {
+                if let Some((build_to, is_optional)) = generated_output_locations.get(&spec.input)
+                {
+                    // An optional producer may be invoked lazily by this
+                    // consumer's BuildStep.readAsString. Keep the consumer
+                    // request alive so the resident worker can satisfy that
+                    // demand before deciding that the primary input is
+                    // missing.
+                    if !is_optional {
+                        let output_is_visible = !deleted_overlay.contains(&spec.input)
+                            && (overlay.contains_key(&spec.input)
+                                || workspace.asset_exists_at(&spec.input, *build_to)?);
+                        if !output_is_visible {
+                            record_missing_primary_input(
+                                &workspace,
+                                &state,
+                                &spec,
+                                &mut overlay,
+                                &mut deleted_overlay,
+                                &mut pending_deletions,
+                                &mut pending_actions,
+                            )?;
+                            continue;
+                        }
+                    }
+                }
+                runnable_phase_specs.push(spec);
+            }
+            let requests = runnable_phase_specs
                 .iter()
                 .map(|spec| BuildRequest {
                     builder: spec.builder.id.to_owned(),
@@ -454,7 +492,7 @@ pub(crate) fn run_with_config(
                 resolver_needs_reset = true;
             }
 
-            for (spec, result) in phase_specs.into_iter().zip(results) {
+            for (spec, result) in runnable_phase_specs.into_iter().zip(results) {
                 record_build_result(
                     &workspace,
                     &state,
@@ -538,6 +576,54 @@ pub(crate) fn run_with_config(
         print_workspace_read_metrics(workspace.read_metrics());
     }
     println!("Build completed (Rust frontend)");
+    Ok(())
+}
+
+/// Record the build_runner equivalent of a generated primary input which was
+/// planned but not emitted by its producer. Keeping the empty action in the
+/// graph makes the missing-output state stable across no-op builds and removes
+/// any stale outputs from a previous successful run at the same commit
+/// boundary as ordinary Builder results.
+fn record_missing_primary_input(
+    workspace: &Workspace,
+    state: &GraphState,
+    spec: &BuildSpec,
+    overlay: &mut BTreeMap<String, Vec<u8>>,
+    deleted_overlay: &mut BTreeSet<String>,
+    pending_deletions: &mut Vec<(Arc<BuilderDefinition>, String)>,
+    pending_actions: &mut Vec<(String, ActionState)>,
+) -> io::Result<()> {
+    let key = spec.action_key();
+    let mut outputs_to_delete = state
+        .actions
+        .get(&key)
+        .map(|action| action.outputs.clone())
+        .unwrap_or_default();
+    for output in &spec.outputs {
+        if !outputs_to_delete.contains(output) {
+            outputs_to_delete.push(output.clone());
+        }
+    }
+    for output in outputs_to_delete {
+        deleted_overlay.insert(output.clone());
+        overlay.remove(&output);
+        if workspace.asset_exists_at(&output, spec.builder.build_to)? {
+            pending_deletions.push((spec.builder.clone(), output));
+        }
+    }
+    pending_actions.push((
+        key,
+        ActionState {
+            builder: spec.builder.id.to_owned(),
+            input: spec.input.clone(),
+            reads: Vec::new(),
+            resolver_reads: Vec::new(),
+            glob_reads: Vec::new(),
+            outputs: Vec::new(),
+            output_digests: BTreeMap::new(),
+            status: "skipped_missing_input".to_owned(),
+        },
+    ));
     Ok(())
 }
 
@@ -733,6 +819,17 @@ fn expand_dirty_dependents(
                 .or_default()
                 .push(action_key.clone());
         }
+        // A consumer whose primary input was unavailable has no read or
+        // resolver dependency to record. Preserve that edge so a producer
+        // that becomes available can wake the skipped action without
+        // broadening ordinary primary-input invalidation (which is already
+        // handled by GraphState::changed_since_previous).
+        if action.status == "skipped_missing_input" {
+            dependents_by_asset
+                .entry(action.input.clone())
+                .or_default()
+                .push(action_key.clone());
+        }
     }
 
     let mut dirty_keys = dirty
@@ -742,17 +839,31 @@ fn expand_dirty_dependents(
     let mut cursor = 0;
     while cursor < dirty.len() {
         let source_key = dirty[cursor].action_key();
-        if let Some(action) = state.actions.get(&source_key) {
-            for output in &action.outputs {
-                for dependent_key in dependents_by_asset
-                    .get(output)
-                    .into_iter()
-                    .flatten()
-                {
-                    if dirty_keys.insert(dependent_key.clone()) {
-                        if let Some(spec) = specs_by_key.get(dependent_key) {
-                            dirty.push(spec.clone());
-                        }
+        let source_outputs = match state.actions.get(&source_key) {
+            Some(action) if !action.outputs.is_empty() => action.outputs.clone(),
+            // Use the current plan when the prior action did not run or was
+            // skipped before it could discover an output. This preserves an
+            // edge for a producer that may emit an output in this build while
+            // treating a successful no-output action as having no outputs.
+            Some(action) if action.status == "not_triggered" => specs_by_key
+                .get(&source_key)
+                .map(|spec| spec.outputs.clone())
+                .unwrap_or_default(),
+            Some(_) => Vec::new(),
+            None => specs_by_key
+                .get(&source_key)
+                .map(|spec| spec.outputs.clone())
+                .unwrap_or_default(),
+        };
+        for output in source_outputs {
+            for dependent_key in dependents_by_asset
+                .get(&output)
+                .into_iter()
+                .flatten()
+            {
+                if dirty_keys.insert(dependent_key.clone()) {
+                    if let Some(spec) = specs_by_key.get(dependent_key) {
+                        dirty.push(spec.clone());
                     }
                 }
             }
@@ -763,8 +874,10 @@ fn expand_dirty_dependents(
 
 #[cfg(test)]
 mod tests {
-    use super::execution_order;
+    use super::{execution_order, expand_dirty_dependents};
     use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder};
+    use crate::graph::{ActionState, GraphState};
+    use crate::plan::BuildSpec;
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
@@ -805,6 +918,27 @@ mod tests {
         }
     }
 
+    fn build_spec(
+        builder: &ConfiguredBuilder,
+        input: &str,
+        outputs: &[&str],
+    ) -> BuildSpec {
+        BuildSpec {
+            builder: builder.definition.clone(),
+            target: builder.target.clone(),
+            package: builder.package.clone(),
+            is_root: builder.is_root,
+            phase: builder.phase,
+            instance_key: format!(
+                "{}|{}|{}|{}",
+                builder.target, builder.definition.id, builder.phase, builder.package
+            ),
+            input: input.to_owned(),
+            outputs: outputs.iter().map(|output| (*output).to_owned()).collect(),
+            options: builder.options.clone(),
+        }
+    }
+
     #[test]
     fn execution_order_runs_cross_target_producer_before_consumer() {
         let builders = vec![
@@ -815,5 +949,65 @@ mod tests {
         ];
 
         assert_eq!(execution_order(&builders), vec![1, 0]);
+    }
+
+    #[test]
+    fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
+        let producer_builder = configured_builder("producer", "app:producer", 0, 0);
+        let consumer_builder = configured_builder("consumer", "app:consumer", 1, 1);
+        let producer = build_spec(
+            &producer_builder,
+            "app|lib/seed.dart",
+            &["app|lib/generated.dart"],
+        );
+        let consumer = build_spec(
+            &consumer_builder,
+            "app|lib/generated.dart",
+            &["app|lib/consumer.txt"],
+        );
+        let state = GraphState {
+            actions: BTreeMap::from([
+                (
+                    producer.action_key(),
+                    ActionState {
+                        builder: producer.builder.id.clone(),
+                        input: producer.input.clone(),
+                        status: "not_triggered".to_owned(),
+                        ..ActionState::default()
+                    },
+                ),
+                (
+                    consumer.action_key(),
+                    ActionState {
+                        builder: consumer.builder.id.clone(),
+                        input: consumer.input.clone(),
+                        status: "skipped_missing_input".to_owned(),
+                        ..ActionState::default()
+                    },
+                ),
+            ]),
+            ..GraphState::default()
+        };
+        let mut dirty = vec![producer.clone()];
+
+        expand_dirty_dependents(&mut dirty, &[producer.clone(), consumer.clone()], &state);
+
+        assert!(dirty
+            .iter()
+            .any(|spec| spec.action_key() == consumer.action_key()));
+
+        let mut successful_empty_state = state;
+        successful_empty_state
+            .actions
+            .get_mut(&producer.action_key())
+            .expect("producer action exists")
+            .status = "success".to_owned();
+        let mut dirty = vec![producer.clone()];
+        expand_dirty_dependents(
+            &mut dirty,
+            &[producer, consumer.clone()],
+            &successful_empty_state,
+        );
+        assert_eq!(dirty.len(), 1);
     }
 }

@@ -123,7 +123,14 @@ assert_outputs() {
 }
 
 assert_actions() {
-  assert_contains "$1" "Rust frontend: $2 build action(s)"
+  local file=$1
+  local expected=$2
+  local actual
+  if grep -Fq -- "Rust frontend: $expected build action(s)" "$file"; then
+    return 0
+  fi
+  actual=$(grep -F 'Rust frontend:' "$file" | tail -n 1 || true)
+  fail "${file##*/} does not contain: Rust frontend: $expected build action(s); observed: ${actual:-<none>}"
 }
 
 setup_case() {

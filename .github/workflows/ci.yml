@@ -329,7 +329,7 @@ jobs:
             run: bash scripts/watch_smoke_riverpod.sh
 
   compatibility:
-    name: Compatibility suite (lifecycle, graph, mapping)
+    name: Compatibility suite (lifecycle, graph)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     env:
@@ -370,12 +370,42 @@ jobs:
               bash scripts/correctness_target_cycle.sh
               bash scripts/correctness_arbitrary_dependency_target.sh
               bash scripts/correctness_applies_builder.sh
-          - name: "Compatibility: mapping"
+
+  compatibility-mapping:
+    name: Compatibility suite (mapping)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: compatibility-mapping
+          cache-inputs: |
+            fixtures/**/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_*.sh
+            scripts/watch_smoke_*.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
+      - parallel:
+          - name: "Compatibility: capture mapping"
+            shell: bash
+            run: bash scripts/correctness_capture_builder.sh
+          - name: "Compatibility: multiple mappings"
+            shell: bash
+            run: bash scripts/correctness_multi_mapping_builder.sh
+          - name: "Compatibility: Drift"
+            shell: bash
+            run: bash scripts/correctness_drift.sh
+          - name: "Compatibility: Drift analyzer"
             shell: bash
             run: |
-              bash scripts/correctness_capture_builder.sh
-              bash scripts/correctness_multi_mapping_builder.sh
-              bash scripts/correctness_drift.sh
+              bash scripts/correctness_drift_analyzer.sh
+              bash scripts/watch_smoke_drift_analyzer.sh
+
   native-build:
     name: Native build (${{ matrix.target_id }})
     runs-on: ${{ matrix.runs_on }}
