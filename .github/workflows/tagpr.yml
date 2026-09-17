@@ -33,7 +33,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # tagpr does not propagate postVersionCommand's exit status.
       - name: Verify generated release metadata
-        run: python3 scripts/sync_readme_install_version.py --check
+        run: |
+          python3 scripts/sync_readme_install_version.py --check
+          cargo metadata --manifest-path rust/Cargo.toml --locked --no-deps >/dev/null
 
   release:
     name: Dispatch tagged release
