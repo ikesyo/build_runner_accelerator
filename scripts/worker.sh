@@ -151,8 +151,14 @@ worker_run_frontend() {
     if [[ -n "${!variable_name+x}" ]]; then environment+=("$variable_name=${!variable_name}"); fi
   done
   local log_path="${VERIFY_COMMAND_LOG:-${VERIFY_LOG_DIR:-$repo_root/.dart_tool/build_runner_accelerator/verification}/rust-frontend.log}"
+  local timeout_variable=VERIFY_BUILD_TIMEOUT_SECONDS
+  local timeout_default=300
+  if [[ "${1:-}" == watch ]]; then
+    timeout_variable=VERIFY_WATCH_PROCESS_TIMEOUT_SECONDS
+    timeout_default=1800
+  fi
   local timeout_seconds
-  timeout_seconds=$(verification_timeout_seconds VERIFY_BUILD_TIMEOUT_SECONDS 300) || return 2
+  timeout_seconds=$(verification_timeout_seconds "$timeout_variable" "$timeout_default") || return 2
   VERIFY_WORKSPACE="${VERIFY_WORKSPACE:-$repo_root}" verification_run_command "rust-frontend" "$timeout_seconds" "$log_path" env "${environment[@]}" "$worker_script_dir/run_rust_frontend.sh" "$@"
 }
 
