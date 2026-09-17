@@ -990,7 +990,7 @@ mod tests {
         };
         let mut dirty = vec![producer.clone()];
 
-        expand_dirty_dependents(&mut dirty, &[producer, consumer.clone()], &state);
+        expand_dirty_dependents(&mut dirty, &[producer.clone(), consumer.clone()], &state);
 
         assert!(dirty
             .iter()
