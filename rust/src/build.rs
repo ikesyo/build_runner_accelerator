@@ -813,12 +813,20 @@ fn expand_dirty_dependents(
         .collect::<BTreeMap<_, _>>();
     let mut dependents_by_asset = BTreeMap::<String, Vec<String>>::new();
     for (action_key, action) in &state.actions {
-        for dependency in std::iter::once(&action.input)
-            .chain(action.reads.iter())
-            .chain(action.resolver_reads.iter())
-        {
+        for dependency in action.reads.iter().chain(action.resolver_reads.iter()) {
             dependents_by_asset
                 .entry(dependency.clone())
+                .or_default()
+                .push(action_key.clone());
+        }
+        // A consumer whose primary input was unavailable has no read or
+        // resolver dependency to record. Preserve that edge so a producer
+        // that becomes available can wake the skipped action without
+        // broadening ordinary primary-input invalidation (which is already
+        // handled by GraphState::changed_since_previous).
+        if action.status == "skipped_missing_input" {
+            dependents_by_asset
+                .entry(action.input.clone())
                 .or_default()
                 .push(action_key.clone());
         }
