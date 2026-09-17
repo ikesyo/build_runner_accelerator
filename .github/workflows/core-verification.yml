@@ -13,27 +13,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  core:
-    name: Core correctness
+  full-suite:
+    name: Full verification (${{ matrix.suite }})
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - core
+          - current-codegen
+          - compatibility-lifecycle
+          - compatibility-graph
+          - compatibility-mapping
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
       VERIFY_LEVEL: full
-      VERIFY_FULL_SUITES: core
+      VERIFY_FULL_SUITES: ${{ matrix.suite }}
+      VERIFY_KEEP_TEMP_ON_FAILURE: '1'
+      VERIFY_STREAM_LOGS: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
         with:
-          cache-scope: core
+          cache-scope: full-${{ matrix.suite }}
           cache-inputs: |
             pubspec.lock
             fixtures/**/pubspec.lock
             rust/Cargo.lock
             scripts/verify.sh
             scripts/worker.sh
+            scripts/verification_support.sh
+            scripts/correctness_*.sh
+            scripts/watch_*.sh
           setup-rust: 'true'
           build-frontend: 'true'
-      - name: Run core verification
+      - name: Run full verification
         shell: bash
         run: bash scripts/verify.sh
+      - name: Upload verification diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ matrix.suite }}
+          path: |
+            /tmp/build-runner-accelerator-*
+            ${{ github.workspace }}/fixtures/build-runner-accelerator-*
+            ${{ github.workspace }}/.dart_tool/build_runner_accelerator/verification
+          if-no-files-found: warn
+          retention-days: 7

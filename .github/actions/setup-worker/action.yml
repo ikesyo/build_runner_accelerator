@@ -60,6 +60,7 @@ runs:
           scripts/worker.sh
           scripts/toolchain.sh
           scripts/run_rust_frontend.sh
+          scripts/verification_support.sh
           pubspec.yaml
           pubspec.lock
           rust/Cargo.toml

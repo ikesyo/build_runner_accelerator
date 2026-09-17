@@ -6,6 +6,7 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
 source "$script_dir/worker.sh"
+source "$script_dir/verification_support.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 fixture_dir="$repo_root/fixtures/drift_app"
@@ -32,6 +33,11 @@ remove_tree() {
 }
 
 cleanup() {
+  local cleanup_status=$?
+  if ((cleanup_status != 0)) && [[ "${VERIFY_KEEP_TEMP_ON_FAILURE:-1}" != 0 ]]; then
+    printf 'verification: retaining failure workspace(s) and logs\n' >&2
+    return 0
+  fi
   remove_tree "$temporary_dir"
 }
 trap cleanup EXIT
@@ -84,27 +90,23 @@ for directory in "$stock_dir" "$rust_dir"; do
   cp "$fixture_dir/pubspec.yaml" "$directory/pubspec.yaml"
   cp "$fixture_dir/build.yaml" "$directory/build.yaml"
   cp -R "$fixture_dir/lib" "$directory/"
-  (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get \
-      "${pub_get_args[@]}" >"$temporary_dir/$(basename "$directory").pub-get.log" 2>&1) || \
+  verification_run_pub_get "$directory" "pub-get/$(basename "$directory")" \
+    "$dart_bin" "$pub_cache" "${pub_get_args[@]}" || \
     fail "pub get failed in $directory"
 done
 
 run_stock() {
   local directory=$1
   local log=$2
-  (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics run build_runner \
-      build --delete-conflicting-outputs >"$log" 2>&1)
+  verification_run_stock_build "$directory" "build/stock/$(basename "$directory")" "$log" \
+    "$dart_bin" "$pub_cache" build --delete-conflicting-outputs
 }
-
 run_rust() {
   local directory=$1
   local log=$2
-  worker_run_frontend build --root "$directory" --dart "$dart_bin" \
-    --jobs 1 >"$log" 2>&1
+  VERIFY_COMMAND_LOG="$log" VERIFY_WORKSPACE="$directory" worker_run_frontend build --root "$directory" --dart "$dart_bin" \
+    --jobs 1
 }
-
 run_stock "$stock_dir" "$temporary_dir/initial.stock.log" || fail 'stock build failed'
 run_rust "$rust_dir" "$temporary_dir/initial.rust.log" || fail 'Rust build failed'
 

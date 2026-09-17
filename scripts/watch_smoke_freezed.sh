@@ -6,6 +6,7 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
 source "$script_dir/worker.sh"
+source "$script_dir/verification_support.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 fixture_dir="$repo_root/fixtures/freezed_app"
@@ -27,7 +28,12 @@ remove_tree() {
 }
 
 cleanup() {
+  local cleanup_status=$?
   worker_stop_process_group "$watch_pid"
+  if ((cleanup_status != 0)) && [[ "${VERIFY_KEEP_TEMP_ON_FAILURE:-1}" != 0 ]]; then
+    printf 'verification: retaining failure workspace(s) and logs\n' >&2
+    return 0
+  fi
   remove_tree "$test_root"
   remove_tree "$results_dir"
 }
@@ -35,6 +41,7 @@ trap cleanup EXIT INT TERM
 
 fail() {
   printf 'freezed-watch-smoke: FAIL: %s\n' "$*" >&2
+  verification_report_watch_timeout "freezed-watch-smoke" "$watch_dir" "$log_path" "$watch_pid"
   if [[ -f "$log_path" ]]; then
     sed -n '1,240p' "$log_path" >&2
   fi
@@ -51,8 +58,7 @@ cp "$fixture_dir/pubspec.lock" "$watch_dir/pubspec.lock"
 cp "$fixture_dir/build.yaml" "$watch_dir/build.yaml"
 cp "$fixture_dir/lib/model.dart" "$watch_dir/lib/model.dart"
 cp "$fixture_dir/lib/serializable.dart" "$watch_dir/lib/serializable.dart"
-(cd "$watch_dir" && \
-  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null)
+verification_run_pub_get "$watch_dir" "pub-get/watch" "$dart_bin" "$pub_cache" "${pub_get_args[@]}"
 
 worker_start_frontend_process_group "$log_path" \
   BUILD_RUNNER_ACCELERATOR_METRICS=1 PUB_CACHE="$pub_cache" \
@@ -61,7 +67,7 @@ worker_start_frontend_process_group "$log_path" \
 watch_pid=$worker_last_pid
 
 wait_for_initial_build() {
-  for _ in $(seq 1 300); do
+  for _ in $(seq 1 "$(verification_watch_poll_iterations)"); do
     if grep -Fq 'Watching ' "$log_path" && \
       [[ -f "$watch_dir/lib/model.freezed.dart" ]] && \
       [[ -f "$watch_dir/lib/serializable.g.dart" ]]; then
@@ -75,7 +81,7 @@ wait_for_initial_build() {
 
 wait_for_rebuild() {
   local expected_count=$1
-  for _ in $(seq 1 300); do
+  for _ in $(seq 1 "$(verification_watch_poll_iterations)"); do
     local rebuild_count
     local completed_count
     rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)

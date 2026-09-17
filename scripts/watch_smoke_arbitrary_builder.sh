@@ -6,6 +6,7 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
 source "$script_dir/worker.sh"
+source "$script_dir/verification_support.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 fixture_dir="$repo_root/fixtures/arbitrary_builder_app"
@@ -32,14 +33,20 @@ remove_tree() {
 }
 
 cleanup() {
+  local cleanup_status=$?
   worker_stop_process_group "$stock_pid"
   worker_stop_process_group "$rust_pid"
+  if ((cleanup_status != 0)) && [[ "${VERIFY_KEEP_TEMP_ON_FAILURE:-1}" != 0 ]]; then
+    printf 'verification: retaining failure workspace(s) and logs\n' >&2
+    return 0
+  fi
   remove_tree "$temporary_dir"
 }
 trap cleanup EXIT INT TERM
 
 fail() {
   printf 'arbitrary-builder-watch: FAIL: %s\n' "$*" >&2
+  verification_report_watch_timeout "arbitrary-builder-watch" "$workspace_root" "$stock_log" "$stock_pid" "$rust_log" "$rust_pid"
   for log in "$stock_log" "$rust_log"; do
     if [[ -f "$log" ]]; then
       printf '%s\n' "--- $log ---" >&2
@@ -63,8 +70,8 @@ prepare_package() {
   cp "$fixture_dir/lib/input.txt" "$directory/lib/input.txt"
   mkdir -p "$directory/lib/assets/nested"
   printf 'capture watch\n' >"$directory/lib/assets/nested/input.txt"
-  (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null) || \
+  verification_run_pub_get "$directory" "pub-get/$(basename "$directory")" \
+    "$dart_bin" "$pub_cache" || \
     fail "pub get failed for $directory"
 }
 
@@ -88,7 +95,7 @@ rust_pid=$worker_last_pid
 wait_for_path() {
   local path=$1
   local pid=$2
-  for _ in $(seq 1 240); do
+  for _ in $(seq 1 "$(verification_watch_poll_iterations)"); do
     [[ -f "$path" ]] && return 0
     kill -0 "$pid" 2>/dev/null || fail "watch process exited before creating $path"
     sleep 0.25
@@ -100,7 +107,7 @@ wait_for_text() {
   local path=$1
   local expected=$2
   local pid=$3
-  for _ in $(seq 1 240); do
+  for _ in $(seq 1 "$(verification_watch_poll_iterations)"); do
     if [[ -f "$path" ]] && grep -Fq -- "$expected" "$path"; then
       return 0
     fi
