@@ -839,18 +839,17 @@ fn expand_dirty_dependents(
     let mut cursor = 0;
     while cursor < dirty.len() {
         let source_key = dirty[cursor].action_key();
-        let mut source_outputs = BTreeSet::new();
-        if let Some(spec) = specs_by_key.get(&source_key) {
-            // Use the current plan so a producer that was previously skipped
-            // still exposes the output that it may emit in this build.
-            source_outputs.extend(spec.outputs.iter().cloned());
-        }
-        if let Some(action) = state.actions.get(&source_key) {
-            // Keep prior outputs as well for builders whose runtime output
-            // inventory is not known until execution (for example
-            // post-process builders), and to retire old mappings.
-            source_outputs.extend(action.outputs.iter().cloned());
-        }
+        let source_outputs = match state.actions.get(&source_key) {
+            Some(action) if !action.outputs.is_empty() => action.outputs.clone(),
+            // Use the current plan when the prior action had no runtime
+            // outputs. This preserves an edge for a producer that was
+            // previously skipped while retaining runtime inventories for
+            // builders whose outputs are only known after execution.
+            Some(_) | None => specs_by_key
+                .get(&source_key)
+                .map(|spec| spec.outputs.clone())
+                .unwrap_or_default(),
+        };
         for output in source_outputs {
             for dependent_key in dependents_by_asset
                 .get(&output)
