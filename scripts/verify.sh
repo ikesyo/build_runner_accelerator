@@ -275,6 +275,7 @@ run_full() {
   local selected
   local suite_timeout
   local suite_log
+  local suite_results_dir
   local suite_status
   if [[ -n "${VERIFY_SUITE_BODY:-}" ]]; then
     case "$VERIFY_SUITE_BODY" in
@@ -295,7 +296,9 @@ run_full() {
   suite_timeout=$(verification_timeout_seconds VERIFY_SUITE_TIMEOUT_SECONDS 1800) || return 2
   for suite in "${suites[@]}"; do
     suite_log="$results_dir/suite-$suite.log"
-    if VERIFY_WORKSPACE="$repo_root" verification_run_command "suite/$suite" "$suite_timeout" "$suite_log" env VERIFY_FULL_TIMEOUT_GUARD=1 VERIFY_SUITE_BODY="$suite" bash "$script_dir/verify.sh"; then
+    suite_results_dir="$results_dir/suite-$suite"
+    mkdir -p -- "$suite_results_dir"
+    if VERIFY_WORKSPACE="$repo_root" verification_run_command "suite/$suite" "$suite_timeout" "$suite_log" env VERIFY_FULL_TIMEOUT_GUARD=1 VERIFY_SUITE_BODY="$suite" VERIFY_RESULTS_DIR="$suite_results_dir" bash "$script_dir/verify.sh"; then
       suite_status=0
     else
       suite_status=$?
