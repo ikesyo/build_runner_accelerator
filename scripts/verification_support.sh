@@ -245,6 +245,6 @@ verification_watch_poll_iterations() {
     return 2
   }
   local timeout_seconds
-  timeout_seconds=$(verification_timeout_seconds VERIFY_WATCH_TIMEOUT_SECONDS 180) || return 2
+  timeout_seconds=$(verification_timeout_seconds VERIFY_WATCH_TIMEOUT_SECONDS 300) || return 2
   printf '%s\n' "$(((timeout_seconds * 1000) / interval_ms + 3))"
 }

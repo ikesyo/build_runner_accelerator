@@ -149,7 +149,7 @@ default; set `VERIFY_KEEP_TEMP_ON_FAILURE=0` to remove them.
 
 Initial timeout defaults are 300 seconds per build, 180 seconds per pub get,
 900 seconds for the frontend build, 1200 seconds per case, 1800 seconds per
-suite, 3600 seconds for the full invocation, and 180 seconds for watch polling.
+suite, 3600 seconds for the full invocation, and 300 seconds for watch polling.
 Override them with `VERIFY_BUILD_TIMEOUT_SECONDS`,
 `VERIFY_PUB_GET_TIMEOUT_SECONDS`,
 `VERIFY_FRONTEND_BUILD_TIMEOUT_SECONDS`,
