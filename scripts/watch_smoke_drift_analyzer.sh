@@ -131,9 +131,10 @@ grep -Fq 'email' \
 
 metrics_count=$(grep -Fc 'Rust metrics:' "$log_path" || true)
 ((metrics_count >= 3)) || fail "watch emitted only $metrics_count metrics lines"
-grep -Fq 'worker_starts_total=1' "$log_path" || \
+final_metrics=$(grep -F 'Rust metrics:' "$log_path" | tail -n 1 || true)
+grep -Fq 'worker_starts_total=1' <<<"$final_metrics" || \
   fail 'watch did not retain the initial worker'
-grep -Fq 'worker_resets_total=2' "$log_path" || \
+grep -Fq 'worker_resets_total=2' <<<"$final_metrics" || \
   fail 'watch did not reset the resident worker between builds'
 
 printf 'drift-analyzer-watch: generated-output-delete=yes drift-edit=yes event-count=2\n'

@@ -813,7 +813,10 @@ fn expand_dirty_dependents(
         .collect::<BTreeMap<_, _>>();
     let mut dependents_by_asset = BTreeMap::<String, Vec<String>>::new();
     for (action_key, action) in &state.actions {
-        for dependency in action.reads.iter().chain(action.resolver_reads.iter()) {
+        for dependency in std::iter::once(&action.input)
+            .chain(action.reads.iter())
+            .chain(action.resolver_reads.iter())
+        {
             dependents_by_asset
                 .entry(dependency.clone())
                 .or_default()
@@ -828,17 +831,27 @@ fn expand_dirty_dependents(
     let mut cursor = 0;
     while cursor < dirty.len() {
         let source_key = dirty[cursor].action_key();
+        let mut source_outputs = BTreeSet::new();
+        if let Some(spec) = specs_by_key.get(&source_key) {
+            // Use the current plan so a producer that was previously skipped
+            // still exposes the output that it may emit in this build.
+            source_outputs.extend(spec.outputs.iter().cloned());
+        }
         if let Some(action) = state.actions.get(&source_key) {
-            for output in &action.outputs {
-                for dependent_key in dependents_by_asset
-                    .get(output)
-                    .into_iter()
-                    .flatten()
-                {
-                    if dirty_keys.insert(dependent_key.clone()) {
-                        if let Some(spec) = specs_by_key.get(dependent_key) {
-                            dirty.push(spec.clone());
-                        }
+            // Keep prior outputs as well for builders whose runtime output
+            // inventory is not known until execution (for example
+            // post-process builders), and to retire old mappings.
+            source_outputs.extend(action.outputs.iter().cloned());
+        }
+        for output in source_outputs {
+            for dependent_key in dependents_by_asset
+                .get(&output)
+                .into_iter()
+                .flatten()
+            {
+                if dirty_keys.insert(dependent_key.clone()) {
+                    if let Some(spec) = specs_by_key.get(dependent_key) {
+                        dirty.push(spec.clone());
                     }
                 }
             }
@@ -849,8 +862,10 @@ fn expand_dirty_dependents(
 
 #[cfg(test)]
 mod tests {
-    use super::execution_order;
+    use super::{execution_order, expand_dirty_dependents};
     use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder};
+    use crate::graph::{ActionState, GraphState};
+    use crate::plan::BuildSpec;
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
@@ -891,6 +906,27 @@ mod tests {
         }
     }
 
+    fn build_spec(
+        builder: &ConfiguredBuilder,
+        input: &str,
+        outputs: &[&str],
+    ) -> BuildSpec {
+        BuildSpec {
+            builder: builder.definition.clone(),
+            target: builder.target.clone(),
+            package: builder.package.clone(),
+            is_root: builder.is_root,
+            phase: builder.phase,
+            instance_key: format!(
+                "{}|{}|{}|{}",
+                builder.target, builder.definition.id, builder.phase, builder.package
+            ),
+            input: input.to_owned(),
+            outputs: outputs.iter().map(|output| (*output).to_owned()).collect(),
+            options: builder.options.clone(),
+        }
+    }
+
     #[test]
     fn execution_order_runs_cross_target_producer_before_consumer() {
         let builders = vec![
@@ -901,5 +937,51 @@ mod tests {
         ];
 
         assert_eq!(execution_order(&builders), vec![1, 0]);
+    }
+
+    #[test]
+    fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
+        let producer_builder = configured_builder("producer", "app:producer", 0, 0);
+        let consumer_builder = configured_builder("consumer", "app:consumer", 1, 1);
+        let producer = build_spec(
+            &producer_builder,
+            "app|lib/seed.dart",
+            &["app|lib/generated.dart"],
+        );
+        let consumer = build_spec(
+            &consumer_builder,
+            "app|lib/generated.dart",
+            &["app|lib/consumer.txt"],
+        );
+        let state = GraphState {
+            actions: BTreeMap::from([
+                (
+                    producer.action_key(),
+                    ActionState {
+                        builder: producer.builder.id.clone(),
+                        input: producer.input.clone(),
+                        status: "not_triggered".to_owned(),
+                        ..ActionState::default()
+                    },
+                ),
+                (
+                    consumer.action_key(),
+                    ActionState {
+                        builder: consumer.builder.id.clone(),
+                        input: consumer.input.clone(),
+                        status: "skipped_missing_input".to_owned(),
+                        ..ActionState::default()
+                    },
+                ),
+            ]),
+            ..GraphState::default()
+        };
+        let mut dirty = vec![producer.clone()];
+
+        expand_dirty_dependents(&mut dirty, &[producer, consumer.clone()], &state);
+
+        assert!(dirty
+            .iter()
+            .any(|spec| spec.action_key() == consumer.action_key()));
     }
 }
