@@ -841,11 +841,20 @@ fn expand_dirty_dependents(
         let source_key = dirty[cursor].action_key();
         let source_outputs = match state.actions.get(&source_key) {
             Some(action) if !action.outputs.is_empty() => action.outputs.clone(),
-            // Use the current plan when the prior action had no runtime
-            // outputs. This preserves an edge for a producer that was
-            // previously skipped while retaining runtime inventories for
-            // builders whose outputs are only known after execution.
-            Some(_) | None => specs_by_key
+            // Use the current plan when the prior action did not run or was
+            // skipped before it could discover an output. This preserves an
+            // edge for a producer that may emit an output in this build while
+            // treating a successful no-output action as having no outputs.
+            Some(action)
+                if matches!(
+                    action.status.as_str(),
+                    "not_triggered" | "skipped_missing_input"
+                ) => specs_by_key
+                .get(&source_key)
+                .map(|spec| spec.outputs.clone())
+                .unwrap_or_default(),
+            Some(_) => Vec::new(),
+            None => specs_by_key
                 .get(&source_key)
                 .map(|spec| spec.outputs.clone())
                 .unwrap_or_default(),
@@ -990,5 +999,19 @@ mod tests {
         assert!(dirty
             .iter()
             .any(|spec| spec.action_key() == consumer.action_key()));
+
+        let mut successful_empty_state = state;
+        successful_empty_state
+            .actions
+            .get_mut(&producer.action_key())
+            .expect("producer action exists")
+            .status = "success".to_owned();
+        let mut dirty = vec![producer.clone()];
+        expand_dirty_dependents(
+            &mut dirty,
+            &[producer, consumer.clone()],
+            &successful_empty_state,
+        );
+        assert_eq!(dirty.len(), 1);
     }
 }
