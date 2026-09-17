@@ -130,3 +130,29 @@ will be `0.1.1`. If the next release should be the `0.1.0` stable release,
 edit all three version files in the generated release pull request before
 merging it; the release workflow requires the tag and all version files to
 match exactly.
+
+
+## Bounded full verification
+
+Full verification accepts `VERIFY_FULL_SUITES=all` or a comma-separated suite
+selection: `core`, `current-codegen`,
+`compatibility-lifecycle`, `compatibility-graph`, and
+`compatibility-mapping`. The scheduled and manually dispatched workflow runs one
+suite per runner with `fail-fast: false`; any failed matrix job still fails
+the workflow, and state transitions inside a fixture remain serial.
+
+The common verification helper records suite, case, and command start/end
+events, elapsed time, command, workspace, and log path. A timed-out command
+returns status 124, records the log tail and process tree, and terminates the
+whole process group. Failed temporary workspaces and logs are retained by
+default; set `VERIFY_KEEP_TEMP_ON_FAILURE=0` to remove them.
+
+Initial timeout defaults are 300 seconds per build, 180 seconds per pub get,
+900 seconds for the frontend build, 1200 seconds per case, 1800 seconds per
+suite, 3600 seconds for the full invocation, 1800 seconds for a watch process, and 300 seconds for watch polling.
+Override them with `VERIFY_BUILD_TIMEOUT_SECONDS`,
+`VERIFY_PUB_GET_TIMEOUT_SECONDS`,
+`VERIFY_FRONTEND_BUILD_TIMEOUT_SECONDS`,
+`VERIFY_CASE_TIMEOUT_SECONDS`, `VERIFY_SUITE_TIMEOUT_SECONDS`,
+`VERIFY_FULL_TIMEOUT_SECONDS`, `VERIFY_WATCH_PROCESS_TIMEOUT_SECONDS`,
+`VERIFY_WATCH_TIMEOUT_SECONDS`, `VERIFY_TIMEOUT_GRACE_SECONDS`.

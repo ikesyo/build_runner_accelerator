@@ -6,6 +6,7 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
 source "$script_dir/worker.sh"
+source "$script_dir/verification_support.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 fixture_dir="$repo_root/fixtures/built_value_app"
@@ -28,6 +29,11 @@ remove_tree() {
 }
 
 cleanup() {
+  local cleanup_status=$?
+  if ((cleanup_status != 0)) && [[ "${VERIFY_KEEP_TEMP_ON_FAILURE:-1}" != 0 ]]; then
+    printf 'verification: retaining failure workspace(s) and logs\n' >&2
+    return 0
+  fi
   remove_tree "$temporary_dir"
 }
 trap cleanup EXIT
@@ -72,14 +78,13 @@ for directory in "$stock_dir" "$rust_dir"; do
   cp "$fixture_dir/pubspec.lock" "$directory/pubspec.lock"
   cp -R "$fixture_dir/lib" "$directory/"
   cp -R "$fixture_dir/bin" "$directory/"
-  (cd "$directory" && PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics \
-    pub get >/dev/null) || fail "pub get failed in $directory"
+  verification_run_pub_get "$directory" "pub-get/$(basename "$directory")" "$dart_bin" "$pub_cache" || fail "pub get failed in $directory"
 done
 
-(cd "$stock_dir" && PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics \
-  run build_runner build >"$temporary_dir/stock.log" 2>&1) || fail 'stock build failed'
-(cd "$repo_root" && worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
-  --jobs 1 >"$temporary_dir/rust.log" 2>&1) || fail 'Rust build failed'
+verification_run_stock_build "$stock_dir" "build/stock" "$temporary_dir/stock.log" \
+  "$dart_bin" "$pub_cache" build || fail 'stock build failed'
+VERIFY_COMMAND_LOG="$temporary_dir/rust.log" VERIFY_WORKSPACE="$rust_dir" \
+  worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" --jobs 1 || fail 'Rust build failed'
 
 assert_same_file "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart"
 assert_same_file \
@@ -100,11 +105,11 @@ assert_contains "$temporary_dir/rust.log" 'Build completed (Rust frontend)'
 for directory in "$stock_dir" "$rust_dir"; do
   printf '// no longer a built_value library\nvoid model() {}\n' >"$directory/lib/model.dart"
 done
-(cd "$stock_dir" && PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics \
-  run build_runner build >"$temporary_dir/stock-change.log" 2>&1) || \
+verification_run_stock_build "$stock_dir" "build/stock-change" "$temporary_dir/stock-change.log" \
+  "$dart_bin" "$pub_cache" build || \
   fail 'stock changed-input build failed'
-(cd "$repo_root" && worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
-  --jobs 1 >"$temporary_dir/rust-change.log" 2>&1) || \
+VERIFY_COMMAND_LOG="$temporary_dir/rust-change.log" VERIFY_WORKSPACE="$rust_dir" \
+  worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" --jobs 1 || \
   fail 'Rust changed-input build failed'
 assert_no_file "$stock_dir/lib/model.g.dart"
 assert_no_file "$rust_dir/lib/model.g.dart"

@@ -6,6 +6,7 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
 source "$script_dir/worker.sh"
+source "$script_dir/verification_support.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 fixture_dir="$repo_root/fixtures/post_process_builder_app"
@@ -31,6 +32,11 @@ remove_tree() {
 }
 
 cleanup() {
+  local cleanup_status=$?
+  if ((cleanup_status != 0)) && [[ "${VERIFY_KEEP_TEMP_ON_FAILURE:-1}" != 0 ]]; then
+    printf 'verification: retaining failure workspace(s) and logs\n' >&2
+    return 0
+  fi
   remove_tree "$temporary_dir"
 }
 trap cleanup EXIT
@@ -52,24 +58,21 @@ worker_attach "$test_root"
 run_rust() {
   local directory=$1
   local log=$2
-  worker_run_frontend \
-    build --root "$directory" --dart "$dart_bin" >"$log" 2>&1
+  VERIFY_COMMAND_LOG="$log" VERIFY_WORKSPACE="$directory" worker_run_frontend \
+    build --root "$directory" --dart "$dart_bin"
 }
-
 run_stock() {
   local directory=$1
   local log=$2
-  (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics run build_runner \
-      build --delete-conflicting-outputs >"$log" 2>&1)
+  verification_run_stock_build "$directory" "build/stock/$(basename "$directory")" "$log" \
+    "$dart_bin" "$pub_cache" build --delete-conflicting-outputs
 }
-
 run_stock_clean() {
   local directory=$1
   local log=$2
-  (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics run build_runner \
-      clean >"$log.clean" 2>&1)
+  local timeout_seconds
+  timeout_seconds=$(verification_timeout_seconds VERIFY_BUILD_TIMEOUT_SECONDS 300) || return 2
+  verification_run_command_in_dir "$directory" "clean/stock/$(basename "$directory")" "$log.clean" "$timeout_seconds" env PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics run build_runner clean
   run_stock "$directory" "$log"
 }
 
@@ -105,8 +108,9 @@ prepare_package() {
   cp "$fixture_dir/lib/post_process_builder.dart" \
     "$directory/lib/post_process_builder.dart"
   cp "$fixture_dir/lib/input.txt" "$directory/lib/input.txt"
-  (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null)
+  verification_run_pub_get "$directory" "pub-get/$(basename "$directory")" \
+    "$dart_bin" "$pub_cache" "${pub_get_args[@]}" || \
+    fail "pub get failed for $directory"
 }
 
 setup_case() {
@@ -200,9 +204,9 @@ run_case_stale_output() {
   printf 'post-process-builder: stale-output: pass\n'
 }
 
-run_case_output_delete
-run_case_input_change
-run_case_rename
-run_case_input_delete
-run_case_stale_output
+verification_run_case post-process/output-delete run_case_output_delete
+verification_run_case post-process/input-change run_case_input_change
+verification_run_case post-process/rename run_case_rename
+verification_run_case post-process/input-delete run_case_input_delete
+verification_run_case post-process/stale-output run_case_stale_output
 printf 'post-process-builder: all cases passed\n'

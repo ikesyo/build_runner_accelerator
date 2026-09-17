@@ -6,6 +6,7 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
 source "$script_dir/worker.sh"
+source "$script_dir/verification_support.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 temporary_dir=$(mktemp -d)
@@ -27,6 +28,11 @@ remove_tree() {
 }
 
 cleanup() {
+  local cleanup_status=$?
+  if ((cleanup_status != 0)) && [[ "${VERIFY_KEEP_TEMP_ON_FAILURE:-1}" != 0 ]]; then
+    printf 'verification: retaining failure workspace(s) and logs\n' >&2
+    return 0
+  fi
   remove_tree "$temporary_dir"
 }
 trap cleanup EXIT
@@ -152,26 +158,23 @@ prepare_package() {
   write_root_pubspec "$directory"
   write_dependency_package "$directory"
   cp "$repo_root/fixtures/arbitrary_dependency_app/pubspec.lock" "$directory/pubspec.lock"
-  (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get >/dev/null) || \
+  verification_run_pub_get "$directory" "pub-get/$(basename "$directory")" \
+    "$dart_bin" "$pub_cache" || \
     fail "pub get failed for $directory"
 }
 
 run_stock() {
   local directory=$1
   local log=$2
-  (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics run build_runner \
-      build --delete-conflicting-outputs >"$log" 2>&1)
+  verification_run_stock_build "$directory" "build/stock/$(basename "$directory")" "$log" \
+    "$dart_bin" "$pub_cache" build --delete-conflicting-outputs
 }
-
 run_rust() {
   local directory=$1
   local log=$2
-  worker_run_frontend \
-    build --root "$directory" --dart "$dart_bin" --mode rust >"$log" 2>&1
+  VERIFY_COMMAND_LOG="$log" VERIFY_WORKSPACE="$directory" worker_run_frontend \
+    build --root "$directory" --dart "$dart_bin" --mode rust
 }
-
 prepare_package "$stock_dir"
 prepare_package "$rust_dir"
 if ! run_stock "$stock_dir" "$temporary_dir/stock.initial.log"; then
@@ -191,8 +194,8 @@ rust_root_cache="$rust_dir/.dart_tool/build_runner_accelerator/cache/arbitrary_d
 assert_same_file "$stock_root_cache" "$rust_root_cache"
 assert_contains "$temporary_dir/rust.initial.log" 'Rust frontend: 2 build action(s)'
 
-if ! worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
-    --mode rust >"$temporary_dir/rust.no-op.log" 2>&1; then
+if ! VERIFY_COMMAND_LOG="$temporary_dir/rust.no-op.log" VERIFY_WORKSPACE="$rust_dir" worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
+    --mode rust; then
   fail 'Rust no-op build failed'
 fi
 assert_contains "$temporary_dir/rust.no-op.log" 'No work to do (Rust frontend)'
@@ -202,8 +205,8 @@ printf 'changed dependency\n' >"$rust_dir/packages/dependency_target_package/lib
 if ! run_stock "$stock_dir" "$temporary_dir/stock.dependency-change.log"; then
   fail 'stock dependency input-change build failed'
 fi
-if ! worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
-    --mode rust >"$temporary_dir/rust.dependency-change.log" 2>&1; then
+if ! VERIFY_COMMAND_LOG="$temporary_dir/rust.dependency-change.log" VERIFY_WORKSPACE="$rust_dir" worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
+    --mode rust; then
   fail 'Rust dependency input-change build failed'
 fi
 assert_same_file "$stock_cache" "$rust_cache"
@@ -215,8 +218,8 @@ printf 'changed root\n' >"$rust_dir/lib/root.txt"
 if ! run_stock "$stock_dir" "$temporary_dir/stock.root-change.log"; then
   fail 'stock root input-change build failed'
 fi
-if ! worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
-    --mode rust >"$temporary_dir/rust.root-change.log" 2>&1; then
+if ! VERIFY_COMMAND_LOG="$temporary_dir/rust.root-change.log" VERIFY_WORKSPACE="$rust_dir" worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
+    --mode rust; then
   fail 'Rust root input-change build failed'
 fi
 assert_same_file "$stock_root_cache" "$rust_root_cache"
