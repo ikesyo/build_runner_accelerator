@@ -109,7 +109,7 @@ prepare_package() {
     "$directory/lib/post_process_builder.dart"
   cp "$fixture_dir/lib/input.txt" "$directory/lib/input.txt"
   verification_run_pub_get "$directory" "pub-get/$(basename "$directory")" \
-    "$dart_bin" "$pub_cache" "\${pub_get_args[@]}" || \
+    "$dart_bin" "$pub_cache" "${pub_get_args[@]}" || \
     fail "pub get failed for $directory"
 }
 

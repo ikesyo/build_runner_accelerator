@@ -67,7 +67,7 @@ assert_same_file() {
 wait_for_path() {
   local path=$1
   local pid=$2
-  for _ in $(seq 1 "$(verification_watch_poll_iterations)"); do
+  for _ in $(seq 1 "$(verification_watch_poll_iterations 250)"); do
     [[ -f "$path" ]] && return 0
     kill -0 "$pid" 2>/dev/null || fail "watch exited before creating $path"
     sleep 0.25
@@ -78,7 +78,7 @@ wait_for_path() {
 wait_for_absent() {
   local path=$1
   local pid=$2
-  for _ in $(seq 1 "$(verification_watch_poll_iterations)"); do
+  for _ in $(seq 1 "$(verification_watch_poll_iterations 250)"); do
     [[ ! -e "$path" ]] && return 0
     kill -0 "$pid" 2>/dev/null || fail "watch exited before removing $path"
     sleep 0.25
@@ -90,7 +90,7 @@ wait_for_text() {
   local path=$1
   local expected=$2
   local pid=$3
-  for _ in $(seq 1 "$(verification_watch_poll_iterations)"); do
+  for _ in $(seq 1 "$(verification_watch_poll_iterations 250)"); do
     if [[ -f "$path" ]] && grep -Fq -- "$expected" "$path"; then
       return 0
     fi

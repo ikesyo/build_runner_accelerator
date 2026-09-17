@@ -50,8 +50,10 @@ fi
 worker_ensure_frontend || fail 'Rust frontend build failed'
 
 baseline_output="$temporary_dir/model.g.dart.baseline"
-verification_run_stock_build "$fixture_dir" "build/stock" "$temporary_dir/stock.log" "$dart_bin" "$pub_cache" build --delete-conflicting-outputs --log-performance .dart_tool/build_runner_accelerator/stock-performance && \
-  cp "$fixture_dir/lib/model.g.dart" "$baseline_output"
+verification_run_stock_build "$fixture_dir" "build/stock" "$temporary_dir/stock.log" "$dart_bin" "$pub_cache" build --delete-conflicting-outputs --log-performance .dart_tool/build_runner_accelerator/stock-performance || \
+  fail 'Stock build failed'
+cp "$fixture_dir/lib/model.g.dart" "$baseline_output" || \
+  fail 'Could not save stock build output'
 
 if [[ -f "$state_path" ]]; then
   mv "$state_path" "$temporary_dir/graph-v3.before.bin"

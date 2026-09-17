@@ -66,7 +66,7 @@ worker_start_frontend_process_group "$log_path" \
 watch_pid=$worker_last_pid
 
 wait_for_initial_build() {
-  for _ in $(seq 1 "$(verification_watch_poll_iterations)"); do
+  for _ in $(seq 1 "$(verification_watch_poll_iterations 200)"); do
     if grep -Fq 'Watching ' "$log_path" && \
       [[ -f "$watch_dir/lib/model.freezed.dart" ]] && \
       [[ -f "$watch_dir/lib/model.g.dart" ]]; then
@@ -80,7 +80,7 @@ wait_for_initial_build() {
 
 wait_for_rebuild() {
   local expected_count=$1
-  for _ in $(seq 1 "$(verification_watch_poll_iterations)"); do
+  for _ in $(seq 1 "$(verification_watch_poll_iterations 200)"); do
     local rebuild_count
     local completed_count
     rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)

@@ -288,7 +288,7 @@ worker_start_frontend_process_group() {
     if [[ "$previous" == --root ]]; then workspace=$argument; break; fi
     previous=$argument
   done
-  environment+=("VERIFY_COMMAND_LOG=$log_path" "VERIFY_WORKSPACE=$workspace" "VERIFY_STREAM_LOGS=0")
+  environment+=("VERIFY_COMMAND_LOG=$log_path" "VERIFY_WORKSPACE=$workspace" "VERIFY_STREAM_LOGS=0" "VERIFY_COMMAND_LOG_APPEND=1")
   WORKER_PROCESS_WORKSPACE="$workspace" worker_start_process_group "$log_path" env "${environment[@]}" bash -c 'set -euo pipefail; source "$1"; shift; worker_run_frontend "$@"' worker-process "$worker_script_dir/worker.sh" "$@"
 }
 

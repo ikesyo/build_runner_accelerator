@@ -145,7 +145,11 @@ verification_run_command() {
   [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || { printf 'verification: invalid timeout label=%s value=%q\n' "$label" "$timeout_seconds" >&2; return 2; }
   local workspace=${VERIFY_WORKSPACE:-$(pwd)}
   mkdir -p -- "$(dirname -- "$log_path")"
-  : >"$log_path"
+  if [[ "${VERIFY_COMMAND_LOG_APPEND:-0}" == 1 ]]; then
+    : >>"$log_path"
+  else
+    : >"$log_path"
+  fi
   local command_line
   command_line=$(verification_command_text "$@")
   local started
@@ -235,7 +239,12 @@ verification_run_case() {
 }
 
 verification_watch_poll_iterations() {
+  local interval_ms=${1:-200}
+  [[ "$interval_ms" =~ ^[1-9][0-9]*$ ]] || {
+    printf 'verification: invalid watch poll interval: %s\n' "$interval_ms" >&2
+    return 2
+  }
   local timeout_seconds
   timeout_seconds=$(verification_timeout_seconds VERIFY_WATCH_TIMEOUT_SECONDS 180) || return 2
-  printf '%s\n' "$((timeout_seconds * 5 + 3))"
+  printf '%s\n' "$(((timeout_seconds * 1000) / interval_ms + 3))"
 }
