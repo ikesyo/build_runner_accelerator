@@ -22,6 +22,7 @@ supported.
 | `fixtures/optional_builder_app` | Regression fixture | Supported target shape | A normal `is_optional` builder is skipped when undemanded and is run on demand for both secondary reads and primary-input consumers; clean, incremental, failure recovery, deletion, rename, and watch cases compare stock/native outputs. |
 | `fixtures/trigger_builder_app` | Regression fixture | Supported trigger shape | Compares stock/native import, annotation, combined, part-annotation, generated-primary, and `is_optional` + `run_only_if_triggered` cases. It covers trigger transitions, stale-output cleanup, generated-input changes, deletion, rename, failure recovery, and two-job execution; the paired watch probe covers trigger changes and resident worker lifetime. |
 | `fixtures/drift_app` (`drift 2.34.4`, `drift_dev 2.34.6`) | Passed | Supported target shape | `drift_dev`'s multiple factories are expanded using their runtime `buildExtensions`, including generated schema metadata, Dart parts, and cleanup of temporary artifacts. Clean, no-op, incremental, deletion, and byte-identical stock/native comparisons pass. |
+| `fixtures/drift_analyzer_app` (`drift 2.34.4`, `drift_dev 2.34.6`) | Passed | Supported analyzer subset | Isolated `drift_dev:analyzer` target with official `discover` and `analyzer` factories, `.dart`/`.drift` mappings, `preparing_builder` required-input ordering, cache metadata/type-helper outputs, and a generic downstream Builder that exercises cache reads, Resolver APIs, `assetIdForElement`, `inputLibrary`, and `packageConfig`. Clean, no-op, Dart/Drift changes, rename, valid deletion, failure/recovery, jobs=1/2, and native watch probes compare the supported output inventory with stock. |
 | Conduit Flutter target | Passed | Supported subset | Isolated Freezed/JSON target completed with byte-identical outputs. |
 | API Dash `har` target | Passed after narrowing | Supported subset | The initial probe expected a Freezed output for an input outside that builder's effective `generate_for`; the narrowed target completed with matching outputs. |
 | Invoice Ninja model target | Passed | Supported subset | Isolated Freezed/JSON target completed with byte-identical outputs. |
@@ -37,9 +38,46 @@ workload has a reproducible lockfile.
 ## Follow-up order
 
 1. Keep the `built_value` fixture in the normal full correctness suite.
-2. Investigate `registry_builder`, `drift_dev:analyzer`, and
-   `build_web_compilers` as separate compatibility additions; do not encode
-   them as builder-name special cases in the Rust planner.
+2. Broaden the isolated `drift_dev:analyzer` probe to additional official
+   builders only after their manifest shape and API requirements are known;
+   do not encode them as builder-name special cases in the Rust planner.
+3. Investigate `registry_builder`, `drift_dev:modular`, `not_shared`, full
+   `driftCleanup`, and `build_web_compilers` as separate compatibility
+   additions.
+
+## Drift analyzer boundary
+
+The analyzer probe targets the pinned `drift 2.34.4` / `drift_dev 2.34.6`
+solution. It enables the official `drift_dev:analyzer` target and its
+`preparing_builder` dependency while disabling the auto-applied monolithic
+`drift_dev:drift_dev` target; the latter would intentionally produce a stock
+output collision in an analyzer-only fixture. The probe therefore demonstrates
+the analyzer builder contract, not a complete Drift workspace.
+
+The validated subset is:
+
+- `discover` and `analyzer` factory expansion from the official runtime
+  `buildExtensions` for both `.dart` and `.drift` inputs.
+- Required `.drift_prep.json` ordering, cache visibility of discover/analyzer
+  artifacts, optional `.types.temp.dart` output inventory, and source output
+  publication to a later generic Builder.
+- `BuildStep.readAsString`/`canRead`, `resolver.libraryFor`,
+  `resolver.findLibraryByName`, `assetIdForElement`, `inputLibrary`, and
+  package language-version access through `packageConfig`.
+- Stale cache/source output removal, missing declared output handling, and
+  native atomic commit behavior after a Builder failure.
+
+Stock and native output relative paths and bytes match in this fixture. Their
+persistent cache roots and diagnostics differ, and the failure probe checks the
+native atomic guarantee without asserting identical transient failure
+inventories. No performance measurement was made; this probe makes no speed
+claim, and small targets may be dominated by frontend/worker startup and IPC
+fixed costs.
+
+`drift_dev:modular`, `not_shared`, full `driftCleanup`, `registry_builder`,
+`build_web_compilers`, and full Drift examples/workspaces are excluded. In
+`--mode auto`, an unsupported manifest shape remains on stock Dart
+`build_runner`; `--mode rust` reports the unsupported shape explicitly.
 
 ## Trigger semantics boundary
 

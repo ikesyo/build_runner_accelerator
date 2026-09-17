@@ -376,6 +376,8 @@ jobs:
               bash scripts/correctness_capture_builder.sh
               bash scripts/correctness_multi_mapping_builder.sh
               bash scripts/correctness_drift.sh
+              bash scripts/correctness_drift_analyzer.sh
+              bash scripts/watch_smoke_drift_analyzer.sh
   native-build:
     name: Native build (${{ matrix.target_id }})
     runs-on: ${{ matrix.runs_on }}

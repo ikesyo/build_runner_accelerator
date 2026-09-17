@@ -21,6 +21,10 @@ The following are implemented and covered by the current fixture suite:
   need runtime data (including multi-factory and option-dependent builders),
   phase-aware generated-input visibility, and resident-worker Builder/Resource
   lifetime coverage.
+- An isolated supported subset for `drift_dev:analyzer` at the pinned Drift
+  versions, including its `discover`/`analyzer` factories, `.dart`/`.drift`
+  runtime mappings, `preparing_builder` required-input phase, cache artifact
+  visibility, Resolver/BuildStep APIs, output inventory, and native watch.
 - Demand-driven execution for compatible normal `is_optional` builders when a
   later action reads or uses their declared output.
 - Stock-vs-native output comparisons for clean, no-op, incremental, failure,
@@ -55,6 +59,9 @@ The following are implemented and covered by the current fixture suite:
 - [ ] Validate mixed builders and multi-package workspaces from real projects.
 - [ ] Consider builder-specific fast paths only when they beat the generic
   manifest path under the same fixture and SDK conditions.
+- [ ] Extend the Drift probe beyond the isolated analyzer subset: `modular`,
+  `not_shared`, full `driftCleanup`, `registry_builder`,
+  `build_web_compilers`, and complete Drift workspaces remain out of scope.
 
 ## Verification policy
 
@@ -82,3 +89,8 @@ Performance changes require clean, no-op, one-file, and broad incremental
 measurements together with SDK versions, worker count, command lines, and
 byte-identical output results. Runtime metrics are opt-in through
 `BUILD_RUNNER_ACCELERATOR_METRICS=1`.
+
+The Drift analyzer compatibility work has not been benchmarked. In particular,
+small analyzer targets may be dominated by launcher, resident-worker startup,
+and IPC fixed costs, so no performance improvement is implied by the
+compatibility probe.

@@ -186,6 +186,15 @@ pub(crate) fn run_with_config(
         Some(BuilderKind::PostProcess),
         &normal_primary_inputs,
     )?;
+    let generated_output_locations = normal_specs
+        .iter()
+        .flat_map(|spec| {
+            spec.outputs
+                .iter()
+                .cloned()
+                .map(|output| (output, spec.builder.build_to))
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut specs = normal_specs;
     specs.extend(post_specs);
     let visibility = AssetVisibility::from_specs(&specs, &state, &build_config);
@@ -225,6 +234,7 @@ pub(crate) fn run_with_config(
         }
     }
     expand_dirty_dependents(&mut dirty_roots, &specs, &state);
+    expand_declared_output_dependents(&mut dirty_roots, &specs);
     let mut dirty_keys = dirty
         .iter()
         .map(|spec| spec.action_key())
@@ -377,7 +387,28 @@ pub(crate) fn run_with_config(
                 })
                 .cloned()
                 .collect::<Vec<_>>();
-            let requests = phase_specs
+            let mut runnable_phase_specs = Vec::with_capacity(phase_specs.len());
+            for spec in phase_specs {
+                if let Some(build_to) = generated_output_locations.get(&spec.input) {
+                    let output_is_visible = !deleted_overlay.contains(&spec.input)
+                        && (overlay.contains_key(&spec.input)
+                            || workspace.asset_exists_at(&spec.input, *build_to)?);
+                    if !output_is_visible {
+                        record_missing_primary_input(
+                            &workspace,
+                            &state,
+                            &spec,
+                            &mut overlay,
+                            &mut deleted_overlay,
+                            &mut pending_deletions,
+                            &mut pending_actions,
+                        )?;
+                        continue;
+                    }
+                }
+                runnable_phase_specs.push(spec);
+            }
+            let requests = runnable_phase_specs
                 .iter()
                 .map(|spec| BuildRequest {
                     builder: spec.builder.id.to_owned(),
@@ -454,7 +485,7 @@ pub(crate) fn run_with_config(
                 resolver_needs_reset = true;
             }
 
-            for (spec, result) in phase_specs.into_iter().zip(results) {
+            for (spec, result) in runnable_phase_specs.into_iter().zip(results) {
                 record_build_result(
                     &workspace,
                     &state,
@@ -538,6 +569,100 @@ pub(crate) fn run_with_config(
         print_workspace_read_metrics(workspace.read_metrics());
     }
     println!("Build completed (Rust frontend)");
+    Ok(())
+}
+
+/// A later phase is planned from declared outputs so its action identity is
+/// stable before the producer runs. That does not mean every declared output
+/// is an actual asset: Builders are allowed to omit a mapped output for a
+/// particular input. Propagate dirtiness to dependent actions, then let the
+/// execution loop skip their action when the producer's output inventory says
+/// the primary input is missing.
+fn expand_declared_output_dependents(
+    dirty: &mut Vec<crate::plan::BuildSpec>,
+    specs: &[crate::plan::BuildSpec],
+) {
+    let specs_by_key = specs
+        .iter()
+        .map(|spec| (spec.action_key(), spec.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut dependents_by_input = BTreeMap::<String, Vec<String>>::new();
+    for spec in specs {
+        dependents_by_input
+            .entry(spec.input.clone())
+            .or_default()
+            .push(spec.action_key());
+    }
+
+    let mut dirty_keys = dirty
+        .iter()
+        .map(|spec| spec.action_key())
+        .collect::<BTreeSet<_>>();
+    let mut cursor = 0;
+    while cursor < dirty.len() {
+        let source_outputs = dirty[cursor].outputs.clone();
+        for output in source_outputs {
+            for dependent_key in dependents_by_input
+                .get(&output)
+                .into_iter()
+                .flatten()
+            {
+                if dirty_keys.insert(dependent_key.clone()) {
+                    if let Some(spec) = specs_by_key.get(dependent_key) {
+                        dirty.push(spec.clone());
+                    }
+                }
+            }
+        }
+        cursor += 1;
+    }
+}
+
+/// Record the build_runner equivalent of a generated primary input which was
+/// planned but not emitted by its producer. Keeping the empty action in the
+/// graph makes the missing-output state stable across no-op builds and removes
+/// any stale outputs from a previous successful run at the same commit
+/// boundary as ordinary Builder results.
+fn record_missing_primary_input(
+    workspace: &Workspace,
+    state: &GraphState,
+    spec: &BuildSpec,
+    overlay: &mut BTreeMap<String, Vec<u8>>,
+    deleted_overlay: &mut BTreeSet<String>,
+    pending_deletions: &mut Vec<(Arc<BuilderDefinition>, String)>,
+    pending_actions: &mut Vec<(String, ActionState)>,
+) -> io::Result<()> {
+    let key = spec.action_key();
+    let mut outputs_to_delete = state
+        .actions
+        .get(&key)
+        .map(|action| action.outputs.clone())
+        .unwrap_or_default();
+    for output in &spec.outputs {
+        if !outputs_to_delete.contains(output) {
+            outputs_to_delete.push(output.clone());
+        }
+    }
+    for output in outputs_to_delete {
+        deleted_overlay.insert(output.clone());
+        overlay.remove(&output);
+        if workspace.asset_exists_at(&output, spec.builder.build_to)? {
+            pending_deletions.push((spec.builder.clone(), output));
+        }
+    }
+    pending_actions.push((
+        key,
+        ActionState {
+            builder: spec.builder.id.to_owned(),
+            input: spec.input.clone(),
+            reads: Vec::new(),
+            resolver_reads: Vec::new(),
+            glob_reads: Vec::new(),
+            outputs: Vec::new(),
+            output_digests: BTreeMap::new(),
+            status: "skipped_missing_input".to_owned(),
+        },
+    ));
     Ok(())
 }
 
@@ -763,8 +888,9 @@ fn expand_dirty_dependents(
 
 #[cfg(test)]
 mod tests {
-    use super::execution_order;
+    use super::{execution_order, expand_declared_output_dependents};
     use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder};
+    use crate::plan::BuildSpec;
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
@@ -815,5 +941,43 @@ mod tests {
         ];
 
         assert_eq!(execution_order(&builders), vec![1, 0]);
+    }
+
+    fn build_spec(id: &str, input: &str, output: &str) -> BuildSpec {
+        BuildSpec {
+            builder: Arc::new(BuilderDefinition {
+                id: id.to_owned(),
+                kind: BuilderKind::Normal,
+                extensions: Vec::new(),
+                post_process_input_extensions: Vec::new(),
+                build_to: BuildTo::Source,
+                phase: 0,
+                is_optional: false,
+                output_is_optional: false,
+                required_input_suffixes: Vec::new(),
+                excluded_input_suffixes: Vec::new(),
+                applies_builder: None,
+                triggers: Vec::new(),
+            }),
+            target: "app:app".to_owned(),
+            package: "app".to_owned(),
+            is_root: true,
+            phase: 0,
+            instance_key: id.to_owned(),
+            input: input.to_owned(),
+            outputs: vec![output.to_owned()],
+            options: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn declared_output_dirtiness_reaches_later_phase() {
+        let producer = build_spec("producer", "app|lib/input.txt", "app|lib/output.txt");
+        let consumer = build_spec("consumer", "app|lib/output.txt", "app|lib/final.txt");
+        let mut dirty = vec![producer.clone()];
+
+        expand_declared_output_dependents(&mut dirty, &[producer, consumer.clone()]);
+
+        assert!(dirty.iter().any(|spec| spec.action_key() == consumer.action_key()));
     }
 }

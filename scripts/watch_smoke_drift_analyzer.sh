@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd -- "$script_dir/.." && pwd)
+
+source "$script_dir/toolchain.sh"
+source "$script_dir/worker.sh"
+source "$script_dir/verification_support.sh"
+dart_bin=$(resolve_toolchain_dart)
+pub_cache=$(resolve_toolchain_pub_cache)
+fixture_dir="$repo_root/fixtures/drift_analyzer_app"
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-drift-analyzer-watch-root.XXXXXX")
+watch_dir="$test_root/fixtures/watch"
+results_dir=$(mktemp -d)
+pub_get_args=()
+if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
+  pub_get_args+=(--offline)
+fi
+log_path="$results_dir/watch.log"
+watch_pid=
+
+remove_tree() {
+  local path=$1
+  [[ -e "$path" ]] || return 0
+  find "$path" -depth -type f -delete
+  find "$path" -depth -type d -empty -delete
+}
+
+cleanup() {
+  local cleanup_status=$?
+  worker_stop_process_group "$watch_pid"
+  if ((cleanup_status != 0)) && [[ "${VERIFY_KEEP_TEMP_ON_FAILURE:-1}" != 0 ]]; then
+    printf 'verification: retaining failure workspace(s) and logs\n' >&2
+    return 0
+  fi
+  remove_tree "$test_root"
+  remove_tree "$results_dir"
+}
+trap cleanup EXIT INT TERM
+
+fail() {
+  printf 'drift-analyzer-watch: FAIL: %s\n' "$*" >&2
+  verification_report_watch_timeout "drift-analyzer-watch" "$watch_dir" "$log_path" "$watch_pid"
+  if [[ -f "$log_path" ]]; then
+    sed -n '1,260p' "$log_path" >&2
+  fi
+  exit 1
+}
+
+[[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
+worker_ensure_frontend || fail 'Rust frontend build failed'
+
+mkdir -p "$watch_dir/lib"
+worker_attach "$test_root"
+cp "$fixture_dir/pubspec.yaml" "$watch_dir/pubspec.yaml"
+cp "$fixture_dir/pubspec.lock" "$watch_dir/pubspec.lock"
+cp "$fixture_dir/build.yaml" "$watch_dir/build.yaml"
+cp -R "$fixture_dir/lib" "$watch_dir/"
+verification_run_pub_get "$watch_dir" "pub-get/watch" "$dart_bin" "$pub_cache" \
+  "${pub_get_args[@]}"
+
+worker_start_frontend_process_group "$log_path" \
+  BUILD_RUNNER_ACCELERATOR_METRICS=1 PUB_CACHE="$pub_cache" \
+  BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" -- \
+  watch --root "$watch_dir" --dart "$dart_bin" --interval-ms 200
+watch_pid=$worker_last_pid
+
+wait_for_initial_build() {
+  for _ in $(seq 1 "$(verification_watch_poll_iterations 200)"); do
+    if grep -Fq 'Watching ' "$log_path" && \
+      [[ -f "$watch_dir/lib/schema.drift_analyzer_probe.txt" ]] && \
+      [[ -f "$watch_dir/lib/database.drift_analyzer_probe.txt" ]]; then
+      return 0
+    fi
+    kill -0 "$watch_pid" 2>/dev/null || fail 'watch process exited during startup'
+    sleep 0.2
+  done
+  fail 'watch startup timed out'
+}
+
+wait_for_rebuild() {
+  local expected_count=$1
+  for _ in $(seq 1 "$(verification_watch_poll_iterations 200)"); do
+    local rebuild_count
+    local completed_count
+    rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
+    completed_count=$(grep -Fc 'Build completed (Rust frontend)' "$log_path" || true)
+    if ((rebuild_count >= expected_count && completed_count >= expected_count + 1)); then
+      return 0
+    fi
+    kill -0 "$watch_pid" 2>/dev/null || fail 'watch process exited during rebuild'
+    sleep 0.2
+  done
+  fail "watch rebuild timed out at event count $expected_count"
+}
+
+wait_for_initial_build
+cp "$watch_dir/lib/schema.drift_analyzer_probe.txt" \
+  "$results_dir/schema.before.drift_analyzer_probe.txt"
+# Let the watch loop enter its receive state after the initial build before
+# removing an output that it must classify as a user-triggered deletion.
+sleep 1
+
+find "$watch_dir/lib" -maxdepth 1 -type f \
+  -name 'schema.drift_analyzer_probe.txt' -delete
+wait_for_rebuild 1
+sleep 1
+rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
+((rebuild_count == 1)) || \
+  fail "generated output deletion caused $rebuild_count rebuild events"
+[[ -f "$watch_dir/lib/schema.drift_analyzer_probe.txt" ]] || \
+  fail 'Drift analyzer generated output was not restored'
+cmp "$results_dir/schema.before.drift_analyzer_probe.txt" \
+  "$watch_dir/lib/schema.drift_analyzer_probe.txt" || \
+  fail 'restored Drift analyzer output differs from baseline'
+
+sed -i 's/name TEXT NOT NULL,/name TEXT NOT NULL, email TEXT NOT NULL,/' \
+  "$watch_dir/lib/schema.drift"
+wait_for_rebuild 2
+sleep 1
+rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
+((rebuild_count == 2)) || fail "Drift source edit caused $rebuild_count rebuild events"
+if cmp -s "$results_dir/schema.before.drift_analyzer_probe.txt" \
+  "$watch_dir/lib/schema.drift_analyzer_probe.txt"; then
+  fail 'Drift source edit did not change analyzer output'
+fi
+grep -Fq 'email' \
+  "$watch_dir/.dart_tool/build_runner_accelerator/cache/drift_analyzer_app/lib/schema.drift.drift_module.json" || \
+  fail 'Drift source edit did not update the analyzer cache artifact'
+
+metrics_count=$(grep -Fc 'Rust metrics:' "$log_path" || true)
+((metrics_count >= 3)) || fail "watch emitted only $metrics_count metrics lines"
+grep -Fq 'worker_starts_total=1' "$log_path" || \
+  fail 'watch did not retain the initial worker'
+grep -Fq 'worker_resets_total=2' "$log_path" || \
+  fail 'watch did not reset the resident worker between builds'
+
+printf 'drift-analyzer-watch: generated-output-delete=yes drift-edit=yes event-count=2\n'

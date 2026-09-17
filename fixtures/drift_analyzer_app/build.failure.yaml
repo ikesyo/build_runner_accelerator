@@ -1,0 +1,34 @@
+builders:
+  analyzer_probe:
+    import: "package:drift_analyzer_app/analyzer_probe.dart"
+    builder_factories:
+      - analyzerProbe
+    build_extensions:
+      ".dart":
+        - ".drift_analyzer_probe.txt"
+      ".drift":
+        - ".drift_analyzer_probe.txt"
+    required_inputs:
+      - ".drift_module.json"
+    auto_apply: none
+    build_to: source
+
+targets:
+  $default:
+    sources:
+      include:
+        - lib/**
+    builders:
+      drift_dev:drift_dev:
+        enabled: false
+      drift_dev:analyzer:
+        enabled: true
+        generate_for:
+          - lib/**.dart
+          - lib/**.drift
+      drift_analyzer_app:analyzer_probe:
+        generate_for:
+          - lib/**.dart
+          - lib/**.drift
+        options:
+          fail_after_write: true
