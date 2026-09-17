@@ -1,4 +1,4 @@
-name: Core verification
+name: Full verification
 
 on:
   schedule:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: core-verification-${{ github.workflow }}-${{ github.ref }}
+  group: full-verification-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
