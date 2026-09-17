@@ -192,9 +192,9 @@ pub(crate) fn run_with_config(
             spec.outputs
                 .iter()
                 .cloned()
-                .map(|output| (output, spec.builder.build_to))
+                .map(|output| (output, (spec.builder.build_to, spec.builder.is_optional)))
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<BTreeMap<String, (BuildTo, bool)>>();
     let mut specs = normal_specs;
     specs.extend(post_specs);
     let visibility = AssetVisibility::from_specs(&specs, &state, &build_config);
@@ -234,7 +234,6 @@ pub(crate) fn run_with_config(
         }
     }
     expand_dirty_dependents(&mut dirty_roots, &specs, &state);
-    expand_declared_output_dependents(&mut dirty_roots, &specs);
     let mut dirty_keys = dirty
         .iter()
         .map(|spec| spec.action_key())
@@ -389,21 +388,29 @@ pub(crate) fn run_with_config(
                 .collect::<Vec<_>>();
             let mut runnable_phase_specs = Vec::with_capacity(phase_specs.len());
             for spec in phase_specs {
-                if let Some(build_to) = generated_output_locations.get(&spec.input) {
-                    let output_is_visible = !deleted_overlay.contains(&spec.input)
-                        && (overlay.contains_key(&spec.input)
-                            || workspace.asset_exists_at(&spec.input, *build_to)?);
-                    if !output_is_visible {
-                        record_missing_primary_input(
-                            &workspace,
-                            &state,
-                            &spec,
-                            &mut overlay,
-                            &mut deleted_overlay,
-                            &mut pending_deletions,
-                            &mut pending_actions,
-                        )?;
-                        continue;
+                if let Some((build_to, is_optional)) = generated_output_locations.get(&spec.input)
+                {
+                    // An optional producer may be invoked lazily by this
+                    // consumer's BuildStep.readAsString. Keep the consumer
+                    // request alive so the resident worker can satisfy that
+                    // demand before deciding that the primary input is
+                    // missing.
+                    if !is_optional {
+                        let output_is_visible = !deleted_overlay.contains(&spec.input)
+                            && (overlay.contains_key(&spec.input)
+                                || workspace.asset_exists_at(&spec.input, *build_to)?);
+                        if !output_is_visible {
+                            record_missing_primary_input(
+                                &workspace,
+                                &state,
+                                &spec,
+                                &mut overlay,
+                                &mut deleted_overlay,
+                                &mut pending_deletions,
+                                &mut pending_actions,
+                            )?;
+                            continue;
+                        }
                     }
                 }
                 runnable_phase_specs.push(spec);
@@ -570,52 +577,6 @@ pub(crate) fn run_with_config(
     }
     println!("Build completed (Rust frontend)");
     Ok(())
-}
-
-/// A later phase is planned from declared outputs so its action identity is
-/// stable before the producer runs. That does not mean every declared output
-/// is an actual asset: Builders are allowed to omit a mapped output for a
-/// particular input. Propagate dirtiness to dependent actions, then let the
-/// execution loop skip their action when the producer's output inventory says
-/// the primary input is missing.
-fn expand_declared_output_dependents(
-    dirty: &mut Vec<crate::plan::BuildSpec>,
-    specs: &[crate::plan::BuildSpec],
-) {
-    let specs_by_key = specs
-        .iter()
-        .map(|spec| (spec.action_key(), spec.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let mut dependents_by_input = BTreeMap::<String, Vec<String>>::new();
-    for spec in specs {
-        dependents_by_input
-            .entry(spec.input.clone())
-            .or_default()
-            .push(spec.action_key());
-    }
-
-    let mut dirty_keys = dirty
-        .iter()
-        .map(|spec| spec.action_key())
-        .collect::<BTreeSet<_>>();
-    let mut cursor = 0;
-    while cursor < dirty.len() {
-        let source_outputs = dirty[cursor].outputs.clone();
-        for output in source_outputs {
-            for dependent_key in dependents_by_input
-                .get(&output)
-                .into_iter()
-                .flatten()
-            {
-                if dirty_keys.insert(dependent_key.clone()) {
-                    if let Some(spec) = specs_by_key.get(dependent_key) {
-                        dirty.push(spec.clone());
-                    }
-                }
-            }
-        }
-        cursor += 1;
-    }
 }
 
 /// Record the build_runner equivalent of a generated primary input which was
@@ -888,9 +849,8 @@ fn expand_dirty_dependents(
 
 #[cfg(test)]
 mod tests {
-    use super::{execution_order, expand_declared_output_dependents};
+    use super::execution_order;
     use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder};
-    use crate::plan::BuildSpec;
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
@@ -941,43 +901,5 @@ mod tests {
         ];
 
         assert_eq!(execution_order(&builders), vec![1, 0]);
-    }
-
-    fn build_spec(id: &str, input: &str, output: &str) -> BuildSpec {
-        BuildSpec {
-            builder: Arc::new(BuilderDefinition {
-                id: id.to_owned(),
-                kind: BuilderKind::Normal,
-                extensions: Vec::new(),
-                post_process_input_extensions: Vec::new(),
-                build_to: BuildTo::Source,
-                phase: 0,
-                is_optional: false,
-                output_is_optional: false,
-                required_input_suffixes: Vec::new(),
-                excluded_input_suffixes: Vec::new(),
-                applies_builder: None,
-                triggers: Vec::new(),
-            }),
-            target: "app:app".to_owned(),
-            package: "app".to_owned(),
-            is_root: true,
-            phase: 0,
-            instance_key: id.to_owned(),
-            input: input.to_owned(),
-            outputs: vec![output.to_owned()],
-            options: BTreeMap::new(),
-        }
-    }
-
-    #[test]
-    fn declared_output_dirtiness_reaches_later_phase() {
-        let producer = build_spec("producer", "app|lib/input.txt", "app|lib/output.txt");
-        let consumer = build_spec("consumer", "app|lib/output.txt", "app|lib/final.txt");
-        let mut dirty = vec![producer.clone()];
-
-        expand_declared_output_dependents(&mut dirty, &[producer, consumer.clone()]);
-
-        assert!(dirty.iter().any(|spec| spec.action_key() == consumer.action_key()));
     }
 }
