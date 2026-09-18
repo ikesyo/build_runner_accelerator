@@ -26,9 +26,22 @@ targets:
         generate_for:
           - lib/**.dart
           - lib/**.drift
+      drift_dev:modular:
+        enabled: true
+        generate_for:
+          # Keep the first modular action on a Drift-bearing input. The
+          # analysis warning below is emitted while the source output is
+          # generated, and fatal_warnings is checked after that output is
+          # written.
+          - lib/database.dart
+          - lib/**.drift
+        options:
+          # The failure probe adds an unresolved query to database.dart. The
+          # resulting Drift analysis warning is reported during modular
+          # analysis. With fatal_warnings, the Builder throws after
+          # writeAsString, exercising native transaction rollback.
+          fatal_warnings: true
       drift_analyzer_app:analyzer_probe:
         generate_for:
           - lib/**.dart
           - lib/**.drift
-        options:
-          fail_after_write: true

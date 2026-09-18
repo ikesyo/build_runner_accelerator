@@ -645,6 +645,11 @@ List<String> _orderBuilders(
   Map<String, _DefinitionInfo> definitions,
   Map<String, GlobalBuilderConfig> globalOptions,
 ) {
+  // Keep this graph isomorphic to build_runner's findBuilderOrder. The
+  // upstream helper models an edge from a builder to the builder it depends
+  // on, then reverses the topological result. In particular, applies_builders
+  // controls application, not ordering; a required_inputs or runs_before edge
+  // is needed to establish a phase boundary.
   final sorted = keys.toList()..sort();
   final outgoing = <String, Set<String>>{
     for (final key in sorted) key: <String>{},
@@ -673,21 +678,14 @@ List<String> _orderBuilders(
         (required) => childOutputs.any((output) => output.endsWith(required)),
       );
       if (childProvidesRequiredInput) {
-        addEdge(childKey, parentKey);
-      }
-      if (parent.runsBefore.contains(childKey)) {
         addEdge(parentKey, childKey);
       }
-      if (parent.appliesBuilders.contains(childKey) &&
-          !childProvidesRequiredInput) {
-        // Applied builders consume outputs produced by their parent phase.
-        // An existing required-input edge takes precedence when an applied
-        // builder prepares inputs for its parent.
+      if (child.runsBefore.contains(parentKey)) {
         addEdge(parentKey, childKey);
       }
       final childGlobal = globalOptions[childKey];
       if (childGlobal != null && childGlobal.runsBefore.contains(parentKey)) {
-        addEdge(childKey, parentKey);
+        addEdge(parentKey, childKey);
       }
     }
   }
@@ -710,7 +708,7 @@ List<String> _orderBuilders(
   if (result.length != sorted.length) {
     throw StateError('Builder ordering contains a cycle');
   }
-  return result;
+  return result.reversed.toList(growable: false);
 }
 
 bool _requiresRuntimeProbe(_SelectedBuilder selectedBuilder) {

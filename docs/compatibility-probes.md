@@ -22,13 +22,13 @@ supported.
 | `fixtures/optional_builder_app` | Regression fixture | Supported target shape | A normal `is_optional` builder is skipped when undemanded and is run on demand for both secondary reads and primary-input consumers; clean, incremental, failure recovery, deletion, rename, and watch cases compare stock/native outputs. |
 | `fixtures/trigger_builder_app` | Regression fixture | Supported trigger shape | Compares stock/native import, annotation, combined, part-annotation, generated-primary, and `is_optional` + `run_only_if_triggered` cases. It covers trigger transitions, stale-output cleanup, generated-input changes, deletion, rename, failure recovery, and two-job execution; the paired watch probe covers trigger changes and resident worker lifetime. |
 | `fixtures/drift_app` (`drift 2.34.4`, `drift_dev 2.34.6`) | Passed | Supported target shape | `drift_dev`'s multiple factories are expanded using their runtime `buildExtensions`, including generated schema metadata, Dart parts, and cleanup of temporary artifacts. Clean, no-op, incremental, deletion, and byte-identical stock/native comparisons pass. |
-| `fixtures/drift_analyzer_app` (`drift 2.34.4`, `drift_dev 2.34.6`) | Passed | Supported analyzer subset | Isolated `drift_dev:analyzer` target with official `discover` and `analyzer` factories, `.dart`/`.drift` mappings, `preparing_builder` required-input ordering, cache metadata/type-helper outputs, and a generic downstream Builder that exercises cache reads, Resolver APIs, `assetIdForElement`, `inputLibrary`, and `packageConfig`. Clean, no-op, Dart/Drift changes, rename, valid deletion, failure/recovery, jobs=1/2, and native watch probes compare the supported output inventory with stock. |
+| `fixtures/drift_analyzer_app` (`drift 2.34.4`, `drift_dev 2.34.6`, `build_runner 2.16.1`, Dart 3.13.3) | Passed | Supported analyzer → modular subset | Official `preparing_builder` → `analyzer` → `modular` chain with `discover`/`analyzer` factory expansion, `.dart`/`.drift` mappings, analyzer cache artifacts, modular `.drift.dart` source outputs, and a generic downstream Builder that exercises cache reads, Resolver APIs, `assetIdForElement`, `inputLibrary`, and `packageConfig`. Clean, no-op, Dart/Drift changes, rename, valid deletion, stale source cleanup, failure/recovery, jobs=1/2, and native watch probes compare the supported output inventory with stock. |
 | Conduit Flutter target | Passed | Supported subset | Isolated Freezed/JSON target completed with byte-identical outputs. |
 | API Dash `har` target | Passed after narrowing | Supported subset | The initial probe expected a Freezed output for an input outside that builder's effective `generate_for`; the narrowed target completed with matching outputs. |
 | Invoice Ninja model target | Passed | Supported subset | Isolated Freezed/JSON target completed with byte-identical outputs. |
 | Official Conduit stamp-only target | Passed | Supported subset | `conduit_build_runner`'s `stamp_builder` completed. |
 | Official Conduit full builder set | Not supported | Conservative fallback | `registry_builder` is outside the current manifest/worker subset. |
-| Drift `examples/app` / `examples/with_built_value` | Not supported | Conservative fallback | The full examples still include `build_web_compilers` and `drift_dev:analyzer`, which are outside the current subset. The focused `fixtures/drift_app` probe covers the compatible `drift_dev` factory/output path. |
+| Drift `examples/app` / `examples/with_built_value` | Not supported | Conservative fallback | The full examples still include `build_web_compilers`, full Drift workspace configuration, and other builders outside this focused subset. The focused `fixtures/drift_app` probe covers the compatible `drift_dev` factory/output path. |
 
 Some full repository roots also could not be resolved under the probe's
 pub.dev dependency constraints. Those are dependency-resolution limitations,
@@ -38,34 +38,45 @@ workload has a reproducible lockfile.
 ## Follow-up order
 
 1. Keep the `built_value` fixture in the normal full correctness suite.
-2. Broaden the isolated `drift_dev:analyzer` probe to additional official
-   builders only after their manifest shape and API requirements are known;
-   do not encode them as builder-name special cases in the Rust planner.
-3. Investigate `registry_builder`, `drift_dev:modular`, `not_shared`, full
-   `driftCleanup`, and `build_web_compilers` as separate compatibility
-   additions.
+2. Extend the isolated Drift probe to additional official builders only
+   after their manifest shape and API requirements are known; do not encode
+   them as builder-name special cases in the Rust planner.
+3. Investigate `registry_builder`, `not_shared`, full `driftCleanup`, and
+   `build_web_compilers` as separate compatibility additions.
 
 ## Drift analyzer boundary
 
-The analyzer probe targets the pinned `drift 2.34.4` / `drift_dev 2.34.6`
-solution. It enables the official `drift_dev:analyzer` target and its
-`preparing_builder` dependency while disabling the auto-applied monolithic
-`drift_dev:drift_dev` target; the latter would intentionally produce a stock
-output collision in an analyzer-only fixture. The probe therefore demonstrates
-the analyzer builder contract, not a complete Drift workspace.
+The probe targets the pinned `drift 2.34.4` / `drift_dev 2.34.6` solution
+from the fixture lockfile (`build_runner 2.16.1`, Dart 3.13.3). It enables the
+official `preparing_builder`, `drift_dev:analyzer`, and `drift_dev:modular`
+targets while disabling the auto-applied monolithic `drift_dev:drift_dev`
+target; the latter would intentionally produce an output collision with the
+isolated analyzer artifacts. The probe therefore demonstrates a supported
+analyzer-to-modular subset, not a complete Drift workspace.
 
 The validated subset is:
 
 - `discover` and `analyzer` factory expansion from the official runtime
   `buildExtensions` for both `.dart` and `.drift` inputs.
-- Required `.drift_prep.json` ordering, cache visibility of discover/analyzer
-  artifacts, optional `.types.temp.dart` output inventory, and source output
-  publication to a later generic Builder.
+- `preparing_builder` → `analyzer` → `modular` phase ordering from the
+  normalized manifest. `required_inputs` establishes the analyzer cache
+  dependency; `applies_builders` selects the related builder and is not used
+  as a synthetic ordering edge; `runs_before` remains an explicit ordering
+  edge.
+- `.dart` inputs publish `.dart.drift_elements.json`,
+  `.dart.drift_module.json`, and optional `.dart.types.temp.dart` cache
+  artifacts; `.drift` inputs publish the corresponding `.drift.*` artifacts.
+  `modular` consumes `.drift.drift_module.json` and publishes `.drift.dart` to
+  source for both input extensions.
+- Generated cache inputs become visible to later phases, and generated source
+  outputs are visible through the later-phase overlay. Same-phase outputs stay
+  hidden. A failed dirty batch leaves neither the source outputs nor the cache
+  artifacts committed.
 - `BuildStep.readAsString`/`canRead`, `resolver.libraryFor`,
   `resolver.findLibraryByName`, `assetIdForElement`, `inputLibrary`, and
   package language-version access through `packageConfig`.
 - Stale cache/source output removal, missing declared output handling, and
-  native atomic commit behavior after a Builder failure.
+  native atomic commit behavior after modular writes and then fails.
 
 Stock and native output relative paths and bytes match in this fixture. Their
 persistent cache roots and diagnostics differ, and the failure probe checks the
@@ -74,10 +85,12 @@ inventories. No performance measurement was made; this probe makes no speed
 claim, and small targets may be dominated by frontend/worker startup and IPC
 fixed costs.
 
-`drift_dev:modular`, `not_shared`, full `driftCleanup`, `registry_builder`,
-`build_web_compilers`, and full Drift examples/workspaces are excluded. In
-`--mode auto`, an unsupported manifest shape remains on stock Dart
-`build_runner`; `--mode rust` reports the unsupported shape explicitly.
+`not_shared`, full `driftCleanup`, `registry_builder`,
+`build_web_compilers`, and full Drift examples/workspaces are excluded. This
+modular support requires the monolithic `drift_dev:drift_dev` builder to remain
+disabled in the focused fixture. In `--mode auto`, an unsupported manifest
+shape or API requirement is detected before generation and remains on stock
+Dart `build_runner`; `--mode rust` reports the unsupported shape explicitly.
 
 ## Trigger semantics boundary
 

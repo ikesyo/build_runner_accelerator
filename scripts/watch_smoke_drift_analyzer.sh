@@ -70,7 +70,9 @@ wait_for_initial_build() {
   for _ in $(seq 1 "$(verification_watch_poll_iterations 200)"); do
     if grep -Fq 'Watching ' "$log_path" && \
       [[ -f "$watch_dir/lib/schema.drift_analyzer_probe.txt" ]] && \
-      [[ -f "$watch_dir/lib/database.drift_analyzer_probe.txt" ]]; then
+      [[ -f "$watch_dir/lib/database.drift_analyzer_probe.txt" ]] && \
+      [[ -f "$watch_dir/lib/schema.drift.dart" ]] && \
+      [[ -f "$watch_dir/lib/database.drift.dart" ]]; then
       return 0
     fi
     kill -0 "$watch_pid" 2>/dev/null || fail 'watch process exited during startup'
@@ -96,6 +98,7 @@ wait_for_rebuild() {
 }
 
 wait_for_initial_build
+cp "$watch_dir/lib/schema.drift.dart" "$results_dir/schema.before.drift.dart"
 cp "$watch_dir/lib/schema.drift_analyzer_probe.txt" \
   "$results_dir/schema.before.drift_analyzer_probe.txt"
 # Let the watch loop enter its receive state after the initial build before
@@ -103,17 +106,16 @@ cp "$watch_dir/lib/schema.drift_analyzer_probe.txt" \
 sleep 1
 
 find "$watch_dir/lib" -maxdepth 1 -type f \
-  -name 'schema.drift_analyzer_probe.txt' -delete
+  -name 'schema.drift.dart' -delete
 wait_for_rebuild 1
 sleep 1
 rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
 ((rebuild_count == 1)) || \
   fail "generated output deletion caused $rebuild_count rebuild events"
-[[ -f "$watch_dir/lib/schema.drift_analyzer_probe.txt" ]] || \
-  fail 'Drift analyzer generated output was not restored'
-cmp "$results_dir/schema.before.drift_analyzer_probe.txt" \
-  "$watch_dir/lib/schema.drift_analyzer_probe.txt" || \
-  fail 'restored Drift analyzer output differs from baseline'
+[[ -f "$watch_dir/lib/schema.drift.dart" ]] || \
+  fail 'drift_dev:modular source output was not restored'
+cmp "$results_dir/schema.before.drift.dart" "$watch_dir/lib/schema.drift.dart" || \
+  fail 'restored modular source output differs from baseline'
 
 sed -i 's/name TEXT NOT NULL,/name TEXT NOT NULL, email TEXT NOT NULL,/' \
   "$watch_dir/lib/schema.drift"
@@ -123,7 +125,10 @@ rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
 ((rebuild_count == 2)) || fail "Drift source edit caused $rebuild_count rebuild events"
 if cmp -s "$results_dir/schema.before.drift_analyzer_probe.txt" \
   "$watch_dir/lib/schema.drift_analyzer_probe.txt"; then
-  fail 'Drift source edit did not change analyzer output'
+  fail 'Drift source edit did not change analyzer probe output'
+fi
+if cmp -s "$results_dir/schema.before.drift.dart" "$watch_dir/lib/schema.drift.dart"; then
+  fail 'Drift source edit did not change modular source output'
 fi
 grep -Fq 'email' \
   "$watch_dir/.dart_tool/build_runner_accelerator/cache/drift_analyzer_app/lib/schema.drift.drift_module.json" || \
