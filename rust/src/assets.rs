@@ -180,6 +180,7 @@ pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> 
             bytes.extend_from_slice(extension.input_suffix.as_bytes());
             bytes.push(u8::from(extension.input_is_exact));
             bytes.push(u8::from(extension.input_is_capture));
+            bytes.push(u8::from(extension.input_is_all));
             bytes.push(u8::from(extension.input_is_anchored));
             for suffix in &extension.output_suffixes {
                 bytes.extend_from_slice(suffix.as_bytes());

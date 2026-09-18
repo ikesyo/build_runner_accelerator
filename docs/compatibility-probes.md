@@ -17,6 +17,7 @@ supported.
 | `fixtures/freezed_app` (`freezed 4.0.1`, `json_serializable 6.14.1`) | Passed | Current stack fixture | The lockfile resolves `build_runner 2.16.1` with Analyzer 14.3.0. Clean, incremental, failure, deletion, rename, watch, and byte-identical stock/native comparisons are covered. |
 | `fixtures/riverpod_app` (`riverpod_generator 4.0.9`, `freezed 4.0.1`, `json_serializable 6.14.1`) | Passed | Current stack fixture | The lockfile resolves `build_runner 2.16.1` with Analyzer 14.3.0. Provider, Freezed, and JSON outputs are compared across clean, incremental, failure, deletion, watch, and byte-identical stock/native cases. |
 | `fixtures/multi_mapping_builder_app` | Regression fixture | Supported target shape | The static build.yaml suffix is intentionally overridden by a resolved option at runtime (`.runtime` vs `.multi`), while the anchored special-path output remains literal. Clean, no-op, change, rename, and deletion compare the resulting output union; the native side runs with two jobs to exercise concurrent action planning. |
+| `fixtures/empty_input_mapping_app` | New compatibility probe | Supported generic mapping shape | With pinned `build_runner 2.16.1` / `build 4.0.11`, an empty input extension key matches every asset in the selected target scope. The fixture covers extensionless, `.dart`, and `.drift` inputs, regular-plus-empty mapping union, downstream generated-input visibility, target/`generate_for` filtering, source/cache placement, clean/no-op, changes, rename, deletion, stale cleanup, collision, failure recovery, jobs 1/2, and paired stock/native watch output changes. Performance is unmeasured. |
 | `fixtures/lifetime_builder_app` | Passed | Supported target shape | With `--jobs 1`, two source builders run in separate phases with one resident worker. Builder instance state and a shared `Resource` remain stable across four inputs, and the second phase reads the first phase's generated assets. |
 | `fixtures/applies_builder_app` | Passed | Supported target shape | An `applies_builders` consumer is scheduled after its producer phase; stock/native generated outputs match across clean, no-op, change, rename, and deletion cases. |
 | `fixtures/optional_builder_app` | Regression fixture | Supported target shape | A normal `is_optional` builder is skipped when undemanded and is run on demand for both secondary reads and primary-input consumers; clean, incremental, failure recovery, deletion, rename, and watch cases compare stock/native outputs. |
@@ -34,6 +35,36 @@ Some full repository roots also could not be resolved under the probe's
 pub.dev dependency constraints. Those are dependency-resolution limitations,
 not native builder failures, and should be re-probed independently after the
 workload has a reproducible lockfile.
+
+## Empty input extension mapping boundary
+
+The pinned `build` 4.0.11 implementation documents `buildExtensions['']` as
+matching all input assets. It is not an extensionless-file selector and is not
+converted to `.dart` or a wildcard. The expected-output implementation applies
+normal suffix replacement with a zero-length input suffix, so
+`lib/model.dart` maps to `lib/model.dart.empty_mapping.out` and an extensionless
+`lib/README` maps to `lib/README.empty_mapping.out`. Multiple mapping entries
+are evaluated independently; a regular mapping and an empty-key mapping on one
+Builder produce the union of their outputs.
+
+The Dart manifest boundary emits this as `input_match: "all"` with an empty
+`input_suffix`. Rust consumes that normalized kind and appends the output suffix
+to the complete AssetId path. Candidate scope still comes from the official
+package graph/build config: `generate_for` filters the current asset, target
+sources filter the primary input (including generated-input chains), and
+package visibility is not widened by the mapping. `build_to: source` and
+`build_to: cache` retain their existing output visibility and later-phase
+overlay behavior. Output collisions, stale outputs, action identity, and
+atomic commit use the same generic graph rules as other mappings.
+
+This change supports ordinary Builders with simple output suffixes, including
+regular and empty-key mappings together, static/runtime mappings, source/cache
+outputs, and the existing filtering/dependency semantics. Post-process and
+Drift-specific behavior, workspace semantics, and unsupported manifest shapes
+remain excluded. In `--mode auto`, an unsupported mapping shape is rejected at
+the manifest boundary before generation and falls back to stock Dart
+`build_runner`; `--mode rust` returns an explicit unsupported error. The
+compatibility probe does not make a performance claim.
 
 ## Follow-up order
 

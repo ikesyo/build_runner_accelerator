@@ -298,6 +298,9 @@ pub(crate) fn outputs_for(builder: &BuilderDefinition, input: &str) -> io::Resul
 }
 
 fn extension_matches(extension: &BuilderExtension, path: &str) -> bool {
+    if extension.input_is_all {
+        return true;
+    }
     if extension.input_is_exact {
         return path == extension.input_suffix;
     }
@@ -313,6 +316,12 @@ fn output_for(
     input: &str,
     output_suffix: &str,
 ) -> io::Result<String> {
+    if extension.input_is_all {
+        let (package, path) = input
+            .split_once('|')
+            .ok_or_else(|| io::Error::other(format!("invalid AssetId: {input}")))?;
+        return Ok(format!("{package}|{path}{output_suffix}"));
+    }
     if extension.input_is_exact {
         let (package, path) = input
             .split_once('|')
@@ -407,6 +416,7 @@ mod tests {
                 input_suffix: ".dart".to_owned(),
                 input_is_exact: false,
                 input_is_capture: false,
+                input_is_all: false,
                 input_is_anchored: false,
                 output_suffixes: vec![".one.dart".to_owned(), ".two.dart".to_owned()],
             }],
@@ -435,6 +445,7 @@ mod tests {
                 input_suffix: "lib/special.txt".to_owned(),
                 input_is_exact: true,
                 input_is_capture: false,
+                input_is_all: false,
                 input_is_anchored: true,
                 output_suffixes: vec!["lib/special.generated.txt".to_owned()],
             }],
@@ -464,6 +475,7 @@ mod tests {
                     input_suffix: ".txt".to_owned(),
                     input_is_exact: false,
                     input_is_capture: false,
+                    input_is_all: false,
                     input_is_anchored: false,
                     output_suffixes: vec![".multi".to_owned()],
                 },
@@ -471,6 +483,7 @@ mod tests {
                     input_suffix: "lib/special.txt".to_owned(),
                     input_is_exact: true,
                     input_is_capture: false,
+                    input_is_all: false,
                     input_is_anchored: true,
                     output_suffixes: vec!["lib/special.generated.txt".to_owned()],
                 },
@@ -504,6 +517,7 @@ mod tests {
                 input_suffix: "assets/{{dir}}/{{file}}.txt".to_owned(),
                 input_is_exact: false,
                 input_is_capture: true,
+                input_is_all: false,
                 input_is_anchored: true,
                 output_suffixes: vec!["lib/generated/{{dir}}/{{file}}.dart".to_owned()],
             }],
@@ -533,6 +547,7 @@ mod tests {
                 input_suffix: "lib/input.txt".to_owned(),
                 input_is_exact: true,
                 input_is_capture: false,
+                input_is_all: false,
                 input_is_anchored: true,
                 output_suffixes: vec!["lib/generated.txt".to_owned()],
             }],
@@ -578,6 +593,54 @@ mod tests {
         assert!(error.to_string().contains("builder outputs collide"));
         assert!(error.to_string().contains("app|lib/generated.txt"));
     }
+
+    #[test]
+    fn empty_input_mapping_matches_every_asset_and_coexists_with_suffixes() {
+        let builder = Arc::new(BuilderDefinition {
+            id: "example:builder".to_owned(),
+            kind: BuilderKind::Normal,
+            extensions: vec![
+                BuilderExtension {
+                    input_suffix: ".txt".to_owned(),
+                    input_is_exact: false,
+                    input_is_capture: false,
+                    input_is_all: false,
+                    input_is_anchored: false,
+                    output_suffixes: vec![".regular".to_owned()],
+                },
+                BuilderExtension {
+                    input_suffix: String::new(),
+                    input_is_exact: false,
+                    input_is_capture: false,
+                    input_is_all: true,
+                    input_is_anchored: false,
+                    output_suffixes: vec![".all".to_owned()],
+                },
+            ],
+            post_process_input_extensions: Vec::new(),
+            build_to: BuildTo::Source,
+            phase: 0,
+            is_optional: false,
+            output_is_optional: false,
+            required_input_suffixes: Vec::new(),
+            excluded_input_suffixes: Vec::new(),
+            applies_builder: None,
+            triggers: Vec::new(),
+        });
+        assert_eq!(
+            outputs_for(&builder, "app|lib/README").unwrap(),
+            vec!["app|lib/README.all"]
+        );
+        assert_eq!(
+            outputs_for(&builder, "app|lib/input.txt").unwrap(),
+            vec!["app|lib/input.regular", "app|lib/input.txt.all"]
+        );
+        assert_eq!(
+            outputs_for(&builder, "app|lib/model.dart").unwrap(),
+            vec!["app|lib/model.dart.all"]
+        );
+    }
+
     #[test]
     fn empty_output_mapping_is_a_valid_expected_output_plan() {
         let builder = Arc::new(BuilderDefinition {
@@ -587,6 +650,7 @@ mod tests {
                 input_suffix: ".dart".to_owned(),
                 input_is_exact: false,
                 input_is_capture: false,
+                input_is_all: false,
                 input_is_anchored: false,
                 output_suffixes: Vec::new(),
             }],

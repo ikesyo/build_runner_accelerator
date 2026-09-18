@@ -266,6 +266,8 @@ run_compatibility_graph_suite() {
 run_compatibility_mapping_suite() {
   run_script_probe capture correctness_capture_builder.sh 'capture-builder:'
   run_script_probe multi-mapping correctness_multi_mapping_builder.sh 'multi-mapping-builder:'
+  run_script_probe empty-input-mapping correctness_empty_input_mapping.sh 'empty-input-mapping:'
+  run_script_probe empty-input-mapping-watch watch_smoke_empty_input_mapping.sh 'empty-input-mapping-watch:'
   run_script_probe drift correctness_drift.sh 'drift-compatibility:'
   run_script_probe drift-analyzer correctness_drift_analyzer.sh 'drift-analyzer-compatibility:'
   run_script_probe drift-analyzer-watch watch_smoke_drift_analyzer.sh 'drift-analyzer-watch:'

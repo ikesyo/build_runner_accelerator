@@ -23,6 +23,7 @@ pub(crate) struct BuilderExtension {
     pub(crate) input_suffix: String,
     pub(crate) input_is_exact: bool,
     pub(crate) input_is_capture: bool,
+    pub(crate) input_is_all: bool,
     pub(crate) input_is_anchored: bool,
     pub(crate) output_suffixes: Vec<String>,
 }
@@ -226,7 +227,7 @@ impl RustBuildConfig {
 pub(crate) fn rust_build_config_from_manifest(
     manifest: BuilderManifestFile,
 ) -> io::Result<RustBuildConfig> {
-    if manifest.version != 7 {
+    if manifest.version != 8 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unsupported builder manifest version: {}", manifest.version),
@@ -430,9 +431,10 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
 
     let mut extensions = Vec::with_capacity(manifest_extensions.len());
     for manifest_extension in manifest_extensions {
+        let input_is_all = manifest_extension.input_match == "all";
         let input_is_capture = manifest_extension.input_match == "capture";
         let input_is_exact = match manifest_extension.input_match.as_str() {
-            "suffix" | "capture" => false,
+            "suffix" | "capture" | "all" => false,
             "exact" => true,
             value => {
                 return Err(io::Error::new(
@@ -456,7 +458,9 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
         } else {
             None
         };
-        let invalid_input = if input_is_capture {
+        let invalid_input = if input_is_all {
+            !manifest_extension.input_suffix.is_empty() || manifest_extension.input_anchored
+        } else if input_is_capture {
             invalid_capture_path(&manifest_extension.input_suffix)
         } else if input_is_exact {
             invalid_path(&manifest_extension.input_suffix)
@@ -464,7 +468,9 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
             invalid_suffix(&manifest_extension.input_suffix)
         };
         let invalid_output = manifest_extension.output_suffixes.iter().any(|suffix| {
-            if input_is_capture {
+            if input_is_all {
+                invalid_suffix(suffix)
+            } else if input_is_capture {
                 invalid_capture_path(suffix)
                     || validate_capture_output(
                         capture_group_names.as_deref().unwrap_or_default(),
@@ -487,6 +493,7 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
             input_suffix: manifest_extension.input_suffix,
             input_is_exact,
             input_is_capture,
+            input_is_all,
             input_is_anchored: manifest_extension.input_anchored,
             output_suffixes: manifest_extension.output_suffixes,
         });
@@ -642,7 +649,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_builder_phase_order() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [
@@ -707,7 +714,7 @@ mod tests {
     #[test]
     fn configured_phase_is_the_global_worker_phase() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [
@@ -761,7 +768,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_configured_input_exclusions() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -799,7 +806,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_multiple_outputs() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -831,7 +838,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_all_required_input_suffixes() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -865,7 +872,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_optional_builder_flag() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -896,7 +903,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_trigger_metadata_and_digest() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "trigger_digest": "trigger-digest",
             "worker_entrypoint": "dynamic_worker.dart",
@@ -947,7 +954,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_rejects_unsupported_trigger_kind() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -977,7 +984,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_accepts_multiple_extension_mappings() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -1030,9 +1037,79 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_manifest_accepts_all_input_mapping() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:all",
+                "extensions": [{
+                    "input_suffix": "",
+                    "input_match": "all",
+                    "output_suffixes": [".all"]
+                }],
+                "build_to": "source",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["**"]
+            }],
+            "definitions": [{
+                "id": "example:all",
+                "extensions": [{
+                    "input_suffix": "",
+                    "input_match": "all",
+                    "output_suffixes": [".all"]
+                }],
+                "build_to": "source",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+        let config = rust_build_config_from_manifest(manifest).unwrap();
+        let extension = &config.builders[0].definition.extensions[0];
+        assert!(extension.input_is_all);
+        assert!(!extension.input_is_exact);
+        assert!(!extension.input_is_capture);
+        assert_eq!(extension.input_suffix, "");
+    }
+
+    #[test]
+    fn dynamic_manifest_rejects_non_empty_all_input_metadata() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:all",
+                "input_suffix": ".dart",
+                "input_match": "all",
+                "output_suffixes": [".all"],
+                "build_to": "source",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["**"]
+            }],
+            "definitions": [{
+                "id": "example:all",
+                "input_suffix": ".dart",
+                "input_match": "all",
+                "output_suffixes": [".all"],
+                "build_to": "source",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+        let error = rust_build_config_from_manifest(manifest).unwrap_err();
+        assert!(error.to_string().contains("unsupported build extension metadata"));
+    }
+
+    #[test]
     fn dynamic_manifest_accepts_post_process_definition() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -1069,7 +1146,7 @@ mod tests {
     #[test]
     fn singular_output_field_is_accepted_during_manifest_transition() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -1101,7 +1178,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_accepts_capture_mapping() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{
@@ -1134,7 +1211,7 @@ mod tests {
     #[test]
     fn dynamic_manifest_preserves_per_application_runtime_mapping() {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 7,
+            "version": 8,
             "fingerprint": "fingerprint",
             "worker_entrypoint": "dynamic_worker.dart",
             "builders": [{

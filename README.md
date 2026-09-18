@@ -173,7 +173,11 @@ The native frontend has been validated against workspace fixtures using
 `json_serializable`, `freezed`, `built_value`, `riverpod_generator`, a small
 arbitrary builder, and the isolated `drift_dev:analyzer` + `drift_dev:modular`
 subset, as well as
-demand-driven `is_optional` builders. The tracked fixtures are pinned to the
+demand-driven `is_optional` builders and ordinary Builders using
+`build_extensions: {"": [...]}`. The latter follows pinned build_runner's
+official all-asset semantics, including extensionless inputs, regular mapping
+union, target/`generate_for` filtering, and source/cache visibility. The
+tracked fixtures are pinned to the
 `build_runner 2.16.1` compatibility window:
 
 | Fixture | Generator versions |
