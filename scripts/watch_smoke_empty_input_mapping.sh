@@ -94,7 +94,9 @@ wait_for_outputs() {
 wait_for_changed_output() {
   for _ in $(seq 1 "$(verification_watch_poll_iterations 250)"); do
     if grep -Fq 'content=changed by watch' "$stock_dir/lib/input.dart.empty_mapping.out" 2>/dev/null && \
-      grep -Fq 'content=changed by watch' "$rust_dir/lib/input.dart.empty_mapping.out" 2>/dev/null; then
+      grep -Fq 'content=changed by watch' "$rust_dir/lib/input.dart.empty_mapping.out" 2>/dev/null && \
+      grep -Fq 'content=changed by watch' "$stock_dir/lib/input.dart.consumed.out" 2>/dev/null && \
+      grep -Fq 'content=changed by watch' "$rust_dir/lib/input.dart.consumed.out" 2>/dev/null; then
       return 0
     fi
     kill -0 "$stock_pid" 2>/dev/null || fail 'stock watch process exited during rebuild'
