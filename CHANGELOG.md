@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.3.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.2.0...v0.3.0) - 2026-09-18
+
+- feat: support drift_dev analyzer builder by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/29
+- feat: support drift_dev modular builder by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/31
+
 ## [v0.2.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.1.0...v0.2.0) - 2026-09-17
 
 - feat: support demand-driven optional builders by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/17
