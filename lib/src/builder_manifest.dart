@@ -10,7 +10,7 @@ import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
-const _manifestVersion = 7;
+const _manifestVersion = 8;
 const _factoryProbeTimeout = Duration(seconds: 30);
 const _factoryProbeKillGracePeriod = Duration(seconds: 1);
 
@@ -1123,16 +1123,23 @@ List<_ManifestExtension>? _manifestExtensions(
   if (buildExtensions.isEmpty) return null;
   final extensions = <_ManifestExtension>[];
   for (final entry in buildExtensions.entries) {
-    final inputIsAnchored = entry.key.startsWith('^');
+    // build_runner gives the empty input key a distinct meaning: it matches
+    // every input asset. Keep that meaning explicit in the manifest instead
+    // of turning it into a synthetic extension or wildcard.
+    final inputIsAll = entry.key.isEmpty;
+    final inputIsAnchored = !inputIsAll && entry.key.startsWith('^');
     final input = inputIsAnchored ? entry.key.substring(1) : entry.key;
     final captureNames = _captureGroupNames(input);
     final inputIsCapture = captureNames != null;
     final inputIsExact = inputIsAnchored && !inputIsCapture;
-    if ((inputIsCapture
-        ? !_simpleCapturePath(input)
+    final inputIsValid = inputIsAll
+        ? true
+        : inputIsCapture
+        ? _simpleCapturePath(input)
         : inputIsExact
-        ? !_simplePath(input)
-        : !_simpleExtension(input))) {
+        ? _simplePath(input)
+        : _simpleExtension(input);
+    if (!inputIsValid) {
       return null;
     }
     final outputSuffixes = entry.value
@@ -1143,7 +1150,9 @@ List<_ManifestExtension>? _manifestExtensions(
         )
         .toList(growable: false);
     if (outputSuffixes.any(
-      inputIsCapture
+      inputIsAll
+          ? (suffix) => !_simpleExtension(suffix)
+          : inputIsCapture
           ? (suffix) => !_validCaptureOutput(suffix, captureNames)
           : inputIsExact
           ? (suffix) => !_simplePath(suffix)
@@ -1154,7 +1163,9 @@ List<_ManifestExtension>? _manifestExtensions(
     extensions.add(
       _ManifestExtension(
         inputSuffix: input,
-        inputMatch: inputIsCapture
+        inputMatch: inputIsAll
+            ? 'all'
+            : inputIsCapture
             ? 'capture'
             : inputIsExact
             ? 'exact'

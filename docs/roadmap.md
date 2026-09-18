@@ -16,7 +16,8 @@ The following are implemented and covered by the current fixture suite:
 - Manifest-first builder loading from official `PackageGraph` and
   `BuildConfig` resolution.
 - Generic target/package ordering, multiple extension mappings, source/cache
-  outputs, and the supported cache-only post-process subset.
+  outputs, the `build_extensions: {"": [...]}` all-asset mapping, and the
+  supported cache-only post-process subset.
 - Runtime expected-output mapping probes for selected applications that
   need runtime data (including multi-factory and option-dependent builders),
   phase-aware generated-input visibility, and resident-worker Builder/Resource
@@ -49,9 +50,8 @@ The following are implemented and covered by the current fixture suite:
 ## Post-release research
 
 - [ ] Expand the manifest subset toward complete `build.yaml` semantics while
-  preserving the automatic Dart fallback. Explicit trigger evaluation,
-  `build_extensions: {"": ...}`, full post-process behavior, and workspace
-  semantics remain separate follow-ups.
+  preserving the automatic Dart fallback. Full post-process behavior and
+  workspace semantics remain separate follow-ups.
 - [ ] Compare conditional import/export dependency selection with stock
   `build_runner` before attempting a more precise invalidation rule.
 - [ ] Evaluate chunked build-result frames for outputs beyond the v1 frame
@@ -75,6 +75,7 @@ The minimum checks are:
 
 ```bash
 cargo test --locked --manifest-path rust/Cargo.toml
+cargo build --locked --manifest-path rust/Cargo.toml
 bash scripts/verify.sh
 VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
 git diff --check

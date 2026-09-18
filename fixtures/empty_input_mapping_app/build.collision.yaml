@@ -1,0 +1,37 @@
+builders:
+  empty_input_mapping:
+    import: "package:empty_input_mapping_app/builder.dart"
+    builder_factories:
+      - emptyInputMapping
+    build_extensions:
+      "":
+        - ".empty_mapping.out"
+      ".dart":
+        - ".regular.out"
+    auto_apply: none
+    build_to: source
+
+  empty_input_collision:
+    import: "package:empty_input_mapping_app/builder.dart"
+    builder_factories:
+      - emptyInputCollision
+    build_extensions:
+      "":
+        - ".empty_mapping.out"
+    auto_apply: none
+    build_to: source
+
+targets:
+  $default:
+    sources:
+      include:
+        - lib/**
+      exclude:
+        - lib/target-excluded/**
+    builders:
+      empty_input_mapping_app:empty_input_mapping:
+        generate_for:
+          - lib/input.dart
+      empty_input_mapping_app:empty_input_collision:
+        generate_for:
+          - lib/input.dart

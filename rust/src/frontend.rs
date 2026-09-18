@@ -86,7 +86,7 @@ fn read_manifest(
         Ok(manifest) => manifest,
         Err(_) => return Ok(None),
     };
-    if manifest.version != 7 || manifest.fingerprint != fingerprint {
+    if manifest.version != 8 || manifest.fingerprint != fingerprint {
         return Ok(None);
     }
     let manifest_worker_exists = Path::new(&manifest.worker_entrypoint).is_file();

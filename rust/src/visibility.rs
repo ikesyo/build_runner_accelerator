@@ -133,6 +133,7 @@ mod tests {
                     input_suffix: ".txt".to_owned(),
                     input_is_exact: false,
                     input_is_capture: false,
+                    input_is_all: false,
                     input_is_anchored: false,
                     output_suffixes: vec![".out".to_owned()],
                 }],

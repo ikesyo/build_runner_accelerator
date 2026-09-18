@@ -1,0 +1,46 @@
+builders:
+  empty_input_mapping:
+    import: "package:empty_input_mapping_app/builder.dart"
+    builder_factories:
+      - emptyInputMapping
+    build_extensions:
+      "":
+        - ".empty_mapping.out"
+      ".dart":
+        - ".regular.out"
+    auto_apply: none
+    build_to: source
+
+  empty_input_consumer:
+    import: "package:empty_input_mapping_app/builder.dart"
+    builder_factories:
+      - emptyInputConsumer
+    build_extensions:
+      ".empty_mapping.out":
+        - ".consumed.out"
+    required_inputs:
+      - ".empty_mapping.out"
+    auto_apply: none
+    build_to: source
+
+targets:
+  $default:
+    sources:
+      include:
+        - lib/**
+      exclude:
+        - lib/target-excluded/**
+    builders:
+      empty_input_mapping_app:empty_input_mapping:
+        generate_for:
+          include:
+            - lib/input.dart
+            - lib/second.dart
+            - lib/schema.drift
+            - lib/plain
+            - lib/generate-excluded/**
+          exclude:
+            - lib/generate-excluded/**
+      empty_input_mapping_app:empty_input_consumer:
+        generate_for:
+          - lib/**/*.empty_mapping.out
