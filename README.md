@@ -171,7 +171,8 @@ stable across those versions.
 
 The native frontend has been validated against workspace fixtures using
 `json_serializable`, `freezed`, `built_value`, `riverpod_generator`, a small
-arbitrary builder, and the isolated `drift_dev:analyzer` subset, as well as
+arbitrary builder, and the isolated `drift_dev:analyzer` + `drift_dev:modular`
+subset, as well as
 demand-driven `is_optional` builders. The tracked fixtures are pinned to the
 `build_runner 2.16.1` compatibility window:
 
@@ -179,7 +180,7 @@ demand-driven `is_optional` builders. The tracked fixtures are pinned to the
 | --- | --- |
 | `fixtures/freezed_app` | `freezed 4.0.1`, `json_serializable 6.14.1` |
 | `fixtures/riverpod_app` | `riverpod_generator 4.0.9`, `freezed 4.0.1`, `json_serializable 6.14.1` |
-| `fixtures/drift_analyzer_app` | `drift 2.34.4`, `drift_dev 2.34.6` (analyzer-only subset) |
+| `fixtures/drift_analyzer_app` | `drift 2.34.4`, `drift_dev 2.34.6` (analyzer → modular subset) |
 
 These fixtures are compared with stock `build_runner` for their respective
 clean, no-op, incremental, failure, deletion, rename, and watch cases. The
@@ -189,8 +190,8 @@ manifest path remains the source of truth.
 The following are deliberately outside the first release baseline:
 
 - complete `build.yaml` and `build_runner` semantic compatibility;
-- complete Drift workspace support, including `drift_dev:modular`,
-  `not_shared`, full `driftCleanup`, `registry_builder`, and
+- complete Drift workspace support, including `not_shared`, full
+  `driftCleanup`, `registry_builder`, and
   `build_web_compilers`;
 - unsupported manifest shapes and external-process builders;
 - optional-builder shapes that require semantics beyond the supported

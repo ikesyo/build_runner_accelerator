@@ -86,6 +86,63 @@ assert_missing() {
   [[ ! -e "$path" ]] || fail "unexpected stale output: $path"
 }
 
+assert_manifest_chain() {
+  local manifest=$1
+  MANIFEST_PATH="$manifest" python3 - <<'PY' || exit 1
+import json
+import os
+
+with open(os.environ["MANIFEST_PATH"], encoding="utf-8") as manifest_file:
+    entries = json.load(manifest_file)["builders"]
+by_id = {entry["id"]: entry for entry in entries}
+
+required = [
+    "drift_dev:preparing_builder",
+    "drift_dev:analyzer#factory0",
+    "drift_dev:analyzer#factory1",
+    "drift_dev:modular",
+    "drift_analyzer_app:analyzer_probe",
+]
+missing = [builder_id for builder_id in required if builder_id not in by_id]
+if missing:
+    raise AssertionError(f"manifest is missing builders: {missing}")
+
+phases = {builder_id: by_id[builder_id]["phase"] for builder_id in required}
+if not (
+    phases["drift_dev:preparing_builder"]
+    < phases["drift_dev:analyzer#factory0"]
+    < phases["drift_dev:analyzer#factory1"]
+    < phases["drift_dev:modular"]
+    < phases["drift_analyzer_app:analyzer_probe"]
+):
+    raise AssertionError(f"unexpected phase chain: {phases}")
+
+modular = by_id["drift_dev:modular"]
+if modular["build_to"] != "source":
+    raise AssertionError(f"modular build_to is not source: {modular}")
+if modular["required_input_suffixes"] != [".drift.drift_module.json"]:
+    raise AssertionError(f"unexpected modular required inputs: {modular}")
+if set(modular["output_suffixes"]) != {".drift.dart"}:
+    raise AssertionError(f"unexpected modular outputs: {modular}")
+modular_extensions = {
+    extension["input_suffix"]: extension["output_suffixes"]
+    for extension in modular["extensions"]
+}
+if modular_extensions != {
+    ".dart": [".drift.dart"],
+    ".drift": [".drift.dart"],
+}:
+    raise AssertionError(f"unexpected modular mappings: {modular_extensions}")
+
+analyzer = by_id["drift_dev:analyzer#factory1"]
+if not {
+    ".dart.drift_module.json",
+    ".drift.drift_module.json",
+}.issubset(set(analyzer["output_suffixes"])):
+    raise AssertionError(f"analyzer does not publish both module artifacts: {analyzer}")
+PY
+}
+
 compare_outputs() {
   local label=$1
   local schema_stem=${2:-schema}
@@ -100,14 +157,27 @@ compare_outputs() {
     fail "$label missing discover output"
   [[ -f "$generated_stock/database.dart.drift_module.json" ]] || \
     fail "$label missing analyzer module output"
+  [[ -f "$generated_stock/${schema_stem}.drift.drift_elements.json" ]] || \
+    fail "$label missing Drift discover output"
+  [[ -f "$generated_stock/${schema_stem}.drift.drift_module.json" ]] || \
+    fail "$label missing Drift analyzer module output"
   [[ -f "$generated_stock/${schema_stem}.drift.types.temp.dart" ]] || \
     fail "$label missing generated type helper output"
   [[ -f "$generated_rust/${schema_stem}.drift.types.temp.dart" ]] || \
     fail "$label missing native generated type helper output"
+  assert_same_file "$stock_dir/lib/database.drift.dart" "$rust_dir/lib/database.drift.dart"
+  assert_same_file "$stock_dir/lib/${schema_stem}.drift.dart" \
+    "$rust_dir/lib/${schema_stem}.drift.dart"
+  assert_missing \
+    "$rust_dir/.dart_tool/build_runner_accelerator/cache/drift_analyzer_app/lib/database.drift.dart"
+  assert_missing \
+    "$rust_dir/.dart_tool/build_runner_accelerator/cache/drift_analyzer_app/lib/${schema_stem}.drift.dart"
   grep -Fq 'elements=present:' "$rust_dir/lib/database.drift_analyzer_probe.txt" || \
     fail "$label did not read discover cache artifact"
   grep -Fq 'module=present:' "$rust_dir/lib/database.drift_analyzer_probe.txt" || \
     fail "$label did not read analyzer cache artifact"
+  grep -Fq 'module=present:' "$rust_dir/lib/${schema_stem}.drift_analyzer_probe.txt" || \
+    fail "$label did not read the Drift analyzer cache artifact"
   grep -Fq 'types=present:' "$rust_dir/lib/${schema_stem}.drift_analyzer_probe.txt" || \
     fail "$label did not observe the optional type helper"
   grep -Fq 'input_library=drift_analyzer_app' \
@@ -161,6 +231,8 @@ run_rust() {
 run_stock "$stock_dir" "$temporary_dir/clean.stock.log" || fail 'stock clean build failed'
 run_rust "$rust_dir" "$temporary_dir/clean.rust.log" 1 || fail 'Rust clean build failed'
 compare_outputs clean
+assert_manifest_chain \
+  "$rust_dir/.dart_tool/build_runner_accelerator/builder-manifest.json"
 grep -Fq 'drift_dev:analyzer#factory0' \
   "$rust_dir/.dart_tool/build_runner_accelerator/builder-manifest.json" || \
   fail 'manifest did not expand the discover factory'
@@ -216,6 +288,12 @@ assert_same_tree \
 assert_same_tree "$stock_dir/lib" "$rust_dir/lib"
 assert_missing \
   "$rust_dir/.dart_tool/build_runner_accelerator/cache/drift_analyzer_app/lib/schema_renamed.drift.drift_elements.json"
+assert_missing "$rust_dir/lib/schema_renamed.drift.dart"
+assert_missing "$rust_dir/lib/schema_renamed.drift.drift_analyzer_probe.txt"
+assert_missing \
+  "$rust_dir/.dart_tool/build_runner_accelerator/cache/drift_analyzer_app/lib/schema_renamed.drift.drift_module.json"
+assert_missing \
+  "$rust_dir/.dart_tool/build_runner_accelerator/cache/drift_analyzer_app/lib/schema_renamed.drift.types.temp.dart"
 run_rust "$rust_dir" "$temporary_dir/delete-no-op.rust.log" 2 || \
   fail 'Rust deletion no-op failed'
 grep -Fq 'No work to do (Rust frontend)' "$temporary_dir/delete-no-op.rust.log" || \
@@ -225,7 +303,14 @@ grep -Fq 'No work to do (Rust frontend)' "$temporary_dir/delete-no-op.rust.log" 
 # deletion case above intentionally leaves no type helper to compare.
 for directory in "$stock_dir" "$rust_dir"; do
   cp "$fixture_dir/lib/schema.drift" "$directory/lib/schema.drift"
-  sed -i "s/@DriftDatabase()/@DriftDatabase(include: {'schema.drift'})/" \
+  printf '%s\n' \
+    "import 'package:drift/drift.dart';" \
+    '' \
+    'class ExtraTable extends Table {' \
+    '  IntColumn get id => integer()();' \
+    '}' \
+    > "$directory/lib/extra.dart"
+  sed -i "s/@DriftDatabase()/@DriftDatabase(include: {'schema.drift', 'extra.dart'})/" \
     "$directory/lib/database.dart"
 done
 run_stock "$stock_dir" "$temporary_dir/failure-baseline.stock.log" || \
@@ -234,11 +319,30 @@ run_rust "$rust_dir" "$temporary_dir/failure-baseline.rust.log" 1 || \
   fail 'Rust failure baseline build failed'
 compare_outputs failure-baseline
 
-# A failing later Builder must not commit its partial source output in the
-# native transaction. Keep the successful inventory as the recovery oracle.
+# Make the modular actions dirty before switching to a configuration that
+# raises after their writeAsString call. This is the semantic-warning case
+# covered by drift_dev's fatal_warnings behavior: generation still proceeds,
+# but the Builder raises after publishing its in-memory source output.
+for directory in "$stock_dir" "$rust_dir"; do
+  sed -i "s/@DriftDatabase(include: {'schema.drift', 'extra.dart'})/@DriftDatabase(include: {'schema.drift', 'extra.dart'}, queries: {'brokenQuery': 'SELECT * FROM another'})/" \
+    "$directory/lib/database.dart"
+  printf '\nCREATE TABLE broken (\n  id INTEGER NOT NULL PRIMARY KEY,\n  unknown INTEGER NOT NULL REFERENCES another ("table")\n);\n' \
+    >> "$directory/lib/schema.drift"
+done
+
+# The modular Builder writes its output before raising FatalWarningException.
+# Native must keep both source and cache inventories unchanged until the full
+# dirty batch succeeds. Keep the successful inventory as the recovery oracle.
 for file in "$rust_dir"/lib/*.drift_analyzer_probe.txt; do
   cp "$file" "$results_dir/$(basename "$file")"
 done
+for file in "$rust_dir"/lib/*.drift.dart; do
+  cp "$file" "$results_dir/failure-before.$(basename "$file")"
+done
+mkdir -p "$results_dir/failure-cache-before"
+cp -R \
+  "$rust_dir/.dart_tool/build_runner_accelerator/cache/drift_analyzer_app/." \
+  "$results_dir/failure-cache-before/"
 for directory in "$stock_dir" "$rust_dir"; do
   cp "$fixture_dir/build.failure.yaml" "$directory/build.yaml"
 done
@@ -248,9 +352,21 @@ fi
 if run_rust "$rust_dir" "$temporary_dir/failure.rust.log" 2; then
   fail 'Rust failure probe unexpectedly succeeded'
 fi
+grep -Fq 'drift_dev:modular' "$temporary_dir/failure.stock.log" || \
+  fail 'stock failure did not reach drift_dev:modular'
+grep -Fq 'Drift emitted warnings and the `fatal_warnings` build option is enabled.' \
+  "$temporary_dir/failure.rust.log" || \
+  fail 'Rust failure did not come from modular fatal warnings'
 for file in "$results_dir"/*.drift_analyzer_probe.txt; do
   assert_same_file "$file" "$rust_dir/lib/$(basename "$file")"
 done
+for file in "$results_dir"/failure-before.*.drift.dart; do
+  output=$(basename "$file" | sed 's/^failure-before\.//')
+  assert_same_file "$file" "$rust_dir/lib/$output"
+done
+assert_same_tree \
+  "$results_dir/failure-cache-before" \
+  "$rust_dir/.dart_tool/build_runner_accelerator/cache/drift_analyzer_app"
 
 for directory in "$stock_dir" "$rust_dir"; do
   cp "$fixture_dir/build.yaml" "$directory/build.yaml"
@@ -261,4 +377,4 @@ run_rust "$rust_dir" "$temporary_dir/recovery.rust.log" 1 || \
   fail 'Rust recovery build failed'
 compare_outputs recovery
 
-printf 'drift-analyzer-compatibility: factories=2 input-mappings=2 required-input=prep cache-read=yes resolver-api=yes type-helper=yes source-cache=yes inventory=yes failure-atomic=yes jobs=1,2\n'
+printf 'drift-analyzer-compatibility: chain=preparing-analyzer-modular factories=2 input-mappings=2 required-input=cache-artifact cache-read=yes resolver-api=yes type-helper=yes source-output=yes source-cache=yes stale-cleanup=yes failure-atomic=yes jobs=1,2\n'

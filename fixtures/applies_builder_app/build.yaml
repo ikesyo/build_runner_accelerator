@@ -6,8 +6,10 @@ builders:
     build_extensions:
       ".txt":
         - ".produced.txt"
-    # Keep the ordering contract in applies_builders; the consumer does not
-    # declare required_inputs so this probe exercises that phase edge.
+    # Selecting a consumer is the contract of applies_builders; it does not
+    # itself establish a phase edge. The consumer intentionally has no
+    # required_inputs, so this probe also exercises build_runner's stable
+    # ordering when no dependency edge is declared.
     applies_builders:
       - applies_builder_app:consumer
     auto_apply: none

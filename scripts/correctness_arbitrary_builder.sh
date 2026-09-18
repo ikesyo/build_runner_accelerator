@@ -185,8 +185,10 @@ setup_case() {
   assert_no_file "$stock_dir/lib/target-ignored.meta.txt"
   assert_no_file "$rust_dir/lib/target-ignored.gen.txt"
   assert_no_file "$rust_dir/lib/target-ignored.meta.txt"
+  # The exact builder's source output is a .txt input to echo_builder, so the
+  # official generated-input dependency adds a fourth native action.
   assert_contains "$temporary_dir/$name.rust.initial.log" \
-    'Rust frontend: 3 build action(s)'
+    'Rust frontend: 4 build action(s)'
   if (( no_op_checked == 0 )); then
     run_rust "$rust_dir" "$temporary_dir/$name.rust.no-op.log"
     assert_contains "$temporary_dir/$name.rust.no-op.log" \
@@ -351,8 +353,10 @@ run_case_exact_extension() {
   run_rust "$rust_dir" "$temporary_dir/$name.rust.change.log"
   assert_same_file "$stock_dir/lib/special.generated.txt" \
     "$rust_dir/lib/special.generated.txt"
+  # exact_builder's source output is also a .txt input to echo_builder, so
+  # the generated-input dependency contributes one additional action.
   assert_contains "$temporary_dir/$name.rust.change.log" \
-    'Rust frontend: 2 build action(s)'
+    'Rust frontend: 3 build action(s)'
   printf 'arbitrary-builder: exact-extension: pass\n'
 }
 

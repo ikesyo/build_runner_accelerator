@@ -21,10 +21,12 @@ The following are implemented and covered by the current fixture suite:
   need runtime data (including multi-factory and option-dependent builders),
   phase-aware generated-input visibility, and resident-worker Builder/Resource
   lifetime coverage.
-- An isolated supported subset for `drift_dev:analyzer` at the pinned Drift
-  versions, including its `discover`/`analyzer` factories, `.dart`/`.drift`
-  runtime mappings, `preparing_builder` required-input phase, cache artifact
-  visibility, Resolver/BuildStep APIs, output inventory, and native watch.
+- An isolated supported subset for the official
+  `preparing_builder` → `drift_dev:analyzer` → `drift_dev:modular` chain at
+  the pinned Drift versions, including `discover`/`analyzer` factories,
+  `.dart`/`.drift` runtime mappings, analyzer cache artifact visibility,
+  modular `.drift.dart` source outputs, Resolver/BuildStep APIs, stale-output
+  cleanup, atomic failure recovery, and native watch.
 - Demand-driven execution for compatible normal `is_optional` builders when a
   later action reads or uses their declared output.
 - Stock-vs-native output comparisons for clean, no-op, incremental, failure,
@@ -59,7 +61,7 @@ The following are implemented and covered by the current fixture suite:
 - [ ] Validate mixed builders and multi-package workspaces from real projects.
 - [ ] Consider builder-specific fast paths only when they beat the generic
   manifest path under the same fixture and SDK conditions.
-- [ ] Extend the Drift probe beyond the isolated analyzer subset: `modular`,
+- [ ] Extend the Drift probe beyond the isolated analyzer + modular subset:
   `not_shared`, full `driftCleanup`, `registry_builder`,
   `build_web_compilers`, and complete Drift workspaces remain out of scope.
 
@@ -72,8 +74,10 @@ comparisons. The repository scripts accept `DART_BIN`, `CARGO_BIN`,
 The minimum checks are:
 
 ```bash
+cargo test --locked --manifest-path rust/Cargo.toml
 bash scripts/verify.sh
 VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
+git diff --check
 ```
 
 Before a release candidate, run the full correctness suite and the relevant

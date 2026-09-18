@@ -26,6 +26,11 @@ targets:
         generate_for:
           - lib/**.dart
           - lib/**.drift
+      drift_dev:modular:
+        enabled: true
+        generate_for:
+          - lib/**.dart
+          - lib/**.drift
       drift_analyzer_app:analyzer_probe:
         generate_for:
           - lib/**.dart
