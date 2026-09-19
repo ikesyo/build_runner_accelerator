@@ -4,11 +4,15 @@ import 'dart:io';
 
 import 'package:build_config/build_config.dart';
 import 'package:build_runner/src/build_plan/build_triggers.dart'
-    show AnnotationBuildTrigger, BuildTriggers, ImportBuildTrigger;
+    show BuildTriggers;
 import 'package:built_collection/built_collection.dart';
 import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
+
+import 'manifest/mapping.dart';
+import 'manifest/model.dart';
+import 'manifest/ordering.dart';
 
 const _manifestVersion = 8;
 const _factoryProbeTimeout = Duration(seconds: 30);
@@ -40,14 +44,14 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       'Unsupported build trigger configuration:\n${buildTriggers.renderWarnings}',
     );
   }
-  final normalizedTriggers = _normalizedTriggers(buildTriggers);
+  final normalizedTriggerMap = normalizedTriggers(buildTriggers);
   final triggerDigest = buildTriggers.digest.toString();
 
   final rootConfig = configs[packageGraph.root.name];
   if (rootConfig == null) {
     throw StateError('Root package config was not loaded');
   }
-  final targets = <_TargetInfo>[];
+  final targets = <TargetInfo>[];
   for (final package in packageGraph.allPackages.values) {
     if (package.name == r'$sdk') continue;
     final config = configs[package.name];
@@ -56,15 +60,19 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     }
     for (final target in config.buildTargets.values) {
       targets.add(
-        _TargetInfo(
+        TargetInfo(
           package: package,
           target: target,
-          sources: _targetPatterns(target, package, config),
+          sources: targetPatterns(target, package, config),
         ),
       );
     }
   }
-  final targetOrder = _orderTargets(targets);
+  final targetOrder = orderTargets(
+    targets,
+    keyOf: (target) => target.target.key,
+    dependenciesOf: (target) => target.target.dependencies,
+  );
   final orderedTargets = targetOrder.targets;
   final rootTargetKey = packageGraph.root.name + ':' + packageGraph.root.name;
   final rootTarget = orderedTargets
@@ -73,7 +81,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   if (rootTarget == null) {
     throw StateError('Root target is unavailable: ' + rootTargetKey);
   }
-  final definitions = <String, _DefinitionInfo>{};
+  final definitions = <String, DefinitionInfo>{};
   for (final config in configs.values) {
     for (final definition in config.builderDefinitions.values) {
       // Match build_runner's build-script rule: relative imports from
@@ -82,7 +90,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
           definition.package != packageGraph.root.name) {
         continue;
       }
-      definitions[definition.key] = _DefinitionInfo.normal(definition);
+      definitions[definition.key] = DefinitionInfo.normal(definition);
     }
     for (final definition in config.postProcessBuilderDefinitions.values) {
       // Post-process builders use the same package:builder key namespace as
@@ -91,16 +99,16 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
           definition.package != packageGraph.root.name) {
         continue;
       }
-      definitions[definition.key] = _DefinitionInfo.postProcess(definition);
+      definitions[definition.key] = DefinitionInfo.postProcess(definition);
     }
   }
 
-  final selected = <String, _SelectedBuilder>{};
+  final selected = <String, SelectedBuilder>{};
   final disabled = <String>{};
 
   void select(
     String key, {
-    required _TargetInfo target,
+    required TargetInfo target,
     InputSet? generateFor,
     Map<String, dynamic>? options,
     required bool explicit,
@@ -142,7 +150,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       mergedOptions.addAll(global.options);
       mergedOptions.addAll(global.devOptions);
     }
-    selected[selectedKey] = _SelectedBuilder(
+    selected[selectedKey] = SelectedBuilder(
       definition,
       target,
       generateFor ?? definition.defaults.generateFor,
@@ -209,9 +217,9 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   // multi-factory and option-dependent applications so target-local mapping
   // overrides remain lossless and package-specific Rust branches are unnecessary.
   final probeRequests = selected.entries
-      .where((entry) => _requiresRuntimeProbe(entry.value))
+      .where((entry) => requiresRuntimeProbe(entry.value))
       .map(
-        (entry) => _FactoryProbeRequest(
+        (entry) => FactoryProbeRequest(
           id: entry.key,
           definition: entry.value.definition,
           options: _jsonMap(entry.value.options),
@@ -220,19 +228,19 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       )
       .toList(growable: false);
   final probedMappings = await _probeFactoryMappings(root, probeRequests);
-  final canonicalMappings = <String, List<_FactoryMapping>>{};
+  final canonicalMappings = <String, List<FactoryMapping>>{};
   for (final request in probeRequests) {
     final mappings = probedMappings[request.id];
     if (mappings != null) {
       canonicalMappings.putIfAbsent(request.definition.key, () => mappings);
     }
   }
-  final compatibleDefinitions = <String, List<_ManifestDefinition>>{};
+  final compatibleDefinitions = <String, List<ManifestDefinition>>{};
   for (final info in definitions.values) {
-    final converted = _tryConvertDefinition(
+    final converted = tryConvertDefinition(
       info,
       canonicalMappings[info.key],
-      triggers: normalizedTriggers[info.key] ?? const [],
+      triggers: normalizedTriggerMap[info.key] ?? const [],
     );
     if (converted != null && converted.isNotEmpty) {
       compatibleDefinitions[info.key] = converted;
@@ -242,14 +250,14 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   for (final entry in selected.entries) {
     final selectedBuilder = entry.value;
     final definition = selectedBuilder.definition;
-    final requiresRuntimeProbe = _requiresRuntimeProbe(selectedBuilder);
+    final requiresProbe = requiresRuntimeProbe(selectedBuilder);
     final runtimeMappings = probedMappings[entry.key];
-    if (requiresRuntimeProbe) {
+    if (requiresProbe) {
       if (runtimeMappings == null ||
           !compatibleDefinitions.containsKey(definition.key) ||
           compatibleDefinitions[definition.key]!.any(
             (converted) =>
-                _runtimeMappingJson(definition, runtimeMappings, converted) ==
+                runtimeMappingJson(definition, runtimeMappings, converted) ==
                 null,
           )) {
         throw StateError(
@@ -271,14 +279,26 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     for (final definitions in compatibleDefinitions.values)
       for (final definition in definitions) ...definition.outputSuffixes,
   };
-  final normalDefinitions = <String, _DefinitionInfo>{
+  final normalDefinitions = <String, DefinitionInfo>{
     for (final entry in definitions.entries)
       if (!entry.value.isPostProcess) entry.key: entry.value,
   };
-  final globallyOrderedKeys = _orderBuilders(
+  final builderOrdering = <String, BuilderOrderDefinition>{
+    for (final entry in normalDefinitions.entries)
+      entry.key: BuilderOrderDefinition(
+        requiredInputs: entry.value.normal!.requiredInputs,
+        buildExtensionOutputs: entry.value.normal!.buildExtensions.values,
+        runsBefore: entry.value.normal!.runsBefore,
+      ),
+  };
+  final globalRunsBefore = <String, Iterable<String>>{
+    for (final entry in rootConfig.globalOptions.entries)
+      entry.key: entry.value.runsBefore,
+  };
+  final globallyOrderedKeys = orderBuilders(
     normalDefinitions.keys.toList(),
-    normalDefinitions,
-    rootConfig.globalOptions,
+    builderOrdering,
+    globalRunsBefore,
   );
   // Flatten the factory phases in the same order as build_runner's phase
   // creator: definition order first, then factory order within a definition.
@@ -310,7 +330,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
             .map((builder) => builder.definition.key)
             .toList()
           ..sort();
-    final runtimeOutputSuffixes = <String, List<String>>{};
+    final runtimeSuffixesById = <String, List<String>>{};
     for (final candidateBuilder in targetBuilders) {
       final candidateMappings =
           probedMappings[_selectedKey(
@@ -319,8 +339,8 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
           )];
       for (final candidate
           in compatibleDefinitions[candidateBuilder.definition.key] ??
-              const <_ManifestDefinition>[]) {
-        runtimeOutputSuffixes[candidate.id] = _runtimeOutputSuffixes(
+              const <ManifestDefinition>[]) {
+        runtimeSuffixesById[candidate.id] = runtimeOutputSuffixes(
           candidateBuilder.definition,
           candidateMappings,
           candidate,
@@ -332,7 +352,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       final selectedBuilder = targetBuilders.firstWhere(
         (builder) => builder.definition.key == key,
       );
-      final patterns = _patterns(selectedBuilder.generateFor);
+      final selectedPatterns = patterns(selectedBuilder.generateFor);
       for (final converted in compatibleDefinitions[key]!) {
         selectedDefinitions.add(converted.id);
         final excludedInputSuffixes = converted.isPostProcess
@@ -343,18 +363,18 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
                     if (!candidate.isPostProcess &&
                         builderOrder[candidate.id]! >=
                             builderOrder[converted.id]!)
-                      ...(runtimeOutputSuffixes[candidate.id] ??
+                      ...(runtimeSuffixesById[candidate.id] ??
                           candidate.outputSuffixes),
               }.toList()..sort());
         activeEntries.add(
           converted.toJson(
-            generateFor: patterns.include,
-            generateForExclude: patterns.exclude,
+            generateFor: selectedPatterns.include,
+            generateForExclude: selectedPatterns.exclude,
             targetSources: target.sources.include,
             targetSourcesExclude: target.sources.exclude,
             options: _jsonMap(selectedBuilder.options),
             isRoot: target.package.isRoot,
-            runtimeMapping: _runtimeMappingJson(
+            runtimeMapping: runtimeMappingJson(
               selectedBuilder.definition,
               probedMappings[_selectedKey(target.target.key, key)],
               converted,
@@ -373,7 +393,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     }
   }
 
-  final allCompatibleDefinitions = <_ManifestDefinition>[
+  final allCompatibleDefinitions = <ManifestDefinition>[
     for (final definitions in compatibleDefinitions.values) ...definitions,
   ]..sort((left, right) => left.id.compareTo(right.id));
   final definitionEntries = <Map<String, dynamic>>[
@@ -392,7 +412,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       ),
   ];
 
-  final catalogEntries = <_CatalogEntry>[
+  final catalogEntries = <CatalogEntry>[
     for (final definition in allCompatibleDefinitions)
       if (selectedDefinitions.contains(definition.id))
         _catalogEntry(definition),
@@ -411,23 +431,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
 /// marker, and direct dependencies. Keep this small graph local to the worker
 /// package so manifest generation does not depend on the retired
 /// `build_runner_core` package.
-class _PackageGraph {
-  _PackageGraph({required this.root, required this.allPackages});
-
-  final _PackageInfo root;
-  final Map<String, _PackageInfo> allPackages;
-}
-
-class _PackageInfo {
-  _PackageInfo({required this.name, required this.path, required this.isRoot});
-
-  final String name;
-  final String path;
-  final bool isRoot;
-  final List<_PackageInfo> dependencies = <_PackageInfo>[];
-}
-
-Future<_PackageGraph> _loadPackageGraph(String packagePath) async {
+Future<PackageGraph> _loadPackageGraph(String packagePath) async {
   final root = p.canonicalize(packagePath);
   final rootPubspec = _pubspecForPath(root);
   final rootName = rootPubspec['name'];
@@ -451,18 +455,18 @@ Future<_PackageGraph> _loadPackageGraph(String packagePath) async {
     throw StateError('Unable to find package_config.json for $root.');
   }
 
-  final packages = <String, _PackageInfo>{};
+  final packages = <String, PackageInfo>{};
   final orderedPackages = packageConfig.packages.toList()
     ..sort((left, right) => left.name.compareTo(right.name));
   for (final package in orderedPackages) {
-    packages[package.name] = _PackageInfo(
+    packages[package.name] = PackageInfo(
       name: package.name,
       path: package.root.toFilePath(),
       isRoot: package.name == rootName,
     );
   }
 
-  _PackageInfo packageNode(String name, {String? parent}) {
+  PackageInfo packageNode(String name, {String? parent}) {
     final node = packages[name];
     if (node == null) {
       throw StateError(
@@ -489,7 +493,7 @@ Future<_PackageGraph> _loadPackageGraph(String packagePath) async {
     );
   }
 
-  return _PackageGraph(root: rootNode, allPackages: packages);
+  return PackageGraph(root: rootNode, allPackages: packages);
 }
 
 YamlMap _pubspecForPath(String packagePath) {
@@ -520,7 +524,7 @@ List<String> _depsFromYaml(
 Iterable<String> _yamlStringKeys(Map? values) =>
     values == null ? const <String>[] : values.keys.cast<String>();
 
-bool _autoAppliesToTarget(BuilderDefinition definition, _PackageInfo target) {
+bool _autoAppliesToTarget(BuilderDefinition definition, PackageInfo target) {
   switch (definition.autoApply) {
     case AutoApply.rootPackage:
       return target.isRoot;
@@ -537,194 +541,9 @@ bool _autoAppliesToTarget(BuilderDefinition definition, _PackageInfo target) {
 
 String _selectedKey(String target, String builder) => '$target|$builder';
 
-_PatternSet _targetPatterns(
-  BuildTarget target,
-  _PackageInfo package,
-  BuildConfig config,
-) {
-  final include = target.sources.include;
-  if (include == null || include.isEmpty) {
-    final defaults = package.isRoot
-        ? const ['**']
-        : <String>[
-            'CHANGELOG*',
-            'lib/**',
-            'bin/**',
-            'LICENSE*',
-            'pubspec.yaml',
-            'README*',
-            ...config.additionalPublicAssets,
-          ];
-    return _patternSet(
-      defaults,
-      target.sources.exclude?.toList(growable: false) ?? const [],
-    );
-  }
-  return _patterns(target.sources);
-}
-
-_TargetOrder _orderTargets(List<_TargetInfo> targets) {
-  final byKey = <String, _TargetInfo>{
-    for (final target in targets) target.target.key: target,
-  };
-  final indexes = <String, int>{};
-  final lowLinks = <String, int>{};
-  final stack = <String>[];
-  final onStack = <String>{};
-  final components = <List<_TargetInfo>>[];
-  var nextIndex = 0;
-
-  void visit(String key) {
-    if (indexes.containsKey(key)) return;
-    final target = byKey[key];
-    if (target == null) {
-      throw StateError('Target dependency is unavailable: ' + key);
-    }
-
-    indexes[key] = nextIndex;
-    lowLinks[key] = nextIndex;
-    nextIndex++;
-    stack.add(key);
-    onStack.add(key);
-
-    for (final dependency in target.target.dependencies) {
-      if (!byKey.containsKey(dependency)) {
-        throw StateError('Target dependency is unavailable: ' + dependency);
-      }
-      if (!indexes.containsKey(dependency)) {
-        visit(dependency);
-        lowLinks[key] = _min(lowLinks[key]!, lowLinks[dependency]!);
-      } else if (onStack.contains(dependency)) {
-        lowLinks[key] = _min(lowLinks[key]!, indexes[dependency]!);
-      }
-    }
-
-    if (lowLinks[key] == indexes[key]) {
-      final component = <_TargetInfo>[];
-      String member;
-      do {
-        member = stack.removeLast();
-        onStack.remove(member);
-        component.add(byKey[member]!);
-      } while (member != key);
-      components.add(component);
-    }
-  }
-
-  // build_runner's graph helper starts with the last graph node. Reversing
-  // the stable PackageGraph/BuildConfig insertion order preserves its
-  // dependency-first SCC order and member order without a builder-specific
-  // path.
-  for (final target in targets.reversed) {
-    visit(target.target.key);
-  }
-
-  final ordered = <_TargetInfo>[];
-  final componentIndex = <String, int>{};
-  final memberIndex = <String, int>{};
-  var maxComponentSize = 1;
-  for (var component = 0; component < components.length; component++) {
-    final members = components[component];
-    maxComponentSize = _max(maxComponentSize, members.length);
-    for (var member = 0; member < members.length; member++) {
-      final key = members[member].target.key;
-      componentIndex[key] = component;
-      memberIndex[key] = member;
-    }
-    ordered.addAll(members);
-  }
-  return _TargetOrder(ordered, componentIndex, memberIndex, maxComponentSize);
-}
-
-int _min(int left, int right) => left < right ? left : right;
-
-int _max(int left, int right) => left > right ? left : right;
-
-List<String> _orderBuilders(
-  List<String> keys,
-  Map<String, _DefinitionInfo> definitions,
-  Map<String, GlobalBuilderConfig> globalOptions,
-) {
-  // Keep this graph isomorphic to build_runner's findBuilderOrder. The
-  // upstream helper models an edge from a builder to the builder it depends
-  // on, then reverses the topological result. In particular, applies_builders
-  // controls application, not ordering; a required_inputs or runs_before edge
-  // is needed to establish a phase boundary.
-  final sorted = keys.toList()..sort();
-  final outgoing = <String, Set<String>>{
-    for (final key in sorted) key: <String>{},
-  };
-  final indegree = <String, int>{for (final key in sorted) key: 0};
-
-  void addEdge(String before, String after) {
-    if (!outgoing.containsKey(before) ||
-        !outgoing.containsKey(after) ||
-        before == after ||
-        !outgoing[before]!.add(after)) {
-      return;
-    }
-    indegree[after] = indegree[after]! + 1;
-  }
-
-  for (final parentKey in sorted) {
-    final parent = definitions[parentKey]!.normal!;
-    for (final childKey in sorted) {
-      if (parentKey == childKey) continue;
-      final child = definitions[childKey]!.normal!;
-      final childOutputs = child.buildExtensions.values.expand(
-        (value) => value,
-      );
-      final childProvidesRequiredInput = parent.requiredInputs.any(
-        (required) => childOutputs.any((output) => output.endsWith(required)),
-      );
-      if (childProvidesRequiredInput) {
-        addEdge(parentKey, childKey);
-      }
-      if (child.runsBefore.contains(parentKey)) {
-        addEdge(parentKey, childKey);
-      }
-      final childGlobal = globalOptions[childKey];
-      if (childGlobal != null && childGlobal.runsBefore.contains(parentKey)) {
-        addEdge(parentKey, childKey);
-      }
-    }
-  }
-
-  final result = <String>[];
-  final remaining = <String>{
-    for (final key in sorted)
-      if (indegree[key] == 0) key,
-  };
-  while (remaining.isNotEmpty) {
-    final key = remaining.toList()..sort();
-    final next = key.first;
-    remaining.remove(next);
-    result.add(next);
-    for (final child in outgoing[next]!) {
-      indegree[child] = indegree[child]! - 1;
-      if (indegree[child] == 0) remaining.add(child);
-    }
-  }
-  if (result.length != sorted.length) {
-    throw StateError('Builder ordering contains a cycle');
-  }
-  return result.reversed.toList(growable: false);
-}
-
-bool _requiresRuntimeProbe(_SelectedBuilder selectedBuilder) {
-  final definition = selectedBuilder.definition;
-  if (definition.isPostProcess) {
-    // ignore: deprecated_member_use
-    return definition.postProcess!.inputExtensions == null &&
-        _knownPostProcessInputExtensions(definition.postProcess!) == null;
-  }
-  return definition.normal!.builderFactories.length > 1 ||
-      selectedBuilder.options.isNotEmpty;
-}
-
-Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
+Future<Map<String, List<FactoryMapping>>> _probeFactoryMappings(
   String root,
-  Iterable<_FactoryProbeRequest> requests,
+  Iterable<FactoryProbeRequest> requests,
 ) async {
   final probeRequests = requests.toList(growable: false);
   if (probeRequests.isEmpty) return const {};
@@ -768,7 +587,7 @@ Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
     final decoded = jsonDecode(await resultFile.readAsString());
     if (decoded is! Map) return const {};
 
-    final probed = <String, List<_FactoryMapping>>{};
+    final probed = <String, List<FactoryMapping>>{};
     for (final entry in decoded.entries) {
       final request = probeRequests
           .where((candidate) => candidate.id == entry.key)
@@ -779,7 +598,7 @@ Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
           : request.definition.normal!.builderFactories;
       final rawMappings = entry.value as List;
       if (rawMappings.length != expectedFactories.length) continue;
-      final mappings = <_FactoryMapping>[];
+      final mappings = <FactoryMapping>[];
       var valid = true;
       for (var index = 0; index < rawMappings.length; index++) {
         final raw = rawMappings[index];
@@ -817,7 +636,7 @@ Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
           break;
         }
         mappings.add(
-          _FactoryMapping(
+          FactoryMapping(
             factory: raw['factory'] as String,
             buildExtensions: buildExtensions,
             inputExtensions: inputExtensions,
@@ -839,7 +658,7 @@ Future<Map<String, List<_FactoryMapping>>> _probeFactoryMappings(
   }
 }
 
-String _factoryProbeSource(Iterable<_FactoryProbeRequest> requests) {
+String _factoryProbeSource(Iterable<FactoryProbeRequest> requests) {
   // These values are later emitted into executable Dart source. Keep the
   // probe boundary as strict as the manifest converter: only package imports
   // and identifier-shaped factory names may cross it. In particular, a raw
@@ -849,11 +668,11 @@ String _factoryProbeSource(Iterable<_FactoryProbeRequest> requests) {
         if (request.definition.isPostProcess) {
           final postProcess = request.definition.postProcess!;
           return postProcess.import.startsWith('package:') &&
-              _identifier.hasMatch(postProcess.builderFactory);
+              manifestIdentifierPattern.hasMatch(postProcess.builderFactory);
         }
         final normal = request.definition.normal!;
         return normal.import.startsWith('package:') &&
-            normal.builderFactories.every(_identifier.hasMatch);
+            normal.builderFactories.every(manifestIdentifierPattern.hasMatch);
       })
       .toList(growable: false);
   final sorted = safeRequests.toList()
@@ -961,395 +780,10 @@ String? _findPackageConfigPath(String root) {
   }
 }
 
-_FactoryMapping? _factoryMappingFor(
-  _DefinitionInfo info,
-  List<_FactoryMapping>? mappings,
-  _ManifestDefinition definition,
-) {
-  if (mappings == null) return null;
-  final index = info.isPostProcess
-      ? 0
-      : info.normal!.builderFactories.indexOf(definition.factory);
-  if (index < 0 || index >= mappings.length) return null;
-  return mappings[index];
-}
-
-Map<String, dynamic>? _runtimeMappingJson(
-  _DefinitionInfo info,
-  List<_FactoryMapping>? mappings,
-  _ManifestDefinition definition,
-) {
-  final mapping = _factoryMappingFor(info, mappings, definition);
-  if (mapping == null) return null;
-  if (info.isPostProcess) {
-    final inputExtensions = mapping.inputExtensions;
-    if (inputExtensions == null) return null;
-    return <String, dynamic>{'input_extensions': inputExtensions};
-  }
-  final extensions = _manifestExtensions(mapping.buildExtensions);
-  if (extensions == null) return null;
-  return <String, dynamic>{
-    'extensions': [for (final extension in extensions) extension.toJson()],
-  };
-}
-
-List<String> _runtimeOutputSuffixes(
-  _DefinitionInfo info,
-  List<_FactoryMapping>? mappings,
-  _ManifestDefinition definition,
-) {
-  final mapping = _factoryMappingFor(info, mappings, definition);
-  if (mapping == null || info.isPostProcess) {
-    return definition.outputSuffixes;
-  }
-  final extensions = _manifestExtensions(mapping.buildExtensions);
-  if (extensions == null) return definition.outputSuffixes;
-  return <String>[
-    for (final extension in extensions) ...extension.outputSuffixes,
-  ];
-}
-
-Map<String, List<_ManifestTrigger>> _normalizedTriggers(
-  BuildTriggers buildTriggers,
-) {
-  final result = <String, List<_ManifestTrigger>>{};
-  for (final entry in buildTriggers.triggers.entries) {
-    final triggers = <_ManifestTrigger>[];
-    for (final trigger in entry.value) {
-      if (trigger is ImportBuildTrigger) {
-        triggers.add(_ManifestTrigger(kind: 'import', value: trigger.import));
-      } else if (trigger is AnnotationBuildTrigger) {
-        triggers.add(
-          _ManifestTrigger(kind: 'annotation', value: trigger.annotation),
-        );
-      } else {
-        throw StateError(
-          'Unsupported build trigger type for ${entry.key}: '
-          '${trigger.runtimeType}',
-        );
-      }
-    }
-    triggers.sort((left, right) {
-      final kind = left.kind.compareTo(right.kind);
-      return kind != 0 ? kind : left.value.compareTo(right.value);
-    });
-    result[entry.key] = triggers;
-  }
-  return result;
-}
-
-List<_ManifestDefinition>? _tryConvertDefinition(
-  _DefinitionInfo info,
-  List<_FactoryMapping>? probedMappings, {
-  required List<_ManifestTrigger> triggers,
-}) {
-  if (info.isPostProcess) {
-    final runtimeInputExtensions = probedMappings?.length == 1
-        ? probedMappings!.single.inputExtensions
-        : null;
-    final converted = _tryConvertPostProcessDefinition(
-      info.postProcess!,
-      runtimeInputExtensions: runtimeInputExtensions,
-      triggers: triggers,
-    );
-    return converted == null ? null : [converted];
-  }
-  final definition = info.normal!;
-  if (!definition.import.startsWith('package:')) return null;
-  if (definition.builderFactories.any(
-    (factory) => !_identifier.hasMatch(factory),
-  )) {
-    return null;
-  }
-  final requiredInputSuffixes = definition.requiredInputs.toList(
-    growable: false,
-  );
-  if (requiredInputSuffixes.any((suffix) => !_simpleExtension(suffix))) {
-    return null;
-  }
-  final factoryMappings =
-      probedMappings ??
-      (definition.builderFactories.length == 1
-          ? <_FactoryMapping>[
-              _FactoryMapping(
-                factory: definition.builderFactories.single,
-                buildExtensions: definition.buildExtensions,
-              ),
-            ]
-          : null);
-  if (factoryMappings == null ||
-      factoryMappings.length != definition.builderFactories.length) {
-    return null;
-  }
-
-  final converted = <_ManifestDefinition>[];
-  for (
-    var factoryIndex = 0;
-    factoryIndex < factoryMappings.length;
-    factoryIndex++
-  ) {
-    final mapping = factoryMappings[factoryIndex];
-    if (mapping.factory != definition.builderFactories[factoryIndex]) {
-      return null;
-    }
-    final extensions = _manifestExtensions(mapping.buildExtensions);
-    if (extensions == null) return null;
-    converted.add(
-      _ManifestDefinition(
-        id: _manifestFactoryId(
-          definition.key,
-          factoryIndex,
-          definition.builderFactories.length,
-        ),
-        importUri: definition.import,
-        factory: mapping.factory,
-        kind: 'normal',
-        extensions: extensions,
-        inputExtensions: const [],
-        buildTo: definition.buildTo == BuildTo.source ? 'source' : 'cache',
-        outputIsOptional: false,
-        isOptional: definition.isOptional,
-        requiredInputSuffixes: requiredInputSuffixes,
-        triggers: triggers,
-      ),
-    );
-  }
-  return converted;
-}
-
-List<_ManifestExtension>? _manifestExtensions(
-  Map<String, List<String>> buildExtensions,
-) {
-  if (buildExtensions.isEmpty) return null;
-  final extensions = <_ManifestExtension>[];
-  for (final entry in buildExtensions.entries) {
-    // build_runner gives the empty input key a distinct meaning: it matches
-    // every input asset. Keep that meaning explicit in the manifest instead
-    // of turning it into a synthetic extension or wildcard.
-    final inputIsAll = entry.key.isEmpty;
-    final inputIsAnchored = !inputIsAll && entry.key.startsWith('^');
-    final input = inputIsAnchored ? entry.key.substring(1) : entry.key;
-    final captureNames = _captureGroupNames(input);
-    final inputIsCapture = captureNames != null;
-    final inputIsExact = inputIsAnchored && !inputIsCapture;
-    final inputIsValid = inputIsAll
-        ? true
-        : inputIsCapture
-        ? _simpleCapturePath(input)
-        : inputIsExact
-        ? _simplePath(input)
-        : _simpleExtension(input);
-    if (!inputIsValid) {
-      return null;
-    }
-    final outputSuffixes = entry.value
-        .map(
-          inputIsCapture || inputIsExact
-              ? _normalizePathOutput
-              : _normalizeOutputSuffix,
-        )
-        .toList(growable: false);
-    if (outputSuffixes.any(
-      inputIsAll
-          ? (suffix) => !_simpleExtension(suffix)
-          : inputIsCapture
-          ? (suffix) => !_validCaptureOutput(suffix, captureNames)
-          : inputIsExact
-          ? (suffix) => !_simplePath(suffix)
-          : (suffix) => !_simpleExtension(suffix),
-    )) {
-      return null;
-    }
-    extensions.add(
-      _ManifestExtension(
-        inputSuffix: input,
-        inputMatch: inputIsAll
-            ? 'all'
-            : inputIsCapture
-            ? 'capture'
-            : inputIsExact
-            ? 'exact'
-            : 'suffix',
-        inputAnchored: inputIsAnchored,
-        outputSuffixes: outputSuffixes,
-      ),
-    );
-  }
-  return extensions;
-}
-
-_ManifestDefinition? _tryConvertPostProcessDefinition(
-  PostProcessBuilderDefinition definition, {
-  List<String>? runtimeInputExtensions,
-  required List<_ManifestTrigger> triggers,
-}) {
-  if (triggers.isNotEmpty) return null;
-  // build_config 1.2 exposes this field as deprecated while retaining it for
-  // the v1 post-process manifest shape.
-  // ignore: deprecated_member_use
-  final configuredInputExtensions = definition.inputExtensions?.toList(
-    growable: false,
-  );
-  // Current source_gen deliberately leaves this legacy config field unset and
-  // supplies the extension from the runtime FileDeletingBuilder instead.
-  // Keep the known built-in cleanup builder in the converted subset so current
-  // json_serializable builds can preserve source_gen's .g.part cleanup.
-  final inputExtensions =
-      configuredInputExtensions ??
-      runtimeInputExtensions ??
-      _knownPostProcessInputExtensions(definition);
-  if (inputExtensions == null || inputExtensions.isEmpty) return null;
-  if (!definition.import.startsWith('package:')) return null;
-  if (!_identifier.hasMatch(definition.builderFactory)) return null;
-  if (inputExtensions.any((extension) => !_simpleExtension(extension))) {
-    return null;
-  }
-
-  return _ManifestDefinition(
-    id: definition.key,
-    importUri: definition.import,
-    factory: definition.builderFactory,
-    kind: 'post_process',
-    extensions: const [],
-    inputExtensions: inputExtensions,
-    buildTo: 'cache',
-    outputIsOptional: true,
-    isOptional: false,
-    requiredInputSuffixes: const [],
-    triggers: const [],
-  );
-}
-
-List<String>? _knownPostProcessInputExtensions(
-  PostProcessBuilderDefinition definition,
-) {
-  // These package-specific cases are intentional compatibility fallbacks:
-  // build_config leaves inputExtensions unset for these legacy cleanup builders,
-  // while runtime probing adds a measurable startup cost during manifest
-  // generation. Keep the fallback narrow and covered by compatibility fixtures;
-  // unknown post-process builders still use the generic runtime probe. If a
-  // dependency changes its cleanup inputs, update this mapping or restore probing.
-
-  if (definition.key == 'source_gen:part_cleanup' &&
-      definition.import == 'package:source_gen/builder.dart' &&
-      definition.builderFactory == 'partCleanup') {
-    return const <String>['.g.part'];
-  }
-  if (definition.key == 'drift_dev:cleanup' &&
-      definition.import == 'package:drift_dev/integrations/build.dart' &&
-      definition.builderFactory == 'driftCleanup') {
-    return const <String>[
-      '.temp.dart',
-      '.drift_prep.json',
-      '.drift_module.json',
-    ];
-  }
-  return null;
-}
-
-String _manifestFactoryId(String definitionKey, int factoryIndex, int count) =>
-    count == 1 ? definitionKey : '$definitionKey#factory$factoryIndex';
-
-class _FactoryProbeRequest {
-  _FactoryProbeRequest({
-    required this.id,
-    required this.definition,
-    required this.options,
-    required this.isRoot,
-  });
-
-  final String id;
-  final _DefinitionInfo definition;
-  final Map<String, dynamic> options;
-  final bool isRoot;
-}
-
-class _FactoryMapping {
-  _FactoryMapping({
-    required this.factory,
-    required this.buildExtensions,
-    this.inputExtensions,
-  });
-
-  final String factory;
-  final Map<String, List<String>> buildExtensions;
-  final List<String>? inputExtensions;
-}
-
-bool _simpleExtension(String value) =>
-    value.startsWith('.') &&
-    value.length > 1 &&
-    !value.contains('{{}}') &&
-    !value.contains(RegExp(r'[*?\[\]{}]'));
-
-List<String>? _captureGroupNames(String value) {
-  final matches = _captureGroupRegexp.allMatches(value).toList();
-  if (matches.isEmpty) return null;
-  final names = matches.map((match) => match.group(1)!).toList();
-  return names.toSet().length == names.length ? names : null;
-}
-
-bool _simpleCapturePath(String value) {
-  if (_captureGroupNames(value) == null) return false;
-  final normalized = value.replaceAll(_captureGroupRegexp, 'capture');
-  return _simplePath(normalized);
-}
-
-bool _validCaptureOutput(String value, List<String> names) {
-  if (!_simpleCapturePath(value)) return false;
-  final used = <String>{};
-  for (final match in _captureGroupRegexp.allMatches(value)) {
-    final name = match.group(1)!;
-    if (!names.contains(name) || !used.add(name)) return false;
-  }
-  return used.length == names.length;
-}
-
-bool _simplePath(String value) =>
-    value.isNotEmpty &&
-    !value.startsWith('/') &&
-    !value.contains('\\') &&
-    !value.contains('|') &&
-    !value.contains('..') &&
-    !value.contains(RegExp(r'[*?\[\]{}]'));
-
-String _normalizeOutputSuffix(String configured) {
-  if (_simpleExtension(configured)) return configured;
-  // Some build_config definitions expose an extension without the leading
-  // dot even though the builder protocol treats it as a suffix. This is a
-  // shape normalization, independent of any builder package.
-  final normalized = '.$configured';
-  return _simpleExtension(normalized) ? normalized : configured;
-}
-
-String _normalizePathOutput(String configured) => configured;
-
-_PatternSet _patterns(InputSet inputSet) {
-  final include = inputSet.include;
-  final includePatterns = include == null || include.isEmpty
-      ? const ['**']
-      : include.toList(growable: false);
-  final excludePatterns = inputSet.exclude?.toList(growable: false) ?? const [];
-  return _patternSet(includePatterns, excludePatterns);
-}
-
-_PatternSet _patternSet(List<String> include, List<String> exclude) {
-  if (include.any((pattern) => !_supportedPattern(pattern)) ||
-      exclude.any((pattern) => !_supportedPattern(pattern))) {
-    throw StateError('target sources contain an unsupported glob');
-  }
-  return _PatternSet(include, exclude);
-}
-
-bool _supportedPattern(String pattern) =>
-    pattern.isNotEmpty &&
-    !pattern.contains('\\') &&
-    !pattern.contains(RegExp(r'[\[\]{}!]'));
-
 Map<String, dynamic> _jsonMap(Map<String, dynamic> value) =>
     Map<String, dynamic>.from(jsonDecode(jsonEncode(value)) as Map);
 
-String _workerSource(Iterable<_CatalogEntry> entries) {
+String _workerSource(Iterable<CatalogEntry> entries) {
   final sorted = entries.toList()
     ..sort((left, right) => left.id.compareTo(right.id));
   final imports = <String, String>{};
@@ -1427,7 +861,7 @@ String _dartSourceString(String value) {
   return output.toString();
 }
 
-_CatalogEntry _catalogEntry(_ManifestDefinition definition) => _CatalogEntry(
+CatalogEntry _catalogEntry(ManifestDefinition definition) => CatalogEntry(
   id: definition.id,
   importUri: definition.importUri,
   factory: definition.factory,
@@ -1462,9 +896,6 @@ Future<void> _writeAtomically(File file, String contents) async {
   await temporary.writeAsString(contents);
   await temporary.rename(file.path);
 }
-
-final _identifier = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$');
-final _captureGroupRegexp = RegExp(r'\{\{(\w*)\}\}');
 
 class _Arguments {
   _Arguments({
@@ -1507,196 +938,4 @@ class _Arguments {
       fingerprint: fingerprint,
     );
   }
-}
-
-class _DefinitionInfo {
-  _DefinitionInfo.normal(this.normal) : postProcess = null;
-  _DefinitionInfo.postProcess(this.postProcess) : normal = null;
-
-  final BuilderDefinition? normal;
-  final PostProcessBuilderDefinition? postProcess;
-
-  bool get isPostProcess => postProcess != null;
-  String get key => normal?.key ?? postProcess!.key;
-  TargetBuilderConfigDefaults get defaults =>
-      normal?.defaults ?? postProcess!.defaults;
-  Iterable<String> get appliesBuilders => normal?.appliesBuilders ?? const [];
-}
-
-class _TargetInfo {
-  _TargetInfo({
-    required this.package,
-    required this.target,
-    required this.sources,
-  });
-
-  final _PackageInfo package;
-  final BuildTarget target;
-  final _PatternSet sources;
-}
-
-class _TargetOrder {
-  const _TargetOrder(
-    this.targets,
-    this.componentIndex,
-    this.memberIndex,
-    this.maxComponentSize,
-  );
-
-  final List<_TargetInfo> targets;
-  final Map<String, int> componentIndex;
-  final Map<String, int> memberIndex;
-  final int maxComponentSize;
-}
-
-class _SelectedBuilder {
-  _SelectedBuilder(
-    this.definition,
-    this.target,
-    this.generateFor,
-    this.options,
-  );
-
-  final _DefinitionInfo definition;
-  final _TargetInfo target;
-  final InputSet generateFor;
-  final Map<String, dynamic> options;
-}
-
-class _PatternSet {
-  const _PatternSet(this.include, this.exclude);
-
-  final List<String> include;
-  final List<String> exclude;
-}
-
-class _ManifestExtension {
-  const _ManifestExtension({
-    required this.inputSuffix,
-    required this.inputMatch,
-    required this.inputAnchored,
-    required this.outputSuffixes,
-  });
-
-  final String inputSuffix;
-  final String inputMatch;
-  final bool inputAnchored;
-  final List<String> outputSuffixes;
-
-  Map<String, dynamic> toJson() => <String, dynamic>{
-    'input_suffix': inputSuffix,
-    'input_match': inputMatch,
-    'input_anchored': inputAnchored,
-    'output_suffixes': outputSuffixes,
-  };
-}
-
-class _ManifestTrigger {
-  const _ManifestTrigger({required this.kind, required this.value});
-
-  final String kind;
-  final String value;
-
-  Map<String, String> toJson() => <String, String>{
-    'kind': kind,
-    'value': value,
-  };
-}
-
-class _ManifestDefinition {
-  _ManifestDefinition({
-    required this.id,
-    required this.importUri,
-    required this.factory,
-    required this.kind,
-    required this.extensions,
-    required this.inputExtensions,
-    required this.buildTo,
-    required this.outputIsOptional,
-    required this.isOptional,
-    required this.requiredInputSuffixes,
-    required this.triggers,
-  });
-
-  final String id;
-  final String importUri;
-  final String factory;
-  final String kind;
-  final List<_ManifestExtension> extensions;
-  final List<String> inputExtensions;
-  final String buildTo;
-  final bool outputIsOptional;
-  final bool isOptional;
-  final List<String> requiredInputSuffixes;
-  final List<_ManifestTrigger> triggers;
-
-  bool get isPostProcess => kind == 'post_process';
-
-  String get inputSuffix =>
-      isPostProcess ? inputExtensions.first : extensions.first.inputSuffix;
-  String get inputMatch =>
-      isPostProcess ? 'suffix' : extensions.first.inputMatch;
-  bool get inputAnchored =>
-      isPostProcess ? false : extensions.first.inputAnchored;
-  List<String> get outputSuffixes => [
-    for (final extension in extensions) ...extension.outputSuffixes,
-  ];
-
-  Map<String, dynamic> toJson({
-    required List<String> generateFor,
-    required List<String> generateForExclude,
-    required List<String> targetSources,
-    required List<String> targetSourcesExclude,
-    required Map<String, dynamic> options,
-    bool isRoot = false,
-    Map<String, dynamic>? runtimeMapping,
-    required int phase,
-    required String? target,
-    required String? package,
-    required int targetOrder,
-    required List<String> excludedInputSuffixes,
-  }) => <String, dynamic>{
-    'id': id,
-    'kind': kind,
-    if (!isPostProcess)
-      'extensions': [for (final extension in extensions) extension.toJson()],
-    if (isPostProcess) 'input_extensions': inputExtensions,
-    // Keep the flattened fields while the watch-side manifest reader and
-    // older diagnostics transition to the explicit extension list.
-    if (!isPostProcess) 'input_suffix': inputSuffix,
-    if (!isPostProcess) 'input_match': inputMatch,
-    if (!isPostProcess) 'input_anchored': inputAnchored,
-    if (!isPostProcess) 'output_suffixes': outputSuffixes,
-    'build_to': buildTo,
-    'phase': phase,
-    if (target != null) 'target': target,
-    if (package != null) 'package': package,
-    if (target != null) 'target_order': targetOrder,
-    'is_optional': isOptional,
-    'output_is_optional': outputIsOptional,
-    'required_input_suffixes': requiredInputSuffixes,
-    'triggers': [for (final trigger in triggers) trigger.toJson()],
-    'excluded_input_suffixes': excludedInputSuffixes,
-    'generate_for': generateFor,
-    'generate_for_exclude': generateForExclude,
-    'target_sources': targetSources,
-    'target_sources_exclude': targetSourcesExclude,
-    'options': options,
-    if (target != null) 'is_root': isRoot,
-    if (runtimeMapping != null) 'runtime_mapping': runtimeMapping,
-  };
-}
-
-class _CatalogEntry {
-  _CatalogEntry({
-    required this.id,
-    required this.importUri,
-    required this.factory,
-    required this.isPostProcess,
-  });
-
-  final String id;
-  final String importUri;
-  final String factory;
-  final bool isPostProcess;
 }
