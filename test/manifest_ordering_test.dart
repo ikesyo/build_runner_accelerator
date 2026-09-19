@@ -82,4 +82,78 @@ void main() {
       <String>['producer', 'consumer'],
     );
   });
+
+  test('orders builders by definition runsBefore', () {
+    final definitions = <String, BuilderOrderDefinition>{
+      'early': const BuilderOrderDefinition(
+        requiredInputs: <String>[],
+        buildExtensionOutputs: <Iterable<String>>[],
+        runsBefore: <String>['late'],
+      ),
+      'late': const BuilderOrderDefinition(
+        requiredInputs: <String>[],
+        buildExtensionOutputs: <Iterable<String>>[],
+        runsBefore: <String>[],
+      ),
+    };
+
+    expect(
+      orderBuilders(
+        <String>['early', 'late'],
+        definitions,
+        const <String, Iterable<String>>{},
+      ),
+      <String>['early', 'late'],
+    );
+  });
+
+  test('orders builders by global runsBefore', () {
+    final definitions = <String, BuilderOrderDefinition>{
+      'early': const BuilderOrderDefinition(
+        requiredInputs: <String>[],
+        buildExtensionOutputs: <Iterable<String>>[],
+        runsBefore: <String>[],
+      ),
+      'late': const BuilderOrderDefinition(
+        requiredInputs: <String>[],
+        buildExtensionOutputs: <Iterable<String>>[],
+        runsBefore: <String>[],
+      ),
+    };
+
+    expect(
+      orderBuilders(
+        <String>['early', 'late'],
+        definitions,
+        const <String, Iterable<String>>{
+          'early': <String>['late'],
+        },
+      ),
+      <String>['early', 'late'],
+    );
+  });
+
+  test('reports builder ordering cycles', () {
+    final definitions = <String, BuilderOrderDefinition>{
+      'a': const BuilderOrderDefinition(
+        requiredInputs: <String>[],
+        buildExtensionOutputs: <Iterable<String>>[],
+        runsBefore: <String>['b'],
+      ),
+      'b': const BuilderOrderDefinition(
+        requiredInputs: <String>[],
+        buildExtensionOutputs: <Iterable<String>>[],
+        runsBefore: <String>['a'],
+      ),
+    };
+
+    expect(
+      () => orderBuilders(
+        <String>['a', 'b'],
+        definitions,
+        const <String, Iterable<String>>{},
+      ),
+      throwsStateError,
+    );
+  });
 }
