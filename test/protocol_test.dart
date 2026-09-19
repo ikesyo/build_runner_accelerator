@@ -114,7 +114,7 @@ void main() {
           'id': 1,
           'builder': 'app|copy',
           'input': 'app|lib/input.dart',
-          'options': <dynamic>{1: 'not a string key'},
+          'options': <dynamic, dynamic>{1: 'not a string key'},
         }),
         throwsA(isA<FormatException>()),
       );
