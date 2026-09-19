@@ -4,11 +4,259 @@ import 'dart:io';
 import 'dart:typed_data';
 
 typedef JsonMap = Map<String, dynamic>;
-typedef RpcControlMessageHandler = Future<void> Function(JsonMap message);
+typedef RpcControlMessageHandler =
+    Future<void> Function(WorkerBuildRequest message);
 
 const List<int> _binaryAssetResponseMagic = <int>[0x42, 0x52, 0x41, 0x42];
 const List<int> _binaryBuildResultMagic = <int>[0x42, 0x52, 0x41, 0x52];
 const int _maxFrameLength = 256 * 1024 * 1024;
+
+/// Typed messages received by the resident worker from the Rust frontend.
+///
+/// JSON is decoded and validated once at the IPC boundary. The execution
+/// layer should consume these values instead of repeatedly inspecting maps.
+sealed class WorkerMessage {
+  const WorkerMessage({required this.id});
+
+  final Object? id;
+
+  static WorkerMessage decode(JsonMap message) {
+    switch (message['type']) {
+      case 'initialize':
+        return WorkerInitializeMessage.fromJson(message);
+      case 'reset':
+        return WorkerResetMessage.fromJson(message);
+      case 'reset_resolver':
+        return WorkerResetResolverMessage.fromJson(message);
+      case 'build':
+        return WorkerBuildMessage(WorkerBuildRequest.fromJson(message));
+      case 'build_batch':
+        return WorkerBuildBatchMessage.fromJson(message);
+      default:
+        return UnsupportedWorkerMessage(
+          id: message['id'],
+          type: message['type'],
+        );
+    }
+  }
+}
+
+class WorkerInitializeMessage extends WorkerMessage {
+  WorkerInitializeMessage({
+    required int id,
+    required this.package,
+    required this.phaseCount,
+  }) : super(id: id);
+
+  factory WorkerInitializeMessage.fromJson(JsonMap message) {
+    final rawPhaseCount = message['phase_count'];
+    final phaseCount = rawPhaseCount is num
+        ? (rawPhaseCount.toInt() < 1 ? 1 : rawPhaseCount.toInt())
+        : 1;
+    final package = _requiredString(message, 'package', 'initialize');
+    if (package.isEmpty) {
+      throw const FormatException('initialize requires a non-empty package');
+    }
+    return WorkerInitializeMessage(
+      id: _requiredInt(message, 'id', 'initialize'),
+      package: package,
+      phaseCount: phaseCount,
+    );
+  }
+
+  final String package;
+  final int phaseCount;
+}
+
+class WorkerResetMessage extends WorkerMessage {
+  WorkerResetMessage({required int id}) : super(id: id);
+
+  factory WorkerResetMessage.fromJson(JsonMap message) =>
+      WorkerResetMessage(id: _requiredInt(message, 'id', 'reset'));
+}
+
+class WorkerResetResolverMessage extends WorkerMessage {
+  WorkerResetResolverMessage({required int id}) : super(id: id);
+
+  factory WorkerResetResolverMessage.fromJson(JsonMap message) =>
+      WorkerResetResolverMessage(
+        id: _requiredInt(message, 'id', 'reset_resolver'),
+      );
+}
+
+class WorkerBuildMessage extends WorkerMessage {
+  WorkerBuildMessage(this.request) : super(id: request.id);
+
+  final WorkerBuildRequest request;
+}
+
+class WorkerBuildBatchMessage extends WorkerMessage {
+  WorkerBuildBatchMessage({required int id, required this.requests})
+    : super(id: id);
+
+  factory WorkerBuildBatchMessage.fromJson(JsonMap message) {
+    final rawRequests = message['requests'];
+    if (rawRequests is! List) {
+      throw const FormatException('build_batch requests must be a list');
+    }
+    return WorkerBuildBatchMessage(
+      id: _requiredInt(message, 'id', 'build_batch'),
+      requests: [
+        for (final rawRequest in rawRequests)
+          WorkerBuildRequest.fromJson(
+            _jsonMap(rawRequest, 'build_batch request'),
+          ),
+      ],
+    );
+  }
+
+  final List<WorkerBuildRequest> requests;
+}
+
+class UnsupportedWorkerMessage extends WorkerMessage {
+  const UnsupportedWorkerMessage({required super.id, required this.type});
+
+  final Object? type;
+}
+
+/// A validated build request, including nested optional-build requests.
+class WorkerBuildRequest {
+  WorkerBuildRequest({
+    required this.id,
+    required this.builder,
+    required this.input,
+    required this.kind,
+    required this.allowedOutputs,
+    required this.options,
+    required this.phase,
+    required this.instanceKey,
+    required this.isRoot,
+    required this.blockedAssets,
+    required this.triggers,
+  });
+
+  factory WorkerBuildRequest.fromJson(JsonMap message) {
+    final rawKind = message['kind'];
+    final kind = rawKind == null
+        ? null
+        : _requiredStringValue(rawKind, 'build kind');
+    if (kind != null && kind != 'normal' && kind != 'post_process') {
+      throw FormatException('unsupported build kind: $kind');
+    }
+    final rawIsRoot = message['is_root'];
+    final rawInstanceKey = message['instance_key'];
+    final rawPhase = message['phase'];
+    final rawOptions = message['options'];
+    final options = rawOptions == null
+        ? <String, dynamic>{}
+        : _stringKeyedMap(rawOptions, 'build options');
+    final rawAllowedOutputs = message['allowed_outputs'];
+    final rawBlockedAssets = message['blocked_assets'];
+    final rawTriggers = message['triggers'];
+    return WorkerBuildRequest(
+      id: _requiredInt(message, 'id', 'build'),
+      builder: _requiredString(message, 'builder', 'build'),
+      input: _requiredString(message, 'input', 'build'),
+      kind: kind,
+      allowedOutputs: _stringList(
+        rawAllowedOutputs ?? const <dynamic>[],
+        'build allowed_outputs',
+      ),
+      options: options,
+      phase: rawPhase is num ? rawPhase.toInt() : 0,
+      instanceKey: rawInstanceKey is String && rawInstanceKey.isNotEmpty
+          ? rawInstanceKey
+          : null,
+      isRoot: rawIsRoot is bool ? rawIsRoot : true,
+      blockedAssets: _stringList(
+        rawBlockedAssets ?? const <dynamic>[],
+        'build blocked_assets',
+      ),
+      triggers: _triggerList(
+        rawTriggers ?? const <dynamic>[],
+        'build triggers',
+      ),
+    );
+  }
+
+  final int id;
+  final String builder;
+  final String input;
+  final String? kind;
+  final List<String> allowedOutputs;
+  final Map<String, dynamic> options;
+  final int phase;
+  final String? instanceKey;
+  final bool isRoot;
+  final List<String> blockedAssets;
+  final List<WorkerBuildTrigger> triggers;
+
+  bool get isPostProcess => kind == 'post_process';
+}
+
+class WorkerBuildTrigger {
+  const WorkerBuildTrigger({required this.kind, required this.value});
+
+  factory WorkerBuildTrigger.fromJson(Object? raw) {
+    final message = _jsonMap(raw, 'build trigger');
+    return WorkerBuildTrigger(
+      kind: _requiredString(message, 'kind', 'build trigger'),
+      value: _requiredString(message, 'value', 'build trigger'),
+    );
+  }
+
+  final String kind;
+  final String value;
+}
+
+int _requiredInt(JsonMap message, String key, String type) {
+  final value = message[key];
+  if (value is! int) {
+    throw FormatException('$type requires an integer $key');
+  }
+  return value;
+}
+
+String _requiredString(JsonMap message, String key, String type) =>
+    _requiredStringValue(message[key], '$type $key');
+
+String _requiredStringValue(Object? value, String label) {
+  if (value is! String) {
+    throw FormatException('$label must be a string');
+  }
+  return value;
+}
+
+JsonMap _jsonMap(Object? value, String label) {
+  if (value is! Map) {
+    throw FormatException('$label must be an object');
+  }
+  final result = <String, dynamic>{};
+  for (final entry in value.entries) {
+    if (entry.key is! String) {
+      throw FormatException('$label keys must be strings');
+    }
+    result[entry.key as String] = entry.value;
+  }
+  return result;
+}
+
+Map<String, dynamic> _stringKeyedMap(Object? value, String label) =>
+    _jsonMap(value, label);
+
+List<String> _stringList(Object? value, String label) {
+  if (value is! List) {
+    throw FormatException('$label must be a list');
+  }
+  return [for (final item in value) _requiredStringValue(item, '$label item')];
+}
+
+List<WorkerBuildTrigger> _triggerList(Object? value, String label) {
+  if (value is! List) {
+    throw FormatException('$label must be a list');
+  }
+  return [for (final item in value) WorkerBuildTrigger.fromJson(item)];
+}
 
 class FrameReader {
   FrameReader(Stream<List<int>> input) : _iterator = StreamIterator(input);
@@ -260,7 +508,7 @@ class RpcSession {
         if (handler == null) {
           throw StateError('Unexpected nested build request during asset RPC');
         }
-        await handler(response);
+        await handler(WorkerBuildRequest.fromJson(response));
         continue;
       }
       if (response['type'] != 'asset_response' || response['id'] != id) {

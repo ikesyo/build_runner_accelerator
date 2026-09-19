@@ -49,26 +49,20 @@ Future<void> runWorker({
   final writer = FrameWriter(stdout);
   try {
     while (true) {
-      final message = await reader.next();
-      if (message == null) return;
+      final rawMessage = await reader.next();
+      if (rawMessage == null) return;
       try {
-        switch (message['type']) {
-          case 'initialize':
-            final package = message['package'];
-            if (package is! String || package.isEmpty) {
-              throw const FormatException(
-                'initialize requires a non-empty package',
-              );
-            }
-            final rawPhaseCount = message['phase_count'];
-            final phaseCount = rawPhaseCount is num
-                ? (rawPhaseCount.toInt() < 1 ? 1 : rawPhaseCount.toInt())
-                : 1;
-            await runtime.startBuild(package, phaseCount: phaseCount);
+        final message = WorkerMessage.decode(rawMessage);
+        switch (message) {
+          case WorkerInitializeMessage initialize:
+            await runtime.startBuild(
+              initialize.package,
+              phaseCount: initialize.phaseCount,
+            );
             await writer.send(<String, dynamic>{
               'v': 1,
               'type': 'initialized',
-              'id': message['id'],
+              'id': initialize.id,
               'capabilities': <String>[
                 ...catalog.keys,
                 'asset-rpc-v1',
@@ -78,51 +72,51 @@ Future<void> runWorker({
                 'build-runner-current-v1',
               ],
             });
-          case 'reset':
+          case WorkerResetMessage reset:
             await runtime.reset();
             await writer.send(<String, dynamic>{
               'v': 1,
               'type': 'reset',
-              'id': message['id'],
+              'id': reset.id,
             });
-          case 'reset_resolver':
+          case WorkerResetResolverMessage resetResolver:
             await runtime.resetResolver();
             await writer.send(<String, dynamic>{
               'v': 1,
               'type': 'reset_resolver',
-              'id': message['id'],
+              'id': resetResolver.id,
             });
-          case 'build':
+          case WorkerBuildMessage build:
             await _handleBuild(
-              message,
+              build.request,
               reader,
               writer,
               runtime,
               catalog,
               postProcessCatalog,
             );
-          case 'build_batch':
+          case WorkerBuildBatchMessage buildBatch:
             await _handleBuildBatch(
-              message,
+              buildBatch,
               reader,
               writer,
               runtime,
               catalog,
               postProcessCatalog,
             );
-          default:
+          case UnsupportedWorkerMessage unsupported:
             await writer.send(<String, dynamic>{
               'v': 1,
               'type': 'error',
-              'id': message['id'],
-              'error': 'Unsupported worker message: ${message['type']}',
+              'id': unsupported.id,
+              'error': 'Unsupported worker message: ${unsupported.type}',
             });
         }
       } catch (error, stack) {
         await writer.send(<String, dynamic>{
           'v': 1,
           'type': 'error',
-          'id': message['id'],
+          'id': rawMessage['id'],
           'error': '$error',
           'stack': '$stack',
         });
@@ -326,7 +320,7 @@ Future<PackageConfig> _loadPackageConfig() async {
 }
 
 Future<void> _handleBuild(
-  JsonMap message,
+  WorkerBuildRequest request,
   FrameReader reader,
   FrameWriter writer,
   _WorkerRuntime runtime,
@@ -335,7 +329,7 @@ Future<void> _handleBuild(
 ) async {
   await writer.sendBuildResult(
     await _runBuild(
-      message,
+      request,
       reader,
       writer,
       runtime,
@@ -346,7 +340,7 @@ Future<void> _handleBuild(
 }
 
 Future<void> _handleNestedBuild(
-  JsonMap message,
+  WorkerBuildRequest request,
   FrameReader reader,
   FrameWriter writer,
   _WorkerRuntime runtime,
@@ -356,7 +350,7 @@ Future<void> _handleNestedBuild(
   try {
     await writer.sendBuildResult(
       await _runBuild(
-        message,
+        request,
         reader,
         writer,
         runtime,
@@ -368,7 +362,7 @@ Future<void> _handleNestedBuild(
     await writer.sendBuildResult(<String, dynamic>{
       'v': 1,
       'type': 'build_result',
-      'id': message['id'],
+      'id': request.id,
       'status': 'error',
       'outputs': <dynamic>[],
       'deleted': <String>[],
@@ -383,25 +377,18 @@ Future<void> _handleNestedBuild(
 }
 
 Future<void> _handleBuildBatch(
-  JsonMap message,
+  WorkerBuildBatchMessage message,
   FrameReader reader,
   FrameWriter writer,
   _WorkerRuntime runtime,
   Map<String, BuilderFactory> builderCatalog,
   Map<String, PostProcessBuilderFactory> postProcessCatalog,
 ) async {
-  final rawRequests = message['requests'];
-  if (rawRequests is! List) {
-    throw FormatException('build_batch requests must be a list');
-  }
   final results = <JsonMap>[];
-  for (final rawRequest in rawRequests) {
-    if (rawRequest is! Map) {
-      throw FormatException('build_batch request must be an object');
-    }
+  for (final request in message.requests) {
     results.add(
       await _runBuild(
-        rawRequest.cast<String, dynamic>(),
+        request,
         reader,
         writer,
         runtime,
@@ -413,26 +400,23 @@ Future<void> _handleBuildBatch(
   await writer.sendBuildResult(<String, dynamic>{
     'v': 1,
     'type': 'build_batch_result',
-    'id': message['id'],
+    'id': message.id,
     'results': results,
   });
 }
 
 Future<JsonMap> _runBuild(
-  JsonMap message,
+  WorkerBuildRequest request,
   FrameReader reader,
   FrameWriter writer,
   _WorkerRuntime runtime,
   Map<String, BuilderFactory> builderCatalog,
   Map<String, PostProcessBuilderFactory> postProcessCatalog,
 ) async {
-  final builderId = message['builder'] as String;
-  final inputName = message['input'] as String;
-  final isPostProcess = message['kind'] == 'post_process';
-  final rawIsRoot = message['is_root'];
-  // Old protocol frames omitted is_root and the worker historically treated
-  // those applications as root builders. Preserve that default.
-  final isRoot = rawIsRoot is bool ? rawIsRoot : true;
+  final builderId = request.builder;
+  final inputName = request.input;
+  final isPostProcess = request.isPostProcess;
+  final isRoot = request.isRoot;
   final profile = _BuildProfile(
     builder: builderId,
     input: inputName,
@@ -441,26 +425,13 @@ Future<JsonMap> _runBuild(
   var actionStarted = false;
   try {
     final input = AssetId.parse(inputName);
-    final rawAllowedOutputs = message['allowed_outputs'] ?? const <dynamic>[];
-    if (rawAllowedOutputs is! List) {
-      throw FormatException('build allowed_outputs must be a list');
-    }
-    final rawBlockedAssets = message['blocked_assets'] ?? const <dynamic>[];
-    if (rawBlockedAssets is! List) {
-      throw FormatException('build blocked_assets must be a list');
-    }
-    final blockedAssets = rawBlockedAssets
-        .map((asset) => AssetId.parse(asset as String))
-        .toSet();
-    final options = Map<String, dynamic>.from(
-      (message['options'] as Map<dynamic, dynamic>?) ?? <dynamic, dynamic>{},
-    );
-    final rawTriggers = message['triggers'] ?? const <dynamic>[];
-    if (rawTriggers is! List) {
-      throw FormatException('build triggers must be a list');
-    }
-    final triggers = rawTriggers
-        .map(NormalizedBuildTrigger.fromJson)
+    final blockedAssets = request.blockedAssets.map(AssetId.parse).toSet();
+    final options = Map<String, dynamic>.from(request.options);
+    final triggers = request.triggers
+        .map(
+          (trigger) =>
+              NormalizedBuildTrigger(kind: trigger.kind, value: trigger.value),
+        )
         .toList(growable: false);
     if (isPostProcess && triggers.isNotEmpty) {
       throw StateError('triggers are unsupported for post-process builders');
@@ -468,8 +439,8 @@ Future<JsonMap> _runBuild(
     final rpc = RpcSession(
       reader,
       writer,
-      buildId: message['id'] as int,
-      phase: _phaseOf(message),
+      buildId: request.id,
+      phase: request.phase,
       postProcess: isPostProcess,
       onControlMessage: (nested) => _handleNestedBuild(
         nested,
@@ -500,7 +471,7 @@ Future<JsonMap> _runBuild(
       triggered = await evaluateBuildTriggers(
         triggers: triggers,
         primaryInput: input,
-        phase: _phaseOf(message),
+        phase: request.phase,
         filesystem: runtime.buildFilesystem,
         inputTracker: triggerInputTracker,
       );
@@ -514,7 +485,7 @@ Future<JsonMap> _runBuild(
       if (factory == null) {
         throw StateError('Unknown post-process builder: $builderId');
       }
-      final instanceKey = _instanceKey(message);
+      final instanceKey = _instanceKey(request);
       var postProcessBuilder = runtime.postProcessBuilders[instanceKey];
       if (postProcessBuilder == null) {
         final factoryTimer = Stopwatch()..start();
@@ -540,7 +511,7 @@ Future<JsonMap> _runBuild(
       if (factory == null) {
         throw StateError('Unknown builder: $builderId');
       }
-      final instanceKey = _instanceKey(message);
+      final instanceKey = _instanceKey(request);
       var builder = runtime.builders[instanceKey];
       if (builder == null) {
         final factoryTimer = Stopwatch()..start();
@@ -556,12 +527,11 @@ Future<JsonMap> _runBuild(
       step = BuildStepImpl(
         inputId: input,
         expectedOutputs: [
-          for (final rawOutput in rawAllowedOutputs)
-            AssetId.parse(rawOutput as String),
+          for (final output in request.allowedOutputs) AssetId.parse(output),
         ],
         inputTracker: inputTracker,
         buildFilesystem: runtime.buildFilesystem,
-        phase: _phaseOf(message),
+        phase: request.phase,
         resolvers: resolver,
         resourceManager: runtime.resourceManager,
       );
@@ -620,7 +590,7 @@ Future<JsonMap> _runBuild(
     return <String, dynamic>{
       'v': 1,
       'type': 'build_result',
-      'id': message['id'],
+      'id': request.id,
       'status': profile.status,
       'outputs': outputs,
       'deleted': <String>[for (final asset in deleted) asset.toString()]
@@ -639,13 +609,8 @@ Future<JsonMap> _runBuild(
   }
 }
 
-String _instanceKey(JsonMap message) {
-  final explicit = message['instance_key'];
-  if (explicit is String && explicit.isNotEmpty) return explicit;
-  return '${message['kind']}|${message['builder']}|${jsonEncode(message['options'] ?? const {})}';
-}
-
-int _phaseOf(JsonMap message) {
-  final value = message['phase'];
-  return value is num ? value.toInt() : 0;
+String _instanceKey(WorkerBuildRequest request) {
+  final explicit = request.instanceKey;
+  if (explicit != null) return explicit;
+  return '${request.kind}|${request.builder}|${jsonEncode(request.options)}';
 }
