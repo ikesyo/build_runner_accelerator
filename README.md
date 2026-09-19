@@ -117,8 +117,9 @@ normal installation or benchmark path.
 The main builder path is manifest-first. Builder names are not hard-coded into
 the Rust planner. The generated manifest carries builder identity, target and
 phase ordering, input/output mappings, `build_to`, required inputs, source
-filters, and resolved options. Supported normal builders and the cache-only
-post-process subset use the same action model.
+filters, and resolved options. Supported normal builders and the supported
+post-process subset use the same action model, including source and cache
+outputs.
 
 Rust and Dart communicate through the versioned contract in
 [`protocol/v1.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/protocol/v1.md). Control messages are length-prefixed JSON;

@@ -1,3 +1,4 @@
+import 'package:build_config/build_config.dart';
 import 'package:build_runner_accelerator/src/manifest/mapping.dart';
 import 'package:build_runner_accelerator/src/manifest/model.dart';
 import 'package:test/test.dart';
@@ -102,4 +103,40 @@ void main() {
     expect(json['phase'], 2);
     expect(json['target_order'], 1);
   });
+
+  group('post-process definitions', () {
+    test('preserves a source build_to value', () {
+      final converted = tryConvertDefinition(
+        DefinitionInfo.postProcess(_postProcessDefinition(BuildTo.source)),
+        null,
+        triggers: const <ManifestTrigger>[],
+      )!.single;
+
+      expect(converted.buildTo, 'source');
+    });
+
+    test('keeps the default cache build_to value', () {
+      final converted = tryConvertDefinition(
+        DefinitionInfo.postProcess(_postProcessDefinition(BuildTo.cache)),
+        null,
+        triggers: const <ManifestTrigger>[],
+      )!.single;
+
+      expect(converted.buildTo, 'cache');
+    });
+  });
+}
+
+PostProcessBuilderDefinition _postProcessDefinition(BuildTo buildTo) {
+  final config = BuildConfig.fromMap('example', const <String>[], {
+    'post_process_builders': {
+      'post': {
+        'builder_factory': 'createPostProcessBuilder',
+        'import': 'package:example/post_process.dart',
+        'input_extensions': <String>['.gen.txt'],
+        'build_to': buildTo == BuildTo.source ? 'source' : 'cache',
+      },
+    },
+  });
+  return config.postProcessBuilderDefinitions['example:post']!;
 }

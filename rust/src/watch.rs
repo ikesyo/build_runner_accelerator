@@ -1,6 +1,7 @@
 use crate::build;
 use crate::cli::Options;
 use crate::frontend::{run_dart_fallback, select_frontend, worker_executable};
+use crate::graph::GraphState;
 use crate::pattern::match_capture_pattern;
 use crate::worker::WorkerPool;
 use crate::workspace::Workspace;
@@ -105,27 +106,56 @@ fn is_generated_output(root: &Path, path: &Path) -> bool {
     let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&contents) else {
         return false;
     };
-    manifest
-        .get("builders")
-        .and_then(|value| value.as_array())
-        .is_some_and(|builders| {
-            builders.iter().any(|builder| {
-                builder.get("build_to").and_then(|value| value.as_str()) == Some("source")
-                    && (builder
-                        .get("output_suffixes")
-                        .and_then(|value| value.as_array())
-                        .is_some_and(|suffixes| {
-                            suffixes
-                                .iter()
-                                .filter_map(|suffix| suffix.as_str())
-                                .any(|suffix| output_pattern_matches(relative, name, suffix))
-                        })
-                        || builder
-                            .get("output_suffix")
-                            .and_then(|value| value.as_str())
-                            .is_some_and(|suffix| output_pattern_matches(relative, name, suffix)))
-            })
+    let Some(builders) = manifest.get("builders").and_then(|value| value.as_array()) else {
+        return false;
+    };
+    if builders
+        .iter()
+        .any(|builder| {
+            builder.get("build_to").and_then(|value| value.as_str()) == Some("source")
+                && (builder
+                    .get("output_suffixes")
+                    .and_then(|value| value.as_array())
+                    .is_some_and(|suffixes| {
+                        suffixes
+                            .iter()
+                            .filter_map(|suffix| suffix.as_str())
+                            .any(|suffix| output_pattern_matches(relative, name, suffix))
+                    })
+                    || builder
+                        .get("output_suffix")
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|suffix| output_pattern_matches(relative, name, suffix)))
         })
+    {
+        return true;
+    }
+
+    let source_post_process_ids = builders
+        .iter()
+        .filter(|builder| {
+            builder.get("kind").and_then(|value| value.as_str()) == Some("post_process")
+                && builder.get("build_to").and_then(|value| value.as_str()) == Some("source")
+        })
+        .filter_map(|builder| builder.get("id").and_then(|value| value.as_str()))
+        .collect::<Vec<_>>();
+    if source_post_process_ids.is_empty() {
+        return false;
+    }
+
+    let relative_asset = relative.replace('\\', "/");
+    let graph_path = root.join(".dart_tool/build_runner_accelerator/graph-v3.bin");
+    let Ok(state) = GraphState::load(&graph_path) else {
+        return false;
+    };
+    state.actions.values().any(|action| {
+        source_post_process_ids.contains(&action.builder.as_str())
+            && action.outputs.iter().any(|output| {
+                output
+                    .split_once('|')
+                    .is_some_and(|(_, asset_path)| asset_path == relative_asset.as_str())
+            })
+    })
 }
 
 fn output_pattern_matches(relative: &str, name: &str, pattern: &str) -> bool {

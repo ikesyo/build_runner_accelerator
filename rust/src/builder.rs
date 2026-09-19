@@ -343,12 +343,21 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
                     .chars()
                     .any(|character| matches!(character, '*' | '?' | '{' | '}' | '[' | ']'))
         };
+        let build_to = match entry.build_to.as_str() {
+            "cache" => BuildTo::Cache,
+            "source" => BuildTo::Source,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unsupported post-process metadata for {}", entry.id),
+                ));
+            }
+        };
         if entry.input_extensions.is_empty()
             || entry
                 .input_extensions
                 .iter()
                 .any(|extension| invalid_extension(extension))
-            || entry.build_to != "cache"
             || !entry.extensions.is_empty()
         {
             return Err(io::Error::new(
@@ -361,7 +370,7 @@ fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<Bu
             kind,
             extensions: Vec::new(),
             post_process_input_extensions: entry.input_extensions,
-            build_to: BuildTo::Cache,
+            build_to,
             phase: entry.phase,
             is_optional: false,
             output_is_optional: true,
@@ -624,7 +633,6 @@ fn runtime_mapping_from_manifest(
             runtime_entry.extensions = Vec::new();
             runtime_entry.input_extensions = input_extensions;
             runtime_entry.runtime_mapping = None;
-            runtime_entry.build_to = "cache".to_owned();
             let runtime = dynamic_builder_definition(runtime_entry)?;
             Ok((None, Some(runtime.post_process_input_extensions)))
         }
@@ -643,7 +651,7 @@ fn default_builder_kind() -> String {
 #[cfg(test)]
 mod tests {
     use super::{rust_build_config_from_manifest, BuilderManifestFile};
-    use crate::builder::BuilderKind;
+    use crate::builder::{BuildTo, BuilderKind};
     use serde_json::json;
 
     #[test]
@@ -1133,6 +1141,7 @@ mod tests {
         .unwrap();
         let config = rust_build_config_from_manifest(manifest).unwrap();
         assert_eq!(config.builders[0].definition.kind, BuilderKind::PostProcess);
+        assert_eq!(config.builders[0].definition.build_to, BuildTo::Cache);
         assert_eq!(
             config.builders[0]
                 .definition
@@ -1141,6 +1150,36 @@ mod tests {
         );
         assert!(config.builders[0].definition.extensions.is_empty());
         assert!(config.builders[0].definition.output_is_optional);
+    }
+
+    #[test]
+    fn dynamic_manifest_accepts_source_post_process_definition() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:post",
+                "kind": "post_process",
+                "input_extensions": [".gen.txt"],
+                "build_to": "source",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["lib/**/*.gen.txt"]
+            }],
+            "definitions": [{
+                "id": "example:post",
+                "kind": "post_process",
+                "input_extensions": [".gen.txt"],
+                "build_to": "source",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+        let config = rust_build_config_from_manifest(manifest).unwrap();
+        assert_eq!(config.builders[0].definition.kind, BuilderKind::PostProcess);
+        assert_eq!(config.builders[0].definition.build_to, BuildTo::Source);
     }
 
     #[test]

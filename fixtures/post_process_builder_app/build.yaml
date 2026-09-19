@@ -15,6 +15,7 @@ post_process_builders:
     builder_factory: appendPostProcessBuilder
     input_extensions:
       - ".gen.txt"
+    build_to: source
 
 targets:
   $default:

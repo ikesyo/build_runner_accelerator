@@ -9,7 +9,7 @@ The first prototype used fixed builder branches. That approach made each new
 builder add Rust matching logic, Dart catalog entries, and special output
 handling. It also represented only the root target, while official
 build_runner configuration can select builders from dependency-owned targets,
-target cycles, multiple extension mappings, and cache-only post-processors.
+target cycles, multiple extension mappings, and post-processors.
 
 ## Decision
 
@@ -24,7 +24,7 @@ Use a generated, workspace-specific manifest as the generic boundary:
 - The model carries package/target scope, dependency-owned targets, stable
   target order, strongly connected component phase semantics, source filters,
   the lossless `required_inputs` suffix list, optional outputs, normal and
-  supported cache-only post-process builders, and multiple literal/capture
+  supported post-process builders, and multiple literal/capture
   extension mappings.
 - Compatible normal `is_optional` builders remain in the action plan but are
   omitted from eager execution. A later action's asset read can request the

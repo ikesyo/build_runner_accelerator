@@ -270,7 +270,7 @@ ManifestDefinition? _tryConvertPostProcessDefinition(
     kind: 'post_process',
     extensions: const [],
     inputExtensions: inputExtensions,
-    buildTo: 'cache',
+    buildTo: definition.buildTo == BuildTo.source ? 'source' : 'cache',
     outputIsOptional: true,
     isOptional: false,
     requiredInputSuffixes: const [],
