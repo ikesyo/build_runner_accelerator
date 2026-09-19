@@ -1,0 +1,85 @@
+import 'package:build_runner_accelerator/src/manifest/ordering.dart';
+import 'package:test/test.dart';
+
+class _TargetNode {
+  const _TargetNode(this.key, this.dependencies);
+
+  final String key;
+  final List<String> dependencies;
+}
+
+void main() {
+  test('orders target dependencies first and preserves SCC metadata', () {
+    final result = orderTargets<_TargetNode>(
+      const <_TargetNode>[
+        _TargetNode('app:app', <String>['dependency:dependency']),
+        _TargetNode('dependency:dependency', <String>[]),
+      ],
+      keyOf: (target) => target.key,
+      dependenciesOf: (target) => target.dependencies,
+    );
+
+    expect(result.targets.map((target) => target.key), <String>[
+      'dependency:dependency',
+      'app:app',
+    ]);
+    expect(result.componentIndex['dependency:dependency'], 0);
+    expect(result.componentIndex['app:app'], 1);
+    expect(result.maxComponentSize, 1);
+  });
+
+  test('keeps cyclic targets in one stable component', () {
+    final result = orderTargets<_TargetNode>(
+      const <_TargetNode>[
+        _TargetNode('a:a', <String>['b:b']),
+        _TargetNode('b:b', <String>['a:a']),
+      ],
+      keyOf: (target) => target.key,
+      dependenciesOf: (target) => target.dependencies,
+    );
+
+    expect(result.targets.map((target) => target.key), <String>['a:a', 'b:b']);
+    expect(result.componentIndex['a:a'], 0);
+    expect(result.componentIndex['b:b'], 0);
+    expect(result.memberIndex['a:a'], 0);
+    expect(result.memberIndex['b:b'], 1);
+    expect(result.maxComponentSize, 2);
+  });
+
+  test('reports missing target dependencies', () {
+    expect(
+      () => orderTargets<_TargetNode>(
+        const <_TargetNode>[
+          _TargetNode('app:app', <String>['missing:missing']),
+        ],
+        keyOf: (target) => target.key,
+        dependenciesOf: (target) => target.dependencies,
+      ),
+      throwsStateError,
+    );
+  });
+
+  test('orders builders by required input outputs', () {
+    final definitions = <String, BuilderOrderDefinition>{
+      'consumer': const BuilderOrderDefinition(
+        requiredInputs: <String>['.json'],
+        buildExtensionOutputs: <Iterable<String>>[
+          <String>['.json'],
+        ],
+        runsBefore: <String>[],
+      ),
+      'producer': const BuilderOrderDefinition(
+        requiredInputs: <String>[],
+        buildExtensionOutputs: <Iterable<String>>[
+          <String>['.json'],
+        ],
+        runsBefore: <String>[],
+      ),
+    };
+
+    expect(
+      orderBuilders(<String>['consumer', 'producer'], definitions, const {}),
+      <String>['producer', 'consumer'],
+    );
+  });
+}
