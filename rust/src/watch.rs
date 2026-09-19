@@ -148,13 +148,14 @@ fn load_source_post_process_outputs(root: &Path) -> BTreeSet<String> {
         .values()
         .filter(|action| source_post_process_ids.contains(action.builder.as_str()))
         .flat_map(|action| action.outputs.iter())
-        .filter_map(|output| output.split_once('|').map(|(_, path)| path.replace('\\', "/")))
+        .filter_map(|output| output.split_once('|').map(|_| output.clone()))
         .collect()
 }
 
 fn is_generated_output(
     root: &Path,
     path: &Path,
+    root_package: &str,
     source_post_process_outputs: &BTreeSet<String>,
 ) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -195,8 +196,8 @@ fn is_generated_output(
         return true;
     }
 
-    let relative_asset = relative.replace('\\', "/");
-    source_post_process_outputs.contains(&relative_asset)
+    let asset = format!("{root_package}|{}", relative.replace('\\', "/"));
+    source_post_process_outputs.contains(&asset)
 }
 
 fn output_pattern_matches(relative: &str, name: &str, pattern: &str) -> bool {
@@ -253,7 +254,12 @@ fn is_relevant_event(
             return is_root_package && name == "package_config.json";
         }
         if is_root_package
-            && is_generated_output(&workspace.root, path, source_post_process_outputs)
+            && is_generated_output(
+                &workspace.root,
+                path,
+                &workspace.root_package,
+                source_post_process_outputs,
+            )
         {
             // Ignore our own generated writes, but rebuild if a generated
             // source file was removed by the user.
