@@ -6,6 +6,7 @@ use crate::pattern::match_capture_pattern;
 use crate::worker::WorkerPool;
 use crate::workspace::Workspace;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -14,9 +15,16 @@ use std::time::Duration;
 
 pub(crate) fn run(options: &Options) -> io::Result<()> {
     let mut pool = None;
+    let mut source_post_process_outputs = BTreeSet::new();
 
-    if let Err(error) = run_watch_build(options, &mut pool) {
-        eprintln!("initial watch build failed: {error}");
+    match run_watch_build(options, &mut pool) {
+        Ok(true) => {
+            source_post_process_outputs = load_source_post_process_outputs(&options.root);
+        }
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!("initial watch build failed: {error}");
+        }
     }
 
     let workspace = Workspace::load(options.root.clone())?;
@@ -39,22 +47,35 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     );
 
     loop {
-        if !wait_for_relevant_event(&receiver, &workspace, options.interval_ms)? {
+        if !wait_for_relevant_event(
+            &receiver,
+            &workspace,
+            &source_post_process_outputs,
+            options.interval_ms,
+        )? {
             continue;
         }
 
         eprintln!("Change detected; rebuilding");
-        if let Err(error) = run_watch_build(options, &mut pool) {
-            eprintln!("watch build failed: {error}");
+        match run_watch_build(options, &mut pool) {
+            Ok(true) => {
+                source_post_process_outputs =
+                    load_source_post_process_outputs(&options.root);
+            }
+            Ok(false) => source_post_process_outputs.clear(),
+            Err(error) => {
+                eprintln!("watch build failed: {error}");
+            }
         }
     }
 }
 
-fn run_watch_build(options: &Options, pool: &mut Option<WorkerPool>) -> io::Result<()> {
+fn run_watch_build(options: &Options, pool: &mut Option<WorkerPool>) -> io::Result<bool> {
     let workspace = Workspace::load(options.root.clone())?;
     let Some(build_config) = select_frontend(options, &workspace)? else {
         pool.take();
-        return run_dart_fallback(options, &workspace);
+        run_dart_fallback(options, &workspace)?;
+        return Ok(false);
     };
 
     if pool.is_none() {
@@ -68,18 +89,20 @@ fn run_watch_build(options: &Options, pool: &mut Option<WorkerPool>) -> io::Resu
             options.worker.is_none(),
         )?);
     }
-    build::run_with_config(options, pool.as_mut(), workspace, build_config)
+    build::run_with_config(options, pool.as_mut(), workspace, build_config)?;
+    Ok(true)
 }
 
 fn wait_for_relevant_event(
     receiver: &Receiver<notify::Result<Event>>,
     workspace: &Workspace,
+    source_post_process_outputs: &BTreeSet<String>,
     debounce_ms: u64,
 ) -> io::Result<bool> {
     loop {
         let event = receiver.recv().map_err(io::Error::other)?;
         let event = event.map_err(io::Error::other)?;
-        if !is_relevant_event(workspace, &event) {
+        if !is_relevant_event(workspace, &event, source_post_process_outputs) {
             continue;
         }
 
@@ -92,7 +115,47 @@ fn wait_for_relevant_event(
     }
 }
 
-fn is_generated_output(root: &Path, path: &Path) -> bool {
+fn load_source_post_process_outputs(root: &Path) -> BTreeSet<String> {
+    let manifest_path = root.join(".dart_tool/build_runner_accelerator/builder-manifest.json");
+    let Ok(contents) = fs::read_to_string(manifest_path) else {
+        return BTreeSet::new();
+    };
+    let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return BTreeSet::new();
+    };
+    let Some(builders) = manifest.get("builders").and_then(|value| value.as_array()) else {
+        return BTreeSet::new();
+    };
+    let source_post_process_ids = builders
+        .iter()
+        .filter(|builder| {
+            builder.get("kind").and_then(|value| value.as_str()) == Some("post_process")
+                && builder.get("build_to").and_then(|value| value.as_str()) == Some("source")
+        })
+        .filter_map(|builder| builder.get("id").and_then(|value| value.as_str()))
+        .collect::<BTreeSet<_>>();
+    if source_post_process_ids.is_empty() {
+        return BTreeSet::new();
+    }
+
+    let graph_path = root.join(".dart_tool/build_runner_accelerator/graph-v3.bin");
+    let Ok(state) = GraphState::load(&graph_path) else {
+        return BTreeSet::new();
+    };
+    state
+        .actions
+        .values()
+        .filter(|action| source_post_process_ids.contains(action.builder.as_str()))
+        .flat_map(|action| action.outputs.iter())
+        .filter_map(|output| output.split_once('|').map(|(_, path)| path.replace('\\', "/")))
+        .collect()
+}
+
+fn is_generated_output(
+    root: &Path,
+    path: &Path,
+    source_post_process_outputs: &BTreeSet<String>,
+) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
     };
@@ -131,31 +194,8 @@ fn is_generated_output(root: &Path, path: &Path) -> bool {
         return true;
     }
 
-    let source_post_process_ids = builders
-        .iter()
-        .filter(|builder| {
-            builder.get("kind").and_then(|value| value.as_str()) == Some("post_process")
-                && builder.get("build_to").and_then(|value| value.as_str()) == Some("source")
-        })
-        .filter_map(|builder| builder.get("id").and_then(|value| value.as_str()))
-        .collect::<Vec<_>>();
-    if source_post_process_ids.is_empty() {
-        return false;
-    }
-
     let relative_asset = relative.replace('\\', "/");
-    let graph_path = root.join(".dart_tool/build_runner_accelerator/graph-v3.bin");
-    let Ok(state) = GraphState::load(&graph_path) else {
-        return false;
-    };
-    state.actions.values().any(|action| {
-        source_post_process_ids.contains(&action.builder.as_str())
-            && action.outputs.iter().any(|output| {
-                output
-                    .split_once('|')
-                    .is_some_and(|(_, asset_path)| asset_path == relative_asset.as_str())
-            })
-    })
+    source_post_process_outputs.contains(&relative_asset)
 }
 
 fn output_pattern_matches(relative: &str, name: &str, pattern: &str) -> bool {
@@ -165,7 +205,11 @@ fn output_pattern_matches(relative: &str, name: &str, pattern: &str) -> bool {
     relative == pattern || relative.ends_with(pattern) || name.ends_with(pattern)
 }
 
-fn is_relevant_event(workspace: &Workspace, event: &Event) -> bool {
+fn is_relevant_event(
+    workspace: &Workspace,
+    event: &Event,
+    source_post_process_outputs: &BTreeSet<String>,
+) -> bool {
     if !matches!(
         event.kind,
         EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
@@ -207,7 +251,9 @@ fn is_relevant_event(workspace: &Workspace, event: &Event) -> bool {
         }) {
             return is_root_package && name == "package_config.json";
         }
-        if is_root_package && is_generated_output(&workspace.root, path) {
+        if is_root_package
+            && is_generated_output(&workspace.root, path, source_post_process_outputs)
+        {
             // Ignore our own generated writes, but rebuild if a generated
             // source file was removed by the user.
             return matches!(event.kind, EventKind::Remove(_));
