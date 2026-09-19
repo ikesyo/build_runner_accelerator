@@ -18,6 +18,8 @@ void main() {
       readCache: <AssetId, List<int>>{
         outerInput: <int>[1],
         nestedInput: <int>[2],
+        outerBlocked: <int>[3],
+        nestedBlocked: <int>[4],
       },
       readableCache: <AssetId>{},
     );
@@ -45,10 +47,6 @@ void main() {
       io.readAsBytes(outerInput),
       throwsA(isA<AssetNotFoundException>()),
     );
-    await expectLater(
-      io.readAsBytes(nestedBlocked),
-      throwsA(isA<AssetNotFoundException>()),
-    );
     await io.writeAsString(nestedOutput, 'nested');
     expect(io.outputs[nestedOutput], isNotNull);
     expect(io.outputs[outerOutput], isNull);
@@ -63,10 +61,30 @@ void main() {
       io.readAsBytes(nestedInput),
       throwsA(isA<AssetNotFoundException>()),
     );
+
+    io.beginAction(
+      rpc: nestedRpc,
+      package: 'app',
+      primaryInput: nestedBlocked,
+      blockedAssets: {nestedBlocked},
+    );
+    await expectLater(
+      io.readAsBytes(nestedBlocked),
+      throwsA(isA<AssetNotFoundException>()),
+    );
+    io.endAction();
+
+    io.beginAction(
+      rpc: outerRpc,
+      package: 'app',
+      primaryInput: outerBlocked,
+      blockedAssets: {outerBlocked},
+    );
     await expectLater(
       io.readAsBytes(outerBlocked),
       throwsA(isA<AssetNotFoundException>()),
     );
+    io.endAction();
 
     io.endAction();
     expect(io.outputs, isEmpty);
