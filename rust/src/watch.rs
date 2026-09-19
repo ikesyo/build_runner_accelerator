@@ -17,17 +17,18 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     let mut pool = None;
     let mut source_post_process_outputs = BTreeSet::new();
 
-    match run_watch_build(options, &mut pool) {
-        Ok(true) => {
-            source_post_process_outputs = load_source_post_process_outputs(&options.root);
-        }
-        Ok(false) => {}
+    let initial_native_build = match run_watch_build(options, &mut pool) {
+        Ok(native_build) => native_build,
         Err(error) => {
             eprintln!("initial watch build failed: {error}");
+            false
         }
-    }
+    };
 
     let workspace = Workspace::load(options.root.clone())?;
+    if initial_native_build {
+        source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
+    }
     let (sender, receiver) = mpsc::channel();
     let mut watcher = notify::recommended_watcher(move |result| {
         let _ = sender.send(result);
@@ -60,7 +61,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         match run_watch_build(options, &mut pool) {
             Ok(true) => {
                 source_post_process_outputs =
-                    load_source_post_process_outputs(&options.root);
+                    load_source_post_process_outputs(&workspace.root);
             }
             Ok(false) => source_post_process_outputs.clear(),
             Err(error) => {
