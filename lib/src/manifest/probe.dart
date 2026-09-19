@@ -124,8 +124,12 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
     // and falls back to stock Dart build_runner in auto mode.
     return const {};
   } finally {
-    if (temporary != null && temporary.existsSync()) {
-      await temporary.delete(recursive: true);
+    if (temporary != null) {
+      try {
+        await temporary.delete(recursive: true);
+      } catch (_) {
+        // Cleanup is best effort; the probe must not fail the build.
+      }
     }
   }
 }
