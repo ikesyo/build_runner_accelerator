@@ -6,32 +6,97 @@ import 'package:build_config/build_config.dart';
 import 'package:build_runner/src/build_plan/build_triggers.dart'
     show BuildTriggers;
 import 'package:built_collection/built_collection.dart';
-import 'package:package_config/package_config.dart';
-import 'package:path/path.dart' as p;
-import 'package:yaml/yaml.dart';
 
+import 'manifest/emitter.dart';
 import 'manifest/mapping.dart';
 import 'manifest/model.dart';
 import 'manifest/ordering.dart';
-
-const _manifestVersion = 8;
-const _factoryProbeTimeout = Duration(seconds: 30);
-const _factoryProbeKillGracePeriod = Duration(seconds: 1);
+import 'manifest/package_graph.dart';
+import 'manifest/probe.dart';
 
 Future<void> generateBuilderManifest(List<String> arguments) async {
   final options = _Arguments.parse(arguments);
   final root = Directory(options.root).absolute.path;
-  final packageGraph = await _loadPackageGraph(root);
-  final configs = <String, BuildConfig>{};
+  final inputs = await _loadInputs(root);
+  final resolved = _resolveTargetsAndDefinitions(inputs);
+  final selection = _selectApplications(resolved);
+  final runtimeMappings = await _probeRuntimeMappings(
+    root,
+    resolved,
+    selection,
+  );
+  final normalized = _normalizeManifest(resolved, selection, runtimeMappings);
+  await _emitArtifacts(options, inputs.triggerDigest, normalized);
+}
 
-  for (final package in packageGraph.allPackages.values) {
-    if (package.name == r'$sdk') continue;
-    configs[package.name] = await BuildConfig.fromBuildConfigDir(
-      package.name,
-      package.dependencies.map((dependency) => dependency.name),
-      package.path,
-    );
-  }
+class _LoadedInputs {
+  const _LoadedInputs({
+    required this.packageGraph,
+    required this.configs,
+    required this.normalizedTriggerMap,
+    required this.triggerDigest,
+  });
+
+  final PackageGraph packageGraph;
+  final Map<String, BuildConfig> configs;
+  final Map<String, List<ManifestTrigger>> normalizedTriggerMap;
+  final String triggerDigest;
+}
+
+class _ResolvedInputs {
+  const _ResolvedInputs({
+    required this.rootPackageName,
+    required this.rootConfig,
+    required this.orderedTargets,
+    required this.targetOrder,
+    required this.definitions,
+    required this.normalizedTriggerMap,
+  });
+
+  final String rootPackageName;
+  final BuildConfig rootConfig;
+  final List<TargetInfo> orderedTargets;
+  final TargetOrder<TargetInfo> targetOrder;
+  final Map<String, DefinitionInfo> definitions;
+  final Map<String, List<ManifestTrigger>> normalizedTriggerMap;
+}
+
+class _ApplicationSelection {
+  const _ApplicationSelection(this.selected);
+
+  final Map<String, SelectedBuilder> selected;
+}
+
+class _RuntimeMappings {
+  const _RuntimeMappings({
+    required this.probedMappings,
+    required this.compatibleDefinitions,
+  });
+
+  final Map<String, List<FactoryMapping>> probedMappings;
+  final Map<String, List<ManifestDefinition>> compatibleDefinitions;
+}
+
+class _NormalizedManifest {
+  const _NormalizedManifest({
+    required this.builders,
+    required this.definitions,
+    required this.catalogEntries,
+  });
+
+  const _NormalizedManifest.empty()
+    : builders = const [],
+      definitions = const [],
+      catalogEntries = const [];
+
+  final List<Map<String, dynamic>> builders;
+  final List<Map<String, dynamic>> definitions;
+  final List<CatalogEntry> catalogEntries;
+}
+
+Future<_LoadedInputs> _loadInputs(String root) async {
+  final packageGraph = await loadPackageGraph(root);
+  final configs = await loadBuildConfigs(packageGraph);
 
   // Keep build_runner's parser and package-wide aggregation as the source of
   // truth. The Rust side receives only this normalized, analyzer-independent
@@ -44,17 +109,24 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       'Unsupported build trigger configuration:\n${buildTriggers.renderWarnings}',
     );
   }
-  final normalizedTriggerMap = normalizedTriggers(buildTriggers);
-  final triggerDigest = buildTriggers.digest.toString();
+  return _LoadedInputs(
+    packageGraph: packageGraph,
+    configs: configs,
+    normalizedTriggerMap: normalizedTriggers(buildTriggers),
+    triggerDigest: buildTriggers.digest.toString(),
+  );
+}
 
-  final rootConfig = configs[packageGraph.root.name];
+_ResolvedInputs _resolveTargetsAndDefinitions(_LoadedInputs inputs) {
+  final packageGraph = inputs.packageGraph;
+  final rootConfig = inputs.configs[packageGraph.root.name];
   if (rootConfig == null) {
     throw StateError('Root package config was not loaded');
   }
   final targets = <TargetInfo>[];
   for (final package in packageGraph.allPackages.values) {
     if (package.name == r'$sdk') continue;
-    final config = configs[package.name];
+    final config = inputs.configs[package.name];
     if (config == null) {
       throw StateError('Package config is unavailable: ' + package.name);
     }
@@ -82,7 +154,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     throw StateError('Root target is unavailable: ' + rootTargetKey);
   }
   final definitions = <String, DefinitionInfo>{};
-  for (final config in configs.values) {
+  for (final config in inputs.configs.values) {
     for (final definition in config.builderDefinitions.values) {
       // Match build_runner's build-script rule: relative imports from
       // dependency packages cannot be imported by the root worker script.
@@ -102,7 +174,17 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       definitions[definition.key] = DefinitionInfo.postProcess(definition);
     }
   }
+  return _ResolvedInputs(
+    rootPackageName: packageGraph.root.name,
+    rootConfig: rootConfig,
+    orderedTargets: orderedTargets,
+    targetOrder: targetOrder,
+    definitions: definitions,
+    normalizedTriggerMap: inputs.normalizedTriggerMap,
+  );
+}
 
+_ApplicationSelection _selectApplications(_ResolvedInputs resolved) {
   final selected = <String, SelectedBuilder>{};
   final disabled = <String>{};
 
@@ -113,7 +195,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     Map<String, dynamic>? options,
     required bool explicit,
   }) {
-    final definition = definitions[key];
+    final definition = resolved.definitions[key];
     // A dependency's build.yaml may contain configuration for a builder
     // supplied only by that package's development dependencies. build_runner
     // ignores such entries when the builder application is absent from the
@@ -123,14 +205,15 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     // filter therefore does not schedule those applications, even when a
     // dependency package's own build.yaml mentions the builder.
     if (!definition.isPostProcess &&
-        target.package.name != packageGraph.root.name &&
+        target.package.name != resolved.rootPackageName &&
         definition.normal!.buildTo == BuildTo.source) {
       return;
     }
     if (!definition.isPostProcess &&
-        target.package.name != packageGraph.root.name &&
+        target.package.name != resolved.rootPackageName &&
         definition.normal!.appliesBuilders.any(
-          (applied) => definitions[applied]?.normal?.buildTo == BuildTo.source,
+          (applied) =>
+              resolved.definitions[applied]?.normal?.buildTo == BuildTo.source,
         )) {
       // A hidden cache builder which applies a visible source builder is also
       // filtered out by build_runner for non-root packages.
@@ -140,7 +223,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     if (!explicit && disabled.contains(selectedKey)) return;
     if (!explicit && selected.containsKey(selectedKey)) return;
 
-    final global = rootConfig.globalOptions[key];
+    final global = resolved.rootConfig.globalOptions[key];
     final mergedOptions = <String, dynamic>{
       ...definition.defaults.options,
       ...definition.defaults.devOptions,
@@ -158,7 +241,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     );
 
     for (final applied in definition.appliesBuilders) {
-      if (definitions.containsKey(applied)) {
+      if (resolved.definitions.containsKey(applied)) {
         select(
           applied,
           target: target,
@@ -170,7 +253,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     }
   }
 
-  for (final target in orderedTargets) {
+  for (final target in resolved.orderedTargets) {
     for (final entry in target.target.builders.entries) {
       final selectedKey = _selectedKey(target.target.key, entry.key);
       if (!entry.value.isEnabled) {
@@ -190,7 +273,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     }
 
     if (target.target.autoApplyBuilders) {
-      for (final definition in definitions.values) {
+      for (final definition in resolved.definitions.values) {
         final selectedKey = _selectedKey(target.target.key, definition.key);
         if (selected.containsKey(selectedKey)) continue;
         if (!definition.isPostProcess &&
@@ -200,23 +283,26 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       }
     }
   }
+  return _ApplicationSelection(selected);
+}
 
-  if (selected.isEmpty) {
-    await _writeManifest(
-      options,
-      builders: const [],
-      definitions: const [],
-      workerSource: _workerSource(const []),
-      triggerDigest: triggerDigest,
+Future<_RuntimeMappings> _probeRuntimeMappings(
+  String root,
+  _ResolvedInputs resolved,
+  _ApplicationSelection selection,
+) async {
+  if (selection.selected.isEmpty) {
+    return const _RuntimeMappings(
+      probedMappings: {},
+      compatibleDefinitions: {},
     );
-    return;
   }
 
-  // build.yaml remains the ordering source, while the
-  // instantiated Builder is the expected-output source. Probe selected
-  // multi-factory and option-dependent applications so target-local mapping
-  // overrides remain lossless and package-specific Rust branches are unnecessary.
-  final probeRequests = selected.entries
+  // build.yaml remains the ordering source, while the instantiated Builder is
+  // the expected-output source. Probe selected multi-factory and
+  // option-dependent applications so target-local mapping overrides remain
+  // lossless and package-specific Rust branches are unnecessary.
+  final probeRequests = selection.selected.entries
       .where((entry) => requiresRuntimeProbe(entry.value))
       .map(
         (entry) => FactoryProbeRequest(
@@ -227,7 +313,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
         ),
       )
       .toList(growable: false);
-  final probedMappings = await _probeFactoryMappings(root, probeRequests);
+  final probedMappings = await probeFactoryMappings(root, probeRequests);
   final canonicalMappings = <String, List<FactoryMapping>>{};
   for (final request in probeRequests) {
     final mappings = probedMappings[request.id];
@@ -236,18 +322,18 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     }
   }
   final compatibleDefinitions = <String, List<ManifestDefinition>>{};
-  for (final info in definitions.values) {
+  for (final info in resolved.definitions.values) {
     final converted = tryConvertDefinition(
       info,
       canonicalMappings[info.key],
-      triggers: normalizedTriggerMap[info.key] ?? const [],
+      triggers: resolved.normalizedTriggerMap[info.key] ?? const [],
     );
     if (converted != null && converted.isNotEmpty) {
       compatibleDefinitions[info.key] = converted;
     }
   }
 
-  for (final entry in selected.entries) {
+  for (final entry in selection.selected.entries) {
     final selectedBuilder = entry.value;
     final definition = selectedBuilder.definition;
     final requiresProbe = requiresRuntimeProbe(selectedBuilder);
@@ -272,15 +358,27 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       );
     }
   }
+  return _RuntimeMappings(
+    probedMappings: probedMappings,
+    compatibleDefinitions: compatibleDefinitions,
+  );
+}
+
+_NormalizedManifest _normalizeManifest(
+  _ResolvedInputs resolved,
+  _ApplicationSelection selection,
+  _RuntimeMappings runtime,
+) {
+  if (selection.selected.isEmpty) return const _NormalizedManifest.empty();
 
   final activeEntries = <Map<String, dynamic>>[];
   final selectedDefinitions = <String>{};
   final allOutputSuffixes = <String>{
-    for (final definitions in compatibleDefinitions.values)
+    for (final definitions in runtime.compatibleDefinitions.values)
       for (final definition in definitions) ...definition.outputSuffixes,
   };
   final normalDefinitions = <String, DefinitionInfo>{
-    for (final entry in definitions.entries)
+    for (final entry in resolved.definitions.entries)
       if (!entry.value.isPostProcess) entry.key: entry.value,
   };
   final builderOrdering = <String, BuilderOrderDefinition>{
@@ -292,7 +390,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       ),
   };
   final globalRunsBefore = <String, Iterable<String>>{
-    for (final entry in rootConfig.globalOptions.entries)
+    for (final entry in resolved.rootConfig.globalOptions.entries)
       entry.key: entry.value.runsBefore,
   };
   final globallyOrderedKeys = orderBuilders(
@@ -305,15 +403,16 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   final builderOrder = <String, int>{};
   var nextBuilderOrder = 0;
   for (final key in globallyOrderedKeys) {
-    for (final definition in compatibleDefinitions[key] ?? const []) {
+    for (final definition in runtime.compatibleDefinitions[key] ?? const []) {
       if (definition.isPostProcess) continue;
       builderOrder[definition.id] = nextBuilderOrder++;
     }
   }
-  for (final target in orderedTargets) {
-    final componentIndex = targetOrder.componentIndex[target.target.key]!;
-    final memberIndex = targetOrder.memberIndex[target.target.key]!;
-    final targetBuilders = selected.values
+  for (final target in resolved.orderedTargets) {
+    final componentIndex =
+        resolved.targetOrder.componentIndex[target.target.key]!;
+    final memberIndex = resolved.targetOrder.memberIndex[target.target.key]!;
+    final targetBuilders = selection.selected.values
         .where((builder) => builder.target.target.key == target.target.key)
         .toList();
     if (targetBuilders.isEmpty) continue;
@@ -333,12 +432,12 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     final runtimeSuffixesById = <String, List<String>>{};
     for (final candidateBuilder in targetBuilders) {
       final candidateMappings =
-          probedMappings[_selectedKey(
+          runtime.probedMappings[_selectedKey(
             target.target.key,
             candidateBuilder.definition.key,
           )];
       for (final candidate
-          in compatibleDefinitions[candidateBuilder.definition.key] ??
+          in runtime.compatibleDefinitions[candidateBuilder.definition.key] ??
               const <ManifestDefinition>[]) {
         runtimeSuffixesById[candidate.id] = runtimeOutputSuffixes(
           candidateBuilder.definition,
@@ -353,13 +452,14 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
         (builder) => builder.definition.key == key,
       );
       final selectedPatterns = patterns(selectedBuilder.generateFor);
-      for (final converted in compatibleDefinitions[key]!) {
+      for (final converted in runtime.compatibleDefinitions[key]!) {
         selectedDefinitions.add(converted.id);
         final excludedInputSuffixes = converted.isPostProcess
             ? <String>[]
             : (<String>{
                 for (final candidateKey in normalKeys)
-                  for (final candidate in compatibleDefinitions[candidateKey]!)
+                  for (final candidate
+                      in runtime.compatibleDefinitions[candidateKey]!)
                     if (!candidate.isPostProcess &&
                         builderOrder[candidate.id]! >=
                             builderOrder[converted.id]!)
@@ -376,12 +476,13 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
             isRoot: target.package.isRoot,
             runtimeMapping: runtimeMappingJson(
               selectedBuilder.definition,
-              probedMappings[_selectedKey(target.target.key, key)],
+              runtime.probedMappings[_selectedKey(target.target.key, key)],
               converted,
             ),
             phase: converted.isPostProcess
                 ? 0
-                : builderOrder[converted.id]! * targetOrder.maxComponentSize +
+                : builderOrder[converted.id]! *
+                          resolved.targetOrder.maxComponentSize +
                       memberIndex,
             target: target.target.key,
             package: target.package.name,
@@ -394,7 +495,8 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   }
 
   final allCompatibleDefinitions = <ManifestDefinition>[
-    for (final definitions in compatibleDefinitions.values) ...definitions,
+    for (final definitions in runtime.compatibleDefinitions.values)
+      ...definitions,
   ]..sort((left, right) => left.id.compareTo(right.id));
   final definitionEntries = <Map<String, dynamic>>[
     for (final definition in allCompatibleDefinitions)
@@ -417,112 +519,26 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       if (selectedDefinitions.contains(definition.id))
         _catalogEntry(definition),
   ];
-
-  await _writeManifest(
-    options,
+  return _NormalizedManifest(
     builders: activeEntries,
     definitions: definitionEntries,
-    workerSource: _workerSource(catalogEntries),
-    triggerDigest: triggerDigest,
+    catalogEntries: catalogEntries,
   );
 }
 
-/// The manifest generator only needs the package graph's names, paths, root
-/// marker, and direct dependencies. Keep this small graph local to the worker
-/// package so manifest generation does not depend on the retired
-/// `build_runner_core` package.
-Future<PackageGraph> _loadPackageGraph(String packagePath) async {
-  final root = p.canonicalize(packagePath);
-  final rootPubspec = _pubspecForPath(root);
-  final rootName = rootPubspec['name'];
-  if (rootName is! String || rootName.isEmpty) {
-    throw StateError('The current package has no name in pubspec.yaml.');
-  }
-
-  var packageConfigRoot = root;
-  PackageConfig? packageConfig;
-  while (true) {
-    packageConfig = await findPackageConfig(
-      Directory(packageConfigRoot),
-      recurse: false,
-    );
-    if (packageConfig != null) break;
-    final parent = p.dirname(packageConfigRoot);
-    if (parent == packageConfigRoot) break;
-    packageConfigRoot = parent;
-  }
-  if (packageConfig == null) {
-    throw StateError('Unable to find package_config.json for $root.');
-  }
-
-  final packages = <String, PackageInfo>{};
-  final orderedPackages = packageConfig.packages.toList()
-    ..sort((left, right) => left.name.compareTo(right.name));
-  for (final package in orderedPackages) {
-    packages[package.name] = PackageInfo(
-      name: package.name,
-      path: package.root.toFilePath(),
-      isRoot: package.name == rootName,
-    );
-  }
-
-  PackageInfo packageNode(String name, {String? parent}) {
-    final node = packages[name];
-    if (node == null) {
-      throw StateError(
-        'Dependency $name ${parent == null ? '' : 'of $parent '}not '
-        'present; run `dart pub get` first.',
-      );
-    }
-    return node;
-  }
-
-  final rootNode = packageNode(rootName);
-  rootNode.dependencies.addAll(
-    _depsFromYaml(
-      rootPubspec,
-      includeDevDependencies: true,
-    ).map((name) => packageNode(name, parent: rootName)),
-  );
-  for (final package in orderedPackages.where((p) => p.name != rootName)) {
-    final pubspec = _pubspecForPath(package.root.toFilePath());
-    packages[package.name]!.dependencies.addAll(
-      _depsFromYaml(
-        pubspec,
-      ).map((name) => packageNode(name, parent: package.name)),
-    );
-  }
-
-  return PackageGraph(root: rootNode, allPackages: packages);
-}
-
-YamlMap _pubspecForPath(String packagePath) {
-  final path = p.join(packagePath, 'pubspec.yaml');
-  final file = File(path);
-  if (!file.existsSync()) {
-    throw StateError('Unable to find $path.');
-  }
-  final value = loadYaml(file.readAsStringSync());
-  if (value is! YamlMap) {
-    throw StateError('$path does not contain a YAML map.');
-  }
-  return value;
-}
-
-List<String> _depsFromYaml(
-  YamlMap pubspec, {
-  bool includeDevDependencies = false,
-}) {
-  final dependencies = <String>{
-    ..._yamlStringKeys(pubspec['dependencies'] as Map?),
-    if (includeDevDependencies)
-      ..._yamlStringKeys(pubspec['dev_dependencies'] as Map?),
-  };
-  return dependencies.toList()..sort();
-}
-
-Iterable<String> _yamlStringKeys(Map? values) =>
-    values == null ? const <String>[] : values.keys.cast<String>();
+Future<void> _emitArtifacts(
+  _Arguments options,
+  String triggerDigest,
+  _NormalizedManifest normalized,
+) => emitManifestArtifacts(
+  manifestPath: options.manifest,
+  workerEntrypoint: options.workerEntrypoint,
+  fingerprint: options.fingerprint,
+  builders: normalized.builders,
+  definitions: normalized.definitions,
+  catalogEntries: normalized.catalogEntries,
+  triggerDigest: triggerDigest,
+);
 
 bool _autoAppliesToTarget(BuilderDefinition definition, PackageInfo target) {
   switch (definition.autoApply) {
@@ -541,325 +557,8 @@ bool _autoAppliesToTarget(BuilderDefinition definition, PackageInfo target) {
 
 String _selectedKey(String target, String builder) => '$target|$builder';
 
-Future<Map<String, List<FactoryMapping>>> _probeFactoryMappings(
-  String root,
-  Iterable<FactoryProbeRequest> requests,
-) async {
-  final probeRequests = requests.toList(growable: false);
-  if (probeRequests.isEmpty) return const {};
-  final packageConfig = _findPackageConfigPath(root);
-  if (packageConfig == null) return const {};
-
-  Directory? temporary;
-  try {
-    temporary = await Directory.systemTemp.createTemp(
-      'build-runner-accelerator-factory-probe-',
-    );
-    final probeFile = File(p.join(temporary.path, 'probe.dart'));
-    final resultFile = File(p.join(temporary.path, 'result.json'));
-    await probeFile.writeAsString(_factoryProbeSource(probeRequests));
-    // Process.start is required here so a misbehaving factory probe can be
-    // terminated instead of blocking manifest generation indefinitely.
-    final process = await Process.start(Platform.resolvedExecutable, [
-      '--packages=$packageConfig',
-      probeFile.path,
-      resultFile.path,
-    ], workingDirectory: root);
-    // Consume both pipes while the probe runs; otherwise a verbose probe can
-    // block on a full child-process pipe before the timeout is reached.
-    unawaited(process.stdout.drain<void>());
-    unawaited(process.stderr.drain<void>());
-
-    int exitCode;
-    try {
-      exitCode = await process.exitCode.timeout(_factoryProbeTimeout);
-    } on TimeoutException {
-      process.kill();
-      try {
-        await process.exitCode.timeout(_factoryProbeKillGracePeriod);
-      } on TimeoutException {
-        // The child may be outside our control; the probe still must not
-        // keep manifest generation blocked.
-      }
-      return const {};
-    }
-    if (exitCode != 0 || !resultFile.existsSync()) return const {};
-    final decoded = jsonDecode(await resultFile.readAsString());
-    if (decoded is! Map) return const {};
-
-    final probed = <String, List<FactoryMapping>>{};
-    for (final entry in decoded.entries) {
-      final request = probeRequests
-          .where((candidate) => candidate.id == entry.key)
-          .firstOrNull;
-      if (request == null || entry.value is! List) continue;
-      final expectedFactories = request.definition.isPostProcess
-          ? <String>[request.definition.postProcess!.builderFactory]
-          : request.definition.normal!.builderFactories;
-      final rawMappings = entry.value as List;
-      if (rawMappings.length != expectedFactories.length) continue;
-      final mappings = <FactoryMapping>[];
-      var valid = true;
-      for (var index = 0; index < rawMappings.length; index++) {
-        final raw = rawMappings[index];
-        if (raw is! Map || raw['factory'] != expectedFactories[index]) {
-          valid = false;
-          break;
-        }
-        final rawBuildExtensions = raw['build_extensions'];
-        if (rawBuildExtensions is! Map) {
-          valid = false;
-          break;
-        }
-        final buildExtensions = <String, List<String>>{};
-        for (final extension in rawBuildExtensions.entries) {
-          final input = extension.key;
-          final outputs = extension.value;
-          if (input is! String ||
-              outputs is! List ||
-              outputs.any((output) => output is! String)) {
-            valid = false;
-            break;
-          }
-          buildExtensions[input] = outputs.cast<String>();
-        }
-        if (!valid) break;
-        final rawInputExtensions = raw['input_extensions'];
-        final inputExtensions = rawInputExtensions == null
-            ? null
-            : rawInputExtensions is List &&
-                  rawInputExtensions.every((input) => input is String)
-            ? rawInputExtensions.cast<String>()
-            : null;
-        if (raw.containsKey('input_extensions') && inputExtensions == null) {
-          valid = false;
-          break;
-        }
-        mappings.add(
-          FactoryMapping(
-            factory: raw['factory'] as String,
-            buildExtensions: buildExtensions,
-            inputExtensions: inputExtensions,
-          ),
-        );
-      }
-      if (valid) probed[request.id] = mappings;
-    }
-    return probed;
-  } catch (_) {
-    // A probe is an optimization boundary, not a reason to fail the build.
-    // The caller treats a missing selected request as an unsupported manifest
-    // and falls back to stock Dart build_runner in auto mode.
-    return const {};
-  } finally {
-    if (temporary != null && temporary.existsSync()) {
-      await temporary.delete(recursive: true);
-    }
-  }
-}
-
-String _factoryProbeSource(Iterable<FactoryProbeRequest> requests) {
-  // These values are later emitted into executable Dart source. Keep the
-  // probe boundary as strict as the manifest converter: only package imports
-  // and identifier-shaped factory names may cross it. In particular, a raw
-  // factory value must never reach the importPrefix.factory expression below.
-  final safeRequests = requests
-      .where((request) {
-        if (request.definition.isPostProcess) {
-          final postProcess = request.definition.postProcess!;
-          return postProcess.import.startsWith('package:') &&
-              manifestIdentifierPattern.hasMatch(postProcess.builderFactory);
-        }
-        final normal = request.definition.normal!;
-        return normal.import.startsWith('package:') &&
-            normal.builderFactories.every(manifestIdentifierPattern.hasMatch);
-      })
-      .toList(growable: false);
-  final sorted = safeRequests.toList()
-    ..sort((left, right) => left.id.compareTo(right.id));
-  final imports = <String, String>{};
-  for (final request in sorted) {
-    final importUri = request.definition.isPostProcess
-        ? request.definition.postProcess!.import
-        : request.definition.normal!.import;
-    imports.putIfAbsent(
-      importUri,
-      () => 'builderImport' + imports.length.toString(),
-    );
-  }
-
-  final output = StringBuffer()
-    ..writeln('import \'dart:convert\';')
-    ..writeln('import \'dart:io\';')
-    ..writeln(
-      "import 'package:build/build.dart' show Builder, BuilderOptions, PostProcessBuilder;",
-    );
-  for (final entry in imports.entries) {
-    output.writeln(
-      'import ' + _dartSourceString(entry.key) + ' as ' + entry.value + ';',
-    );
-  }
-  output
-    ..writeln()
-    ..writeln('void main(List<String> args) {')
-    ..writeln('  if (args.length != 1) {')
-    ..writeln('    exitCode = 64;')
-    ..writeln('    return;')
-    ..writeln('  }')
-    ..writeln('  final result = <String, dynamic>{};');
-  for (final request in sorted) {
-    final importUri = request.definition.isPostProcess
-        ? request.definition.postProcess!.import
-        : request.definition.normal!.import;
-    final importPrefix = imports[importUri]!;
-    final optionsLiteral = _dartSourceString(jsonEncode(request.options));
-    final builderOptions =
-        'BuilderOptions('
-        'Map<String, dynamic>.from(jsonDecode($optionsLiteral) as Map), '
-        'isRoot: ${request.isRoot})';
-    output
-      ..writeln('    try {')
-      ..writeln('      result[${_dartSourceString(request.id)}] = <dynamic>[');
-    if (request.definition.isPostProcess) {
-      final factory = request.definition.postProcess!.builderFactory;
-      output
-        ..writeln('      <String, dynamic>{')
-        ..writeln('        \'factory\': ${_dartSourceString(factory)},')
-        ..writeln("        'build_extensions': <String, List<String>>{},")
-        ..writeln(
-          '        \'input_extensions\': _postProcessInputExtensions('
-          '$importPrefix.$factory($builderOptions)),',
-        )
-        ..writeln('      },');
-    } else {
-      for (final factory in request.definition.normal!.builderFactories) {
-        output
-          ..writeln('      <String, dynamic>{')
-          ..writeln('        \'factory\': ${_dartSourceString(factory)},')
-          ..writeln("        'build_extensions': _builderBuildExtensions(")
-          ..writeln('          $importPrefix.$factory($builderOptions),')
-          ..writeln('        ),')
-          ..writeln('      },');
-      }
-    }
-    output
-      ..writeln('      ];')
-      ..writeln('    } catch (_) {}');
-  }
-  output
-    ..writeln('  File(args.single).writeAsStringSync(jsonEncode(result));')
-    ..writeln('}')
-    ..writeln()
-    ..writeln(
-      'Map<String, List<String>> _builderBuildExtensions(Builder builder) => '
-      '<String, List<String>>{'
-      'for (final entry in builder.buildExtensions.entries) '
-      'entry.key: entry.value.toList(growable: false),'
-      '};',
-    )
-    ..writeln()
-    ..writeln(
-      'List<String> _postProcessInputExtensions(PostProcessBuilder builder) '
-      '=> builder.inputExtensions.toList(growable: false);',
-    );
-  return output.toString();
-}
-
-String? _findPackageConfigPath(String root) {
-  var packageConfigRoot = p.canonicalize(root);
-  while (true) {
-    final candidate = p.join(
-      packageConfigRoot,
-      '.dart_tool',
-      'package_config.json',
-    );
-    if (File(candidate).existsSync()) return candidate;
-    final parent = p.dirname(packageConfigRoot);
-    if (parent == packageConfigRoot) return null;
-    packageConfigRoot = parent;
-  }
-}
-
 Map<String, dynamic> _jsonMap(Map<String, dynamic> value) =>
     Map<String, dynamic>.from(jsonDecode(jsonEncode(value)) as Map);
-
-String _workerSource(Iterable<CatalogEntry> entries) {
-  final sorted = entries.toList()
-    ..sort((left, right) => left.id.compareTo(right.id));
-  final imports = <String, String>{};
-  for (final entry in sorted) {
-    imports.putIfAbsent(
-      entry.importUri,
-      () => 'builderImport' + imports.length.toString(),
-    );
-  }
-
-  final output = StringBuffer()
-    ..writeln(
-      "import 'package:build/build.dart' show BuilderFactory, PostProcessBuilderFactory;",
-    )
-    ..writeln("import 'package:build_runner_accelerator/src/worker.dart';");
-  for (final entry in imports.entries) {
-    output.writeln(
-      'import ' + _dartSourceString(entry.key) + ' as ' + entry.value + ';',
-    );
-  }
-  output
-    ..writeln()
-    ..writeln('Future<void> main() => runWorker(')
-    ..writeln('  catalog: <String, BuilderFactory>{');
-  for (final entry in sorted.where((entry) => !entry.isPostProcess)) {
-    output.writeln(
-      '    ' +
-          _dartSourceString(entry.id) +
-          ': ' +
-          imports[entry.importUri]! +
-          '.' +
-          entry.factory +
-          ',',
-    );
-  }
-  output
-    ..writeln('  },')
-    ..writeln('  postProcessCatalog: <String, PostProcessBuilderFactory>{');
-  for (final entry in sorted.where((entry) => entry.isPostProcess)) {
-    output.writeln(
-      '    ' +
-          _dartSourceString(entry.id) +
-          ': ' +
-          imports[entry.importUri]! +
-          '.' +
-          entry.factory +
-          ',',
-    );
-  }
-  output
-    ..writeln('  },')
-    ..writeln(');');
-  return output.toString();
-}
-
-String _dartSourceString(String value) {
-  final output = StringBuffer("'");
-  for (final codeUnit in value.codeUnits) {
-    if (codeUnit == 0x5c || codeUnit == 0x27 || codeUnit == 0x24) {
-      output
-        ..write('\\')
-        ..writeCharCode(codeUnit);
-    } else if (codeUnit < 0x20 ||
-        codeUnit == 0x7f ||
-        codeUnit == 0x2028 ||
-        codeUnit == 0x2029) {
-      output
-        ..write('\\u')
-        ..write(codeUnit.toRadixString(16).padLeft(4, '0'));
-    } else {
-      output.writeCharCode(codeUnit);
-    }
-  }
-  output.write("'");
-  return output.toString();
-}
 
 CatalogEntry _catalogEntry(ManifestDefinition definition) => CatalogEntry(
   id: definition.id,
@@ -867,35 +566,6 @@ CatalogEntry _catalogEntry(ManifestDefinition definition) => CatalogEntry(
   factory: definition.factory,
   isPostProcess: definition.isPostProcess,
 );
-
-Future<void> _writeManifest(
-  _Arguments options, {
-  required Iterable<Map<String, dynamic>> builders,
-  required Iterable<Map<String, dynamic>> definitions,
-  required String workerSource,
-  required String triggerDigest,
-}) async {
-  final manifestFile = File(options.manifest);
-  final workerFile = File(options.workerEntrypoint);
-  await manifestFile.parent.create(recursive: true);
-  await workerFile.parent.create(recursive: true);
-  await _writeAtomically(workerFile, workerSource);
-  final manifest = <String, dynamic>{
-    'version': _manifestVersion,
-    'fingerprint': options.fingerprint,
-    'trigger_digest': triggerDigest,
-    'worker_entrypoint': workerFile.absolute.path,
-    'builders': builders.toList(),
-    'definitions': definitions.toList(),
-  };
-  await _writeAtomically(manifestFile, jsonEncode(manifest) + '\n');
-}
-
-Future<void> _writeAtomically(File file, String contents) async {
-  final temporary = File(file.path + '.tmp.' + pid.toString());
-  await temporary.writeAsString(contents);
-  await temporary.rename(file.path);
-}
 
 class _Arguments {
   _Arguments({
