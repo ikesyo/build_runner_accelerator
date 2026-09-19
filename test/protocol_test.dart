@@ -1,3 +1,8 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:test/test.dart';
 
@@ -131,4 +136,87 @@ void main() {
       );
     });
   });
+
+  test('records asset RPC timing when a response arrives', () async {
+    String? observedOperation;
+    var observedTotalUs = -1;
+    var observedSendUs = -1;
+    var observedWaitUs = -1;
+    final session = RpcSession(
+      FrameReader(
+        Stream<List<int>>.value(
+          _frame(<String, dynamic>{
+            'v': 1,
+            'type': 'asset_response',
+            'id': 1000,
+            'ok': true,
+          }),
+        ),
+      ),
+      FrameWriter(IOSink(_DiscardingConsumer())),
+      buildId: 7,
+      phase: 2,
+      postProcess: false,
+      onTiming:
+          ({
+            required String operation,
+            required int totalUs,
+            required int sendUs,
+            required int waitUs,
+          }) {
+            observedOperation = operation;
+            observedTotalUs = totalUs;
+            observedSendUs = sendUs;
+            observedWaitUs = waitUs;
+          },
+    );
+
+    await session.call('read', <String, dynamic>{'asset': 'app|lib/a.dart'});
+
+    expect(observedOperation, 'read');
+    expect(observedTotalUs, greaterThanOrEqualTo(observedSendUs));
+    expect(observedSendUs, greaterThanOrEqualTo(0));
+    expect(observedWaitUs, greaterThanOrEqualTo(0));
+  });
+
+  test(
+    'hydrates shared-memory asset responses through the configured reader',
+    () async {
+      final reader = FrameReader(
+        Stream<List<int>>.value(
+          _frame(<String, dynamic>{
+            'v': 1,
+            'type': 'asset_response',
+            'id': 1000,
+            'ok': true,
+            'encoding': 'shared_memory',
+            'length': 3,
+          }),
+        ),
+        sharedMemoryReader: (length) {
+          expect(length, 3);
+          return Uint8List.fromList(<int>[1, 2, 3]);
+        },
+      );
+
+      final response = await reader.next();
+
+      expect(response?['encoding'], 'shared_memory');
+      expect(response?['bytes'], orderedEquals(<int>[1, 2, 3]));
+    },
+  );
+}
+
+List<int> _frame(Map<String, dynamic> message) {
+  final payload = utf8.encode(jsonEncode(message));
+  final header = ByteData(4)..setUint32(0, payload.length, Endian.big);
+  return <int>[...header.buffer.asUint8List(), ...payload];
+}
+
+class _DiscardingConsumer implements StreamConsumer<List<int>> {
+  @override
+  Future<void> addStream(Stream<List<int>> stream) => stream.drain<void>();
+
+  @override
+  Future<void> close() async {}
 }

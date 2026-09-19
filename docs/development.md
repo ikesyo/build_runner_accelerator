@@ -96,6 +96,11 @@ the public summary in [`benchmarks.md`](benchmarks.md) only from a
 reproducible launcher-inclusive run; detailed experiments belong in
 [`benchmarks/experiments-2026-09.md`](benchmarks/experiments-2026-09.md).
 
+The IPC/FFI investigation has a dedicated helper which reuses the current JSON
+fixture and reports Rust frame timings plus Dart asset-RPC timings:
+[`benchmarks/ipc-ffi-poc.md`](benchmarks/ipc-ffi-poc.md) and
+`scripts/benchmark_ipc.sh`.
+
 ## Release checks
 
 The release workflow builds one archive per target in

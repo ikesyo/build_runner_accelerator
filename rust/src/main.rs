@@ -9,6 +9,7 @@ mod metrics;
 mod pattern;
 mod plan;
 mod protocol;
+mod shared_memory;
 mod snapshot;
 mod watch;
 mod worker;

@@ -3,6 +3,7 @@ use crate::protocol::{
     BINARY_BUILD_RESULT_MAGIC, BuildResult, IncomingFrame, decode_build_batch_result_frame,
     decode_build_result_frame, read_message_with_size, write_binary_frame, write_frame,
 };
+use crate::shared_memory::{self, ReadSharedMemory};
 use crate::worker_kernel::{
     WorkerArtifact, background_worker_aot_if_ready, resolve_worker_artifact,
 };
@@ -68,6 +69,8 @@ pub struct WorkerClient {
     input: BufWriter<ChildStdin>,
     output: BufReader<ChildStdout>,
     next_id: u64,
+    read_shared_memory: Option<ReadSharedMemory>,
+    metrics_enabled: bool,
     metrics: WorkerClientMetrics,
 }
 
@@ -79,6 +82,15 @@ struct WorkerClientMetrics {
     resolver_reset_us: u64,
     build_us: u64,
     asset_rpc_us: u64,
+    read_rpc_us: u64,
+    can_read_rpc_us: u64,
+    find_assets_rpc_us: u64,
+    /// Time spent serializing, writing, and flushing worker frames.
+    ipc_write_us: u64,
+    /// Time spent reading and decoding worker frames. This includes blocking
+    /// while the Dart worker produces a response, so it is an end-to-end
+    /// worker wait rather than a pipe-only measurement.
+    ipc_read_us: u64,
     ipc_frames_sent: u64,
     ipc_frames_received: u64,
     ipc_bytes_sent: u64,
@@ -90,6 +102,7 @@ struct WorkerClientMetrics {
     read_requests: u64,
     read_bytes: u64,
     binary_read_responses: u64,
+    shared_memory_read_responses: u64,
     can_read_requests: u64,
     find_assets_requests: u64,
     find_assets_results: u64,
@@ -103,6 +116,11 @@ impl WorkerClientMetrics {
         self.resolver_reset_us += other.resolver_reset_us;
         self.build_us += other.build_us;
         self.asset_rpc_us += other.asset_rpc_us;
+        self.read_rpc_us += other.read_rpc_us;
+        self.can_read_rpc_us += other.can_read_rpc_us;
+        self.find_assets_rpc_us += other.find_assets_rpc_us;
+        self.ipc_write_us += other.ipc_write_us;
+        self.ipc_read_us += other.ipc_read_us;
         self.ipc_frames_sent += other.ipc_frames_sent;
         self.ipc_frames_received += other.ipc_frames_received;
         self.ipc_bytes_sent += other.ipc_bytes_sent;
@@ -114,6 +132,7 @@ impl WorkerClientMetrics {
         self.read_requests += other.read_requests;
         self.read_bytes += other.read_bytes;
         self.binary_read_responses += other.binary_read_responses;
+        self.shared_memory_read_responses += other.shared_memory_read_responses;
         self.can_read_requests += other.can_read_requests;
         self.find_assets_requests += other.find_assets_requests;
         self.find_assets_results += other.find_assets_results;
@@ -153,6 +172,10 @@ impl WorkerClient {
                 command
             }
         };
+        let read_shared_memory = ReadSharedMemory::from_environment()?;
+        if let Some(shared_memory) = &read_shared_memory {
+            shared_memory.configure_command(&mut command);
+        }
         let mut child = command
             .current_dir(root)
             .stdin(Stdio::piped())
@@ -176,6 +199,8 @@ impl WorkerClient {
             input,
             output,
             next_id: 1,
+            read_shared_memory,
+            metrics_enabled: metrics_enabled(),
             metrics: WorkerClientMetrics {
                 worker_start_us: started.elapsed().as_micros() as u64,
                 ..WorkerClientMetrics::default()
@@ -219,6 +244,13 @@ impl WorkerClient {
             return Err(io::Error::other(format!(
                 "worker does not support required capability: {OPTIONAL_BUILD_CAPABILITY}"
             )));
+        }
+        if self.read_shared_memory.is_some()
+            && !has_capability(&response, shared_memory::CAPABILITY)
+        {
+            // Keep compatibility with an older worker. Its binary read path
+            // remains the safe fallback when it does not know this PoC.
+            self.read_shared_memory = None;
         }
         self.metrics.worker_initialize_us += started.elapsed().as_micros() as u64;
         Ok(())
@@ -817,6 +849,27 @@ impl WorkerClient {
                 match read_result {
                     Ok(bytes) => {
                         self.metrics.read_bytes += bytes.len() as u64;
+                        let wrote_to_shared_memory = self
+                            .read_shared_memory
+                            .as_ref()
+                            .map(|shared_memory| shared_memory.write(bytes.as_slice()))
+                            .transpose()?
+                            .unwrap_or(false);
+                        if wrote_to_shared_memory {
+                            self.metrics.shared_memory_read_responses += 1;
+                            let result = self.send(&json!({
+                                "v": 1,
+                                "type": "asset_response",
+                                "id": id,
+                                "ok": true,
+                                "encoding": "shared_memory",
+                                "length": bytes.len(),
+                            }));
+                            let elapsed = started.elapsed().as_micros() as u64;
+                            self.metrics.asset_rpc_us += elapsed;
+                            self.metrics.read_rpc_us += elapsed;
+                            return result;
+                        }
                         self.metrics.binary_read_responses += 1;
                         let result = self.send_binary(
                             &json!({
@@ -829,7 +882,9 @@ impl WorkerClient {
                             }),
                             bytes.as_slice(),
                         );
-                        self.metrics.asset_rpc_us += started.elapsed().as_micros() as u64;
+                        let elapsed = started.elapsed().as_micros() as u64;
+                        self.metrics.asset_rpc_us += elapsed;
+                        self.metrics.read_rpc_us += elapsed;
                         return result;
                     }
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -886,7 +941,14 @@ impl WorkerClient {
             }
         };
         let result = self.send(&response);
-        self.metrics.asset_rpc_us += started.elapsed().as_micros() as u64;
+        let elapsed = started.elapsed().as_micros() as u64;
+        self.metrics.asset_rpc_us += elapsed;
+        match operation {
+            "read" => self.metrics.read_rpc_us += elapsed,
+            "can_read" => self.metrics.can_read_rpc_us += elapsed,
+            "find_assets" => self.metrics.find_assets_rpc_us += elapsed,
+            _ => {}
+        }
         result
     }
 
@@ -897,22 +959,34 @@ impl WorkerClient {
     }
 
     fn send(&mut self, message: &Value) -> io::Result<()> {
+        let started = self.metrics_enabled.then(Instant::now);
         let frame_size = write_frame(&mut self.input, message)?;
+        if let Some(started) = started {
+            self.metrics.ipc_write_us += started.elapsed().as_micros() as u64;
+        }
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
         Ok(())
     }
 
     fn send_binary(&mut self, metadata: &Value, bytes: &[u8]) -> io::Result<()> {
+        let started = self.metrics_enabled.then(Instant::now);
         let frame_size = write_binary_frame(&mut self.input, metadata, bytes)?;
+        if let Some(started) = started {
+            self.metrics.ipc_write_us += started.elapsed().as_micros() as u64;
+        }
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
         Ok(())
     }
 
     fn receive(&mut self) -> io::Result<IncomingFrame> {
+        let started = self.metrics_enabled.then(Instant::now);
         let (message, frame_size) = read_message_with_size(&mut self.output)?
             .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "Dart worker exited"))?;
+        if let Some(started) = started {
+            self.metrics.ipc_read_us += started.elapsed().as_micros() as u64;
+        }
         self.metrics.ipc_frames_received += 1;
         self.metrics.ipc_bytes_received += frame_size as u64;
         if matches!(
@@ -1142,6 +1216,11 @@ pub struct PoolMetrics {
     pub resolver_reset_us: u64,
     pub build_us: u64,
     pub asset_rpc_us: u64,
+    pub read_rpc_us: u64,
+    pub can_read_rpc_us: u64,
+    pub find_assets_rpc_us: u64,
+    pub ipc_write_us: u64,
+    pub ipc_read_us: u64,
     pub ipc_frames_sent: u64,
     pub ipc_frames_received: u64,
     pub ipc_bytes_sent: u64,
@@ -1153,6 +1232,7 @@ pub struct PoolMetrics {
     pub read_requests: u64,
     pub read_bytes: u64,
     pub binary_read_responses: u64,
+    pub shared_memory_read_responses: u64,
     pub can_read_requests: u64,
     pub find_assets_requests: u64,
     pub find_assets_results: u64,
@@ -1354,6 +1434,11 @@ impl WorkerPool {
             resolver_reset_us: worker_metrics.resolver_reset_us,
             build_us: worker_metrics.build_us,
             asset_rpc_us: worker_metrics.asset_rpc_us,
+            read_rpc_us: worker_metrics.read_rpc_us,
+            can_read_rpc_us: worker_metrics.can_read_rpc_us,
+            find_assets_rpc_us: worker_metrics.find_assets_rpc_us,
+            ipc_write_us: worker_metrics.ipc_write_us,
+            ipc_read_us: worker_metrics.ipc_read_us,
             ipc_frames_sent: worker_metrics.ipc_frames_sent,
             ipc_frames_received: worker_metrics.ipc_frames_received,
             ipc_bytes_sent: worker_metrics.ipc_bytes_sent,
@@ -1365,6 +1450,7 @@ impl WorkerPool {
             read_requests: worker_metrics.read_requests,
             read_bytes: worker_metrics.read_bytes,
             binary_read_responses: worker_metrics.binary_read_responses,
+            shared_memory_read_responses: worker_metrics.shared_memory_read_responses,
             can_read_requests: worker_metrics.can_read_requests,
             find_assets_requests: worker_metrics.find_assets_requests,
             find_assets_results: worker_metrics.find_assets_results,

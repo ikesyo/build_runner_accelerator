@@ -13,7 +13,7 @@ pub(crate) fn runtime_metrics_enabled() -> bool {
 
 pub(crate) fn print_pool_metrics(metrics: PoolMetrics) {
     eprintln!(
-        "Rust metrics: workers_active={} worker_starts_total={} worker_initializes_total={} worker_resets_total={} resolver_resets_total={} worker_start_us={} worker_initialize_us={} worker_reset_us={} resolver_reset_us={} build_us={} asset_rpc_us={} ipc_frames_sent={} ipc_frames_received={} ipc_bytes_sent={} ipc_bytes_received={} build_result_frames={} build_result_bytes={} build_result_json_bytes={} asset_requests={} read_requests={} read_bytes={} binary_read_responses={} can_read_requests={} find_assets_requests={} find_assets_results={}",
+        "Rust metrics: workers_active={} worker_starts_total={} worker_initializes_total={} worker_resets_total={} resolver_resets_total={} worker_start_us={} worker_initialize_us={} worker_reset_us={} resolver_reset_us={} build_us={} asset_rpc_us={} read_rpc_us={} can_read_rpc_us={} find_assets_rpc_us={} ipc_write_us={} ipc_read_us={} ipc_frames_sent={} ipc_frames_received={} ipc_bytes_sent={} ipc_bytes_received={} build_result_frames={} build_result_bytes={} build_result_json_bytes={} asset_requests={} read_requests={} read_bytes={} binary_read_responses={} shared_memory_read_responses={} can_read_requests={} find_assets_requests={} find_assets_results={}",
         metrics.active_workers,
         metrics.worker_starts,
         metrics.worker_initializes,
@@ -25,6 +25,11 @@ pub(crate) fn print_pool_metrics(metrics: PoolMetrics) {
         metrics.resolver_reset_us,
         metrics.build_us,
         metrics.asset_rpc_us,
+        metrics.read_rpc_us,
+        metrics.can_read_rpc_us,
+        metrics.find_assets_rpc_us,
+        metrics.ipc_write_us,
+        metrics.ipc_read_us,
         metrics.ipc_frames_sent,
         metrics.ipc_frames_received,
         metrics.ipc_bytes_sent,
@@ -36,6 +41,7 @@ pub(crate) fn print_pool_metrics(metrics: PoolMetrics) {
         metrics.read_requests,
         metrics.read_bytes,
         metrics.binary_read_responses,
+        metrics.shared_memory_read_responses,
         metrics.can_read_requests,
         metrics.find_assets_requests,
         metrics.find_assets_results,

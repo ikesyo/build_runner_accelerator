@@ -203,6 +203,7 @@ build_command() {
         env
         "PUB_CACHE=$pub_cache"
         "BUILD_RUNNER_ACCELERATOR_BIN=$accelerator_bin"
+        bash
         "$script_dir/worker.sh"
         run-frontend
         build
@@ -271,6 +272,14 @@ measure_case() {
   if [[ "$trace_mode" == 1 ]]; then
     trace_args+=(--trace "$trace_path")
   fi
+  local -a measured_command=("${BUILD_COMMAND[@]}")
+  if [[ "$lane" == accelerator && "${measured_command[0]}" == env ]]; then
+    measured_command=(
+      env
+      "VERIFY_COMMAND_LOG=$output_path.worker.log"
+      "${measured_command[@]:1}"
+    )
+  fi
 
   "$python_bin" "$measure_script" \
     --metrics "$metric_path" \
@@ -291,7 +300,7 @@ measure_case() {
     --metadata fixture_sha256="$fixture_sha" \
     --metadata input_count=10 \
     "${trace_args[@]}" \
-    -- "${BUILD_COMMAND[@]}"
+    -- "${measured_command[@]}"
 
   local output_count
   local output_sha

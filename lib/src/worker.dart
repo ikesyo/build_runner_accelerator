@@ -18,6 +18,7 @@ import 'protocol.dart';
 import 'remote_build_step.dart';
 import 'resolver_host.dart';
 import 'resolver_reads.dart';
+import 'shared_read_memory.dart';
 import 'trigger_evaluator.dart';
 
 final _metricsEnabled =
@@ -41,11 +42,12 @@ Future<void> runWorker({
   });
   final packageConfigTimer = _metricsEnabled ? (Stopwatch()..start()) : null;
   final packageConfig = await _loadPackageConfig();
+  final sharedReadMemory = SharedReadMemory.fromEnvironment();
   final resolverProfile = ResolverInitializationProfile(
     enabled: _metricsEnabled,
   )..packageConfigLoadUs = packageConfigTimer?.elapsedMicroseconds ?? 0;
   final runtime = _WorkerRuntime(packageConfig, resolverProfile);
-  final reader = FrameReader(stdin);
+  final reader = FrameReader(stdin, sharedMemoryReader: sharedReadMemory?.read);
   final writer = FrameWriter(stdout);
   try {
     while (true) {
@@ -70,6 +72,7 @@ Future<void> runWorker({
                 'build-result-binary-v1',
                 'optional-builder-demand-v1',
                 'build-runner-current-v1',
+                if (sharedReadMemory != null) sharedReadMemoryCapability,
               ],
             });
           case WorkerResetMessage reset:
@@ -124,6 +127,7 @@ Future<void> runWorker({
     }
   } finally {
     await runtime.close();
+    sharedReadMemory?.dispose();
   }
 }
 
@@ -261,6 +265,16 @@ class _BuildProfile {
   int readCount = 0;
   int resolverReadCount = 0;
   int globCount = 0;
+  int assetRpcUs = 0;
+  int assetRpcSendUs = 0;
+  int assetRpcWaitUs = 0;
+  int assetRpcReadUs = 0;
+  int assetRpcReadSendUs = 0;
+  int assetRpcReadWaitUs = 0;
+  int assetRpcCalls = 0;
+  int assetRpcReadCalls = 0;
+  int assetRpcCanReadCalls = 0;
+  int assetRpcFindAssetsCalls = 0;
   final ResolverInitializationProfile resolverProfile;
 
   void recordResolverGet(int elapsedUs, {required bool first}) {
@@ -269,10 +283,33 @@ class _BuildProfile {
     if (first) resolverFirstGetUs += elapsedUs;
   }
 
+  void recordAssetRpc({
+    required String operation,
+    required int totalUs,
+    required int sendUs,
+    required int waitUs,
+  }) {
+    assetRpcUs += totalUs;
+    assetRpcSendUs += sendUs;
+    assetRpcWaitUs += waitUs;
+    assetRpcCalls++;
+    switch (operation) {
+      case 'read':
+        assetRpcReadCalls++;
+        assetRpcReadUs += totalUs;
+        assetRpcReadSendUs += sendUs;
+        assetRpcReadWaitUs += waitUs;
+      case 'can_read':
+        assetRpcCanReadCalls++;
+      case 'find_assets':
+        assetRpcFindAssetsCalls++;
+    }
+  }
+
   void emit() {
     if (!_metricsEnabled) return;
     stderr.writeln(
-      'Dart metrics: ${jsonEncode(<String, dynamic>{'builder': builder, 'input': input, 'status': status, 'total_us': _total.elapsedMicroseconds, 'factory_us': factoryUs, 'resolver_get_us': resolverGetUs, 'resolver_get_calls': resolverGetCalls, 'resolver_first_get_us': resolverFirstGetUs, 'package_config_load_us': resolverProfile.packageConfigLoadUs, 'resolver_constructor_us': resolverProfile.resolverConstructorUs, 'resolver_sdk_summary_us': resolverProfile.sdkSummaryUs, 'resolver_sdk_summary_lock_wait_us': resolverProfile.sdkSummaryLockWaitUs, 'resolver_sdk_summary_after_lock_us': resolverProfile.sdkSummaryAfterLockUs, 'resolver_post_sdk_summary_us': resolverProfile.resolverPostSdkSummaryUs, 'run_builder_us': runBuilderUs, 'resolver_reads_us': resolverReadsUs, 'result_assembly_us': resultAssemblyUs, 'outputs': outputCount, 'reads': readCount, 'resolver_reads': resolverReadCount, 'glob_reads': globCount})}',
+      'Dart metrics: ${jsonEncode(<String, dynamic>{'builder': builder, 'input': input, 'status': status, 'total_us': _total.elapsedMicroseconds, 'factory_us': factoryUs, 'resolver_get_us': resolverGetUs, 'resolver_get_calls': resolverGetCalls, 'resolver_first_get_us': resolverFirstGetUs, 'package_config_load_us': resolverProfile.packageConfigLoadUs, 'resolver_constructor_us': resolverProfile.resolverConstructorUs, 'resolver_sdk_summary_us': resolverProfile.sdkSummaryUs, 'resolver_sdk_summary_lock_wait_us': resolverProfile.sdkSummaryLockWaitUs, 'resolver_sdk_summary_after_lock_us': resolverProfile.sdkSummaryAfterLockUs, 'resolver_post_sdk_summary_us': resolverProfile.resolverPostSdkSummaryUs, 'run_builder_us': runBuilderUs, 'resolver_reads_us': resolverReadsUs, 'result_assembly_us': resultAssemblyUs, 'outputs': outputCount, 'reads': readCount, 'resolver_reads': resolverReadCount, 'glob_reads': globCount, 'asset_rpc_us': assetRpcUs, 'asset_rpc_send_us': assetRpcSendUs, 'asset_rpc_wait_us': assetRpcWaitUs, 'asset_rpc_read_us': assetRpcReadUs, 'asset_rpc_read_send_us': assetRpcReadSendUs, 'asset_rpc_read_wait_us': assetRpcReadWaitUs, 'asset_rpc_calls': assetRpcCalls, 'asset_rpc_read_calls': assetRpcReadCalls, 'asset_rpc_can_read_calls': assetRpcCanReadCalls, 'asset_rpc_find_assets_calls': assetRpcFindAssetsCalls})}',
     );
   }
 }
@@ -442,6 +479,7 @@ Future<JsonMap> _runBuild(
       buildId: request.id,
       phase: request.phase,
       postProcess: isPostProcess,
+      onTiming: _metricsEnabled ? profile.recordAssetRpc : null,
       onControlMessage: (nested) => _handleNestedBuild(
         nested,
         reader,

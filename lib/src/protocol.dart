@@ -6,6 +6,14 @@ import 'dart:typed_data';
 typedef JsonMap = Map<String, dynamic>;
 typedef RpcControlMessageHandler =
     Future<void> Function(WorkerBuildRequest message);
+typedef RpcTimingHandler =
+    void Function({
+      required String operation,
+      required int totalUs,
+      required int sendUs,
+      required int waitUs,
+    });
+typedef SharedMemoryReader = Uint8List Function(int length);
 
 const List<int> _binaryAssetResponseMagic = <int>[0x42, 0x52, 0x41, 0x42];
 const List<int> _binaryBuildResultMagic = <int>[0x42, 0x52, 0x41, 0x52];
@@ -259,9 +267,11 @@ List<WorkerBuildTrigger> _triggerList(Object? value, String label) {
 }
 
 class FrameReader {
-  FrameReader(Stream<List<int>> input) : _iterator = StreamIterator(input);
+  FrameReader(Stream<List<int>> input, {this.sharedMemoryReader})
+    : _iterator = StreamIterator(input);
 
   final StreamIterator<List<int>> _iterator;
+  final SharedMemoryReader? sharedMemoryReader;
   final List<int> _buffer = <int>[];
 
   Future<JsonMap?> next() async {
@@ -284,7 +294,35 @@ class FrameReader {
     if (decoded is! Map) {
       throw FormatException('IPC payload must be a JSON object');
     }
-    return decoded.cast<String, dynamic>();
+    final message = decoded.cast<String, dynamic>();
+    _attachSharedMemoryBytes(message);
+    return message;
+  }
+
+  void _attachSharedMemoryBytes(JsonMap message) {
+    if (message['type'] != 'asset_response' ||
+        message['encoding'] != 'shared_memory') {
+      return;
+    }
+    final length = message['length'];
+    if (length is! int || length < 0) {
+      throw const FormatException(
+        'Shared-memory asset response has an invalid length',
+      );
+    }
+    final reader = sharedMemoryReader;
+    if (reader == null) {
+      throw const FormatException(
+        'Shared-memory asset response received without a reader',
+      );
+    }
+    final bytes = reader(length);
+    if (bytes.length != length) {
+      throw const FormatException(
+        'Shared-memory asset response length mismatch',
+      );
+    }
+    message['bytes'] = bytes;
   }
 
   bool _hasBinaryAssetResponseMagic(Uint8List payload) {
@@ -473,6 +511,7 @@ class RpcSession {
     required this.phase,
     required this.postProcess,
     this.onControlMessage,
+    this.onTiming,
   });
 
   final FrameReader reader;
@@ -481,10 +520,14 @@ class RpcSession {
   final int phase;
   final bool postProcess;
   final RpcControlMessageHandler? onControlMessage;
+  final RpcTimingHandler? onTiming;
   int _nextId = 1000;
 
   Future<JsonMap> call(String op, Map<String, dynamic> parameters) async {
     final id = _nextId++;
+    final Stopwatch? totalTimer = onTiming == null
+        ? null
+        : (Stopwatch()..start());
     await writer.send(<String, dynamic>{
       'v': 1,
       'type': 'asset_request',
@@ -498,6 +541,10 @@ class RpcSession {
       'phase': phase,
       'kind': postProcess ? 'post_process' : 'normal',
     });
+    final sendUs = totalTimer?.elapsedMicroseconds ?? 0;
+    final Stopwatch? waitTimer = totalTimer == null
+        ? null
+        : (Stopwatch()..start());
     while (true) {
       final response = await reader.next();
       if (response == null) {
@@ -516,6 +563,12 @@ class RpcSession {
           'Unexpected message while waiting for asset RPC: $response',
         );
       }
+      onTiming?.call(
+        operation: op,
+        totalUs: totalTimer?.elapsedMicroseconds ?? 0,
+        sendUs: sendUs,
+        waitUs: waitTimer?.elapsedMicroseconds ?? 0,
+      );
       if (response['ok'] != true) {
         throw StateError(response['error']?.toString() ?? 'Asset RPC failed');
       }
