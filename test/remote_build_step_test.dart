@@ -8,10 +8,6 @@ import 'package:test/test.dart';
 
 void main() {
   test('nested actions restore the outer asset IO context', () async {
-    final outerOutputController = StreamController<List<int>>();
-    final nestedOutputController = StreamController<List<int>>();
-    addTearDown(outerOutputController.close);
-    addTearDown(nestedOutputController.close);
     final outerInput = AssetId('app', 'lib/outer.dart');
     final outerOutput = AssetId('app', 'lib/outer.txt');
     final nestedInput = AssetId('app', 'lib/nested.dart');
@@ -25,8 +21,8 @@ void main() {
       },
       readableCache: <AssetId>{},
     );
-    final outerRpc = _rpc(outerOutputController);
-    final nestedRpc = _rpc(nestedOutputController);
+    final outerRpc = _rpc();
+    final nestedRpc = _rpc();
 
     io.beginAction(
       rpc: outerRpc,
@@ -77,10 +73,18 @@ void main() {
   });
 }
 
-RpcSession _rpc(StreamController<List<int>> outputController) => RpcSession(
+RpcSession _rpc() => RpcSession(
   FrameReader(Stream<List<int>>.empty()),
-  FrameWriter(IOSink(outputController)),
+  FrameWriter(IOSink(_DiscardingConsumer())),
   buildId: 1,
   phase: 0,
   postProcess: false,
 );
+
+class _DiscardingConsumer implements StreamConsumer<List<int>> {
+  @override
+  Future<void> addStream(Stream<List<int>> stream) => stream.drain<void>();
+
+  @override
+  Future<void> close() async {}
+}
