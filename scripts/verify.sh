@@ -54,7 +54,7 @@ fail() {
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
-if ! bash "$script_dir/check_fixture_lockfiles.sh"; then
+if ! python3 "$script_dir/sync_release_metadata.py" --check; then
   fail 'fixture lockfiles are inconsistent with pubspec.yaml'
 fi
 if [[ "$verify_level" == full && "${VERIFY_FULL_TIMEOUT_GUARD:-0}" != 1 ]]; then

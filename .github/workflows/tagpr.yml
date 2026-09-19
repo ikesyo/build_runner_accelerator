@@ -45,8 +45,7 @@ jobs:
       # tagpr does not propagate postVersionCommand's exit status.
       - name: Verify generated release metadata
         run: |
-          python3 scripts/sync_readme_install_version.py --check
-          bash scripts/check_fixture_lockfiles.sh
+          python3 scripts/sync_release_metadata.py --check
           cargo metadata --manifest-path rust/Cargo.toml --locked --no-deps >/dev/null
 
   release:
