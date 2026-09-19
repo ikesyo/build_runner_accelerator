@@ -7,7 +7,7 @@ import 'package:path/path.dart' as p;
 
 import 'release_downloader_api.dart';
 
-const buildRunnerAcceleratorVersion = '0.3.0';
+const buildRunnerAcceleratorVersion = '0.4.0';
 const _workerAotEnvironment = 'BUILD_RUNNER_ACCELERATOR_WORKER_AOT';
 const _releaseCacheMetadataFilename = 'artifact.json';
 
