@@ -95,7 +95,7 @@ packages:
       path: "../.."
       relative: true
     source: path
-    version: "0.3.0"
+    version: "0.4.0"
   built_collection:
     dependency: transitive
     description:

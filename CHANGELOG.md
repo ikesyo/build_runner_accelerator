@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.4.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.3.0...v0.4.0) - 2026-09-19
+
+- feat: support empty input extension mappings by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/32
+- chore: keep fixture lockfiles synchronized with releases by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/34
+- refactor(dart): split manifest model, ordering, and mapping by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/35
+- fix: preserve post-process build_to source by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/36
+- refactor(dart): stage manifest generation pipeline by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/37
+- refactor(dart): separate worker message decoding by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/38
+
 ## [v0.3.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.2.0...v0.3.0) - 2026-09-18
 
 - feat: support drift_dev analyzer builder by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/29
