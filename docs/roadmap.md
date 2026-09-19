@@ -17,7 +17,7 @@ The following are implemented and covered by the current fixture suite:
   `BuildConfig` resolution.
 - Generic target/package ordering, multiple extension mappings, source/cache
   outputs, the `build_extensions: {"": [...]}` all-asset mapping, and the
-  supported cache-only post-process subset.
+  supported post-process subset.
 - Runtime expected-output mapping probes for selected applications that
   need runtime data (including multi-factory and option-dependent builders),
   phase-aware generated-input visibility, and resident-worker Builder/Resource

@@ -142,14 +142,12 @@ atomic_write() {
 
 stock_post_output() {
   local directory=$1
-  printf '%s\n' \
-    "$directory/.dart_tool/build/generated/post_process_builder_app/lib/input.gen.txt.post.txt"
+  printf '%s\n' "$directory/lib/input.gen.txt.post.txt"
 }
 
 rust_post_output() {
   local directory=$1
-  printf '%s\n' \
-    "$directory/.dart_tool/build_runner_accelerator/cache/post_process_builder_app/lib/input.gen.txt.post.txt"
+  printf '%s\n' "$directory/lib/input.gen.txt.post.txt"
 }
 
 wait_for_path "$stock_dir/lib/input.gen.txt" "$stock_pid"
@@ -173,16 +171,16 @@ mv "$rust_dir/lib/input.txt" "$rust_dir/lib/renamed.txt"
 wait_for_path "$stock_dir/lib/renamed.gen.txt" "$stock_pid"
 wait_for_path "$rust_dir/lib/renamed.gen.txt" "$rust_pid"
 wait_for_path \
-  "$stock_dir/.dart_tool/build/generated/post_process_builder_app/lib/renamed.gen.txt.post.txt" \
+  "$stock_dir/lib/renamed.gen.txt.post.txt" \
   "$stock_pid"
 wait_for_path \
-  "$rust_dir/.dart_tool/build_runner_accelerator/cache/post_process_builder_app/lib/renamed.gen.txt.post.txt" \
+  "$rust_dir/lib/renamed.gen.txt.post.txt" \
   "$rust_pid"
 sleep 1
 assert_same_file "$stock_dir/lib/renamed.gen.txt" "$rust_dir/lib/renamed.gen.txt"
 assert_same_file \
-  "$stock_dir/.dart_tool/build/generated/post_process_builder_app/lib/renamed.gen.txt.post.txt" \
-  "$rust_dir/.dart_tool/build_runner_accelerator/cache/post_process_builder_app/lib/renamed.gen.txt.post.txt"
+  "$stock_dir/lib/renamed.gen.txt.post.txt" \
+  "$rust_dir/lib/renamed.gen.txt.post.txt"
 assert_no_file "$stock_dir/lib/input.gen.txt"
 assert_no_file "$rust_dir/lib/input.gen.txt"
 assert_no_file "$(stock_post_output "$stock_dir")"

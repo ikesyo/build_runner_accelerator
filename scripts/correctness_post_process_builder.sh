@@ -78,12 +78,12 @@ run_stock_clean() {
 
 post_output() {
   local directory=$1
-  printf '%s\n' "$directory/.dart_tool/build_runner_accelerator/cache/post_process_builder_app/lib/input.gen.txt.post.txt"
+  printf '%s\n' "$directory/lib/input.gen.txt.post.txt"
 }
 
 stock_post_output() {
   local directory=$1
-  printf '%s\n' "$directory/.dart_tool/build/generated/post_process_builder_app/lib/input.gen.txt.post.txt"
+  printf '%s\n' "$directory/lib/input.gen.txt.post.txt"
 }
 
 assert_same_file() {
@@ -139,8 +139,8 @@ run_case_output_delete() {
   setup_case "$name"
   rm -f -- "$(stock_post_output "$stock_dir")" "$(post_output "$rust_dir")"
   run_stock "$stock_dir" "$temporary_dir/$name.stock.change.log"
-  # build_runner 2.7.2 keeps a successful post-process step successful even
-  # when its hidden cache output is removed externally. A clean stock build
+  # build_runner keeps a successful post-process step successful even when its
+  # source output is removed externally. A clean stock build
   # gives us the reference bytes while the Rust run above remains an
   # incremental output-recovery check.
   if [[ ! -f "$(stock_post_output "$stock_dir")" ]]; then
@@ -172,11 +172,10 @@ run_case_rename() {
   run_stock "$stock_dir" "$temporary_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$temporary_dir/$name.rust.change.log"
   assert_same_file "$stock_dir/lib/renamed.gen.txt" "$rust_dir/lib/renamed.gen.txt"
-  assert_same_file \
-    "$stock_dir/.dart_tool/build/generated/post_process_builder_app/lib/renamed.gen.txt.post.txt" \
-    "$rust_dir/.dart_tool/build_runner_accelerator/cache/post_process_builder_app/lib/renamed.gen.txt.post.txt"
+  assert_same_file "$stock_dir/lib/renamed.gen.txt.post.txt" \
+    "$rust_dir/lib/renamed.gen.txt.post.txt"
   assert_no_file "$rust_dir/lib/input.gen.txt"
-  assert_no_file "$rust_dir/.dart_tool/build_runner_accelerator/cache/post_process_builder_app/lib/input.gen.txt.post.txt"
+  assert_no_file "$rust_dir/lib/input.gen.txt.post.txt"
   printf 'post-process-builder: rename: pass\n'
 }
 
