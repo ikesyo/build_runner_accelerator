@@ -53,63 +53,64 @@ Future<void> runWorker({
       if (rawMessage == null) return;
       try {
         final message = WorkerMessage.decode(rawMessage);
-        if (message is WorkerInitializeMessage) {
-          await runtime.startBuild(
-            message.package,
-            phaseCount: message.phaseCount,
-          );
-          await writer.send(<String, dynamic>{
-            'v': 1,
-            'type': 'initialized',
-            'id': message.id,
-            'capabilities': <String>[
-              ...catalog.keys,
-              'asset-rpc-v1',
-              'asset-rpc-binary-read-v1',
-              'build-result-binary-v1',
-              'optional-builder-demand-v1',
-              'build-runner-current-v1',
-            ],
-          });
-        } else if (message is WorkerResetMessage) {
-          await runtime.reset();
-          await writer.send(<String, dynamic>{
-            'v': 1,
-            'type': 'reset',
-            'id': message.id,
-          });
-        } else if (message is WorkerResetResolverMessage) {
-          await runtime.resetResolver();
-          await writer.send(<String, dynamic>{
-            'v': 1,
-            'type': 'reset_resolver',
-            'id': message.id,
-          });
-        } else if (message is WorkerBuildMessage) {
-          await _handleBuild(
-            message.request,
-            reader,
-            writer,
-            runtime,
-            catalog,
-            postProcessCatalog,
-          );
-        } else if (message is WorkerBuildBatchMessage) {
-          await _handleBuildBatch(
-            message,
-            reader,
-            writer,
-            runtime,
-            catalog,
-            postProcessCatalog,
-          );
-        } else if (message is UnsupportedWorkerMessage) {
-          await writer.send(<String, dynamic>{
-            'v': 1,
-            'type': 'error',
-            'id': message.id,
-            'error': 'Unsupported worker message: ${message.type}',
-          });
+        switch (message) {
+          case WorkerInitializeMessage initialize:
+            await runtime.startBuild(
+              initialize.package,
+              phaseCount: initialize.phaseCount,
+            );
+            await writer.send(<String, dynamic>{
+              'v': 1,
+              'type': 'initialized',
+              'id': initialize.id,
+              'capabilities': <String>[
+                ...catalog.keys,
+                'asset-rpc-v1',
+                'asset-rpc-binary-read-v1',
+                'build-result-binary-v1',
+                'optional-builder-demand-v1',
+                'build-runner-current-v1',
+              ],
+            });
+          case WorkerResetMessage reset:
+            await runtime.reset();
+            await writer.send(<String, dynamic>{
+              'v': 1,
+              'type': 'reset',
+              'id': reset.id,
+            });
+          case WorkerResetResolverMessage resetResolver:
+            await runtime.resetResolver();
+            await writer.send(<String, dynamic>{
+              'v': 1,
+              'type': 'reset_resolver',
+              'id': resetResolver.id,
+            });
+          case WorkerBuildMessage build:
+            await _handleBuild(
+              build.request,
+              reader,
+              writer,
+              runtime,
+              catalog,
+              postProcessCatalog,
+            );
+          case WorkerBuildBatchMessage buildBatch:
+            await _handleBuildBatch(
+              buildBatch,
+              reader,
+              writer,
+              runtime,
+              catalog,
+              postProcessCatalog,
+            );
+          case UnsupportedWorkerMessage unsupported:
+            await writer.send(<String, dynamic>{
+              'v': 1,
+              'type': 'error',
+              'id': unsupported.id,
+              'error': 'Unsupported worker message: ${unsupported.type}',
+            });
         }
       } catch (error, stack) {
         await writer.send(<String, dynamic>{
