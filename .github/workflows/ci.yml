@@ -47,6 +47,9 @@ jobs:
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
         with:
           sdk: ${{ matrix.sdk }}
+      - name: Check fixture lockfiles
+        if: matrix.resolution == 'upgrade'
+        run: bash scripts/check_fixture_lockfiles.sh
       - name: Dart package checks
         shell: bash
         run: |

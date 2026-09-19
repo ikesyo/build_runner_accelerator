@@ -15,9 +15,11 @@ jobs:
   tagpr:
     name: Prepare or tag release
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       tag: ${{ steps.tagpr.outputs.tag }}
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -26,6 +28,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
         with:
           toolchain: 1.98.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .pub-cache
+          key: tagpr-pub-${{ runner.os }}-${{ hashFiles('fixtures/**/pubspec.yaml') }}
+          restore-keys: |
+            tagpr-pub-${{ runner.os }}-
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
       - name: Run tagpr
         id: tagpr
         uses: Songmu/tagpr@d1b8138b7a31075141b6cd64103de9485ced7ac9 # v1.20.1
@@ -35,6 +46,7 @@ jobs:
       - name: Verify generated release metadata
         run: |
           python3 scripts/sync_readme_install_version.py --check
+          bash scripts/check_fixture_lockfiles.sh
           cargo metadata --manifest-path rust/Cargo.toml --locked --no-deps >/dev/null
 
   release:

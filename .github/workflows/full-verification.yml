@@ -43,6 +43,7 @@ jobs:
             fixtures/**/pubspec.lock
             rust/Cargo.lock
             scripts/verify.sh
+            scripts/check_fixture_lockfiles.sh
             scripts/worker.sh
             scripts/verification_support.sh
             scripts/correctness_*.sh
