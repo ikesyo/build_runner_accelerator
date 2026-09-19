@@ -1,4 +1,4 @@
-//! Linux-only shared-memory transport used by the read-path PoC.
+//! POSIX shared-memory transport used by the read-path PoC.
 //!
 //! The file-backed mapping is deliberately small and private to one worker.
 //! The pipe still carries the request and a response header; only the read
@@ -10,7 +10,7 @@ pub const ENV_PATH: &str = "BUILD_RUNNER_ACCELERATOR_READ_SHARED_MEMORY_PATH";
 pub const ENV_CAPACITY: &str = "BUILD_RUNNER_ACCELERATOR_READ_SHARED_MEMORY_CAPACITY";
 pub const CAPABILITY: &str = "asset-rpc-shared-memory-read-v1";
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod platform {
     use super::{ENV_CAPACITY, ENV_ENABLED, ENV_PATH};
     use std::env;
@@ -29,7 +29,8 @@ mod platform {
     const PROT_WRITE: i32 = 0x2;
     const MAP_SHARED: i32 = 0x1;
 
-    #[link(name = "c")]
+    #[cfg_attr(target_os = "linux", link(name = "c"))]
+    #[cfg_attr(target_os = "macos", link(name = "System"))]
     unsafe extern "C" {
         fn mmap(
             address: *mut c_void,
@@ -152,7 +153,7 @@ mod platform {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 mod platform {
     use super::{ENV_ENABLED, ENV_PATH};
     use std::io;
@@ -165,7 +166,7 @@ mod platform {
             if std::env::var(ENV_ENABLED).as_deref() == Ok("1") {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
-                    "read shared memory PoC is only available on Linux",
+                    "read shared memory PoC is only available on Linux and macOS",
                 ));
             }
             Ok(None)

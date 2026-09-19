@@ -57,19 +57,21 @@ implementation still pays synchronization and copying costs.
 ## Read-only shared-memory PoC (2026-09-19)
 
 The first implementation keeps the Rust/Dart process boundary and the request
-and response control frames. On Linux, each Rust worker creates a private,
-0600 file-backed `mmap` slot and passes its path to the Dart worker. For a
-successful `asset_request(read)`, Rust copies the bytes into that slot and
-sends only a JSON response header. Dart maps the file read-only, copies the
+and response control frames. On Linux and macOS, each Rust worker creates a
+private, 0600 file-backed `mmap` slot and passes its path to the Dart worker.
+For a successful `asset_request(read)`, Rust copies the bytes into that slot
+and sends only a JSON response header. Dart maps the file read-only, copies the
 announced slice into the existing read cache, and then the next read may reuse
 the slot. Reads larger than the configured slot fall back to the existing
 binary response. A worker that does not advertise the capability also falls
 back automatically.
 
 This is deliberately a FFI-equivalent transport experiment, not a production
-ABI: it is Linux-only, uses one synchronous slot per worker, and keeps the pipe
-for all control traffic and build results. No production package dependency is
-added; the Dart side calls `libc.so.6` through `dart:ffi`.
+ABI: it is currently limited to Linux and macOS, uses one synchronous slot per
+worker, and keeps the pipe for all control traffic and build results. No
+production package dependency is added; the Dart side calls the platform
+system library (`libc.so.6` on Linux or `libSystem.B.dylib` on macOS) through
+`dart:ffi`.
 
 Enable it for the same benchmark matrix with:
 
@@ -82,7 +84,7 @@ CASES='no-op one-file broad' REPEATS=3 ACCELERATOR_JOBS=1 \
 scripts/benchmark_ipc.sh
 ```
 
-The paired one-file run used the pinned Dart 3.13.3/Rust 1.98.1 toolchains,
+The paired one-file Linux run used the pinned Dart 3.13.3/Rust 1.98.1 toolchains,
 the release frontend, one direct worker, and three repeats. All six measured
 builds produced the same output hash (`51d4d65d…`). The median read-only
 transport figures were:
@@ -101,7 +103,7 @@ signal.
 | Rust bytes sent | 90,336 | 33,709 | −56,627 bytes |
 | shared-memory read responses | 0 | 33 | — |
 
-The sample shows a meaningful reduction in read transport bytes and estimated
+The Linux sample shows a meaningful reduction in read transport bytes and estimated
 read overhead, but only a sub-percent wall-time change on this fixture. The
 extra Rust time includes the copy into the mapping and the JSON header write;
 the Dart side still makes a defensive copy into its cache. Treat this as

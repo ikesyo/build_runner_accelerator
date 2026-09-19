@@ -78,9 +78,9 @@ final class SharedReadMemory {
 
   static SharedReadMemory? fromEnvironment() {
     if (Platform.environment[_enabledEnvironment] != '1') return null;
-    if (!Platform.isLinux) {
+    if (!Platform.isLinux && !Platform.isMacOS) {
       throw UnsupportedError(
-        'read shared memory PoC is only available on Linux',
+        'read shared memory PoC is only available on Linux and macOS',
       );
     }
     final path = Platform.environment[_pathEnvironment];
@@ -90,7 +90,7 @@ final class SharedReadMemory {
       );
     }
     final capacity = _parseCapacity(Platform.environment[_capacityEnvironment]);
-    final libc = ffi.DynamicLibrary.open('libc.so.6');
+    final libc = _openSystemLibrary();
     final malloc = libc.lookupFunction<_MallocNative, _Malloc>('malloc');
     final free = libc.lookupFunction<_FreeNative, _Free>('free');
     final open = libc.lookupFunction<_OpenNative, _Open>('open');
@@ -154,6 +154,16 @@ final class SharedReadMemory {
       throw FormatException('$_capacityEnvironment must be a positive integer');
     }
     return capacity;
+  }
+
+  static ffi.DynamicLibrary _openSystemLibrary() {
+    // Linux exposes the POSIX calls through glibc; macOS exposes them through
+    // the system libSystem shim. Keep this lookup explicit so the default
+    // binary IPC path never loads a native library.
+    if (Platform.isMacOS) {
+      return ffi.DynamicLibrary.open('libSystem.B.dylib');
+    }
+    return ffi.DynamicLibrary.open('libc.so.6');
   }
 
   static bool _isMapFailed(ffi.Pointer<ffi.Void> pointer) {
