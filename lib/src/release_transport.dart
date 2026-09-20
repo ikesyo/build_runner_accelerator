@@ -35,24 +35,31 @@ class ReleaseDownloadClient {
     }
     final client = _httpClient ?? HttpClient();
     try {
-      final request = await client.getUrl(uri).timeout(requestTimeout);
-      request.followRedirects = true;
-      request.maxRedirects = 5;
-      request.headers.set(
-        HttpHeaders.userAgentHeader,
-        'build_runner_accelerator',
-      );
-      final response = await request.close().timeout(requestTimeout);
-      for (final redirect in response.redirects) {
-        if (requireHttps && redirect.location.scheme != 'https') {
+      var current = uri;
+      var response = await _request(client, current);
+      var redirects = 0;
+      while (response.isRedirect) {
+        if (redirects >= 5) {
+          throw ReleaseDownloadException('too many release redirects: $uri');
+        }
+        final location = response.headers.value(HttpHeaders.locationHeader);
+        if (location == null) {
+          throw ReleaseDownloadException('release redirect has no location');
+        }
+        final next = current.resolve(location);
+        if (requireHttps && next.scheme != 'https') {
           throw ReleaseDownloadException(
-            'refusing non-HTTPS release redirect: ${redirect.location}',
+            'refusing non-HTTPS release redirect: $next',
           );
         }
+        await response.drain<void>();
+        current = next;
+        response = await _request(client, current);
+        redirects++;
       }
       if (response.statusCode != HttpStatus.ok) {
         throw ReleaseDownloadException(
-          'release download failed with HTTP ${response.statusCode}: $uri',
+          'release download failed with HTTP ${response.statusCode}: $current',
         );
       }
       if (response.contentLength > maxBytes) {
@@ -84,5 +91,15 @@ class ReleaseDownloadClient {
     } finally {
       if (_httpClient == null) client.close(force: true);
     }
+  }
+
+  Future<HttpClientResponse> _request(HttpClient client, Uri uri) async {
+    final request = await client.getUrl(uri).timeout(requestTimeout);
+    request.followRedirects = false;
+    request.headers.set(
+      HttpHeaders.userAgentHeader,
+      'build_runner_accelerator',
+    );
+    return request.close().timeout(requestTimeout);
   }
 }

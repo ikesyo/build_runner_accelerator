@@ -60,6 +60,7 @@ class ReleaseArtifactCache {
     version: version,
     target: target,
     binaryName: binaryName,
+    fallbackDigest: _sha256FileWithCrypto,
   );
 
   Future<String> install({
@@ -114,10 +115,12 @@ class ReleaseArtifactCache {
       );
       await _replaceFileAtomically(temporaryMetadata, metadata);
 
-      final installed = await validBinary(
+      final installed = await ReleaseCacheMetadata.validBinary(
+        cacheDirectory: cacheDirectory,
         version: version,
         target: target,
         binaryName: binaryName,
+        fallbackDigest: (_) async => binaryDigest,
       );
       if (installed == null) {
         throw ReleaseDownloadException(
@@ -180,6 +183,14 @@ class ReleaseArtifactCache {
         value.contains(r'\')) {
       throw ReleaseDownloadException('invalid $label: $value');
     }
+  }
+}
+
+Future<String?> _sha256FileWithCrypto(String path) async {
+  try {
+    return crypto.sha256.convert(await File(path).readAsBytes()).toString();
+  } on Object {
+    return null;
   }
 }
 

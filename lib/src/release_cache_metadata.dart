@@ -20,6 +20,8 @@ class ReleaseCacheMetadata {
     required String version,
     required String target,
     required String binaryName,
+    Future<String?> Function(String path)? digestReader,
+    Future<String?> Function(String path)? fallbackDigest,
   }) async {
     final targetDirectory = Directory(p.join(cacheDirectory, version, target));
     final binary = File(p.join(targetDirectory.path, binaryName));
@@ -48,7 +50,9 @@ class ReleaseCacheMetadata {
           !_isSha256(decoded['binary_sha256'] as String)) {
         return null;
       }
-      final digest = await _sha256File(binary.path);
+      final digest =
+          await (digestReader ?? _sha256File)(binary.path) ??
+          await fallbackDigest?.call(binary.path);
       if (digest == null || digest != decoded['binary_sha256']) return null;
       return binary.absolute.path;
     } on Object {

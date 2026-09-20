@@ -191,7 +191,7 @@ Future<String> _ensureInstalledInProcess({
   if (output.isEmpty) {
     throw StateError('release downloader process returned no result');
   }
-  final response = jsonDecode(output.split('\n').last);
+  final response = decodeReleaseDownloaderResponse(output);
   if (response is Map && response['ok'] == true && response['path'] is String) {
     return response['path'] as String;
   }
@@ -200,6 +200,16 @@ Future<String> _ensureInstalledInProcess({
   throw StateError(
     'release artifact download failed: $error${stack is String ? '\n$stack' : ''}',
   );
+}
+
+Object? decodeReleaseDownloaderResponse(String output) {
+  try {
+    return jsonDecode(output.split('\n').last);
+  } on FormatException catch (error) {
+    throw StateError(
+      'release downloader process returned invalid JSON: $output\n$error',
+    );
+  }
 }
 
 bool _launcherRunsFromDartSource() {
