@@ -138,7 +138,10 @@ assert_same_file "$stock_dir/lib/input.dart.empty_mapping.out" \
 assert_same_file "$stock_dir/lib/input.dart.consumed.out" \
   "$rust_dir/lib/input.dart.consumed.out"
 
-stock_events=$(grep -Ec 'Build completed|Succeeded after' "$stock_log" || true)
+# build_runner 2.16 reports the initial build as "Built with
+# build_runner/aot" and announces subsequent builds with "Starting build".
+# Keep the older event spellings for compatibility with earlier SDKs.
+stock_events=$(grep -Ec 'Build completed|Succeeded after|Built with build_runner/aot in|Starting build #' "$stock_log" || true)
 rust_events=$(grep -Fc 'Build completed (Rust frontend)' "$rust_log" || true)
 ((stock_events >= 2)) || fail "stock watch completed only $stock_events builds"
 ((rust_events >= 2)) || fail "Rust watch completed only $rust_events builds"
