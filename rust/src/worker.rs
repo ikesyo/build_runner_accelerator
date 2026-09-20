@@ -97,6 +97,7 @@ struct WorkerClientMetrics {
     ipc_bytes_received: u64,
     build_result_frames: u64,
     build_result_bytes: u64,
+    build_result_output_bytes: u64,
     build_result_json_bytes: u64,
     asset_requests: u64,
     read_requests: u64,
@@ -106,6 +107,7 @@ struct WorkerClientMetrics {
     can_read_requests: u64,
     find_assets_requests: u64,
     find_assets_results: u64,
+    find_assets_response_bytes: u64,
 }
 
 impl WorkerClientMetrics {
@@ -127,6 +129,7 @@ impl WorkerClientMetrics {
         self.ipc_bytes_received += other.ipc_bytes_received;
         self.build_result_frames += other.build_result_frames;
         self.build_result_bytes += other.build_result_bytes;
+        self.build_result_output_bytes += other.build_result_output_bytes;
         self.build_result_json_bytes += other.build_result_json_bytes;
         self.asset_requests += other.asset_requests;
         self.read_requests += other.read_requests;
@@ -136,6 +139,7 @@ impl WorkerClientMetrics {
         self.can_read_requests += other.can_read_requests;
         self.find_assets_requests += other.find_assets_requests;
         self.find_assets_results += other.find_assets_results;
+        self.find_assets_response_bytes += other.find_assets_response_bytes;
     }
 }
 
@@ -693,6 +697,7 @@ impl WorkerClient {
             "ok": false,
             "error": error.to_string(),
         }))
+        .map(|_| ())
     }
 
     fn ensure_optional_output(
@@ -868,7 +873,7 @@ impl WorkerClient {
                             let elapsed = started.elapsed().as_micros() as u64;
                             self.metrics.asset_rpc_us += elapsed;
                             self.metrics.read_rpc_us += elapsed;
-                            return result;
+                            return result.map(|_| ());
                         }
                         self.metrics.binary_read_responses += 1;
                         let result = self.send_binary(
@@ -941,6 +946,11 @@ impl WorkerClient {
             }
         };
         let result = self.send(&response);
+        if operation == "find_assets" {
+            if let Ok(frame_size) = result {
+                self.metrics.find_assets_response_bytes += frame_size as u64;
+            }
+        }
         let elapsed = started.elapsed().as_micros() as u64;
         self.metrics.asset_rpc_us += elapsed;
         match operation {
@@ -949,7 +959,7 @@ impl WorkerClient {
             "find_assets" => self.metrics.find_assets_rpc_us += elapsed,
             _ => {}
         }
-        result
+        result.map(|_| ())
     }
 
     fn next_id(&mut self) -> u64 {
@@ -958,7 +968,7 @@ impl WorkerClient {
         id
     }
 
-    fn send(&mut self, message: &Value) -> io::Result<()> {
+    fn send(&mut self, message: &Value) -> io::Result<usize> {
         let started = self.metrics_enabled.then(Instant::now);
         let frame_size = write_frame(&mut self.input, message)?;
         if let Some(started) = started {
@@ -966,7 +976,7 @@ impl WorkerClient {
         }
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
-        Ok(())
+        Ok(frame_size)
     }
 
     fn send_binary(&mut self, metadata: &Value, bytes: &[u8]) -> io::Result<()> {
@@ -1011,6 +1021,11 @@ impl WorkerClient {
 
     fn record_json_build_result_size(&mut self, result: &BuildResult) -> io::Result<()> {
         if metrics_enabled() {
+            self.metrics.build_result_output_bytes += result
+                .outputs
+                .iter()
+                .map(|output| output.bytes.len() as u64)
+                .sum::<u64>();
             self.metrics.build_result_json_bytes += json_build_result_frame_size(result)?;
         }
         Ok(())
@@ -1022,6 +1037,11 @@ impl WorkerClient {
         results: &[BuildResult],
     ) -> io::Result<()> {
         if metrics_enabled() {
+            self.metrics.build_result_output_bytes += results
+                .iter()
+                .flat_map(|result| result.outputs.iter())
+                .map(|output| output.bytes.len() as u64)
+                .sum::<u64>();
             self.metrics.build_result_json_bytes +=
                 json_build_batch_result_frame_size(id, results)?;
         }
@@ -1227,6 +1247,7 @@ pub struct PoolMetrics {
     pub ipc_bytes_received: u64,
     pub build_result_frames: u64,
     pub build_result_bytes: u64,
+    pub build_result_output_bytes: u64,
     pub build_result_json_bytes: u64,
     pub asset_requests: u64,
     pub read_requests: u64,
@@ -1236,6 +1257,7 @@ pub struct PoolMetrics {
     pub can_read_requests: u64,
     pub find_assets_requests: u64,
     pub find_assets_results: u64,
+    pub find_assets_response_bytes: u64,
 }
 
 impl WorkerPool {
@@ -1445,6 +1467,7 @@ impl WorkerPool {
             ipc_bytes_received: worker_metrics.ipc_bytes_received,
             build_result_frames: worker_metrics.build_result_frames,
             build_result_bytes: worker_metrics.build_result_bytes,
+            build_result_output_bytes: worker_metrics.build_result_output_bytes,
             build_result_json_bytes: worker_metrics.build_result_json_bytes,
             asset_requests: worker_metrics.asset_requests,
             read_requests: worker_metrics.read_requests,
@@ -1454,6 +1477,7 @@ impl WorkerPool {
             can_read_requests: worker_metrics.can_read_requests,
             find_assets_requests: worker_metrics.find_assets_requests,
             find_assets_results: worker_metrics.find_assets_results,
+            find_assets_response_bytes: worker_metrics.find_assets_response_bytes,
         }
     }
 

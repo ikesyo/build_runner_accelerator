@@ -28,7 +28,8 @@ Each Dart build profile now includes asset RPC timings:
 - operation counts for `read`, `can_read`, and `find_assets`.
 
 The existing Rust `asset_rpc_us`, operation-specific `*_rpc_us`, `read_bytes`,
-frame counts, and frame byte counts remain available. The Dart and Rust values
+frame counts, frame byte counts, build-result output bytes, and `find_assets`
+response bytes remain available. The Dart and Rust values
 intentionally overlap: the overlap is useful for estimating transport and
 framing overhead, while the Dart total captures the user-visible RPC wait.
 
@@ -109,6 +110,28 @@ extra Rust time includes the copy into the mapping and the JSON header write;
 the Dart side still makes a defensive copy into its cache. Treat this as
 evidence that a read-only PoC is viable, not as justification for migrating
 other asset operations or the full worker protocol.
+
+## Candidate screening (2026-09-20)
+
+Before extending the mapping to another message family, the same fixture was
+measured with one run at each worker count. `build_result_output_bytes` counts
+only generated output bytes; `build_result_bytes` includes the binary frame
+header and metadata. `find_assets_response_bytes` is the complete JSON response
+frame for all ten `find_assets` calls in this fixture.
+
+| jobs | case | build-result frames | output bytes | binary frame bytes | `find_assets` response bytes | read bytes |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | one-file | 2 | 10,210 | 21,830 | 1,380 | 56,693 |
+| 1 | broad | 2 | 10,210 | 21,494 | 1,350 | 56,660 |
+| 2 | one-file | 4 | 10,210 | 23,140 | 1,380 | 104,626 |
+| 4 | one-file | 8 | 10,210 | 25,760 | 1,380 | 200,492 |
+
+All runs produced the same output hash. The build-result and `find_assets`
+payloads are small and stable here, while read payload volume grows with worker
+parallelism. Therefore this experiment does not justify a second shared-memory
+transport yet. Revisit `build_result` on a fixture with substantially larger
+generated outputs; keep `find_assets` on the measurement-only path unless a
+large glob response is observed.
 
 ## Reproduction
 

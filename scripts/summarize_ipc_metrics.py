@@ -80,10 +80,17 @@ def summarize(paths: list[pathlib.Path]) -> dict[str, object]:
         "ipc_frames_received",
         "ipc_bytes_sent",
         "ipc_bytes_received",
+        "build_result_frames",
+        "build_result_bytes",
+        "build_result_output_bytes",
+        "build_result_json_bytes",
         "read_requests",
         "read_bytes",
         "binary_read_responses",
         "shared_memory_read_responses",
+        "find_assets_requests",
+        "find_assets_results",
+        "find_assets_response_bytes",
     ):
         value = rust.get(key)
         if value is not None:
