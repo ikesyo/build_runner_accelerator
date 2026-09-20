@@ -32,11 +32,7 @@ void main() {
     final bytes = utf8.encode('frontend');
     final archive = Archive()
       ..addFile(
-        ArchiveFile(
-          'linux-x64/build_runner_accelerator',
-          bytes.length,
-          bytes,
-        ),
+        ArchiveFile('linux-x64/build_runner_accelerator', bytes.length, bytes),
       );
     final archiveBytes = ZipEncoder().encode(archive);
 

@@ -16,7 +16,9 @@ void main() {
     expect(manifest.protocolMajor, releaseProtocolMajor);
     expect(manifest.artifacts, hasLength(2));
     expect(
-      manifest.artifacts.singleWhere((artifact) => artifact.target == 'linux-x64').filename,
+      manifest.artifacts
+          .singleWhere((artifact) => artifact.target == 'linux-x64')
+          .filename,
       'build_runner_accelerator-linux-x64.tar.gz',
     );
   });
