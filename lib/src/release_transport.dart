@@ -52,7 +52,7 @@ class ReleaseDownloadClient {
             'refusing non-HTTPS release redirect: $next',
           );
         }
-        await response.drain<void>();
+        await _discardResponse(response);
         current = next;
         response = await _request(client, current);
         redirects++;
@@ -101,5 +101,14 @@ class ReleaseDownloadClient {
       'build_runner_accelerator',
     );
     return request.close().timeout(requestTimeout);
+  }
+
+  Future<void> _discardResponse(HttpClientResponse response) async {
+    final subscription = response.listen((_) {});
+    try {
+      await subscription.asFuture<void>().timeout(requestTimeout);
+    } finally {
+      await subscription.cancel();
+    }
   }
 }

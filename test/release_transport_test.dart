@@ -58,22 +58,57 @@ void main() {
       expect(httpClient.requestedUris, [start]);
     },
   );
+
+  test('times out while draining a redirect body', () async {
+    final start = Uri.parse('https://mirror.example/start');
+    final target = Uri.parse('https://mirror.example/target');
+    final redirectBody = StreamController<List<int>>();
+    addTearDown(redirectBody.close);
+    final httpClient = _RedirectingHttpClient({
+      start: _ResponseSpec.redirect(
+        target.toString(),
+        bodyStream: redirectBody.stream,
+      ),
+      target: _ResponseSpec.ok(utf8Bytes('downloaded')),
+    });
+    final client = ReleaseDownloadClient(
+      baseUrl: 'https://mirror.example/releases',
+      requireHttps: true,
+      requestTimeout: const Duration(milliseconds: 50),
+      httpClient: httpClient,
+    );
+
+    await expectLater(
+      client.download(start, maxBytes: 1024),
+      throwsA(
+        isA<ReleaseDownloadException>().having(
+          (error) => error.message,
+          'message',
+          contains('timed out'),
+        ),
+      ),
+    );
+    expect(httpClient.requestedUris, [start]);
+  });
 }
 
 class _ResponseSpec {
   const _ResponseSpec.ok(List<int> body)
     : statusCode = HttpStatus.ok,
       location = null,
-      this.body = body;
+      this.body = body,
+      bodyStream = null;
 
-  const _ResponseSpec.redirect(String location)
+  const _ResponseSpec.redirect(String location, {Stream<List<int>>? bodyStream})
     : statusCode = HttpStatus.movedTemporarily,
       this.location = location,
-      body = const <int>[];
+      body = const <int>[],
+      this.bodyStream = bodyStream;
 
   final int statusCode;
   final String? location;
   final List<int> body;
+  final Stream<List<int>>? bodyStream;
 
   bool get isRedirect => location != null;
 }
@@ -163,7 +198,7 @@ class _RedirectingHttpClientResponse extends Stream<List<int>>
     Function? onError,
     void Function()? onDone,
     bool? cancelOnError,
-  }) => Stream<List<int>>.fromIterable([spec.body]).listen(
+  }) => (spec.bodyStream ?? Stream<List<int>>.fromIterable([spec.body])).listen(
     onData,
     onError: onError,
     onDone: onDone,
