@@ -38,6 +38,7 @@ targets:
             - lib/second.dart
             - lib/schema.drift
             - lib/plain
+            - lib/renamed
             - lib/generate-excluded/**
           exclude:
             - lib/generate-excluded/**
