@@ -23,6 +23,11 @@ CARGO_PACKAGE_BLOCK_PATTERN = re.compile(
 )
 
 
+FRONTEND_VERSION_PATTERN = re.compile(
+    rf"(?m)^const buildRunnerAcceleratorVersion = '({SEMVER})';$"
+)
+
+
 def read_package_version(pubspec_path: Path) -> str:
     contents = pubspec_path.read_text(encoding="utf-8")
     matches = PUBSPEC_VERSION_PATTERN.findall(contents)
@@ -129,6 +134,25 @@ def synchronize_readme(repository_root: Path, version: str, check: bool) -> None
     print(f"Synchronized README installation version to {version}.")
 
 
+def read_frontend_version(repository_root: Path) -> str:
+    frontend_path = repository_root / "lib/src/frontend_binary_resolver.dart"
+    contents = frontend_path.read_text(encoding="utf-8")
+    matches = FRONTEND_VERSION_PATTERN.findall(contents)
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"expected exactly one frontend version in {frontend_path}, found {len(matches)}"
+        )
+    return matches[0]
+
+
+def check_frontend_version(repository_root: Path, version: str) -> None:
+    frontend_path = repository_root / "lib/src/frontend_binary_resolver.dart"
+    actual = read_frontend_version(repository_root)
+    if actual != version:
+        raise RuntimeError(f"{frontend_path} has {actual}; expected {version}")
+    print(f"frontend version matches {version}.")
+
+
 def run_cargo_update(repository_root: Path) -> None:
     print("release metadata sync: updating Cargo.lock")
     subprocess.run(
@@ -232,6 +256,7 @@ def main() -> None:
 
     if args.check:
         synchronize_readme(repository_root, version, check=True)
+        check_frontend_version(repository_root, version)
         check_cargo_lock(repository_root, version)
         check_fixture_lockfiles(repository_root, version)
         print(f"release metadata check: all metadata matches {version}")
