@@ -114,7 +114,7 @@ jobs:
             exit 1
           fi
           if [[ "$frontend_version" != "$version" || "$cargo_version" != "$version" ]]; then
-            echo "version mismatch: pubspec=$version launcher=$frontend_version cargo=$cargo_version" >&2
+            echo "version mismatch: pubspec=$version frontend=$frontend_version cargo=$cargo_version" >&2
             exit 1
           fi
           echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
