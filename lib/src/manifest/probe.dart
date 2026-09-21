@@ -42,82 +42,15 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
     unawaited(process.stdout.drain<void>());
     unawaited(process.stderr.drain<void>());
 
-    int exitCode;
-    try {
-      exitCode = await process.exitCode.timeout(_factoryProbeTimeout);
-    } on TimeoutException {
-      process.kill();
-      try {
-        await process.exitCode.timeout(_factoryProbeKillGracePeriod);
-      } on TimeoutException {
-        // The child may be outside our control; the probe still must not
-        // keep manifest generation blocked.
-      }
-      return const {};
-    }
+    final exitCode = await waitForProbeExit(
+      exitCode: process.exitCode,
+      kill: process.kill,
+    );
     if (exitCode != 0 || !resultFile.existsSync()) return const {};
-    final decoded = jsonDecode(await resultFile.readAsString());
-    if (decoded is! Map) return const {};
-
-    final probed = <String, List<FactoryMapping>>{};
-    for (final entry in decoded.entries) {
-      final request = probeRequests
-          .where((candidate) => candidate.id == entry.key)
-          .firstOrNull;
-      if (request == null || entry.value is! List) continue;
-      final expectedFactories = request.definition.isPostProcess
-          ? <String>[request.definition.postProcess!.builderFactory]
-          : request.definition.normal!.builderFactories;
-      final rawMappings = entry.value as List;
-      if (rawMappings.length != expectedFactories.length) continue;
-      final mappings = <FactoryMapping>[];
-      var valid = true;
-      for (var index = 0; index < rawMappings.length; index++) {
-        final raw = rawMappings[index];
-        if (raw is! Map || raw['factory'] != expectedFactories[index]) {
-          valid = false;
-          break;
-        }
-        final rawBuildExtensions = raw['build_extensions'];
-        if (rawBuildExtensions is! Map) {
-          valid = false;
-          break;
-        }
-        final buildExtensions = <String, List<String>>{};
-        for (final extension in rawBuildExtensions.entries) {
-          final input = extension.key;
-          final outputs = extension.value;
-          if (input is! String ||
-              outputs is! List ||
-              outputs.any((output) => output is! String)) {
-            valid = false;
-            break;
-          }
-          buildExtensions[input] = outputs.cast<String>();
-        }
-        if (!valid) break;
-        final rawInputExtensions = raw['input_extensions'];
-        final inputExtensions = rawInputExtensions == null
-            ? null
-            : rawInputExtensions is List &&
-                  rawInputExtensions.every((input) => input is String)
-            ? rawInputExtensions.cast<String>()
-            : null;
-        if (raw.containsKey('input_extensions') && inputExtensions == null) {
-          valid = false;
-          break;
-        }
-        mappings.add(
-          FactoryMapping(
-            factory: raw['factory'] as String,
-            buildExtensions: buildExtensions,
-            inputExtensions: inputExtensions,
-          ),
-        );
-      }
-      if (valid) probed[request.id] = mappings;
-    }
-    return probed;
+    return decodeFactoryProbeResponse(
+      await resultFile.readAsString(),
+      probeRequests,
+    );
   } catch (_) {
     // A probe is an optimization boundary, not a reason to fail the build.
     // The caller treats a missing selected request as an unsupported manifest
@@ -132,6 +65,109 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
       }
     }
   }
+}
+
+/// Waits for a probe process without allowing it to block manifest generation
+/// indefinitely. A null result means that the process exceeded its timeout.
+Future<int?> waitForProbeExit({
+  required Future<int> exitCode,
+  required void Function() kill,
+  Duration timeout = _factoryProbeTimeout,
+  Duration killGracePeriod = _factoryProbeKillGracePeriod,
+}) async {
+  try {
+    return await exitCode.timeout(timeout);
+  } on TimeoutException {
+    kill();
+    try {
+      await exitCode.timeout(killGracePeriod);
+    } on TimeoutException {
+      // The child may be outside our control; the probe still must not
+      // keep manifest generation blocked.
+    }
+    return null;
+  }
+}
+
+/// Decodes a probe result and keeps only entries matching their requests.
+/// Invalid JSON is treated like an unavailable probe.
+Map<String, List<FactoryMapping>> decodeFactoryProbeResponse(
+  String source,
+  Iterable<FactoryProbeRequest> requests,
+) {
+  try {
+    return decodeFactoryProbeResult(jsonDecode(source), requests);
+  } on FormatException {
+    return const {};
+  }
+}
+
+Map<String, List<FactoryMapping>> decodeFactoryProbeResult(
+  Object? decoded,
+  Iterable<FactoryProbeRequest> requests,
+) {
+  if (decoded is! Map) return const {};
+
+  final requestsById = <String, FactoryProbeRequest>{
+    for (final request in requests) request.id: request,
+  };
+  final probed = <String, List<FactoryMapping>>{};
+  for (final entry in decoded.entries) {
+    final request = requestsById[entry.key];
+    if (request == null || entry.value is! List) continue;
+    final expectedFactories = request.definition.isPostProcess
+        ? <String>[request.definition.postProcess!.builderFactory]
+        : request.definition.normal!.builderFactories;
+    final rawMappings = entry.value as List;
+    if (rawMappings.length != expectedFactories.length) continue;
+    final mappings = <FactoryMapping>[];
+    var valid = true;
+    for (var index = 0; index < rawMappings.length; index++) {
+      final raw = rawMappings[index];
+      if (raw is! Map || raw['factory'] != expectedFactories[index]) {
+        valid = false;
+        break;
+      }
+      final rawBuildExtensions = raw['build_extensions'];
+      if (rawBuildExtensions is! Map) {
+        valid = false;
+        break;
+      }
+      final buildExtensions = <String, List<String>>{};
+      for (final extension in rawBuildExtensions.entries) {
+        final input = extension.key;
+        final outputs = extension.value;
+        if (input is! String ||
+            outputs is! List ||
+            outputs.any((output) => output is! String)) {
+          valid = false;
+          break;
+        }
+        buildExtensions[input] = outputs.cast<String>();
+      }
+      if (!valid) break;
+      final rawInputExtensions = raw['input_extensions'];
+      final inputExtensions = rawInputExtensions == null
+          ? null
+          : rawInputExtensions is List &&
+                rawInputExtensions.every((input) => input is String)
+          ? rawInputExtensions.cast<String>()
+          : null;
+      if (raw.containsKey('input_extensions') && inputExtensions == null) {
+        valid = false;
+        break;
+      }
+      mappings.add(
+        FactoryMapping(
+          factory: raw['factory'] as String,
+          buildExtensions: buildExtensions,
+          inputExtensions: inputExtensions,
+        ),
+      );
+    }
+    if (valid) probed[request.id] = mappings;
+  }
+  return probed;
 }
 
 String _factoryProbeSource(Iterable<FactoryProbeRequest> requests) {
