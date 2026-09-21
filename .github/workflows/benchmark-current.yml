@@ -77,6 +77,7 @@ jobs:
           python3 - "$RESULTS_DIR" <<'PY'
           import json
           import statistics
+          import os
           import sys
           from pathlib import Path
 
@@ -115,6 +116,10 @@ jobs:
               stream.write(summary)
           with open(sys.argv[1] + "/summary.md", "w", encoding="utf-8") as stream:
               stream.write(summary)
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as stream:
+                  stream.write(summary)
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -150,6 +155,7 @@ jobs:
           dart pub get
           (cd fixtures/current_json_app && dart pub get)
       - name: Run paired watch smoke
+        id: watch
         shell: bash
         env:
           RESULTS_DIR: ${{ github.workspace }}/benchmark-results/watch
@@ -158,6 +164,27 @@ jobs:
           mkdir -p "$RESULTS_DIR"
           /usr/bin/time -f 'watch_smoke_elapsed_seconds=%e' -o "$RESULTS_DIR/watch.time"             bash scripts/watch_smoke_current_json.sh 2>&1 | tee "$RESULTS_DIR/watch.log"
           cat "$RESULTS_DIR/watch.time"
+      - name: Summarize watch smoke
+        if: ${{ always() }}
+        shell: bash
+        env:
+          RESULTS_DIR: ${{ github.workspace }}/benchmark-results/watch
+          WATCH_OUTCOME: ${{ steps.watch.outcome }}
+        run: |
+          {
+            echo "### Watch smoke"
+            echo
+            echo "- Result: **${WATCH_OUTCOME:-unknown}**"
+            if [[ -f "$RESULTS_DIR/watch.time" ]]; then
+              echo "- Elapsed: $(<"$RESULTS_DIR/watch.time")"
+            fi
+            if [[ "$WATCH_OUTCOME" == success ]]; then
+              echo "- Input change: passed"
+              echo "- Output delete: passed"
+              echo "- Rename: passed"
+              echo "- Stock/Rust output match: passed"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: benchmark-current-watch
@@ -277,6 +304,7 @@ jobs:
           Path("benchmark-report.md").write_text(report, encoding="utf-8")
           print(report)
           PY
+          cat benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: benchmark-current-report
