@@ -81,9 +81,13 @@ Map<String, SelectedBuilder> selectApplications({
 
   for (final target in orderedTargets) {
     for (final entry in target.target.builders.entries) {
-      final selectedKey = _selectedKey(target.target.key, entry.key);
       if (!entry.value.isEnabled) {
-        disabled.add(selectedKey);
+        disabled.add(_selectedKey(target.target.key, entry.key));
+      }
+    }
+
+    for (final entry in target.target.builders.entries) {
+      if (!entry.value.isEnabled) {
         continue;
       }
       select(

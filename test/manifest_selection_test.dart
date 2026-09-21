@@ -67,6 +67,38 @@ void main() {
     expect(selected, isEmpty);
   });
 
+  test('honors explicit disable before selecting an applied builder', () {
+    final config = BuildConfig.fromMap('example', const <String>[], {
+      'builders': {
+        'producer': _builder(
+          'createProducer',
+          appliesBuilders: <String>['example:consumer'],
+        ),
+        'consumer': _builder('createConsumer'),
+      },
+      'targets': {
+        r'$default': {
+          'builders': {
+            'example:producer': {'enabled': true},
+            'example:consumer': {'enabled': false},
+          },
+        },
+      },
+    });
+
+    final selected = selectApplications(
+      rootPackageName: 'example',
+      rootConfig: config,
+      orderedTargets: <TargetInfo>[_target(config)],
+      definitions: _definitions(config),
+    );
+
+    expect(
+      selected.keys,
+      unorderedEquals(<String>['example:example|example:producer']),
+    );
+  });
+
   test('merges default, target, and global options in precedence order', () {
     final config = BuildConfig.fromMap('example', const <String>[], {
       'builders': {
