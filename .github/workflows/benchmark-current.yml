@@ -143,10 +143,10 @@ jobs:
           lines = [
               f"### {lane} ({parallelism})",
               "",
-              f"- CPU group: `{display(environment.get("cpu_group"))}`",
-              f"- CPU model: {display(cpu.get("model_name"))}",
-              f"- vCPU: {display(cpu.get("nproc"))} (host: {display(cpu.get("nproc_all"))})",
-              f"- Runner image: {display(runner.get("image_os"))} / {display(runner.get("image_version"))}",
+              f"- CPU group: `{display(environment.get('cpu_group'))}`",
+              f"- CPU model: {display(cpu.get('model_name'))}",
+              f"- vCPU: {display(cpu.get('nproc'))} (host: {display(cpu.get('nproc_all'))})",
+              f"- Runner image: {display(runner.get('image_os'))} / {display(runner.get('image_version'))}",
               f"- CPU steal: {display(steal)}%",
               "",
               "| Case | Wall ms (median; min–max) | User ms | Sys ms | Peak RSS KiB |",
@@ -416,12 +416,13 @@ jobs:
                   if environment.get("cpu_steal", {}).get("percent") is not None
               ]
               steal = statistics.median(steals) if steals else None
+              steal_text = "—" if steal is None else f"{steal:.3f}"
               lines.append(
-                  f"| `{group}` | {cpu.get("model_name", "unknown")} | "
-                  f"{cpu.get("nproc", "unknown")} | "
-                  f"{runner.get("image_os", "unknown")} / {runner.get("image_version", "unknown")} | "
-                  f"{", ".join(benchmark_ids)} | "
-                  f"{"—" if steal is None else f"{steal:.3f}"} |"
+                  f"| `{group}` | {cpu.get('model_name', 'unknown')} | "
+                  f"{cpu.get('nproc', 'unknown')} | "
+                  f"{runner.get('image_os', 'unknown')} / {runner.get('image_version', 'unknown')} | "
+                  f"{', '.join(benchmark_ids)} | "
+                  f"{steal_text} |"
               )
           lines += [
               "",
@@ -434,10 +435,10 @@ jobs:
               for case in cases:
                   lines.append(
                       f"| `{group}` | {case} | "
-                      f"{fmt(cpu_median(group, "stock", "default", case))} | "
-                      f"{fmt(cpu_median(group, "accelerator", "jobs:1", case))} | "
-                      f"{fmt(cpu_median(group, "accelerator", "jobs:2", case))} | "
-                      f"{fmt(cpu_median(group, "accelerator", "jobs:4", case))} |"
+                      f"{fmt(cpu_median(group, 'stock', 'default', case))} | "
+                      f"{fmt(cpu_median(group, 'accelerator', 'jobs:1', case))} | "
+                      f"{fmt(cpu_median(group, 'accelerator', 'jobs:2', case))} | "
+                      f"{fmt(cpu_median(group, 'accelerator', 'jobs:4', case))} |"
                   )
 
           watch_time = next(root.rglob("watch.time"), None)
@@ -447,6 +448,7 @@ jobs:
               {},
           )
           watch_steal = watch_environment.get("cpu_steal", {}).get("percent")
+          watch_steal_text = "—" if watch_steal is None else f"{watch_steal:.3f}%"
           lines += [
               "",
               "## Watch smoke",
@@ -455,7 +457,7 @@ jobs:
               "rename, and byte-identical output checks.",
               f"Elapsed: {watch_time.read_text(encoding='utf-8').strip() if watch_time else 'unavailable'}",
               f"CPU group: {watch_environment.get('cpu_group', 'unknown')}",
-              f"CPU steal: {'—' if watch_steal is None else f'{watch_steal:.3f}%'}",
+              f"CPU steal: {watch_steal_text}",
               "",
               "Raw JSONL, environment metadata, and logs are in the uploaded benchmark artifacts.",
           ]
