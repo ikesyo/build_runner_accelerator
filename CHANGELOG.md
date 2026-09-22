@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.4.1](https://github.com/ikesyo/build_runner_accelerator/compare/v0.4.0...v0.4.1) - 2026-09-22
+
+- ci: show benchmark results in job summaries by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/44
+- ci: capture benchmark runner fingerprints by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/45
+- Reduce batch visibility memory overhead by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/47
+- Investigate native action-count expansion by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/48
+
 ## [v0.4.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.3.0...v0.4.0) - 2026-09-21
 
 - feat: support empty input extension mappings by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/32
