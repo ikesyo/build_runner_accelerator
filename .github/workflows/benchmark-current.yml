@@ -47,6 +47,7 @@ jobs:
             fixtures/current_json_app/pubspec.lock
             rust/Cargo.lock
             scripts/benchmark_current_baseline.sh
+            scripts/benchmark_environment.py
             scripts/worker.sh
           setup-rust: 'true'
           build-frontend: ${{ matrix.lane == 'accelerator' }}
@@ -55,6 +56,18 @@ jobs:
         shell: bash
         run: |
           dart pub get
+      - name: Capture benchmark environment
+        shell: bash
+        env:
+          BENCHMARK_ID: ${{ matrix.id }}
+          BENCHMARK_LANE: ${{ matrix.lane }}
+          BENCHMARK_PARALLELISM: ${{ matrix.accelerator_jobs }}
+          RESULTS_DIR: ${{ github.workspace }}/benchmark-results/${{ matrix.id }}
+        run: |
+          mkdir -p "$RESULTS_DIR"
+          python3 scripts/benchmark_environment.py \
+            --phase before \
+            --output "$RESULTS_DIR/environment-before.json"
       - name: Run current baseline benchmark
         shell: bash
         env:
@@ -69,6 +82,19 @@ jobs:
         run: |
           mkdir -p "$RESULTS_DIR"
           bash scripts/benchmark_current_baseline.sh 2>&1 | tee "$RESULTS_DIR/benchmark.log"
+      - name: Capture benchmark environment after run
+        if: ${{ always() }}
+        shell: bash
+        env:
+          BENCHMARK_ID: ${{ matrix.id }}
+          BENCHMARK_LANE: ${{ matrix.lane }}
+          BENCHMARK_PARALLELISM: ${{ matrix.accelerator_jobs }}
+          RESULTS_DIR: ${{ github.workspace }}/benchmark-results/${{ matrix.id }}
+        run: |
+          python3 scripts/benchmark_environment.py \
+            --phase after \
+            --output "$RESULTS_DIR/environment.json" \
+            --previous "$RESULTS_DIR/environment-before.json"
       - name: Print benchmark summary
         shell: bash
         env:
@@ -82,8 +108,21 @@ jobs:
           from pathlib import Path
 
           root = Path(sys.argv[1])
-          records = [json.loads(path.read_text(encoding="utf-8"))
-                     for path in sorted(root.glob("*.json"))]
+          records = []
+          for path in sorted(root.glob("*.json")):
+              try:
+                  record = json.loads(path.read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError):
+                  continue
+              if "case" in record and "wall_ms" in record:
+                  records.append(record)
+          environment = {}
+          environment_path = root / "environment.json"
+          if environment_path.is_file():
+              try:
+                  environment = json.loads(environment_path.read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError):
+                  pass
 
           def stat(case, key):
               values = [float(record[key]) for record in records
@@ -93,10 +132,22 @@ jobs:
           def fmt(value):
               return f"{value:,.0f}"
 
+          def display(value):
+              return "unknown" if value in (None, "") else str(value)
+
           lane = records[0]["lane"]
           parallelism = records[0].get("build_runner_parallelism", "default")
+          cpu = environment.get("cpu", {})
+          runner = environment.get("runner", {})
+          steal = environment.get("cpu_steal", {}).get("percent")
           lines = [
               f"### {lane} ({parallelism})",
+              "",
+              f"- CPU group: `{display(environment.get('cpu_group'))}`",
+              f"- CPU model: {display(cpu.get('model_name'))}",
+              f"- vCPU: {display(cpu.get('nproc'))} (host: {display(cpu.get('nproc_all'))})",
+              f"- Runner image: {display(runner.get('image_os'))} / {display(runner.get('image_version'))}",
+              f"- CPU steal: {display(steal)}%",
               "",
               "| Case | Wall ms (median; min–max) | User ms | Sys ms | Peak RSS KiB |",
               "| --- | ---: | ---: | ---: | ---: |",
@@ -145,6 +196,7 @@ jobs:
             fixtures/current_json_app/pubspec.lock
             rust/Cargo.lock
             scripts/watch_smoke_current_json.sh
+            scripts/benchmark_environment.py
             scripts/worker.sh
           setup-rust: 'true'
           build-frontend: 'true'
@@ -154,6 +206,18 @@ jobs:
         run: |
           dart pub get
           (cd fixtures/current_json_app && dart pub get)
+      - name: Capture watch environment
+        shell: bash
+        env:
+          BENCHMARK_ID: watch
+          BENCHMARK_LANE: watch
+          BENCHMARK_PARALLELISM: watch
+          RESULTS_DIR: ${{ github.workspace }}/benchmark-results/watch
+        run: |
+          mkdir -p "$RESULTS_DIR"
+          python3 scripts/benchmark_environment.py \
+            --phase before \
+            --output "$RESULTS_DIR/environment-before.json"
       - name: Run paired watch smoke
         id: watch
         shell: bash
@@ -164,6 +228,19 @@ jobs:
           mkdir -p "$RESULTS_DIR"
           /usr/bin/time -f 'watch_smoke_elapsed_seconds=%e' -o "$RESULTS_DIR/watch.time"             bash scripts/watch_smoke_current_json.sh 2>&1 | tee "$RESULTS_DIR/watch.log"
           cat "$RESULTS_DIR/watch.time"
+      - name: Capture watch environment after run
+        if: ${{ always() }}
+        shell: bash
+        env:
+          BENCHMARK_ID: watch
+          BENCHMARK_LANE: watch
+          BENCHMARK_PARALLELISM: watch
+          RESULTS_DIR: ${{ github.workspace }}/benchmark-results/watch
+        run: |
+          python3 scripts/benchmark_environment.py \
+            --phase after \
+            --output "$RESULTS_DIR/environment.json" \
+            --previous "$RESULTS_DIR/environment-before.json"
       - name: Summarize watch smoke
         if: ${{ always() }}
         shell: bash
@@ -171,10 +248,43 @@ jobs:
           RESULTS_DIR: ${{ github.workspace }}/benchmark-results/watch
           WATCH_OUTCOME: ${{ steps.watch.outcome }}
         run: |
+          mapfile -t ENVIRONMENT_SUMMARY < <(
+            python3 - "$RESULTS_DIR/environment.json" <<'PY'
+          import json
+          import sys
+
+          try:
+              with open(sys.argv[1], encoding="utf-8") as stream:
+                  environment = json.load(stream)
+          except (OSError, json.JSONDecodeError):
+              environment = {}
+
+          cpu = environment.get("cpu") or {}
+          runner = environment.get("runner") or {}
+          steal = (environment.get("cpu_steal") or {}).get("percent")
+          image_os = runner.get("image_os") or "unknown"
+          image_version = runner.get("image_version") or "unknown"
+          values = (
+              environment.get("cpu_group"),
+              cpu.get("model_name"),
+              cpu.get("nproc"),
+              cpu.get("nproc_all"),
+              f"{image_os} / {image_version}",
+              "unknown" if steal is None else f"{steal}%",
+          )
+          for value in values:
+              print("unknown" if value in (None, "") else value)
+          PY
+          )
           {
             echo "### Watch smoke"
             echo
             echo "- Result: **${WATCH_OUTCOME:-unknown}**"
+            echo "- CPU group: \`${ENVIRONMENT_SUMMARY[0]:-unknown}\`"
+            echo "- CPU model: ${ENVIRONMENT_SUMMARY[1]:-unknown}"
+            echo "- vCPU: ${ENVIRONMENT_SUMMARY[2]:-unknown} (host: ${ENVIRONMENT_SUMMARY[3]:-unknown})"
+            echo "- Runner image: ${ENVIRONMENT_SUMMARY[4]:-unknown}"
+            echo "- CPU steal: ${ENVIRONMENT_SUMMARY[5]:-unknown}"
             if [[ -f "$RESULTS_DIR/watch.time" ]]; then
               echo "- Elapsed: $(<"$RESULTS_DIR/watch.time")"
             fi
@@ -186,6 +296,7 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() }}
         with:
           name: benchmark-current-watch
           path: ${{ github.workspace }}/benchmark-results/watch
@@ -213,16 +324,29 @@ jobs:
 
           root = Path("artifacts")
           records = []
+          environments = {}
+          for path in sorted(root.rglob("environment.json")):
+              try:
+                  environment = json.loads(path.read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError):
+                  continue
+              environments[path.parent] = environment
           for path in sorted(root.rglob("*.json")):
+              if path.name in ("environment.json", "environment-before.json"):
+                  continue
               try:
                   record = json.loads(path.read_text(encoding="utf-8"))
               except (OSError, json.JSONDecodeError):
                   continue
               if "lane" in record and "case" in record and "wall_ms" in record:
+                  record_environment = environments.get(path.parent, {})
+                  record["_cpu_group"] = record_environment.get("cpu_group", "unknown")
                   records.append(record)
 
           cases = ("clean", "no-op", "one-file", "broad")
           groups = {}
+          cpu_groups = {}
+          cpu_group_environments = {}
           for record in records:
               key = (
                   record["lane"],
@@ -230,6 +354,17 @@ jobs:
                   record["case"],
               )
               groups.setdefault(key, []).append(record)
+              cpu_key = (
+                  record["_cpu_group"],
+                  record["lane"],
+                  record.get("build_runner_parallelism", "default"),
+                  record["case"],
+              )
+              cpu_groups.setdefault(cpu_key, []).append(record)
+
+          for environment in environments.values():
+              group = environment.get("cpu_group", "unknown")
+              cpu_group_environments.setdefault(group, []).append(environment)
 
           def median(key, case):
               values = groups.get((*key, case), [])
@@ -242,6 +377,10 @@ jobs:
               stock = median(("stock", "default"), case)
               native = median(("accelerator", parallelism), case)
               return "—" if not stock or not native else f"{stock / native:.2f}x"
+
+          def cpu_median(group, lane, parallelism, case):
+              values = cpu_groups.get((group, lane, parallelism, case), [])
+              return statistics.median(float(record["wall_ms"]) for record in values) if values else None
 
           lines = [
               "# Current build_runner baseline benchmark",
@@ -289,7 +428,61 @@ jobs:
                           f"{statistics.median(float(r['maxrss']) for r in values):,.0f} |"
                       )
 
+          lines += [
+              "",
+              "## CPU groups",
+              "",
+              "| CPU group | Model | vCPU | Image | Jobs | Steal % |",
+              "| --- | --- | ---: | --- | --- | ---: |",
+          ]
+          for group in sorted(cpu_group_environments):
+              environments_for_group = cpu_group_environments[group]
+              representative = environments_for_group[0]
+              cpu = representative.get("cpu", {})
+              runner = representative.get("runner", {})
+              benchmark_ids = sorted({
+                  environment.get("benchmark", {}).get("id", "unknown")
+                  for environment in environments_for_group
+              })
+              steals = [
+                  environment.get("cpu_steal", {}).get("percent")
+                  for environment in environments_for_group
+                  if environment.get("cpu_steal", {}).get("percent") is not None
+              ]
+              steal = statistics.median(steals) if steals else None
+              steal_text = "—" if steal is None else f"{steal:.3f}"
+              lines.append(
+                  f"| `{group}` | {cpu.get('model_name', 'unknown')} | "
+                  f"{cpu.get('nproc', 'unknown')} | "
+                  f"{runner.get('image_os', 'unknown')} / {runner.get('image_version', 'unknown')} | "
+                  f"{', '.join(benchmark_ids)} | "
+                  f"{steal_text} |"
+              )
+          lines += [
+              "",
+              "## Wall time by CPU group (median ms)",
+              "",
+              "| CPU group | Case | Stock | Accelerator jobs=1 | Accelerator jobs=2 | Accelerator jobs=4 |",
+              "| --- | --- | ---: | ---: | ---: | ---: |",
+          ]
+          for group in sorted(cpu_group_environments):
+              for case in cases:
+                  lines.append(
+                      f"| `{group}` | {case} | "
+                      f"{fmt(cpu_median(group, 'stock', 'default', case))} | "
+                      f"{fmt(cpu_median(group, 'accelerator', 'jobs:1', case))} | "
+                      f"{fmt(cpu_median(group, 'accelerator', 'jobs:2', case))} | "
+                      f"{fmt(cpu_median(group, 'accelerator', 'jobs:4', case))} |"
+                  )
+
           watch_time = next(root.rglob("watch.time"), None)
+          watch_environment = next(
+              (environment for environment in environments.values()
+               if environment.get("benchmark", {}).get("id") == "watch"),
+              {},
+          )
+          watch_steal = watch_environment.get("cpu_steal", {}).get("percent")
+          watch_steal_text = "—" if watch_steal is None else f"{watch_steal:.3f}%"
           lines += [
               "",
               "## Watch smoke",
@@ -297,8 +490,10 @@ jobs:
               "Paired stock/Rust watch smoke passed input-change, output-delete, "
               "rename, and byte-identical output checks.",
               f"Elapsed: {watch_time.read_text(encoding='utf-8').strip() if watch_time else 'unavailable'}",
+              f"CPU group: {watch_environment.get('cpu_group', 'unknown')}",
+              f"CPU steal: {watch_steal_text}",
               "",
-              "Raw JSONL and logs are in the uploaded benchmark artifacts.",
+              "Raw JSONL, environment metadata, and logs are in the uploaded benchmark artifacts.",
           ]
           report = "\n".join(lines) + "\n"
           Path("benchmark-report.md").write_text(report, encoding="utf-8")
