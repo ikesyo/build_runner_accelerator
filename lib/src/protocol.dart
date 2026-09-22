@@ -29,7 +29,7 @@ sealed class WorkerMessage {
       case 'reset_resolver':
         return WorkerResetResolverMessage.fromJson(message);
       case 'build':
-        return WorkerBuildMessage(WorkerBuildRequest.fromJson(message));
+        return WorkerBuildMessage(_decodeBuildRequest(message));
       case 'build_batch':
         return WorkerBuildBatchMessage.fromJson(message);
       default:
@@ -114,7 +114,7 @@ class WorkerBuildBatchMessage extends WorkerMessage {
         for (final rawRequest in rawRequests)
           WorkerBuildRequest.fromJson(
             _jsonMap(rawRequest, 'build_batch request'),
-            inheritedBlockedAssets: blockedAssets,
+            blockedAssets: blockedAssets,
           ),
       ],
     );
@@ -148,7 +148,7 @@ class WorkerBuildRequest {
 
   factory WorkerBuildRequest.fromJson(
     JsonMap message, {
-    List<String>? inheritedBlockedAssets,
+    required List<String> blockedAssets,
   }) {
     final rawKind = message['kind'];
     final kind = rawKind == null
@@ -165,7 +165,6 @@ class WorkerBuildRequest {
         ? <String, dynamic>{}
         : _stringKeyedMap(rawOptions, 'build options');
     final rawAllowedOutputs = message['allowed_outputs'];
-    final rawBlockedAssets = message['blocked_assets'];
     final rawTriggers = message['triggers'];
     return WorkerBuildRequest(
       id: _requiredInt(message, 'id', 'build'),
@@ -182,9 +181,7 @@ class WorkerBuildRequest {
           ? rawInstanceKey
           : null,
       isRoot: rawIsRoot is bool ? rawIsRoot : true,
-      blockedAssets:
-          inheritedBlockedAssets ??
-          _stringList(rawBlockedAssets, 'build blocked_assets'),
+      blockedAssets: blockedAssets,
       triggers: _triggerList(
         rawTriggers ?? const <dynamic>[],
         'build triggers',
@@ -355,6 +352,16 @@ class FrameReader {
   }
 }
 
+WorkerBuildRequest _decodeBuildRequest(JsonMap message) {
+  return WorkerBuildRequest.fromJson(
+    message,
+    blockedAssets: _stringList(
+      message['blocked_assets'],
+      'build blocked_assets',
+    ),
+  );
+}
+
 class FrameWriter {
   FrameWriter(this._output);
 
@@ -521,7 +528,7 @@ class RpcSession {
         if (handler == null) {
           throw StateError('Unexpected nested build request during asset RPC');
         }
-        await handler(WorkerBuildRequest.fromJson(response));
+        await handler(_decodeBuildRequest(response));
         continue;
       }
       if (response['type'] != 'asset_response' || response['id'] != id) {

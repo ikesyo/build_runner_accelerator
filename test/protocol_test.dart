@@ -111,7 +111,7 @@ void main() {
           'builder': 'app|copy',
           'input': 'app|lib/input.dart',
           'allowed_outputs': <dynamic>['app|lib/output.dart', 42],
-        }),
+        }, blockedAssets: const <String>[]),
         throwsA(isA<FormatException>()),
       );
       expect(
@@ -120,7 +120,7 @@ void main() {
           'builder': 'app|copy',
           'input': 'app|lib/input.dart',
           'options': <dynamic, dynamic>{1: 'not a string key'},
-        }),
+        }, blockedAssets: const <String>[]),
         throwsA(isA<FormatException>()),
       );
       expect(
@@ -131,6 +131,18 @@ void main() {
           'triggers': <dynamic>[
             <String, dynamic>{'kind': 'import'},
           ],
+        }, blockedAssets: const <String>[]),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('requires blocked_assets for direct build messages', () {
+      expect(
+        () => WorkerMessage.decode(<String, dynamic>{
+          'type': 'build',
+          'id': 1,
+          'builder': 'app|copy',
+          'input': 'app|lib/input.dart',
         }),
         throwsA(isA<FormatException>()),
       );
