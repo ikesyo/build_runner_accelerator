@@ -96,8 +96,7 @@ class WorkerBuildBatchMessage extends WorkerMessage {
     required int id,
     required this.blockedAssets,
     required this.requests,
-  })
-    : super(id: id);
+  }) : super(id: id);
 
   factory WorkerBuildBatchMessage.fromJson(JsonMap message) {
     final blockedAssets = _stringList(
