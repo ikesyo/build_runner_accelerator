@@ -640,3 +640,343 @@
             [".runtime"]
         );
     }
+
+    #[test]
+    fn dynamic_manifest_rejects_unsupported_version() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 7,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart"
+        }))
+        .unwrap();
+
+        let error = rust_build_config_from_manifest(manifest).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "unsupported builder manifest version: 7"
+        );
+    }
+
+    #[test]
+    fn dynamic_manifest_rejects_missing_worker_entrypoint() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": ""
+        }))
+        .unwrap();
+
+        let error = rust_build_config_from_manifest(manifest).unwrap_err();
+        assert_eq!(error.to_string(), "builder manifest has no worker entrypoint");
+    }
+
+    #[test]
+    fn dynamic_manifest_rejects_duplicate_definitions() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "definitions": [
+                {
+                    "id": "example:builder",
+                    "input_suffix": ".txt",
+                    "output_suffixes": [".generated"],
+                    "build_to": "source",
+                    "phase": 0
+                },
+                {
+                    "id": "example:builder",
+                    "input_suffix": ".txt",
+                    "output_suffixes": [".generated"],
+                    "build_to": "source",
+                    "phase": 0
+                }
+            ]
+        }))
+        .unwrap();
+
+        let error = rust_build_config_from_manifest(manifest).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "builder manifest contains duplicate definitions"
+        );
+    }
+
+    #[test]
+    fn dynamic_manifest_rejects_configured_builder_without_definition() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:configured",
+                "input_suffix": ".txt",
+                "output_suffixes": [".generated"],
+                "build_to": "source",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["lib/**/*.txt"]
+            }],
+            "definitions": [{
+                "id": "example:other",
+                "input_suffix": ".txt",
+                "output_suffixes": [".generated"],
+                "build_to": "source",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+
+        let error = rust_build_config_from_manifest(manifest).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "configured builder is missing from definitions: example:configured"
+        );
+    }
+
+    #[test]
+    fn dynamic_manifest_rejects_configured_builder_without_generate_for() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:builder",
+                "input_suffix": ".txt",
+                "output_suffixes": [".generated"],
+                "build_to": "source",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example"
+            }],
+            "definitions": [{
+                "id": "example:builder",
+                "input_suffix": ".txt",
+                "output_suffixes": [".generated"],
+                "build_to": "source",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+
+        let error = rust_build_config_from_manifest(manifest).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "configured builder has no generate_for: example:builder"
+        );
+    }
+
+    #[test]
+    fn dynamic_manifest_rejects_configured_builder_without_target_scope() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:builder",
+                "input_suffix": ".txt",
+                "output_suffixes": [".generated"],
+                "build_to": "source",
+                "phase": 0,
+                "target": "",
+                "package": "example",
+                "generate_for": ["lib/**/*.txt"]
+            }],
+            "definitions": [{
+                "id": "example:builder",
+                "input_suffix": ".txt",
+                "output_suffixes": [".generated"],
+                "build_to": "source",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+
+        let error = rust_build_config_from_manifest(manifest).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "configured builder has no target scope: example:builder"
+        );
+    }
+
+    #[test]
+    fn dynamic_manifest_rejects_invalid_input_match() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:builder",
+                "input_suffix": ".txt",
+                "input_match": "regex",
+                "output_suffixes": [".generated"],
+                "build_to": "source",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["lib/**/*.txt"]
+            }],
+            "definitions": [{
+                "id": "example:builder",
+                "input_suffix": ".txt",
+                "input_match": "regex",
+                "output_suffixes": [".generated"],
+                "build_to": "source",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+
+        let error = rust_build_config_from_manifest(manifest).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "unsupported input match for example:builder: regex"
+        );
+    }
+
+    #[test]
+    fn dynamic_manifest_rejects_invalid_capture_output() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:capture",
+                "input_suffix": "lib/assets/{{file}}.txt",
+                "input_match": "capture",
+                "output_suffixes": ["lib/generated/{{missing}}.dart"],
+                "build_to": "source",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["lib/assets/**/*.txt"]
+            }],
+            "definitions": [{
+                "id": "example:capture",
+                "input_suffix": "lib/assets/{{file}}.txt",
+                "input_match": "capture",
+                "output_suffixes": ["lib/generated/{{missing}}.dart"],
+                "build_to": "source",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+
+        let error = rust_build_config_from_manifest(manifest).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unsupported build extension metadata"));
+    }
+
+    #[test]
+    fn dynamic_manifest_rejects_post_process_triggers() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:post",
+                "kind": "post_process",
+                "input_extensions": [".generated"],
+                "build_to": "cache",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["lib/**/*.generated"],
+                "triggers": [{"kind": "import", "value": "example/marker.dart"}]
+            }],
+            "definitions": [{
+                "id": "example:post",
+                "kind": "post_process",
+                "input_extensions": [".generated"],
+                "build_to": "cache",
+                "phase": 0,
+                "triggers": [{"kind": "import", "value": "example/marker.dart"}]
+            }]
+        }))
+        .unwrap();
+
+        let error = rust_build_config_from_manifest(manifest).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "unsupported triggers for post-process builder: example:post"
+        );
+    }
+
+    #[test]
+    fn dynamic_manifest_rejects_mismatched_normal_runtime_mapping() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:builder",
+                "input_suffix": ".dart",
+                "output_suffixes": [".generated.dart"],
+                "build_to": "cache",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["lib/**/*.dart"],
+                "runtime_mapping": {"input_extensions": [".runtime.dart"]}
+            }],
+            "definitions": [{
+                "id": "example:builder",
+                "input_suffix": ".dart",
+                "output_suffixes": [".generated.dart"],
+                "build_to": "cache",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+
+        let error = rust_build_config_from_manifest(manifest).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "invalid runtime mapping for example:builder: normal builders cannot carry input_extensions"
+        );
+    }
+
+    #[test]
+    fn dynamic_manifest_preserves_post_process_runtime_mapping() {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 8,
+            "fingerprint": "fingerprint",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "id": "example:post",
+                "kind": "post_process",
+                "input_extensions": [".static"],
+                "build_to": "cache",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "generate_for": ["lib/**/*.static"],
+                "runtime_mapping": {"input_extensions": [".runtime"]}
+            }],
+            "definitions": [{
+                "id": "example:post",
+                "kind": "post_process",
+                "input_extensions": [".static"],
+                "build_to": "cache",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+
+        let config = rust_build_config_from_manifest(manifest).unwrap();
+        assert_eq!(
+            config.builders[0]
+                .definition
+                .post_process_input_extensions,
+            [".static"]
+        );
+        assert_eq!(
+            config.builders[0]
+                .effective_definition()
+                .post_process_input_extensions,
+            [".runtime"]
+        );
+        assert_eq!(config.phase_count(), 1);
+    }
