@@ -105,8 +105,8 @@ BUILD_RUNNER_ACCELERATOR_PLAN_ONLY=1 \
 
 This prints graph, planner, visibility, and action-generation counts plus
 builder/target breakdowns and Linux RSS samples to stderr, then exits before
-starting the Dart worker or changing outputs. `PLAN_ONLY` implies the regular
-metrics output; it is intended for investigation rather than a build result.
+starting the Dart worker or changing outputs. `PLAN_ONLY` enables the plan
+metrics; it is intended for investigation rather than a build result.
 
 ## Release checks
 

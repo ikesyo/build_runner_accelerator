@@ -9,8 +9,6 @@ use crate::frontend::{run_dart_fallback, select_frontend, worker_executable};
 use crate::graph::{ActionState, GRAPH_SCHEMA_VERSION, GraphState};
 use crate::metrics::{
     FilesystemMetrics, graph_file_size, print_filesystem_metrics, print_graph_metrics,
-    plan_metrics_enabled, plan_only_enabled, print_graph_action_metrics,
-    print_plan_spec_metrics, print_plan_stage,
     print_pool_metrics, print_workspace_read_metrics, runtime_metrics_enabled, snapshot_summary,
 };
 use crate::plan::{
@@ -57,18 +55,6 @@ pub(crate) fn run_with_config(
     let graph_load_us = graph_load_started.elapsed().as_micros();
     let graph_load_bytes = graph_file_size(&state_path);
     let config_digest = config_digest(&workspace, &build_config)?;
-    if plan_metrics_enabled() {
-        print_plan_stage(
-            "graph",
-            format_args!(
-                "actions={} assets={} compatible={}",
-                state.actions.len(),
-                state.assets.len(),
-                state.is_compatible(&config_digest),
-            ),
-        );
-        print_graph_action_metrics(&state);
-    }
     let mut filesystem_metrics = FilesystemMetrics::default();
     let scan_started = Instant::now();
     let scanned_packages = build_config
@@ -192,7 +178,6 @@ pub(crate) fn run_with_config(
     // build. The phase-aware planning snapshot includes outputs declared by all
     // normal phases, so post-process builders see every output that will exist
     // when their final phase starts.
-    let planning_snapshot_assets = normal_planning_snapshot.len();
     let post_snapshot = normal_planning_snapshot;
     let post_specs = build_specs_for_kind_with_primary_inputs(
         &workspace,
@@ -213,58 +198,6 @@ pub(crate) fn run_with_config(
     let mut specs = normal_specs;
     specs.extend(post_specs);
     let visibility = AssetVisibility::from_specs(&specs, &state, &build_config);
-    if plan_metrics_enabled() {
-        print_plan_stage(
-            "planner",
-            format_args!(
-                "current_snapshot_assets={} normal_snapshot_assets={} planning_snapshot_assets={} primary_inputs={} normal_specs={} post_process_specs={} total_specs={}",
-                current_snapshot.len(),
-                normal_snapshot.len(),
-                planning_snapshot_assets,
-                normal_primary_inputs.len(),
-                specs
-                    .iter()
-                    .filter(|spec| spec.builder.kind == BuilderKind::Normal)
-                    .count(),
-                specs
-                    .iter()
-                    .filter(|spec| spec.builder.kind == BuilderKind::PostProcess)
-                    .count(),
-                specs.len(),
-            ),
-        );
-        print_plan_spec_metrics("planner", &specs, &build_config);
-        let (locations, normal_outputs, post_process_outputs) = visibility.counts();
-        let empty_deleted = BTreeSet::new();
-        let phase_count = build_config.phase_count();
-        let normal_blocked_max = (0..phase_count)
-            .map(|phase| {
-                visibility.blocked_asset_count(
-                    phase as u32,
-                    BuilderKind::Normal,
-                    &empty_deleted,
-                )
-            })
-            .max()
-            .unwrap_or(0);
-        let post_process_blocked = visibility.blocked_asset_count(
-            0,
-            BuilderKind::PostProcess,
-            &empty_deleted,
-        );
-        print_plan_stage(
-            "visibility",
-            format_args!(
-                "locations={} normal_output_assets={} post_process_outputs={} phases={} normal_blocked_assets_max={} post_process_blocked_assets={}",
-                locations,
-                normal_outputs,
-                post_process_outputs,
-                phase_count,
-                normal_blocked_max,
-                post_process_blocked,
-            ),
-        );
-    }
 
     let mut current_output_digests = BTreeMap::new();
     for action in state.actions.values() {
@@ -300,12 +233,6 @@ pub(crate) fn run_with_config(
             }
         }
     }
-    let dirty_root_count = dirty_roots.len();
-    let optional_dirty_root_count = dirty_roots
-        .iter()
-        .filter(|spec| spec.builder.is_optional)
-        .count();
-    let dirty_before_dependents = dirty.len();
     expand_dirty_dependents(&mut dirty_roots, &specs, &state);
     let mut dirty_keys = dirty
         .iter()
@@ -335,32 +262,6 @@ pub(crate) fn run_with_config(
         })
         .map(|(key, action)| (key.clone(), action.clone()))
         .collect();
-
-    if plan_metrics_enabled() {
-        print_plan_stage(
-            "actions",
-            format_args!(
-                "planned_specs={} graph_actions={} dirty_roots={} optional_dirty_roots={} dirty_non_optional_roots={} expanded_dependents={} dirty_actions={} lazy_force_keys={} deleted_actions={}",
-                specs.len(),
-                state.actions.len(),
-                dirty_root_count,
-                optional_dirty_root_count,
-                dirty_before_dependents,
-                dirty
-                    .len()
-                    .saturating_sub(dirty_before_dependents),
-                dirty.len(),
-                lazy_force_keys.len(),
-                deleted_actions.len(),
-            ),
-        );
-        print_plan_spec_metrics("dirty", &dirty, &build_config);
-    }
-
-    if plan_only_enabled() {
-        eprintln!("Rust plan metrics: plan-only=true; worker execution skipped");
-        return Ok(());
-    }
 
     if dirty.is_empty() && deleted_actions.is_empty() {
         println!("No work to do (Rust frontend)");

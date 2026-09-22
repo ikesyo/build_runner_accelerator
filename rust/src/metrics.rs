@@ -30,9 +30,12 @@ pub(crate) fn plan_only_enabled() -> bool {
 }
 
 pub(crate) fn print_plan_stage(stage: &str, details: impl Display) {
+    print_plan_stage_with_rss(stage, process_rss_kb(), details);
+}
+
+fn print_plan_stage_with_rss(stage: &str, rss_kb: u64, details: impl Display) {
     eprintln!(
-        "Rust plan metrics: stage={stage} rss_kb={} {details}",
-        process_rss_kb()
+        "Rust plan metrics: stage={stage} rss_kb={rss_kb} {details}"
     );
 }
 
@@ -45,6 +48,7 @@ pub(crate) fn print_plan_spec_metrics(
     specs: &[BuildSpec],
     config: &RustBuildConfig,
 ) {
+    let rss_kb = process_rss_kb();
     let mut scopes = BTreeMap::<(&str, &str, &str, u32, bool, bool), usize>::new();
     let mut action_keys = BTreeSet::<(&str, &str, &str)>::new();
     let mut builder_inputs = BTreeSet::<(&str, &str, &str)>::new();
@@ -103,8 +107,9 @@ pub(crate) fn print_plan_spec_metrics(
         *scopes.entry(scope).or_default() += 1;
     }
 
-    print_plan_stage(
+    print_plan_stage_with_rss(
         stage,
+        rss_kb,
         format_args!(
             "specs={} normal_specs={} post_process_specs={} optional_specs={} required_input_specs={} required_input_definitions={} output_edges={} unique_outputs={} duplicate_action_keys={} duplicate_builder_inputs={}",
             specs.len(),
@@ -133,6 +138,7 @@ pub(crate) fn print_plan_spec_metrics(
 }
 
 pub(crate) fn print_graph_action_metrics(state: &GraphState) {
+    let rss_kb = process_rss_kb();
     let mut builder_inputs = BTreeSet::<(&str, &str)>::new();
     let mut statuses = BTreeMap::<&str, usize>::new();
     let mut duplicate_builder_inputs = 0;
@@ -142,8 +148,9 @@ pub(crate) fn print_graph_action_metrics(state: &GraphState) {
         }
         *statuses.entry(action.status.as_str()).or_default() += 1;
     }
-    print_plan_stage(
+    print_plan_stage_with_rss(
         "graph-actions",
+        rss_kb,
         format_args!(
             "actions={} unique_builder_inputs={} duplicate_builder_inputs={} statuses={:?}",
             state.actions.len(),

@@ -74,38 +74,6 @@ impl AssetVisibility {
         self.locations.get(asset).copied()
     }
 
-    pub(crate) fn counts(&self) -> (usize, usize, usize) {
-        (
-            self.locations.len(),
-            self.normal_output_phases
-                .values()
-                .map(|assets| assets.len())
-                .sum(),
-            self.post_process_outputs.len(),
-        )
-    }
-
-    pub(crate) fn blocked_asset_count(
-        &self,
-        phase: u32,
-        kind: BuilderKind,
-        deleted: &BTreeSet<String>,
-    ) -> usize {
-        let mut blocked = BTreeSet::<&str>::new();
-        blocked.extend(deleted.iter().map(|asset| asset.as_str()));
-        blocked.extend(self.post_process_outputs.iter().map(|asset| asset.as_str()));
-        if kind == BuilderKind::Normal {
-            for assets in self
-                .normal_output_phases
-                .range(phase..)
-                .map(|(_, assets)| assets)
-            {
-                blocked.extend(assets.iter().map(|asset| asset.as_str()));
-            }
-        }
-        blocked.len()
-    }
-
     /// Returns the logical assets hidden from an action at [phase].
     pub(crate) fn blocked_assets(
         &self,
