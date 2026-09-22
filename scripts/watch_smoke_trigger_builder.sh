@@ -134,6 +134,9 @@ rust_pid=$worker_last_pid
 
 wait_for_path "$stock_dir/lib/generated_input.consumer.dart" "$stock_pid"
 wait_for_path "$rust_dir/lib/generated_input.consumer.dart" "$rust_pid"
+# The first output can exist before the native watcher has finished starting.
+# Wait for readiness before applying the first watch transition.
+wait_for_text "$rust_log" "Watching " "$rust_pid"
 assert_same_file \
   "$stock_dir/lib/generated_input.consumer.dart" \
   "$rust_dir/lib/generated_input.consumer.dart"
