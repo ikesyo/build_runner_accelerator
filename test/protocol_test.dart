@@ -60,6 +60,7 @@ void main() {
       final message = WorkerMessage.decode(<String, dynamic>{
         'type': 'build_batch',
         'id': 20,
+        'blocked_assets': <dynamic>['app|lib/blocked.dart'],
         'requests': <dynamic>[
           <String, dynamic>{
             'id': 21,
@@ -78,11 +79,15 @@ void main() {
       expect(message, isA<WorkerBuildBatchMessage>());
       final batch = message as WorkerBuildBatchMessage;
       expect(batch.id, 20);
+      expect(batch.blockedAssets, ['app|lib/blocked.dart']);
       expect(batch.requests, hasLength(2));
       expect(batch.requests[0].id, 21);
       expect(batch.requests[0].isRoot, isTrue);
+      expect(batch.requests[0].blockedAssets, ['app|lib/blocked.dart']);
+      expect(batch.requests[0].blockedAssets, same(batch.blockedAssets));
       expect(batch.requests[1].id, 22);
       expect(batch.requests[1].isPostProcess, isTrue);
+      expect(batch.requests[1].blockedAssets, same(batch.blockedAssets));
     });
 
     test('retains unsupported messages for the worker error response', () {

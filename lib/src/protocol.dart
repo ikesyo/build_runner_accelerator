@@ -91,25 +91,37 @@ class WorkerBuildMessage extends WorkerMessage {
 }
 
 class WorkerBuildBatchMessage extends WorkerMessage {
-  WorkerBuildBatchMessage({required int id, required this.requests})
+  /// The visibility hint is shared by every child request in the batch.
+  WorkerBuildBatchMessage({
+    required int id,
+    required this.blockedAssets,
+    required this.requests,
+  })
     : super(id: id);
 
   factory WorkerBuildBatchMessage.fromJson(JsonMap message) {
+    final blockedAssets = _stringList(
+      message['blocked_assets'],
+      'build_batch blocked_assets',
+    );
     final rawRequests = message['requests'];
     if (rawRequests is! List) {
       throw const FormatException('build_batch requests must be a list');
     }
     return WorkerBuildBatchMessage(
       id: _requiredInt(message, 'id', 'build_batch'),
+      blockedAssets: blockedAssets,
       requests: [
         for (final rawRequest in rawRequests)
           WorkerBuildRequest.fromJson(
             _jsonMap(rawRequest, 'build_batch request'),
+            inheritedBlockedAssets: blockedAssets,
           ),
       ],
     );
   }
 
+  final List<String> blockedAssets;
   final List<WorkerBuildRequest> requests;
 }
 
@@ -135,7 +147,10 @@ class WorkerBuildRequest {
     required this.triggers,
   });
 
-  factory WorkerBuildRequest.fromJson(JsonMap message) {
+  factory WorkerBuildRequest.fromJson(
+    JsonMap message, {
+    List<String>? inheritedBlockedAssets,
+  }) {
     final rawKind = message['kind'];
     final kind = rawKind == null
         ? null
@@ -168,10 +183,9 @@ class WorkerBuildRequest {
           ? rawInstanceKey
           : null,
       isRoot: rawIsRoot is bool ? rawIsRoot : true,
-      blockedAssets: _stringList(
-        rawBlockedAssets ?? const <dynamic>[],
-        'build blocked_assets',
-      ),
+      blockedAssets:
+          inheritedBlockedAssets ??
+          _stringList(rawBlockedAssets, 'build blocked_assets'),
       triggers: _triggerList(
         rawTriggers ?? const <dynamic>[],
         'build triggers',
