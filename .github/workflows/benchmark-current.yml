@@ -248,10 +248,43 @@ jobs:
           RESULTS_DIR: ${{ github.workspace }}/benchmark-results/watch
           WATCH_OUTCOME: ${{ steps.watch.outcome }}
         run: |
+          mapfile -t ENVIRONMENT_SUMMARY < <(
+            python3 - "$RESULTS_DIR/environment.json" <<'PY'
+          import json
+          import sys
+
+          try:
+              with open(sys.argv[1], encoding="utf-8") as stream:
+                  environment = json.load(stream)
+          except (OSError, json.JSONDecodeError):
+              environment = {}
+
+          cpu = environment.get("cpu") or {}
+          runner = environment.get("runner") or {}
+          steal = (environment.get("cpu_steal") or {}).get("percent")
+          image_os = runner.get("image_os") or "unknown"
+          image_version = runner.get("image_version") or "unknown"
+          values = (
+              environment.get("cpu_group"),
+              cpu.get("model_name"),
+              cpu.get("nproc"),
+              cpu.get("nproc_all"),
+              f"{image_os} / {image_version}",
+              "unknown" if steal is None else f"{steal}%",
+          )
+          for value in values:
+              print("unknown" if value in (None, "") else value)
+          PY
+          )
           {
             echo "### Watch smoke"
             echo
             echo "- Result: **${WATCH_OUTCOME:-unknown}**"
+            echo "- CPU group: `${ENVIRONMENT_SUMMARY[0]:-unknown}`"
+            echo "- CPU model: ${ENVIRONMENT_SUMMARY[1]:-unknown}"
+            echo "- vCPU: ${ENVIRONMENT_SUMMARY[2]:-unknown} (host: ${ENVIRONMENT_SUMMARY[3]:-unknown})"
+            echo "- Runner image: ${ENVIRONMENT_SUMMARY[4]:-unknown}"
+            echo "- CPU steal: ${ENVIRONMENT_SUMMARY[5]:-unknown}"
             if [[ -f "$RESULTS_DIR/watch.time" ]]; then
               echo "- Elapsed: $(<"$RESULTS_DIR/watch.time")"
             fi
