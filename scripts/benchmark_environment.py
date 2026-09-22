@@ -24,18 +24,42 @@ CPU_STAT_FIELDS = (
 )
 
 
+COMMAND_TIMEOUT_SECONDS = 5.0
+
+
 def run_command(*args: str) -> dict[str, Any]:
-    result = subprocess.run(
-        args,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            args,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        stdout = error.stdout or ""
+        stderr = error.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(encoding="utf-8", errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(encoding="utf-8", errors="replace")
+        timeout_message = (
+            f"command timed out after {COMMAND_TIMEOUT_SECONDS:g} seconds"
+        )
+        return {
+            "argv": list(args),
+            "exit_code": None,
+            "stdout": stdout.strip(),
+            "stderr": f"{stderr.strip()}\n{timeout_message}".strip(),
+            "timed_out": True,
+        }
+
     return {
         "argv": list(args),
         "exit_code": result.returncode,
         "stdout": result.stdout.strip(),
         "stderr": result.stderr.strip(),
+        "timed_out": False,
     }
 
 
