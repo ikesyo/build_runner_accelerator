@@ -280,7 +280,7 @@ jobs:
             echo "### Watch smoke"
             echo
             echo "- Result: **${WATCH_OUTCOME:-unknown}**"
-            echo "- CPU group: `${ENVIRONMENT_SUMMARY[0]:-unknown}`"
+            echo "- CPU group: \`${ENVIRONMENT_SUMMARY[0]:-unknown}\`"
             echo "- CPU model: ${ENVIRONMENT_SUMMARY[1]:-unknown}"
             echo "- vCPU: ${ENVIRONMENT_SUMMARY[2]:-unknown} (host: ${ENVIRONMENT_SUMMARY[3]:-unknown})"
             echo "- Runner image: ${ENVIRONMENT_SUMMARY[4]:-unknown}"
