@@ -96,6 +96,18 @@ the public summary in [`benchmarks.md`](benchmarks.md) only from a
 reproducible launcher-inclusive run; detailed experiments belong in
 [`benchmarks/experiments-2026-09.md`](benchmarks/experiments-2026-09.md).
 
+For unexpectedly large native action plans, use the pre-worker diagnostics:
+
+```bash
+BUILD_RUNNER_ACCELERATOR_PLAN_ONLY=1 \
+  dart run build_runner_accelerator build --mode rust
+```
+
+This prints graph, planner, visibility, and action-generation counts plus
+builder/target breakdowns and Linux RSS samples to stderr, then exits before
+starting the Dart worker or changing outputs. `PLAN_ONLY` implies the regular
+metrics output; it is intended for investigation rather than a build result.
+
 ## Release checks
 
 The release workflow builds one archive per target in
