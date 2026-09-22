@@ -1,14 +1,182 @@
+use crate::builder::{BuilderKind, RustBuildConfig};
+use crate::graph::GraphState;
+use crate::plan::BuildSpec;
 use crate::snapshot::Snapshot;
 use crate::worker::PoolMetrics;
 use crate::workspace::WorkspaceReadMetrics;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
+use std::fmt::Display;
 use std::path::Path;
 
 pub(crate) fn runtime_metrics_enabled() -> bool {
     env::var("BUILD_RUNNER_ACCELERATOR_METRICS")
         .map(|value| value == "1")
         .unwrap_or(false)
+}
+
+/// Enables the pre-worker plan diagnostics used to investigate unexpectedly
+/// large action graphs. The plan-only mode implies metrics so one environment
+/// variable is sufficient when reproducing a large workspace.
+pub(crate) fn plan_metrics_enabled() -> bool {
+    runtime_metrics_enabled() || plan_only_enabled()
+}
+
+pub(crate) fn plan_only_enabled() -> bool {
+    env::var("BUILD_RUNNER_ACCELERATOR_PLAN_ONLY")
+        .map(|value| value == "1")
+        .unwrap_or(false)
+}
+
+pub(crate) fn print_plan_stage(stage: &str, details: impl Display) {
+    print_plan_stage_with_rss(stage, process_rss_kb(), details);
+}
+
+fn print_plan_stage_with_rss(stage: &str, rss_kb: u64, details: impl Display) {
+    eprintln!(
+        "Rust plan metrics: stage={stage} rss_kb={rss_kb} {details}"
+    );
+}
+
+/// Print a compact breakdown without cloning any BuildSpec-owned strings.
+/// This is intentionally called before worker setup: the large-workspace
+/// investigation must still produce useful output when action execution never
+/// starts.
+pub(crate) fn print_plan_spec_metrics(
+    stage: &str,
+    specs: &[BuildSpec],
+    config: &RustBuildConfig,
+) {
+    let rss_kb = process_rss_kb();
+    let mut scopes = BTreeMap::<(&str, &str, &str, u32, bool, bool), usize>::new();
+    let mut action_keys = BTreeSet::<(&str, &str, &str)>::new();
+    let mut builder_inputs = BTreeSet::<(&str, &str, &str)>::new();
+    let mut outputs = BTreeSet::<&str>::new();
+    let mut required_input_definitions = BTreeSet::<&str>::new();
+    let mut output_edges = 0;
+    let mut normal_specs = 0;
+    let mut post_process_specs = 0;
+    let mut optional_specs = 0;
+    let mut required_input_specs = 0;
+    let mut duplicate_action_keys = 0;
+    let mut duplicate_builder_inputs = 0;
+
+    for spec in specs {
+        let is_post_process = spec.builder.kind == BuilderKind::PostProcess;
+        if is_post_process {
+            post_process_specs += 1;
+        } else {
+            normal_specs += 1;
+        }
+        if spec.builder.is_optional {
+            optional_specs += 1;
+        }
+        if !spec.builder.required_input_suffixes.is_empty() {
+            required_input_specs += 1;
+            required_input_definitions.insert(spec.builder.id.as_str());
+        }
+        output_edges += spec.outputs.len();
+        outputs.extend(spec.outputs.iter().map(String::as_str));
+
+        let action_key = (
+            spec.target.as_str(),
+            spec.instance_key.as_str(),
+            spec.input.as_str(),
+        );
+        if !action_keys.insert(action_key) {
+            duplicate_action_keys += 1;
+        }
+        let builder_input = (
+            spec.builder.id.as_str(),
+            spec.package.as_str(),
+            spec.input.as_str(),
+        );
+        if !builder_inputs.insert(builder_input) {
+            duplicate_builder_inputs += 1;
+        }
+
+        let scope = (
+            spec.package.as_str(),
+            spec.target.as_str(),
+            spec.builder.id.as_str(),
+            spec.phase,
+            is_post_process,
+            spec.builder.is_optional,
+        );
+        *scopes.entry(scope).or_default() += 1;
+    }
+
+    print_plan_stage_with_rss(
+        stage,
+        rss_kb,
+        format_args!(
+            "specs={} normal_specs={} post_process_specs={} optional_specs={} required_input_specs={} required_input_definitions={} output_edges={} unique_outputs={} duplicate_action_keys={} duplicate_builder_inputs={}",
+            specs.len(),
+            normal_specs,
+            post_process_specs,
+            optional_specs,
+            required_input_specs,
+            required_input_definitions.len(),
+            output_edges,
+            outputs.len(),
+            duplicate_action_keys,
+            duplicate_builder_inputs,
+        ),
+    );
+
+    for ((package, target, builder, phase, is_post_process, is_optional), count) in scopes {
+        let required_inputs = config
+            .definition(builder)
+            .map(|definition| definition.required_input_suffixes.len())
+            .unwrap_or(0);
+        eprintln!(
+            "Rust plan breakdown: stage={stage} package={package} target={target} builder={builder} phase={phase} kind={} optional={is_optional} required_inputs={required_inputs} specs={count}",
+            if is_post_process { "post_process" } else { "normal" },
+        );
+    }
+}
+
+pub(crate) fn print_graph_action_metrics(state: &GraphState) {
+    let rss_kb = process_rss_kb();
+    let mut builder_inputs = BTreeSet::<(&str, &str)>::new();
+    let mut statuses = BTreeMap::<&str, usize>::new();
+    let mut duplicate_builder_inputs = 0;
+    for action in state.actions.values() {
+        if !builder_inputs.insert((action.builder.as_str(), action.input.as_str())) {
+            duplicate_builder_inputs += 1;
+        }
+        *statuses.entry(action.status.as_str()).or_default() += 1;
+    }
+    print_plan_stage_with_rss(
+        "graph-actions",
+        rss_kb,
+        format_args!(
+            "actions={} unique_builder_inputs={} duplicate_builder_inputs={} statuses={:?}",
+            state.actions.len(),
+            builder_inputs.len(),
+            duplicate_builder_inputs,
+            statuses,
+        ),
+    );
+}
+
+#[cfg(target_os = "linux")]
+fn process_rss_kb() -> u64 {
+    let Ok(status) = fs::read_to_string("/proc/self/status") else {
+        return 0;
+    };
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))
+        .and_then(|value| value.split_whitespace().next())
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_rss_kb() -> u64 {
+    0
 }
 
 pub(crate) fn print_pool_metrics(metrics: PoolMetrics) {
