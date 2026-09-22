@@ -69,6 +69,7 @@ Future<void> runWorker({
                 'asset-rpc-binary-read-v1',
                 'build-result-binary-v1',
                 'optional-builder-demand-v1',
+                'shared-blocked-assets-v1',
                 'build-runner-current-v1',
               ],
             });
@@ -385,6 +386,7 @@ Future<void> _handleBuildBatch(
   Map<String, PostProcessBuilderFactory> postProcessCatalog,
 ) async {
   final results = <JsonMap>[];
+  final blockedAssets = message.blockedAssets.map(AssetId.parse).toSet();
   for (final request in message.requests) {
     results.add(
       await _runBuild(
@@ -394,6 +396,7 @@ Future<void> _handleBuildBatch(
         runtime,
         builderCatalog,
         postProcessCatalog,
+        inheritedBlockedAssets: blockedAssets,
       ),
     );
   }
@@ -411,8 +414,9 @@ Future<JsonMap> _runBuild(
   FrameWriter writer,
   _WorkerRuntime runtime,
   Map<String, BuilderFactory> builderCatalog,
-  Map<String, PostProcessBuilderFactory> postProcessCatalog,
-) async {
+  Map<String, PostProcessBuilderFactory> postProcessCatalog, {
+  Set<AssetId>? inheritedBlockedAssets,
+}) async {
   final builderId = request.builder;
   final inputName = request.input;
   final isPostProcess = request.isPostProcess;
@@ -425,7 +429,9 @@ Future<JsonMap> _runBuild(
   var actionStarted = false;
   try {
     final input = AssetId.parse(inputName);
-    final blockedAssets = request.blockedAssets.map(AssetId.parse).toSet();
+    final blockedAssets =
+        inheritedBlockedAssets ??
+        request.blockedAssets.map(AssetId.parse).toSet();
     final options = Map<String, dynamic>.from(request.options);
     final triggers = request.triggers
         .map(

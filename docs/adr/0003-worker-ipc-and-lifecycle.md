@@ -25,6 +25,9 @@ Use the version 1 protocol in [protocol/v1.md](../../protocol/v1.md):
 - The worker advertises optional-builder-demand-v1 when it supports nested
   demand-driven actions. Rust uses this capability only for manifests that
   contain optional builders.
+- The worker must advertise shared-blocked-assets-v1. A build batch carries
+  its phase-aware blocked-asset list once at the batch level; child requests
+  inherit it instead of repeating the list. There is no per-request fallback.
 - Both endpoints enforce a 256 MiB complete-frame limit.
 - Worker stdout is reserved for frames. Human diagnostics go to stderr.
 - A worker remains resident across actions and watch builds. Resolver state can

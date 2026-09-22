@@ -22,6 +22,7 @@ use std::time::Instant;
 const BINARY_READ_CAPABILITY: &str = "asset-rpc-binary-read-v1";
 const BINARY_BUILD_RESULT_CAPABILITY: &str = "build-result-binary-v1";
 const OPTIONAL_BUILD_CAPABILITY: &str = "optional-builder-demand-v1";
+const SHARED_BLOCKED_ASSETS_CAPABILITY: &str = "shared-blocked-assets-v1";
 
 /// A successful optional action that was requested while another action was
 /// suspended in the resident Dart worker. The build frontend commits these
@@ -220,6 +221,11 @@ impl WorkerClient {
                 "worker does not support required capability: {OPTIONAL_BUILD_CAPABILITY}"
             )));
         }
+        if !has_capability(&response, SHARED_BLOCKED_ASSETS_CAPABILITY) {
+            return Err(io::Error::other(format!(
+                "worker does not support required capability: {SHARED_BLOCKED_ASSETS_CAPABILITY}"
+            )));
+        }
         self.metrics.worker_initialize_us += started.elapsed().as_micros() as u64;
         Ok(())
     }
@@ -270,6 +276,11 @@ impl WorkerClient {
     ) -> io::Result<BuildResult> {
         let started = Instant::now();
         let id = self.next_id();
+        let blocked_assets = visibility.blocked_assets(
+            request.phase,
+            build_request_kind(request),
+            deleted_overlay,
+        );
         self.send(&json!({
             "v": 1,
             "type": "build",
@@ -282,7 +293,7 @@ impl WorkerClient {
             "phase": request.phase,
             "instance_key": request.instance_key,
             "is_root": request.is_root,
-            "blocked_assets": request.blocked_assets,
+            "blocked_assets": blocked_assets,
             "triggers": request.triggers,
         }))?;
 
@@ -332,6 +343,10 @@ impl WorkerClient {
     ) -> io::Result<Vec<BuildResult>> {
         let started = Instant::now();
         let id = self.next_id();
+        // Every request in this batch has the same phase and kind. Keep the
+        // visibility hint at the batch level instead of copying the full
+        // blocked-asset list into every request.
+        let blocked_assets = batch_blocked_assets(requests, visibility, deleted_overlay)?;
         let batch_requests = requests
             .iter()
             .enumerate()
@@ -346,7 +361,6 @@ impl WorkerClient {
                     "phase": request.phase,
                     "instance_key": request.instance_key,
                     "is_root": request.is_root,
-                    "blocked_assets": request.blocked_assets,
                     "triggers": request.triggers,
                 })
             })
@@ -355,6 +369,7 @@ impl WorkerClient {
             "v": 1,
             "type": "build_batch",
             "id": id,
+            "blocked_assets": blocked_assets,
             "requests": batch_requests,
         }))?;
 
@@ -422,6 +437,11 @@ impl WorkerClient {
     ) -> io::Result<BuildResult> {
         let started = Instant::now();
         let id = self.next_id();
+        let blocked_assets = visibility.blocked_assets(
+            request.phase,
+            build_request_kind(request),
+            deleted_overlay,
+        );
         self.send(&json!({
             "v": 1,
             "type": "build",
@@ -434,7 +454,7 @@ impl WorkerClient {
             "phase": request.phase,
             "instance_key": request.instance_key,
             "is_root": request.is_root,
-            "blocked_assets": request.blocked_assets,
+            "blocked_assets": blocked_assets,
             "triggers": request.triggers,
         }))?;
 
@@ -486,6 +506,9 @@ impl WorkerClient {
     ) -> io::Result<Vec<BuildResult>> {
         let started = Instant::now();
         let id = self.next_id();
+        // Lazy batches have the same visibility context as ordinary batches;
+        // the nested build path still carries its own single-action hint.
+        let blocked_assets = batch_blocked_assets(requests, visibility, deleted_overlay)?;
         let batch_requests = requests
             .iter()
             .enumerate()
@@ -500,7 +523,6 @@ impl WorkerClient {
                     "phase": request.phase,
                     "instance_key": request.instance_key,
                     "is_root": request.is_root,
-                    "blocked_assets": request.blocked_assets,
                     "triggers": request.triggers,
                 })
             })
@@ -509,6 +531,7 @@ impl WorkerClient {
             "v": 1,
             "type": "build_batch",
             "id": id,
+            "blocked_assets": blocked_assets,
             "requests": batch_requests,
         }))?;
 
@@ -710,11 +733,6 @@ impl WorkerClient {
             instance_key: spec.instance_key.clone(),
             is_root: spec.is_root,
             post_process: false,
-            blocked_assets: visibility.blocked_assets(
-                spec.phase,
-                BuilderKind::Normal,
-                deleted_overlay,
-            ),
             triggers: spec.builder.triggers.clone(),
         };
         let result = self.build_lazy(
@@ -982,6 +1000,28 @@ fn build_request_kind(request: &BuildRequest) -> BuilderKind {
     }
 }
 
+fn batch_blocked_assets(
+    requests: &[BuildRequest],
+    visibility: &AssetVisibility,
+    deleted_overlay: &BTreeSet<String>,
+) -> io::Result<Vec<String>> {
+    let Some(first) = requests.first() else {
+        return Ok(Vec::new());
+    };
+    if requests.iter().any(|request| {
+        request.phase != first.phase || request.post_process != first.post_process
+    }) {
+        return Err(io::Error::other(
+            "build batch requests must share phase and builder kind",
+        ));
+    }
+    Ok(visibility.blocked_assets(
+        first.phase,
+        build_request_kind(first),
+        deleted_overlay,
+    ))
+}
+
 fn asset_request_build_id(request: &Value) -> io::Result<u64> {
     request
         .get("build_id")
@@ -1109,7 +1149,6 @@ pub struct BuildRequest {
     pub instance_key: String,
     pub is_root: bool,
     pub post_process: bool,
-    pub blocked_assets: Vec<String>,
     pub triggers: Vec<crate::builder::BuilderTrigger>,
 }
 
@@ -1551,11 +1590,13 @@ fn json_build_batch_result_frame_size(id: u64, results: &[BuildResult]) -> io::R
 #[cfg(test)]
 mod tests {
     use super::{
-        balanced_request_ranges, batch_asset_request_context, has_capability, is_worker_script,
-        missing_asset_response, target_worker_count, validate_asset_request_context, BuildRequest,
+        balanced_request_ranges, batch_asset_request_context, batch_blocked_assets,
+        has_capability, is_worker_script, missing_asset_response, target_worker_count,
+        validate_asset_request_context, BuildRequest,
     };
+    use crate::visibility::AssetVisibility;
     use serde_json::json;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn build_request(phase: u32, post_process: bool) -> BuildRequest {
         BuildRequest {
@@ -1567,7 +1608,6 @@ mod tests {
             instance_key: "example".to_owned(),
             is_root: true,
             post_process,
-            blocked_assets: Vec::new(),
             triggers: Vec::new(),
         }
     }
@@ -1592,11 +1632,30 @@ mod tests {
     }
 
     #[test]
-    fn binary_read_capability_is_required() {
+    fn batch_blocked_assets_requires_one_visibility_context() {
+        let requests = vec![build_request(0, false), build_request(0, false)];
+        let visibility = AssetVisibility::default();
+        let deleted = BTreeSet::new();
+        assert_eq!(
+            batch_blocked_assets(&requests, &visibility, &deleted).unwrap(),
+            Vec::<String>::new()
+        );
+
+        let mixed = vec![build_request(0, false), build_request(1, false)];
+        assert!(batch_blocked_assets(&mixed, &visibility, &deleted).is_err());
+    }
+
+    #[test]
+    fn required_worker_capabilities_are_detected() {
         let response = json!({
-            "capabilities": ["asset-rpc-v1", "asset-rpc-binary-read-v1"]
+            "capabilities": [
+                "asset-rpc-v1",
+                "asset-rpc-binary-read-v1",
+                "shared-blocked-assets-v1"
+            ]
         });
         assert!(has_capability(&response, "asset-rpc-binary-read-v1"));
+        assert!(has_capability(&response, "shared-blocked-assets-v1"));
         assert!(!has_capability(&response, "other-capability"));
         assert!(!has_capability(&json!({}), "asset-rpc-binary-read-v1"));
     }

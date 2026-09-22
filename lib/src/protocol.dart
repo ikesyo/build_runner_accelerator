@@ -29,7 +29,7 @@ sealed class WorkerMessage {
       case 'reset_resolver':
         return WorkerResetResolverMessage.fromJson(message);
       case 'build':
-        return WorkerBuildMessage(WorkerBuildRequest.fromJson(message));
+        return WorkerBuildMessage(_decodeBuildRequest(message));
       case 'build_batch':
         return WorkerBuildBatchMessage.fromJson(message);
       default:
@@ -91,25 +91,36 @@ class WorkerBuildMessage extends WorkerMessage {
 }
 
 class WorkerBuildBatchMessage extends WorkerMessage {
-  WorkerBuildBatchMessage({required int id, required this.requests})
-    : super(id: id);
+  /// The visibility hint is shared by every child request in the batch.
+  WorkerBuildBatchMessage({
+    required int id,
+    required this.blockedAssets,
+    required this.requests,
+  }) : super(id: id);
 
   factory WorkerBuildBatchMessage.fromJson(JsonMap message) {
+    final blockedAssets = _stringList(
+      message['blocked_assets'],
+      'build_batch blocked_assets',
+    );
     final rawRequests = message['requests'];
     if (rawRequests is! List) {
       throw const FormatException('build_batch requests must be a list');
     }
     return WorkerBuildBatchMessage(
       id: _requiredInt(message, 'id', 'build_batch'),
+      blockedAssets: blockedAssets,
       requests: [
         for (final rawRequest in rawRequests)
           WorkerBuildRequest.fromJson(
             _jsonMap(rawRequest, 'build_batch request'),
+            blockedAssets: blockedAssets,
           ),
       ],
     );
   }
 
+  final List<String> blockedAssets;
   final List<WorkerBuildRequest> requests;
 }
 
@@ -135,7 +146,10 @@ class WorkerBuildRequest {
     required this.triggers,
   });
 
-  factory WorkerBuildRequest.fromJson(JsonMap message) {
+  factory WorkerBuildRequest.fromJson(
+    JsonMap message, {
+    required List<String> blockedAssets,
+  }) {
     final rawKind = message['kind'];
     final kind = rawKind == null
         ? null
@@ -151,7 +165,6 @@ class WorkerBuildRequest {
         ? <String, dynamic>{}
         : _stringKeyedMap(rawOptions, 'build options');
     final rawAllowedOutputs = message['allowed_outputs'];
-    final rawBlockedAssets = message['blocked_assets'];
     final rawTriggers = message['triggers'];
     return WorkerBuildRequest(
       id: _requiredInt(message, 'id', 'build'),
@@ -168,10 +181,7 @@ class WorkerBuildRequest {
           ? rawInstanceKey
           : null,
       isRoot: rawIsRoot is bool ? rawIsRoot : true,
-      blockedAssets: _stringList(
-        rawBlockedAssets ?? const <dynamic>[],
-        'build blocked_assets',
-      ),
+      blockedAssets: blockedAssets,
       triggers: _triggerList(
         rawTriggers ?? const <dynamic>[],
         'build triggers',
@@ -342,6 +352,16 @@ class FrameReader {
   }
 }
 
+WorkerBuildRequest _decodeBuildRequest(JsonMap message) {
+  return WorkerBuildRequest.fromJson(
+    message,
+    blockedAssets: _stringList(
+      message['blocked_assets'],
+      'build blocked_assets',
+    ),
+  );
+}
+
 class FrameWriter {
   FrameWriter(this._output);
 
@@ -508,7 +528,7 @@ class RpcSession {
         if (handler == null) {
           throw StateError('Unexpected nested build request during asset RPC');
         }
-        await handler(WorkerBuildRequest.fromJson(response));
+        await handler(_decodeBuildRequest(response));
         continue;
       }
       if (response['type'] != 'asset_response' || response['id'] != id) {

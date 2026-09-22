@@ -426,11 +426,6 @@ pub(crate) fn run_with_config(
                     instance_key: spec.instance_key.clone(),
                     is_root: configured_builder.is_root,
                     post_process: builder.kind == BuilderKind::PostProcess,
-                    blocked_assets: visibility.blocked_assets(
-                        spec.phase,
-                        builder.kind,
-                        &deleted_overlay,
-                    ),
                     triggers: spec.builder.triggers.clone(),
                 })
                 .collect::<Vec<_>>();
