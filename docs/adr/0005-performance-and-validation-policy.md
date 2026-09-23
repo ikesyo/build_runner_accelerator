@@ -24,11 +24,11 @@ Use the following policy:
 - Start only the workers needed by the current ready-action set and batch
   independent requests where it preserves phase and resource semantics.
 - Have each successful action report whether it requested a `Resolver`. For an
-  unknown normal-builder instance, run its first action before choosing the
-  batch size; keep the remaining actions on one resident worker after Resolver
-  use is observed, and grow the pool after a no-Resolver result. Treat the
-  report as a required field because the Rust frontend and Dart worker ship
-  together.
+  unclassified normal-builder instance, keep the entire first homogeneous
+  batch on one resident worker because Resolver use may depend on the input.
+  Later batches may use parallel workers after recorded results show no Resolver
+  use. Treat the report as a required field because the Rust frontend and Dart
+  worker ship together.
 - Keep runtime and worker-stage metrics opt-in and stderr-only through
   BUILD_RUNNER_ACCELERATOR_METRICS=1.
 - Scope read, resolver, glob, and SDK-summary caches to a workspace/build or
@@ -70,11 +70,13 @@ An explicitly AOT-compiled launcher is an advanced compatibility case, not a
 release artifact or a required performance target.
 
 Resolver-backed actions share one resident worker within a builder instance so
-its Analyzer driver can reuse library analysis. The first action for an
-unclassified instance is a serial probe; this adds one action's latency before
-parallel fan-out for Resolver-free builders. Builder instances that request a
-Resolver stay serialized for that worker-pool configuration, trading some
-parallelism for avoiding independent AnalysisDrivers repeating the same work.
+its Analyzer driver can reuse library analysis. The entire first homogeneous
+batch for an unclassified instance stays on one resident worker, even if an
+earlier input did not request a Resolver, because use may vary by input. Later
+batches can fan out after recorded results show no Resolver use. Builder
+instances that request a Resolver stay serialized for that worker-pool
+configuration, trading some parallelism for avoiding independent
+AnalysisDrivers repeating the same work.
 
 ## Alternatives considered
 
