@@ -1481,7 +1481,7 @@ impl WorkerPool {
                         return Ok(results);
                     }
 
-                    self.prepare_for_requests(&root, requests.len())?;
+                    self.prepare_for_requests(&root, requests.len() - 1)?;
                     self.initialize_pending_workers(&root, &package, phase_count, false)?;
                     let remaining_results = self.build_parallel_on_current_workers(
                         workspace,
