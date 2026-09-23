@@ -1161,6 +1161,7 @@ pub struct WorkerPool {
     max_jobs: usize,
     initialized: Option<(PathBuf, String, String, usize, bool)>,
     initialized_workers: usize,
+    resolver_usage: BTreeMap<(String, String), bool>,
     retired_metrics: WorkerClientMetrics,
     worker_starts: u64,
     worker_initializes: u64,
@@ -1231,6 +1232,7 @@ impl WorkerPool {
             max_jobs,
             initialized: None,
             initialized_workers: 0,
+            resolver_usage: BTreeMap::new(),
             retired_metrics: WorkerClientMetrics::default(),
             worker_starts: 1,
             worker_initializes: 0,
@@ -1295,6 +1297,7 @@ impl WorkerPool {
         }
 
         if self.initialized.is_some() {
+            self.resolver_usage.clear();
             let worker_artifact = resolve_worker_artifact(
                 root,
                 &self.dart_binary,
@@ -1421,7 +1424,6 @@ impl WorkerPool {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
-        self.prepare_for_requests(&workspace.root, requests.len())?;
         let (root, package) = match &self.initialized {
             Some((root, package, _, _, _)) => (root.clone(), package.clone()),
             None => {
@@ -1435,14 +1437,87 @@ impl WorkerPool {
             .as_ref()
             .map(|(_, _, _, phase_count, _)| *phase_count)
             .unwrap_or(1);
-        self.initialize_pending_workers(&root, &package, phase_count, false)?;
-        if self.workers.len() == 1 {
-            return self
-                .workers[0]
-                .build_batch(workspace, requests, overlay, deleted_overlay, visibility);
+
+        if let Some(key) = homogeneous_resolver_usage_key(requests) {
+            match self.resolver_usage.get(&key).copied() {
+                Some(true) => {
+                    self.initialize_pending_workers(&root, &package, phase_count, false)?;
+                    let results = self.workers[0].build_batch(
+                        workspace,
+                        requests,
+                        overlay,
+                        deleted_overlay,
+                        visibility,
+                    )?;
+                    self.record_resolver_usage(requests, &results);
+                    return Ok(results);
+                }
+                Some(false) => {}
+                None if requests.len() > 1 && self.max_jobs > 1 => {
+                    // Keep an unclassified homogeneous batch on one worker:
+                    // Resolver use may depend on the input, so the first
+                    // action cannot safely classify the remaining actions.
+                    self.initialize_pending_workers(&root, &package, phase_count, false)?;
+                    let first_results = self.workers[0].build_batch(
+                        workspace,
+                        &requests[..1],
+                        overlay,
+                        deleted_overlay,
+                        visibility,
+                    )?;
+                    self.record_resolver_usage(&requests[..1], &first_results);
+
+                    let mut results = first_results;
+                    let remaining_results = self.workers[0].build_batch(
+                        workspace,
+                        &requests[1..],
+                        overlay,
+                        deleted_overlay,
+                        visibility,
+                    )?;
+                    self.record_resolver_usage(&requests[1..], &remaining_results);
+                    results.extend(remaining_results);
+                    return Ok(results);
+                }
+                None => {}
+            }
         }
 
-        let worker_count = self.workers.len();
+        self.prepare_for_requests(&root, requests.len())?;
+        self.initialize_pending_workers(&root, &package, phase_count, false)?;
+        let results = self.build_parallel_on_current_workers(
+            workspace,
+            requests,
+            overlay,
+            deleted_overlay,
+            visibility,
+        )?;
+        self.record_resolver_usage(requests, &results);
+        Ok(results)
+    }
+
+    fn build_parallel_on_current_workers(
+        &mut self,
+        workspace: &Workspace,
+        requests: &[BuildRequest],
+        overlay: &BTreeMap<String, Vec<u8>>,
+        deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
+    ) -> io::Result<Vec<BuildResult>> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.workers.len() == 1 {
+            return self.workers[0].build_batch(
+                workspace,
+                requests,
+                overlay,
+                deleted_overlay,
+                visibility,
+            );
+        }
+
+        let worker_count = self.workers.len().min(requests.len());
         let ranges = balanced_request_ranges(requests.len(), worker_count);
         let batches = ranges
             .iter()
@@ -1452,6 +1527,7 @@ impl WorkerPool {
             let handles = self
                 .workers
                 .iter_mut()
+                .take(worker_count)
                 .zip(batches)
                 .map(|(worker, batch)| {
                     scope.spawn(move || {
@@ -1475,6 +1551,16 @@ impl WorkerPool {
             results.extend(batch);
         }
         Ok(results)
+    }
+
+    fn record_resolver_usage(&mut self, requests: &[BuildRequest], results: &[BuildResult]) {
+        for (request, result) in requests.iter().zip(results) {
+            if result.status != "success" {
+                continue;
+            }
+            let key = (request.builder.clone(), request.instance_key.clone());
+            remember_resolver_usage(&mut self.resolver_usage, key, result.resolver_used);
+        }
     }
 
     /// Builds a batch on one resident worker with demand-driven optional
@@ -1527,6 +1613,33 @@ impl WorkerPool {
         self.resolver_resets += count as u64;
         Ok(())
     }
+}
+
+fn homogeneous_resolver_usage_key(requests: &[BuildRequest]) -> Option<(String, String)> {
+    let first = requests.first()?;
+    if first.post_process {
+        return None;
+    }
+    let key = (first.builder.clone(), first.instance_key.clone());
+    requests
+        .iter()
+        .all(|request| {
+            !request.post_process
+                && request.builder == key.0
+                && request.instance_key == key.1
+        })
+        .then_some(key)
+}
+
+fn remember_resolver_usage(
+    resolver_usage: &mut BTreeMap<(String, String), bool>,
+    key: (String, String),
+    used: bool,
+) {
+    resolver_usage
+        .entry(key)
+        .and_modify(|previous| *previous |= used)
+        .or_insert(used);
 }
 
 fn target_worker_count(max_jobs: usize, request_count: usize) -> usize {
@@ -1591,7 +1704,8 @@ fn json_build_batch_result_frame_size(id: u64, results: &[BuildResult]) -> io::R
 mod tests {
     use super::{
         balanced_request_ranges, batch_asset_request_context, batch_blocked_assets,
-        has_capability, is_worker_script, missing_asset_response, target_worker_count,
+        has_capability, homogeneous_resolver_usage_key, is_worker_script,
+        missing_asset_response, remember_resolver_usage, target_worker_count,
         validate_asset_request_context, BuildRequest,
     };
     use crate::visibility::AssetVisibility;
@@ -1629,6 +1743,42 @@ mod tests {
         );
         assert_eq!(balanced_request_ranges(3, 3), vec![(0, 1), (1, 2), (2, 3)]);
         assert_eq!(balanced_request_ranges(2, 4), vec![(0, 1), (1, 2)]);
+    }
+
+    #[test]
+    fn resolver_usage_is_classified_per_builder_instance() {
+        let requests = vec![build_request(0, false), build_request(0, false)];
+        assert_eq!(
+            homogeneous_resolver_usage_key(&requests),
+            Some(("example:builder".to_owned(), "example".to_owned()))
+        );
+
+        let mut different_instance = build_request(0, false);
+        different_instance.instance_key = "another-instance".to_owned();
+        assert_eq!(
+            homogeneous_resolver_usage_key(&[build_request(0, false), different_instance]),
+            None
+        );
+
+        assert_eq!(
+            homogeneous_resolver_usage_key(&[
+                build_request(0, false),
+                build_request(0, true),
+            ]),
+            None
+        );
+    }
+
+    #[test]
+    fn resolver_usage_observations_only_promote_to_resolver_backed() {
+        let key = ("example:builder".to_owned(), "example".to_owned());
+        let mut usage = BTreeMap::new();
+        remember_resolver_usage(&mut usage, key.clone(), false);
+        assert_eq!(usage.get(&key), Some(&false));
+        remember_resolver_usage(&mut usage, key.clone(), true);
+        assert_eq!(usage.get(&key), Some(&true));
+        remember_resolver_usage(&mut usage, key.clone(), false);
+        assert_eq!(usage.get(&key), Some(&true));
     }
 
     #[test]

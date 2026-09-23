@@ -40,6 +40,7 @@ pub struct BuildResult {
     pub reads: Vec<String>,
     #[serde(default)]
     pub resolver_reads: Vec<String>,
+    pub resolver_used: bool,
     #[serde(default)]
     pub glob_reads: Vec<GlobRead>,
     #[serde(default)]
@@ -207,6 +208,7 @@ struct BinaryBuildResultMetadata {
     reads: Vec<String>,
     #[serde(default)]
     resolver_reads: Vec<String>,
+    resolver_used: bool,
     #[serde(default)]
     glob_reads: Vec<GlobRead>,
     #[serde(default)]
@@ -259,6 +261,7 @@ impl BinaryBuildResultMetadata {
             deleted: self.deleted,
             reads: self.reads,
             resolver_reads: self.resolver_reads,
+            resolver_used: self.resolver_used,
             glob_reads: self.glob_reads,
             diagnostics: self.diagnostics,
             error: self.error,
@@ -421,6 +424,7 @@ mod tests {
             "outputs": [{"asset": "app|lib/model.g.dart", "length": 7}],
             "reads": [],
             "resolver_reads": [],
+            "resolver_used": true,
             "glob_reads": [],
             "diagnostics": []
         });
@@ -448,6 +452,7 @@ mod tests {
         assert_eq!(result.id, 2);
         assert_eq!(result.outputs[0].asset, "app|lib/model.g.dart");
         assert_eq!(result.outputs[0].bytes, raw_bytes);
+        assert!(result.resolver_used);
     }
 
     #[test]
@@ -467,6 +472,7 @@ mod tests {
                     "outputs": [{"asset": "app|a.g.dart", "length": 3}],
                     "reads": [],
                     "resolver_reads": [],
+                    "resolver_used": false,
                     "glob_reads": [],
                     "diagnostics": []
                 },
@@ -479,6 +485,7 @@ mod tests {
                     "outputs": [{"asset": "app|b.g.dart", "length": 4}],
                     "reads": [],
                     "resolver_reads": [],
+                    "resolver_used": false,
                     "glob_reads": [],
                     "diagnostics": []
                 }
@@ -503,6 +510,8 @@ mod tests {
         let decoded = decode_build_batch_result_frame(frame).expect("decode build batch result");
         assert_eq!(decoded.id, 7);
         assert_eq!(decoded.results.len(), 2);
+        assert!(!decoded.results[0].resolver_used);
+        assert!(!decoded.results[1].resolver_used);
         assert_eq!(decoded.results[0].outputs[0].bytes, b"one");
         assert_eq!(decoded.results[1].outputs[0].bytes, b"four");
     }
