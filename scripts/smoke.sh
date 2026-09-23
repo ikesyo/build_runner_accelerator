@@ -49,6 +49,31 @@ fi
 
 worker_ensure_frontend || fail 'Rust frontend build failed'
 
+if [[ -f "$state_path" ]]; then
+  mv "$state_path" "$temporary_dir/graph-v3.plan-only-before.bin"
+fi
+plan_only_log="$temporary_dir/plan-only.log"
+if ! (
+  export BUILD_RUNNER_ACCELERATOR_PLAN_ONLY=1
+  export VERIFY_COMMAND_LOG="$plan_only_log"
+  export VERIFY_WORKSPACE="$fixture_dir"
+  worker_run_frontend build --root "$fixture_dir" --dart "$dart_bin"
+); then
+  fail 'Plan-only run failed'
+fi
+grep -Fq 'Rust plan metrics: stage=action-plan' "$plan_only_log" || \
+  fail 'Plan-only action metrics were not printed'
+grep -Fq 'Rust plan metrics: stage=workspace-scan' "$plan_only_log" || \
+  fail 'Plan-only workspace-scan metrics were not printed'
+grep -Fq 'Rust plan metrics: stage=visibility' "$plan_only_log" || \
+  fail 'Plan-only visibility metrics were not printed'
+grep -Fq 'Rust plan only: worker startup and output commit skipped' "$plan_only_log" || \
+  fail 'Plan-only run did not report that worker startup was skipped'
+if grep -Fq 'Rust frontend:' "$plan_only_log"; then
+  fail 'Plan-only run started normal action execution'
+fi
+[[ ! -e "$state_path" ]] || fail 'Plan-only run wrote the action graph'
+
 baseline_output="$temporary_dir/model.g.dart.baseline"
 verification_run_stock_build "$fixture_dir" "build/stock" "$temporary_dir/stock.log" "$dart_bin" "$pub_cache" build --delete-conflicting-outputs --log-performance .dart_tool/build_runner_accelerator/stock-performance || \
   fail 'Stock build failed'
