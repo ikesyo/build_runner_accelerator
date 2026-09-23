@@ -74,7 +74,7 @@ run_stock() {
 }
 
 run_frontend() {
-  run_traced "$script_dir/worker.sh" run-frontend \
+  run_traced bash "$script_dir/worker.sh" run-frontend \
     build --root "$fixture_dir" --dart "$dart_bin" --jobs "$jobs"
 }
 
@@ -179,7 +179,8 @@ fi
 measure rust_clean run_frontend
 compare_outputs "$results_dir/stock_clean"
 measure rust_noop run_frontend
-grep -Fq 'No work to do (Rust frontend)' "$results_dir/rust_noop.stdout"
+rust_frontend_log=${VERIFY_COMMAND_LOG:-${VERIFY_LOG_DIR:-$repo_root/.dart_tool/build_runner_accelerator/verification}/rust-frontend.log}
+grep -Fq 'No work to do (Rust frontend)' "$rust_frontend_log"
 
 marker=$(rg -o 'benchmark marker: [01]' "$input_file" | awk '{print $3}')
 next_marker=$((1 - marker))

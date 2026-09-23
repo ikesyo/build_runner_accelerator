@@ -391,18 +391,6 @@ pub(crate) fn run_with_config(
         let active_pool = worker_pool
             .as_deref_mut()
             .expect("worker pool was just initialized");
-        let max_phase_requests = build_config
-            .builders
-            .iter()
-            .map(|builder| {
-                dirty
-                    .iter()
-                    .filter(|spec| spec.builder.id == builder.definition.id)
-                    .count()
-            })
-            .max()
-            .unwrap_or(0);
-        active_pool.prepare_for_requests(&workspace.root, max_phase_requests)?;
         let first_package = dirty
             .first()
             .map(|spec| spec.package.clone())

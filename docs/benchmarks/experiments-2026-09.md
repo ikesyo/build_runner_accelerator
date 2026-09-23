@@ -195,3 +195,33 @@ The corresponding `scripts/benchmark_riverpod.sh` uses
 separate from the current-JSON baseline because they measure different
 generated-output workloads; these are compatibility benchmarks, not
 release-wide performance guarantees.
+
+### Resolver-aware action batching spot check
+
+On 2026-09-23, the 100-input JSON Serializable fixture was run with Dart 3.13.4,
+`build_runner` 2.16.1, and `BUILD_RUNNER_ACCELERATOR_METRICS=1`. The jobs=4
+baseline was measured before resolver-aware batching; the adaptive jobs=4 and
+jobs=1 runs were measured afterward. Each benchmark run passed its byte-identical
+stock comparison and no-op check. The table sums Dart action metrics from the
+198 actions in the final broad incremental pass:
+
+| Lane | active workers | total action time | `run_builder` | `resolver_reads` |
+| --- | ---: | ---: | ---: | ---: |
+| baseline jobs=4 | 4 | 10.312s | 10.198s | 0.070s |
+| adaptive jobs=4 | 1 | 3.129s | 3.070s | 0.033s |
+| adaptive jobs=1 | 1 | 4.690s | 4.643s | 0.027s |
+
+For jobs=4, total measured action time fell by 69.7% and `run_builder` time by
+69.9% on this resolver-heavy fixture. These are single-run internal timings with
+metrics enabled, not wall-time or release-wide claims. The fixture covers
+`json_serializable` and `source_gen:combining_builder`; larger mixed-builder
+workspaces still need validation before changing the default worker count.
+
+The benchmark invocation was:
+
+```sh
+DART_BIN=/path/to/dart \
+PUB_CACHE=/path/to/pub-cache \
+COUNT=100 JOBS=4 BUILD_RUNNER_ACCELERATOR_METRICS=1 \
+  bash scripts/benchmark_json_serializable.sh
+```

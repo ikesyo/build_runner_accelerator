@@ -278,6 +278,22 @@ class _BuildProfile {
   }
 }
 
+class _TrackingResolvers extends Resolvers {
+  _TrackingResolvers(this._delegate);
+
+  final Resolvers _delegate;
+  bool wasUsed = false;
+
+  @override
+  Future<ReleasableResolver> get(BuildStep buildStep) {
+    wasUsed = true;
+    return _delegate.get(buildStep);
+  }
+
+  @override
+  void reset() => _delegate.reset();
+}
+
 class _ProfilingResolvers extends Resolvers {
   _ProfilingResolvers(this._delegate, this._runtime, this._profile);
 
@@ -369,6 +385,7 @@ Future<void> _handleNestedBuild(
       'deleted': <String>[],
       'reads': <String>[],
       'resolver_reads': <String>[],
+      'resolver_used': false,
       'glob_reads': <dynamic>[],
       'diagnostics': <dynamic>[],
       'error': '$error',
@@ -427,6 +444,7 @@ Future<JsonMap> _runBuild(
     resolverProfile: runtime.resolverProfile,
   );
   var actionStarted = false;
+  var resolverUsed = false;
   try {
     final input = AssetId.parse(inputName);
     final blockedAssets =
@@ -510,9 +528,10 @@ Future<JsonMap> _runBuild(
         await postProcessStep.complete();
       }
     } else {
+      final trackedResolver = _TrackingResolvers(runtime.resolver);
       final resolver = _metricsEnabled
-          ? _ProfilingResolvers(runtime.resolver, runtime, profile)
-          : runtime.resolver;
+          ? _ProfilingResolvers(trackedResolver, runtime, profile)
+          : trackedResolver;
       final factory = builderCatalog[builderId];
       if (factory == null) {
         throw StateError('Unknown builder: $builderId');
@@ -546,6 +565,7 @@ Future<JsonMap> _runBuild(
       } finally {
         await step.complete();
       }
+      resolverUsed = trackedResolver.wasUsed;
     }
     profile.runBuilderUs = runBuilderTimer.elapsedMicroseconds;
 
@@ -603,6 +623,7 @@ Future<JsonMap> _runBuild(
         ..sort(),
       'reads': reads,
       'resolver_reads': resolverReads,
+      'resolver_used': resolverUsed,
       'glob_reads': <Map<String, String>>[
         for (final glob in globReads)
           <String, String>{'package': glob.package, 'pattern': glob.pattern},

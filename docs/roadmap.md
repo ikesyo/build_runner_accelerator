@@ -58,6 +58,8 @@ The following are implemented and covered by the current fixture suite:
   limit.
 - [ ] Re-evaluate indexed/lazy graph persistence and automatic worker-count
   selection using reproducible benchmarks.
+- [ ] Validate resolver-aware batching on larger mixed-builder workspaces before
+  changing the default worker count.
 - [ ] Validate mixed builders and multi-package workspaces from real projects.
 - [ ] Consider builder-specific fast paths only when they beat the generic
   manifest path under the same fixture and SDK conditions.
