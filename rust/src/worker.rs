@@ -1454,9 +1454,9 @@ impl WorkerPool {
                 }
                 Some(false) => {}
                 None if requests.len() > 1 && self.max_jobs > 1 => {
-                    // Learn whether this builder instance asks for a Resolver
-                    // before fanning its remaining actions out to independent
-                    // AnalysisDrivers.
+                    // Keep an unclassified homogeneous batch on one worker:
+                    // Resolver use may depend on the input, so the first
+                    // action cannot safely classify the remaining actions.
                     self.initialize_pending_workers(&root, &package, phase_count, false)?;
                     let first_results = self.workers[0].build_batch(
                         workspace,
@@ -1468,22 +1468,7 @@ impl WorkerPool {
                     self.record_resolver_usage(&requests[..1], &first_results);
 
                     let mut results = first_results;
-                    if self.resolver_usage.get(&key) == Some(&true) {
-                        let remaining_results = self.workers[0].build_batch(
-                            workspace,
-                            &requests[1..],
-                            overlay,
-                            deleted_overlay,
-                            visibility,
-                        )?;
-                        self.record_resolver_usage(&requests[1..], &remaining_results);
-                        results.extend(remaining_results);
-                        return Ok(results);
-                    }
-
-                    self.prepare_for_requests(&root, requests.len() - 1)?;
-                    self.initialize_pending_workers(&root, &package, phase_count, false)?;
-                    let remaining_results = self.build_parallel_on_current_workers(
+                    let remaining_results = self.workers[0].build_batch(
                         workspace,
                         &requests[1..],
                         overlay,
