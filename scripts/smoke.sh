@@ -63,6 +63,8 @@ if ! (
 fi
 grep -Fq 'Rust plan metrics: stage=action-plan' "$plan_only_log" || \
   fail 'Plan-only action metrics were not printed'
+grep -Fq 'Rust plan metrics: stage=workspace-scan' "$plan_only_log" || \
+  fail 'Plan-only workspace-scan metrics were not printed'
 grep -Fq 'Rust plan metrics: stage=visibility' "$plan_only_log" || \
   fail 'Plan-only visibility metrics were not printed'
 grep -Fq 'Rust plan only: worker startup and output commit skipped' "$plan_only_log" || \
