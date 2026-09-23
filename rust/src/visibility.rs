@@ -70,6 +70,19 @@ impl AssetVisibility {
         visibility
     }
 
+    pub(crate) fn summary(&self) -> (usize, usize, usize) {
+        let normal_phase_outputs = self
+            .normal_output_phases
+            .values()
+            .map(BTreeSet::len)
+            .sum();
+        (
+            self.locations.len(),
+            normal_phase_outputs,
+            self.post_process_outputs.len(),
+        )
+    }
+
     pub(crate) fn location(&self, asset: &str) -> Option<BuildTo> {
         self.locations.get(asset).copied()
     }

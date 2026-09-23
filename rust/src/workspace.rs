@@ -527,14 +527,27 @@ fn collect_files(root: &Path, current: &Path, result: &mut Vec<(String, PathBuf)
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if matches!(name.as_ref(), ".dart_tool" | ".git" | "build" | "target") {
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        let file_type = entry.file_type()?;
+        // build_runner's package asset view hides dot-prefixed paths. In
+        // particular, .fvm/flutter_sdk commonly points at an entire Flutter
+        // SDK and must not become part of the root package's asset graph.
+        if name.starts_with('.') {
             continue;
         }
-        if path.is_dir() {
+        if matches!(name.as_ref(), "build" | "target") {
+            continue;
+        }
+        // Do not follow links out of a package root (or recurse through a link
+        // back into the package). Package assets are discovered from real
+        // directory entries only.
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
             collect_files(root, &path, result)?;
-        } else if path.is_file() {
+        } else if file_type.is_file() {
             let relative = path
                 .strip_prefix(root)
                 .map_err(io::Error::other)?
@@ -681,7 +694,36 @@ fn segment_matches(pattern: &str, value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{glob_literal_prefix, lower_bound, matches_glob};
+    use super::{collect_files, glob_literal_prefix, lower_bound, matches_glob};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "build-runner-accelerator-workspace-test-{}-{}",
+                std::process::id(),
+                NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed),
+            ));
+            fs::create_dir_all(&path).expect("create test temp directory");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn glob_supports_recursive_and_single_segment_wildcards() {
@@ -705,5 +747,47 @@ mod tests {
         assert_eq!(lower_bound(&values, "a|one"), 0);
         assert_eq!(lower_bound(&values, "b|two"), 1);
         assert_eq!(lower_bound(&values, "c|none"), 3);
+    }
+
+    #[test]
+    fn package_scan_skips_hidden_paths_and_symlinks() {
+        let temp = TempDir::new();
+        let root = temp.path().join("workspace");
+        let sdk = temp.path().join("flutter-sdk");
+        fs::create_dir_all(root.join("lib")).expect("create workspace lib");
+        fs::create_dir_all(sdk.join("packages/flutter/lib"))
+            .expect("create Flutter SDK fixture");
+        fs::write(root.join("lib/visible.dart"), "void main() {}")
+            .expect("write visible source");
+        fs::write(sdk.join("packages/flutter/lib/sdk.dart"), "class Sdk {}")
+            .expect("write SDK source");
+        fs::write(root.join(".gitignore"), "build/\n").expect("write hidden file");
+
+        fs::create_dir_all(root.join(".fvm")).expect("create fvm directory");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&sdk, root.join(".fvm/flutter_sdk"))
+            .expect("create fvm SDK symlink");
+        #[cfg(not(unix))]
+        {
+            fs::create_dir_all(root.join(".fvm/flutter_sdk"))
+                .expect("create fvm SDK fixture directory");
+            fs::write(
+                root.join(".fvm/flutter_sdk/sdk.dart"),
+                "class Sdk {}",
+            )
+            .expect("write hidden SDK source");
+        }
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&sdk, root.join("linked-sdk"))
+            .expect("create non-hidden SDK symlink");
+
+        let mut files = Vec::new();
+        collect_files(&root, &root, &mut files).expect("scan package files");
+        let paths = files
+            .into_iter()
+            .map(|(relative, _)| relative)
+            .collect::<Vec<_>>();
+        assert_eq!(paths, vec!["lib/visible.dart"]);
     }
 }

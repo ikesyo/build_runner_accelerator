@@ -8,8 +8,10 @@ use crate::digest::digest_bytes;
 use crate::frontend::{run_dart_fallback, select_frontend, worker_executable};
 use crate::graph::{ActionState, GRAPH_SCHEMA_VERSION, GraphState};
 use crate::metrics::{
-    FilesystemMetrics, graph_file_size, print_filesystem_metrics, print_graph_metrics,
-    print_pool_metrics, print_workspace_read_metrics, runtime_metrics_enabled, snapshot_summary,
+    FilesystemMetrics, graph_file_size, plan_metrics_enabled, plan_only_enabled,
+    print_filesystem_metrics, print_graph_action_metrics, print_graph_metrics,
+    print_plan_spec_metrics, print_plan_stage, print_pool_metrics,
+    print_workspace_read_metrics, runtime_metrics_enabled, snapshot_summary,
 };
 use crate::plan::{
     BuildSpec, build_specs_for_kind_with_primary_inputs,
@@ -68,6 +70,18 @@ pub(crate) fn run_with_config(
     let (initial_scan_assets, initial_scan_bytes) = snapshot_summary(&current_snapshot);
     filesystem_metrics.initial_scan_assets = initial_scan_assets;
     filesystem_metrics.initial_scan_bytes = initial_scan_bytes;
+    if plan_metrics_enabled() {
+        print_plan_stage(
+            "workspace-scan",
+            format_args!(
+                "packages={} assets={} bytes={} elapsed_us={}",
+                scanned_packages.len(),
+                initial_scan_assets,
+                initial_scan_bytes,
+                filesystem_metrics.initial_scan_us,
+            ),
+        );
+    }
 
     let stage_started = Instant::now();
     add_current_generated_assets(&workspace, &state, &mut current_snapshot, &build_config)?;
@@ -198,6 +212,38 @@ pub(crate) fn run_with_config(
     let mut specs = normal_specs;
     specs.extend(post_specs);
     let visibility = AssetVisibility::from_specs(&specs, &state, &build_config);
+
+    if plan_metrics_enabled() {
+        let normal_specs = specs
+            .iter()
+            .filter(|spec| spec.builder.kind == BuilderKind::Normal)
+            .count();
+        let (visible_outputs, normal_phase_outputs, post_process_outputs) = visibility.summary();
+        print_plan_stage(
+            "action-plan",
+            format_args!(
+                "specs={} normal_specs={} post_process_specs={}",
+                specs.len(),
+                normal_specs,
+                specs.len() - normal_specs,
+            ),
+        );
+        print_plan_stage(
+            "visibility",
+            format_args!(
+                "visible_output_locations={} normal_phase_outputs={} post_process_outputs={}",
+                visible_outputs,
+                normal_phase_outputs,
+                post_process_outputs,
+            ),
+        );
+        print_plan_spec_metrics("expected", &specs, &build_config);
+        print_graph_action_metrics(&state);
+    }
+    if plan_only_enabled() {
+        eprintln!("Rust plan only: worker startup and output commit skipped");
+        return Ok(());
+    }
 
     let mut current_output_digests = BTreeMap::new();
     for action in state.actions.values() {

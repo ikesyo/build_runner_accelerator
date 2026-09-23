@@ -147,7 +147,7 @@ worker_run_frontend() {
   worker_require_frontend || return 1
   local -a environment=("PUB_CACHE=$worker_pub_cache" "RUSTUP_HOME=$worker_rustup_home" "CARGO_HOME=$worker_cargo_home" "BUILD_RUNNER_ACCELERATOR_BIN=$BUILD_RUNNER_ACCELERATOR_BIN")
   local variable_name
-  for variable_name in DART_SDK BUILD_RUNNER_ACCELERATOR_METRICS BUILD_RUNNER_ACCELERATOR_WORKER_AOT BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH BUILD_RUNNER_ACCELERATOR_WORKER_AOT_BACKGROUND_LOCK BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL; do
+  for variable_name in DART_SDK BUILD_RUNNER_ACCELERATOR_METRICS BUILD_RUNNER_ACCELERATOR_PLAN_ONLY BUILD_RUNNER_ACCELERATOR_WORKER_AOT BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH BUILD_RUNNER_ACCELERATOR_WORKER_AOT_BACKGROUND_LOCK BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL; do
     if [[ -n "${!variable_name+x}" ]]; then environment+=("$variable_name=${!variable_name}"); fi
   done
   local log_path="${VERIFY_COMMAND_LOG:-${VERIFY_LOG_DIR:-$repo_root/.dart_tool/build_runner_accelerator/verification}/rust-frontend.log}"
