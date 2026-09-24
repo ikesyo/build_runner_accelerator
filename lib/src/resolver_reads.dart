@@ -14,8 +14,7 @@ import 'remote_build_step.dart';
 /// phase. Asset contents are stable within those boundaries, while a source
 /// output from an earlier phase can change what the resolver sees.
 class ResolverDependencyCache {
-  final Map<AssetId, List<AssetId>> _dependencies =
-      <AssetId, List<AssetId>>{};
+  final Map<AssetId, List<AssetId>> _dependencies = <AssetId, List<AssetId>>{};
 
   /// Number of Dart assets scanned since the last [clear].
   int get scannedAssetCount => _dependencies.length;
