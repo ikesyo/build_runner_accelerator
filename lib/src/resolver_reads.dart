@@ -8,6 +8,27 @@ import 'package:package_config/package_config.dart';
 
 import 'remote_build_step.dart';
 
+/// Caches dependency candidates found while inspecting Dart assets.
+///
+/// Call [clear] when a build starts or the resolver is reset for a new source
+/// phase. Asset contents are stable within those boundaries, while a source
+/// output from an earlier phase can change what the resolver sees.
+class ResolverDependencyCache {
+  final Map<AssetId, List<AssetId>> _dependencies =
+      <AssetId, List<AssetId>>{};
+
+  /// Number of Dart assets scanned since the last [clear].
+  int get scannedAssetCount => _dependencies.length;
+
+  List<AssetId>? dependenciesFor(AssetId asset) => _dependencies[asset];
+
+  void remember(AssetId asset, List<AssetId> dependencies) {
+    _dependencies[asset] = List<AssetId>.unmodifiable(dependencies);
+  }
+
+  void clear() => _dependencies.clear();
+}
+
 /// Adds conditional import/export candidates to the resolver dependency set.
 ///
 /// build_runner's library-cycle loader already records the ordinary directive
@@ -20,6 +41,7 @@ import 'remote_build_step.dart';
 Future<void> collectResolverReads(
   RemoteAssetReaderWriter io,
   PackageConfig packageConfig,
+  ResolverDependencyCache cache,
 ) async {
   final pending = Queue<AssetId>();
   pending.addAll(io.observedReads.where((asset) => asset.extension == '.dart'));
@@ -29,36 +51,56 @@ Future<void> collectResolverReads(
     final asset = pending.removeFirst();
     if (!visited.add(asset)) continue;
 
-    List<int> bytes;
-    try {
-      bytes = await io.readAsBytes(asset);
-    } on AssetNotFoundException {
-      continue;
-    }
-
-    final content = utf8.decode(bytes, allowMalformed: true);
-    if (!_containsConditionalDirective(content)) continue;
-
-    final unit = parseString(content: content, throwIfDiagnostics: false).unit;
-    for (final directive in unit.directives) {
-      if (directive is! NamespaceDirective ||
-          directive.configurations.isEmpty) {
+    var dependencies = cache.dependenciesFor(asset);
+    if (dependencies == null) {
+      List<int> bytes;
+      try {
+        bytes = await io.readAsBytes(asset);
+      } on AssetNotFoundException {
+        // A demanded optional output can appear later in this phase. Do not
+        // memoize a missing asset across actions.
         continue;
       }
-      final uris = <String?>[directive.uri.stringValue];
-      uris.addAll(
-        directive.configurations.map(
-          (configuration) => configuration.uri.stringValue,
-        ),
-      );
 
-      for (final rawUri in uris) {
-        final dependency = _resolveDirectiveUri(rawUri, asset, packageConfig);
-        if (dependency == null) continue;
-        io.observedReads.add(dependency);
-        if (dependency.extension == '.dart' && !visited.contains(dependency)) {
-          pending.add(dependency);
+      final content = utf8.decode(bytes, allowMalformed: true);
+      if (_containsConditionalDirective(content)) {
+        final unit = parseString(
+          content: content,
+          throwIfDiagnostics: false,
+        ).unit;
+        final discovered = <AssetId>{};
+        for (final directive in unit.directives) {
+          if (directive is! NamespaceDirective ||
+              directive.configurations.isEmpty) {
+            continue;
+          }
+          final uris = <String?>[directive.uri.stringValue];
+          uris.addAll(
+            directive.configurations.map(
+              (configuration) => configuration.uri.stringValue,
+            ),
+          );
+
+          for (final rawUri in uris) {
+            final dependency = _resolveDirectiveUri(
+              rawUri,
+              asset,
+              packageConfig,
+            );
+            if (dependency != null) discovered.add(dependency);
+          }
         }
+        dependencies = discovered.toList(growable: false);
+      } else {
+        dependencies = const <AssetId>[];
+      }
+      cache.remember(asset, dependencies);
+    }
+
+    for (final dependency in dependencies) {
+      io.observedReads.add(dependency);
+      if (dependency.extension == '.dart' && !visited.contains(dependency)) {
+        pending.add(dependency);
       }
     }
   }

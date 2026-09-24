@@ -57,6 +57,14 @@ cp "$fixture_dir/pubspec.yaml" "$watch_dir/pubspec.yaml"
 cp "$fixture_dir/pubspec.lock" "$watch_dir/pubspec.lock"
 cp "$fixture_dir/build.yaml" "$watch_dir/build.yaml"
 cp "$fixture_dir/lib/model.dart" "$watch_dir/lib/model.dart"
+sed -i "1i import 'conditional_base.dart' if (dart.library.io) 'conditional_io.dart' if (dart.library.html) 'conditional_html.dart';" \
+  "$watch_dir/lib/model.dart"
+printf '%s\n' "const conditionalDefault = 'base';" \
+  >"$watch_dir/lib/conditional_base.dart"
+printf '%s\n' "const conditionalDefault = 'io';" \
+  >"$watch_dir/lib/conditional_io.dart"
+printf '%s\n' "const conditionalDefault = 'html';" \
+  >"$watch_dir/lib/conditional_html.dart"
 verification_run_pub_get "$watch_dir" "pub-get/watch" "$dart_bin" "$pub_cache" "${pub_get_args[@]}"
 
 worker_start_frontend_process_group "$log_path" \
@@ -112,12 +120,25 @@ rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
 if cmp -s "$results_dir/model.before.g.dart" "$watch_dir/lib/model.g.dart"; then
   fail 'source edit did not change generated output'
 fi
+cp "$watch_dir/lib/model.g.dart" "$results_dir/model.after-source-edit.g.dart"
+
+printf '%s\n' "const conditionalDefault = 'htmlChanged';" \
+  >"$watch_dir/lib/conditional_html.dart"
+wait_for_rebuild 3
+sleep 1
+rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
+((rebuild_count == 3)) || fail "conditional import edit caused $rebuild_count rebuild events"
+cmp "$results_dir/model.after-source-edit.g.dart" "$watch_dir/lib/model.g.dart" || \
+  fail 'inactive conditional import changed generated output'
+action_build_count=$(grep -Fc 'Rust frontend: 2 build action(s)' "$log_path" || true)
+((action_build_count >= 4)) || \
+  fail 'conditional import edit did not rerun the affected build actions'
 
 metrics_count=$(grep -Fc 'Rust metrics:' "$log_path" || true)
-((metrics_count >= 3)) || fail "watch emitted only $metrics_count metrics lines"
+((metrics_count >= 4)) || fail "watch emitted only $metrics_count metrics lines"
 grep -Fq 'worker_starts_total=1' "$log_path" || \
   fail 'watch did not retain the initial worker'
-grep -Fq 'worker_resets_total=2' "$log_path" || \
+grep -Fq 'worker_resets_total=3' "$log_path" || \
   fail 'watch did not reset the resident worker between builds'
 
-printf 'watch-smoke: generated-output-delete=yes source-edit=yes event-count=2\n'
+printf 'watch-smoke: generated-output-delete=yes source-edit=yes conditional-import-edit=yes event-count=3\n'

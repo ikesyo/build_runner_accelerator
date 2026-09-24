@@ -138,6 +138,8 @@ class _WorkerRuntime {
   final ResourceManager resourceManager = ResourceManager();
   final Map<AssetId, List<int>> readCache = <AssetId, List<int>>{};
   final Set<AssetId> readableCache = <AssetId>{};
+  final ResolverDependencyCache resolverDependencyCache =
+      ResolverDependencyCache();
   final Map<String, Builder> builders = <String, Builder>{};
   final Map<String, PostProcessBuilder> postProcessBuilders =
       <String, PostProcessBuilder>{};
@@ -181,6 +183,7 @@ class _WorkerRuntime {
   /// build_runner allows a filesystem to register its content listener once.
   Future<void> resetResolver() async {
     if (!_buildStarted) return;
+    resolverDependencyCache.clear();
     resolver.reset();
     _buildStarted = false;
     await _startBuild(clearReadCaches: false, clearBuilders: false);
@@ -198,6 +201,7 @@ class _WorkerRuntime {
   void _clearPerBuildState() {
     readCache.clear();
     readableCache.clear();
+    resolverDependencyCache.clear();
     builders.clear();
     postProcessBuilders.clear();
   }
@@ -571,7 +575,11 @@ Future<JsonMap> _runBuild(
 
     if (triggered) {
       final resolverReadsTimer = Stopwatch()..start();
-      await collectResolverReads(runtime.io, runtime.packageConfig);
+      await collectResolverReads(
+        runtime.io,
+        runtime.packageConfig,
+        runtime.resolverDependencyCache,
+      );
       profile.resolverReadsUs = resolverReadsTimer.elapsedMicroseconds;
     }
 
