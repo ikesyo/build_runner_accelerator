@@ -86,7 +86,64 @@ void main() {
   });
 
   test(
-    'reuses conditional dependencies until the resolver cache is cleared',
+    'recomputes dependencies when a post-process output changes bytes',
+    () async {
+      final packageConfigUri = await Isolate.packageConfig;
+      expect(packageConfigUri, isNotNull);
+      final packageConfig = await loadPackageConfigUri(packageConfigUri!);
+      final main = AssetId('app', 'lib/main.dart');
+      final fallback = AssetId('app', 'lib/fallback.dart');
+      final replacement = AssetId('app', 'lib/replacement.dart');
+      final ioVariant = AssetId('app', 'lib/io.dart');
+      final replacementIo = AssetId('app', 'lib/replacement_io.dart');
+      final io = RemoteAssetReaderWriter(
+        readCache: <AssetId, List<int>>{
+          fallback: utf8.encode('class Fallback {}'),
+          replacement: utf8.encode('class Replacement {}'),
+          ioVariant: utf8.encode('class IoVariant {}'),
+          replacementIo: utf8.encode('class ReplacementIo {}'),
+        },
+        readableCache: <AssetId>{},
+      );
+      final cache = ResolverDependencyCache();
+
+      Future<Set<AssetId>> collectPostProcessOutput(String target) async {
+        io.beginAction(
+          rpc: _rpc(),
+          package: 'app',
+          primaryInput: main,
+          blockedAssets: <AssetId>{},
+        );
+        try {
+          final alternateTarget = target.replaceFirst('.dart', '_io.dart');
+          await io.writeAsString(
+            main,
+            "import '$target' if (dart.library.io) '$alternateTarget';",
+          );
+          io.observedReads.add(main);
+          await collectResolverReads(io, packageConfig, cache);
+          return Set<AssetId>.of(io.observedReads);
+        } finally {
+          io.endAction();
+        }
+      }
+
+      final firstReads = await collectPostProcessOutput('fallback.dart');
+      expect(firstReads, containsAll(<AssetId>[main, fallback, ioVariant]));
+      expect(firstReads, isNot(contains(replacement)));
+
+      final secondReads = await collectPostProcessOutput('replacement.dart');
+      expect(
+        secondReads,
+        containsAll(<AssetId>[main, replacement, replacementIo]),
+      );
+      expect(secondReads, isNot(contains(fallback)));
+      expect(secondReads, isNot(contains(ioVariant)));
+    },
+  );
+
+  test(
+    'reuses same-content dependencies and refreshes changed content',
     () async {
       final packageConfigUri = await Isolate.packageConfig;
       expect(packageConfigUri, isNotNull);
@@ -164,7 +221,10 @@ final text = "export 'string.dart' if (dart.library.io) 'string_io.dart';";''',
         }),
         isEmpty,
       );
-      final cachedMainDependencies = cache.dependenciesFor(main);
+      final cachedMainDependencies = cache.dependenciesFor(
+        main,
+        readCache[main]!,
+      );
       expect(cachedMainDependencies, isNotNull);
 
       final repeatedReads = await collectPass();
@@ -183,13 +243,22 @@ final text = "export 'string.dart' if (dart.library.io) 'string_io.dart';";''',
         ]),
       );
       expect(cache.scannedAssetCount, 9);
-      expect(cache.dependenciesFor(main), same(cachedMainDependencies));
+      expect(
+        cache.dependenciesFor(main, readCache[main]!),
+        same(cachedMainDependencies),
+      );
 
       readCache[main] = utf8.encode(
         "import 'replacement.dart' if (dart.library.io) 'replacement_io.dart';",
       );
       final samePhaseReads = await collectPass();
-      expect(samePhaseReads, isNot(contains(replacement)));
+      expect(
+        samePhaseReads,
+        containsAll(<AssetId>[main, replacement, replacementIo]),
+      );
+      expect(samePhaseReads, isNot(contains(fallback)));
+      expect(samePhaseReads, isNot(contains(ioVariant)));
+      expect(cache.scannedAssetCount, 9);
 
       cache.clear();
       final nextPhaseReads = await collectPass();

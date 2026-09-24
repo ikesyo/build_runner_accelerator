@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:build/build.dart';
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:package_config/package_config.dart';
 
 import 'remote_build_step.dart';
@@ -11,26 +12,46 @@ import 'remote_build_step.dart';
 /// Caches dependency candidates found while inspecting Dart assets.
 ///
 /// Call [clear] when a build starts or the resolver is reset for a new source
-/// phase. Asset contents are stable within those boundaries, while a source
-/// output from an earlier phase can change what the resolver sees.
+/// phase. Each entry is also tied to the asset's content digest because a
+/// post-process builder can rewrite its primary input within a phase.
 ///
 /// This cache does not cache action visibility. Callers must read each asset
 /// through the active [RemoteAssetReaderWriter] action before using a cached
 /// dependency list.
 class ResolverDependencyCache {
-  final Map<AssetId, List<AssetId>> _dependencies = <AssetId, List<AssetId>>{};
+  final Map<AssetId, _CachedResolverDependencies> _dependencies =
+      <AssetId, _CachedResolverDependencies>{};
 
   /// Number of Dart assets scanned since the last [clear].
   int get scannedAssetCount => _dependencies.length;
 
-  List<AssetId>? dependenciesFor(AssetId asset) => _dependencies[asset];
+  List<AssetId>? dependenciesFor(AssetId asset, List<int> bytes) {
+    final cached = _dependencies[asset];
+    if (cached == null || cached.contentDigest != _contentDigest(bytes)) {
+      return null;
+    }
+    return cached.dependencies;
+  }
 
-  void remember(AssetId asset, List<AssetId> dependencies) {
-    _dependencies[asset] = List<AssetId>.unmodifiable(dependencies);
+  void remember(AssetId asset, List<int> bytes, List<AssetId> dependencies) {
+    _dependencies[asset] = _CachedResolverDependencies(
+      _contentDigest(bytes),
+      List<AssetId>.unmodifiable(dependencies),
+    );
   }
 
   void clear() => _dependencies.clear();
 }
+
+class _CachedResolverDependencies {
+  const _CachedResolverDependencies(this.contentDigest, this.dependencies);
+
+  final String contentDigest;
+  final List<AssetId> dependencies;
+}
+
+String _contentDigest(List<int> bytes) =>
+    crypto.sha256.convert(bytes).toString();
 
 /// Adds conditional import/export candidates to the resolver dependency set.
 ///
@@ -66,7 +87,7 @@ Future<void> collectResolverReads(
       continue;
     }
 
-    var dependencies = cache.dependenciesFor(asset);
+    var dependencies = cache.dependenciesFor(asset, bytes);
     if (dependencies == null) {
       final content = utf8.decode(bytes, allowMalformed: true);
       if (_containsNamespaceDirectiveCandidate(content)) {
@@ -100,7 +121,7 @@ Future<void> collectResolverReads(
       } else {
         dependencies = const <AssetId>[];
       }
-      cache.remember(asset, dependencies);
+      cache.remember(asset, bytes, dependencies);
     }
 
     for (final dependency in dependencies) {
