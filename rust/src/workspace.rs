@@ -20,7 +20,7 @@ pub struct Workspace {
     pub root_package: String,
     packages: BTreeMap<String, PathBuf>,
     package_config_identity: String,
-    asset_index: Arc<Mutex<BTreeMap<String, Vec<String>>>>,
+    asset_index: Arc<Mutex<BTreeMap<String, Arc<Vec<String>>>>>,
     find_assets_cache: Arc<Mutex<BTreeMap<(String, String), Vec<String>>>>,
     asset_read_cache: Arc<Mutex<BTreeMap<String, Arc<Vec<u8>>>>>,
     asset_read_cache_hits: Arc<AtomicU64>,
@@ -289,7 +289,7 @@ impl Workspace {
         let literal_prefix = glob_literal_prefix(pattern);
         let mut result = Vec::new();
         if literal_prefix.is_empty() {
-            for asset in &assets {
+            for asset in assets.iter() {
                 let Some((_, path)) = asset.split_once('|') else {
                     continue;
                 };
@@ -355,13 +355,13 @@ impl Workspace {
         Ok(bytes)
     }
 
-    fn package_asset_index(&self, package: &str) -> io::Result<Vec<String>> {
+    fn package_asset_index(&self, package: &str) -> io::Result<Arc<Vec<String>>> {
         let mut index = self
             .asset_index
             .lock()
             .map_err(|_| io::Error::other("asset index mutex is poisoned"))?;
         if let Some(assets) = index.get(package) {
-            return Ok(assets.clone());
+            return Ok(Arc::clone(assets));
         }
 
         let mut assets = self
@@ -376,7 +376,8 @@ impl Workspace {
             .collect::<Vec<_>>();
         assets.sort();
         assets.dedup();
-        index.insert(package.to_owned(), assets.clone());
+        let assets = Arc::new(assets);
+        index.insert(package.to_owned(), Arc::clone(&assets));
         Ok(assets)
     }
 
