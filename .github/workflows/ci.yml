@@ -96,6 +96,7 @@ jobs:
             fixtures/**/pubspec.lock
             rust/Cargo.lock
             scripts/smoke.sh
+            scripts/watch_smoke.sh
           setup-rust: 'true'
           build-frontend: 'true'
       - name: Run baseline smoke
@@ -103,6 +104,8 @@ jobs:
           PUB_CACHE: ${{ github.workspace }}/.pub-cache
           SMOKE_SKIP_RUST_TESTS: '1'
         run: bash scripts/smoke.sh
+      - name: Run generic watch smoke
+        run: bash scripts/watch_smoke.sh
 
   integration-trigger:
     name: 'Integration: trigger builder'

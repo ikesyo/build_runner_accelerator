@@ -4,22 +4,68 @@ import 'dart:convert';
 import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:build/build.dart';
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:package_config/package_config.dart';
 
 import 'remote_build_step.dart';
+
+/// Caches dependency candidates found while inspecting Dart assets.
+///
+/// Call [clear] when a build starts or the resolver is reset for a new source
+/// phase. Each entry is also tied to the asset's content digest because a
+/// post-process builder can rewrite its primary input within a phase.
+///
+/// This cache does not cache action visibility. Callers must read each asset
+/// through the active [RemoteAssetReaderWriter] action before using a cached
+/// dependency list.
+class ResolverDependencyCache {
+  final Map<AssetId, _CachedResolverDependencies> _dependencies =
+      <AssetId, _CachedResolverDependencies>{};
+
+  /// Number of Dart assets scanned since the last [clear].
+  int get scannedAssetCount => _dependencies.length;
+
+  List<AssetId>? dependenciesFor(AssetId asset, List<int> bytes) {
+    final cached = _dependencies[asset];
+    if (cached == null || cached.contentDigest != _contentDigest(bytes)) {
+      return null;
+    }
+    return cached.dependencies;
+  }
+
+  void remember(AssetId asset, List<int> bytes, List<AssetId> dependencies) {
+    _dependencies[asset] = _CachedResolverDependencies(
+      _contentDigest(bytes),
+      List<AssetId>.unmodifiable(dependencies),
+    );
+  }
+
+  void clear() => _dependencies.clear();
+}
+
+class _CachedResolverDependencies {
+  const _CachedResolverDependencies(this.contentDigest, this.dependencies);
+
+  final String contentDigest;
+  final List<AssetId> dependencies;
+}
+
+String _contentDigest(List<int> bytes) =>
+    crypto.sha256.convert(bytes).toString();
 
 /// Adds conditional import/export candidates to the resolver dependency set.
 ///
 /// build_runner's library-cycle loader already records the ordinary directive
 /// graph. The compact worker graph has no library-cycle node, so we retain the
 /// same observed asset set and inspect observed Dart sources for conditional
-/// directives, parsing only files that can contribute extra candidates.
+/// directives, parsing only files that might contain namespace directives.
 ///
 /// This is intentionally a dependency collector, not a second Dart resolver:
 /// builders still use build_runner's Analyzer-backed resolver.
 Future<void> collectResolverReads(
   RemoteAssetReaderWriter io,
   PackageConfig packageConfig,
+  ResolverDependencyCache cache,
 ) async {
   final pending = Queue<AssetId>();
   pending.addAll(io.observedReads.where((asset) => asset.extension == '.dart'));
@@ -31,46 +77,69 @@ Future<void> collectResolverReads(
 
     List<int> bytes;
     try {
+      // Validate the asset under this action's visibility before consulting
+      // cached parse results. The reader also records this action's observed
+      // read, and its shared byte cache avoids another RPC when available.
       bytes = await io.readAsBytes(asset);
     } on AssetNotFoundException {
+      // A demanded optional output can appear later in this phase. Do not
+      // memoize a missing asset across actions.
       continue;
     }
 
-    final content = utf8.decode(bytes, allowMalformed: true);
-    if (!_containsConditionalDirective(content)) continue;
+    var dependencies = cache.dependenciesFor(asset, bytes);
+    if (dependencies == null) {
+      final content = utf8.decode(bytes, allowMalformed: true);
+      if (_containsNamespaceDirectiveCandidate(content)) {
+        final unit = parseString(
+          content: content,
+          throwIfDiagnostics: false,
+        ).unit;
+        final discovered = <AssetId>{};
+        for (final directive in unit.directives) {
+          if (directive is! NamespaceDirective ||
+              directive.configurations.isEmpty) {
+            continue;
+          }
+          final uris = <String?>[directive.uri.stringValue];
+          uris.addAll(
+            directive.configurations.map(
+              (configuration) => configuration.uri.stringValue,
+            ),
+          );
 
-    final unit = parseString(content: content, throwIfDiagnostics: false).unit;
-    for (final directive in unit.directives) {
-      if (directive is! NamespaceDirective ||
-          directive.configurations.isEmpty) {
-        continue;
-      }
-      final uris = <String?>[directive.uri.stringValue];
-      uris.addAll(
-        directive.configurations.map(
-          (configuration) => configuration.uri.stringValue,
-        ),
-      );
-
-      for (final rawUri in uris) {
-        final dependency = _resolveDirectiveUri(rawUri, asset, packageConfig);
-        if (dependency == null) continue;
-        io.observedReads.add(dependency);
-        if (dependency.extension == '.dart' && !visited.contains(dependency)) {
-          pending.add(dependency);
+          for (final rawUri in uris) {
+            final dependency = _resolveDirectiveUri(
+              rawUri,
+              asset,
+              packageConfig,
+            );
+            if (dependency != null) discovered.add(dependency);
+          }
         }
+        dependencies = discovered.toList(growable: false);
+      } else {
+        dependencies = const <AssetId>[];
+      }
+      cache.remember(asset, bytes, dependencies);
+    }
+
+    for (final dependency in dependencies) {
+      io.observedReads.add(dependency);
+      if (dependency.extension == '.dart' && !visited.contains(dependency)) {
+        pending.add(dependency);
       }
     }
   }
 }
 
-final _conditionalDirective = RegExp(
-  r'^\s*(?:import|export)\b[^;]*\bif\s*\(',
-  multiLine: true,
-);
+// This permissive candidate check may match comments and strings, but the AST
+// pass below recognizes only real directives. Avoid punctuation-sensitive
+// checks here because valid directive URIs can contain semicolons.
+final _namespaceDirectiveCandidate = RegExp(r'\b(?:import|export)\b');
 
-bool _containsConditionalDirective(String content) =>
-    _conditionalDirective.hasMatch(content);
+bool _containsNamespaceDirectiveCandidate(String content) =>
+    _namespaceDirectiveCandidate.hasMatch(content);
 
 AssetId? _resolveDirectiveUri(
   String? rawUri,
