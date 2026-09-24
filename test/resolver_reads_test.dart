@@ -19,8 +19,13 @@ void main() {
     final dependency = AssetId('app', 'lib/dependency.dart');
     final anotherInput = AssetId('app', 'lib/other.dart');
     final readCache = <AssetId, List<int>>{
-      shared: utf8.encode("import 'dependency.dart';"),
+      shared: utf8.encode(
+        "import 'dependency.dart' if (dart.library.io) 'dependency_io.dart';",
+      ),
       dependency: utf8.encode('class Dependency {}'),
+      AssetId('app', 'lib/dependency_io.dart'): utf8.encode(
+        'class DependencyIo {}',
+      ),
     };
     final io = RemoteAssetReaderWriter(
       readCache: readCache,
