@@ -403,17 +403,22 @@ pub(crate) fn run_with_config(
             lazy_demand_possible,
         )?;
 
-        // Source outputs remain in the Rust overlay until the transaction commits.
-        // Invalidate only the worker's Analyzer graph before a later phase so
-        // resolver-backed builders can re-sync those overlay parts without
-        // discarding the resident worker's asset-read cache.
+        // Outputs remain in the Rust overlay until the transaction commits.
+        // Source-only changes can refresh the Analyzer graph incrementally;
+        // cache-tree changes require a clean graph rebuild.
         let mut resolver_needs_reset = false;
+        // Incremental Analyzer refreshes describe source-tree files only.
+        // Cache-tree outputs can still participate in generated-library
+        // resolution, so their changes require a clean resolver reset.
+        let mut resolver_requires_clean_reset = false;
         let mut initialized_package = first_package;
         // Overlay mutations since the last resolver reset. A single-worker
         // reset can forward them so the worker refreshes only those assets
         // in its Analyzer filesystem instead of re-walking every source.
         let mut resolver_updated = BTreeSet::<String>::new();
         let mut resolver_deleted = BTreeSet::<String>::new();
+        let mut resolver_cache_updated = BTreeSet::<String>::new();
+        let mut resolver_cache_deleted = BTreeSet::<String>::new();
 
         for configured_builder_index in execution_order(&build_config.builders) {
             let configured_builder = &build_config.builders[configured_builder_index];
@@ -449,12 +454,21 @@ pub(crate) fn run_with_config(
                                 &mut pending_actions,
                                 &mut resolver_updated,
                                 &mut resolver_deleted,
+                                &mut resolver_cache_updated,
+                                &mut resolver_cache_deleted,
                             )?;
                             continue;
                         }
                     }
                 }
                 runnable_phase_specs.push(spec);
+            }
+            if !resolver_updated.is_empty() || !resolver_deleted.is_empty() {
+                resolver_needs_reset = true;
+            }
+            if !resolver_cache_updated.is_empty() || !resolver_cache_deleted.is_empty() {
+                resolver_needs_reset = true;
+                resolver_requires_clean_reset = true;
             }
             let requests = runnable_phase_specs
                 .iter()
@@ -483,14 +497,24 @@ pub(crate) fn run_with_config(
                 )?;
                 initialized_package = configured_builder.package.clone();
                 resolver_needs_reset = false;
+                resolver_requires_clean_reset = false;
+                resolver_updated.clear();
+                resolver_deleted.clear();
+                resolver_cache_updated.clear();
+                resolver_cache_deleted.clear();
             } else if resolver_needs_reset {
+                let incremental = !resolver_requires_clean_reset;
                 active_pool.reset_resolver(
                     &workspace.root,
                     &overlay,
                     std::mem::take(&mut resolver_updated),
                     std::mem::take(&mut resolver_deleted),
+                    std::mem::take(&mut resolver_cache_updated),
+                    std::mem::take(&mut resolver_cache_deleted),
+                    incremental,
                 )?;
                 resolver_needs_reset = false;
+                resolver_requires_clean_reset = false;
             }
             let results = if !lazy_demand_possible {
                 active_pool.build_parallel(
@@ -529,6 +553,10 @@ pub(crate) fn run_with_config(
                     &mut pending_actions,
                     &mut resolver_updated,
                     &mut resolver_deleted,
+                    &mut resolver_cache_updated,
+                    &mut resolver_cache_deleted,
+                    &mut resolver_requires_clean_reset,
+                    &specs,
                 )?;
             }
             if lazy_source_output {
@@ -548,7 +576,19 @@ pub(crate) fn run_with_config(
                     &mut pending_actions,
                     &mut resolver_updated,
                     &mut resolver_deleted,
+                    &mut resolver_cache_updated,
+                    &mut resolver_cache_deleted,
+                    &mut resolver_requires_clean_reset,
+                    &specs,
                 )?;
+            }
+
+            if !resolver_updated.is_empty() || !resolver_deleted.is_empty() {
+                resolver_needs_reset = true;
+            }
+            if !resolver_cache_updated.is_empty() || !resolver_cache_deleted.is_empty() {
+                resolver_needs_reset = true;
+                resolver_requires_clean_reset = true;
             }
 
             if builder.kind == BuilderKind::Normal && builder.build_to == BuildTo::Source {
@@ -639,6 +679,8 @@ fn record_missing_primary_input(
     pending_actions: &mut Vec<(String, ActionState)>,
     resolver_updated: &mut BTreeSet<String>,
     resolver_deleted: &mut BTreeSet<String>,
+    resolver_cache_updated: &mut BTreeSet<String>,
+    resolver_cache_deleted: &mut BTreeSet<String>,
 ) -> io::Result<()> {
     let key = spec.action_key();
     let mut outputs_to_delete = state
@@ -654,8 +696,13 @@ fn record_missing_primary_input(
     for output in outputs_to_delete {
         deleted_overlay.insert(output.clone());
         overlay.remove(&output);
-        resolver_deleted.insert(output.clone());
-        resolver_updated.remove(&output);
+        if spec.builder.build_to == BuildTo::Source {
+            resolver_deleted.insert(output.clone());
+            resolver_updated.remove(&output);
+        } else {
+            resolver_cache_deleted.insert(output.clone());
+            resolver_cache_updated.remove(&output);
+        }
         if workspace.asset_exists_at(&output, spec.builder.build_to)? {
             pending_deletions.push((spec.builder.clone(), output));
         }
@@ -688,6 +735,10 @@ fn record_build_result(
     pending_actions: &mut Vec<(String, ActionState)>,
     resolver_updated: &mut BTreeSet<String>,
     resolver_deleted: &mut BTreeSet<String>,
+    resolver_cache_updated: &mut BTreeSet<String>,
+    resolver_cache_deleted: &mut BTreeSet<String>,
+    resolver_requires_clean_reset: &mut bool,
+    specs: &[BuildSpec],
 ) -> io::Result<()> {
     let builder = spec.builder.as_ref();
     if result.status != "success" && result.status != "not_triggered" {
@@ -720,8 +771,13 @@ fn record_build_result(
             }
             deleted_overlay.insert(deleted.clone());
             overlay.remove(deleted);
-            resolver_deleted.insert(deleted.clone());
-            resolver_updated.remove(deleted);
+            if builder.build_to == BuildTo::Source {
+                resolver_deleted.insert(deleted.clone());
+                resolver_updated.remove(deleted);
+            } else {
+                resolver_cache_deleted.insert(deleted.clone());
+                resolver_cache_updated.remove(deleted);
+            }
             pending_deletions.push((spec.builder.clone(), deleted.clone()));
         }
     }
@@ -766,10 +822,26 @@ fn record_build_result(
                 )));
             }
         }
+        if builder.build_to == BuildTo::Source && generated.asset.ends_with(".dart") {
+            if let Some(consumer) = specs.iter().find(|s| s.input == generated.asset) {
+                // A build action uses this generated library as its primary
+                // input. Put it in a fresh Analyzer graph before resolving it.
+                eprintln!(
+                    "Rust resolver reset: {} is a primary input at phase {}",
+                    generated.asset, consumer.phase
+                );
+                *resolver_requires_clean_reset = true;
+            }
+        }
         overlay.insert(generated.asset.clone(), generated.bytes.clone());
         deleted_overlay.remove(&generated.asset);
-        resolver_updated.insert(generated.asset.clone());
-        resolver_deleted.remove(&generated.asset);
+        if builder.build_to == BuildTo::Source {
+            resolver_updated.insert(generated.asset.clone());
+            resolver_deleted.remove(&generated.asset);
+        } else {
+            resolver_cache_updated.insert(generated.asset.clone());
+            resolver_cache_deleted.remove(&generated.asset);
+        }
         pending_outputs.push((
             spec.builder.clone(),
             generated.asset.clone(),
@@ -790,8 +862,13 @@ fn record_build_result(
             for previous_output in &previous.outputs {
                 if !actual_outputs.contains(previous_output.as_str()) {
                     deleted_overlay.insert(previous_output.clone());
-                    resolver_deleted.insert(previous_output.clone());
-                    resolver_updated.remove(previous_output);
+                    if builder.build_to == BuildTo::Source {
+                        resolver_deleted.insert(previous_output.clone());
+                        resolver_updated.remove(previous_output);
+                    } else {
+                        resolver_cache_deleted.insert(previous_output.clone());
+                        resolver_cache_updated.remove(previous_output);
+                    }
                     pending_deletions.push((spec.builder.clone(), previous_output.clone()));
                 }
             }
@@ -806,8 +883,13 @@ fn record_build_result(
                 continue;
             }
             deleted_overlay.insert(expected.clone());
-            resolver_deleted.insert(expected.clone());
-            resolver_updated.remove(expected);
+            if builder.build_to == BuildTo::Source {
+                resolver_deleted.insert(expected.clone());
+                resolver_updated.remove(expected);
+            } else {
+                resolver_cache_deleted.insert(expected.clone());
+                resolver_cache_updated.remove(expected);
+            }
             if workspace.asset_exists_at(expected, builder.build_to)? {
                 pending_deletions.push((spec.builder.clone(), expected.clone()));
             }

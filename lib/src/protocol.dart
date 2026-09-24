@@ -80,6 +80,8 @@ class WorkerResetResolverMessage extends WorkerMessage {
     required int id,
     required this.updatedSources,
     required this.deletedSources,
+    required this.updatedCache,
+    required this.deletedCache,
     required this.incremental,
   }) : super(id: id);
 
@@ -89,27 +91,37 @@ class WorkerResetResolverMessage extends WorkerMessage {
   /// Assets removed from the overlay since the last phase commit.
   final List<String> deletedSources;
 
-  /// Whether the worker may keep its resolver state and apply only the
-  /// listed changes. False when any output was produced by another worker.
+  /// Changed cache-tree assets. These are applied to the worker's asset view
+  /// but are never passed to Analyzer as source-file updates.
+  final List<String> updatedCache;
+
+  /// Cache-tree assets removed from the overlay.
+  final List<String> deletedCache;
+
+  /// Whether the worker may keep its resolver state and apply source changes
+  /// incrementally. False when a clean resolver rebuild is required.
   final bool incremental;
 
   factory WorkerResetResolverMessage.fromJson(JsonMap message) {
-    final incremental = message['incremental'] == true;
     return WorkerResetResolverMessage(
       id: _requiredInt(message, 'id', 'reset_resolver'),
-      updatedSources: incremental
-          ? _stringList(
-              message['updated_sources'],
-              'reset_resolver updated_sources',
-            )
-          : const [],
-      deletedSources: incremental
-          ? _stringList(
-              message['deleted_sources'],
-              'reset_resolver deleted_sources',
-            )
-          : const [],
-      incremental: incremental,
+      updatedSources: _stringList(
+        message['updated_sources'],
+        'reset_resolver updated_sources',
+      ),
+      deletedSources: _stringList(
+        message['deleted_sources'],
+        'reset_resolver deleted_sources',
+      ),
+      updatedCache: _stringList(
+        message['updated_cache'],
+        'reset_resolver updated_cache',
+      ),
+      deletedCache: _stringList(
+        message['deleted_cache'],
+        'reset_resolver deleted_cache',
+      ),
+      incremental: _requiredBool(message, 'incremental', 'reset_resolver'),
     );
   }
 }
@@ -253,6 +265,14 @@ int _requiredInt(JsonMap message, String key, String type) {
   final value = message[key];
   if (value is! int) {
     throw FormatException('$type requires an integer $key');
+  }
+  return value;
+}
+
+bool _requiredBool(JsonMap message, String key, String type) {
+  final value = message[key];
+  if (value is! bool) {
+    throw FormatException('$type requires a boolean $key');
   }
   return value;
 }

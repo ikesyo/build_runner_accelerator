@@ -88,7 +88,13 @@ class RemoteBuildState extends BuildState {
     required int phaseCount,
     Map<AssetId, AssetContent> committedContents = const {},
   }) : _committedContents = committedContents,
-       super(buildStepPlan: _emptyBuildStepPlan(phaseCount), sources: const {});
+       super(
+         buildStepPlan: _emptyBuildStepPlan(phaseCount),
+         // A clean Analyzer reset must seed its in-memory filesystem with
+         // source outputs retained from earlier phases. Rust keeps these in
+         // the overlay until the whole build commits, so they are not on disk.
+         sources: committedContents,
+       );
 
   final Set<String> _packages;
 

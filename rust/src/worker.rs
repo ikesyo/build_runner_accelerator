@@ -258,6 +258,8 @@ impl WorkerClient {
         &mut self,
         updated_sources: &Value,
         deleted_sources: &Value,
+        updated_cache: &Value,
+        deleted_cache: &Value,
         incremental: bool,
     ) -> io::Result<()> {
         let started = Instant::now();
@@ -268,6 +270,8 @@ impl WorkerClient {
             "id": id,
             "updated_sources": updated_sources,
             "deleted_sources": deleted_sources,
+            "updated_cache": updated_cache,
+            "deleted_cache": deleted_cache,
             "incremental": incremental,
         }))?;
         let response = self.receive_json()?;
@@ -1625,6 +1629,9 @@ impl WorkerPool {
         overlay: &BTreeMap<String, Vec<u8>>,
         updated_sources: BTreeSet<String>,
         deleted_sources: BTreeSet<String>,
+        updated_cache: BTreeSet<String>,
+        deleted_cache: BTreeSet<String>,
+        incremental: bool,
     ) -> io::Result<()> {
         let count = self.initialized_workers.min(self.workers.len());
         if count == 0 {
@@ -1636,7 +1643,7 @@ impl WorkerPool {
         // any worker can read them during its reset.
         if count > 1 {
             let spool_root = root.join(OVERLAY_SPOOL_DIR);
-            for asset in &updated_sources {
+            for asset in updated_sources.iter().chain(updated_cache.iter()) {
                 let spool_path = spool_root.join(asset.replacen('|', "/", 1));
                 let Some(bytes) = overlay.get(asset) else {
                     // Do not let a leftover file from an earlier build be
@@ -1649,7 +1656,7 @@ impl WorkerPool {
                 }
                 fs::write(&spool_path, bytes)?;
             }
-            for asset in &deleted_sources {
+            for asset in deleted_sources.iter().chain(deleted_cache.iter()) {
                 let _ = fs::remove_file(spool_root.join(asset.replacen('|', "/", 1)));
             }
         } else {
@@ -1657,14 +1664,27 @@ impl WorkerPool {
             // assets. A single worker serves its current outputs from memory,
             // so discard stale spool files before it receives the reset.
             let spool_root = root.join(OVERLAY_SPOOL_DIR);
-            for asset in updated_sources.iter().chain(deleted_sources.iter()) {
+            for asset in updated_sources
+                .iter()
+                .chain(deleted_sources.iter())
+                .chain(updated_cache.iter())
+                .chain(deleted_cache.iter())
+            {
                 let _ = fs::remove_file(spool_root.join(asset.replacen('|', "/", 1)));
             }
         }
         let updated = json!(updated_sources);
         let deleted = json!(deleted_sources);
+        let updated_cache = json!(updated_cache);
+        let deleted_cache = json!(deleted_cache);
         for worker in self.workers.iter_mut().take(count) {
-            worker.reset_resolver(&updated, &deleted, true)?;
+            worker.reset_resolver(
+                &updated,
+                &deleted,
+                &updated_cache,
+                &deleted_cache,
+                incremental,
+            )?;
         }
         self.resolver_resets += count as u64;
         Ok(())

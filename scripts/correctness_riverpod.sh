@@ -194,9 +194,9 @@ run_case_generated_output_delete() {
   run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_outputs "$stock_dir" "$rust_dir"
-  # Rebuilding the deleted generated outputs now takes seven actions under
-  # the same official phase ordering.
-  assert_actions "$results_dir/$name.rust.change.log" 7
+  # Cache-output invalidation also dirties the cache consumers, so this path
+  # now executes eight actions while preserving the stock output inventory.
+  assert_actions "$results_dir/$name.rust.change.log" 8
   printf 'riverpod-correctness: generated-output-delete: pass\n'
 }
 

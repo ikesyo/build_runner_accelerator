@@ -90,6 +90,12 @@ Future<void> runWorker({
               deletedSources: resetResolver.deletedSources
                   .map(AssetId.parse)
                   .toSet(),
+              updatedCache: resetResolver.updatedCache
+                  .map(AssetId.parse)
+                  .toSet(),
+              deletedCache: resetResolver.deletedCache
+                  .map(AssetId.parse)
+                  .toSet(),
               incremental: resetResolver.incremental,
             );
             await writer.send(<String, dynamic>{
@@ -144,7 +150,7 @@ class _WorkerRuntime {
 
   final PackageConfig packageConfig;
   final ResolverInitializationProfile resolverProfile;
-  final WorkerResolversImpl resolver;
+  WorkerResolversImpl resolver;
   final ResourceManager resourceManager = ResourceManager();
   final Map<AssetId, List<int>> readCache = <AssetId, List<int>>{};
   final Set<AssetId> readableCache = <AssetId>{};
@@ -174,7 +180,7 @@ class _WorkerRuntime {
   Future<void> startBuild(String package, {required int phaseCount}) async {
     if (_buildStarted) {
       await resourceManager.disposeAll();
-      resolver.reset();
+      _replaceResolver();
       _buildStarted = false;
     }
     currentPackage = package;
@@ -189,7 +195,7 @@ class _WorkerRuntime {
   Future<void> reset() async {
     if (!_buildStarted) return;
     await resourceManager.disposeAll();
-    resolver.reset();
+    _replaceResolver();
     _buildStarted = false;
     _clearPerBuildState();
     await _startBuild();
@@ -200,36 +206,35 @@ class _WorkerRuntime {
   /// build_runner allows a filesystem to register its content listener once.
   ///
   /// With [incremental], the analyzer's in-memory filesystem and the loaded
-  /// library-cycle graph are kept: only [updatedSources] are refreshed (the
-  /// worker supplies their new contents itself since they are not committed
-  /// to disk yet) and [deletedSources] evicted, so unchanged sources do not
-  /// get re-analyzed. Only valid when this worker produced every committed
-  /// output itself.
+  /// library-cycle graph are kept: only [updatedSources] are refreshed and
+  /// [deletedSources] evicted, so unchanged sources do not get re-analyzed.
+  /// Cache-tree changes are supplied separately and always use a clean reset.
   Future<void> resetResolver({
     Set<AssetId> updatedSources = const <AssetId>{},
     Set<AssetId> deletedSources = const <AssetId>{},
+    Set<AssetId> updatedCache = const <AssetId>{},
+    Set<AssetId> deletedCache = const <AssetId>{},
     bool incremental = false,
   }) async {
     if (!_buildStarted) return;
     resolverDependencyCache.clear();
-    if (!incremental) {
-      resolver.reset();
-      _buildStarted = false;
-      await _startBuild(clearReadCaches: false, clearBuilders: false);
-      return;
-    }
-    for (final id in updatedSources.followedBy(deletedSources)) {
+    final changedAssets = <AssetId>{
+      ...updatedSources,
+      ...deletedSources,
+      ...updatedCache,
+      ...deletedCache,
+    };
+    for (final id in changedAssets) {
       readCache.remove(id);
       readableCache.remove(id);
     }
-    for (final id in deletedSources) {
+    for (final id in deletedSources.followedBy(deletedCache)) {
       producedOutputs.remove(id);
     }
-    // Updated assets this worker did not produce itself were spooled by Rust
-    // under the workspace overlay directory (multi-worker builds only).
-    // If any content is unavailable, fall back to a clean reset rather than
-    // exposing a missing file to the analyzer.
-    for (final id in updatedSources) {
+    // Updated assets produced by another worker are spooled by Rust under the
+    // workspace overlay directory. Cache outputs use the same transport on a
+    // clean reset but are never added to Analyzer's updated source set.
+    for (final id in updatedSources.followedBy(updatedCache)) {
       final spoolFile = File(
         '${Directory.current.path}/.dart_tool/build_runner_accelerator/'
         'overlay/${id.package}/${id.path}',
@@ -240,8 +245,22 @@ class _WorkerRuntime {
         producedOutputs[id] = AssetContent.bytes(spoolFile.readAsBytesSync());
       } else if (producedOutputs.containsKey(id)) {
         // In a single-worker build the current value is already in memory.
-      } else {
-        resolver.reset();
+      }
+    }
+    if (!incremental) {
+      _replaceResolver();
+      _buildStarted = false;
+      await _startBuild(clearReadCaches: false, clearBuilders: false);
+      return;
+    }
+    for (final id in updatedSources) {
+      if (producedOutputs.containsKey(id)) continue;
+      final spoolFile = File(
+        '${Directory.current.path}/.dart_tool/build_runner_accelerator/'
+        'overlay/${id.package}/${id.path}',
+      );
+      if (!spoolFile.existsSync()) {
+        _replaceResolver();
         _buildStarted = false;
         await _startBuild(clearReadCaches: false, clearBuilders: false);
         return;
@@ -267,6 +286,11 @@ class _WorkerRuntime {
       _buildStarted = false;
     }
     await resourceManager.beforeExit();
+  }
+
+  void _replaceResolver() {
+    resolver.reset();
+    resolver = createResolver(packageConfig, resolverProfile);
   }
 
   void _clearPerBuildState() {
