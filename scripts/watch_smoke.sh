@@ -87,39 +87,55 @@ wait_for_initial_build() {
   fail 'watch startup timed out'
 }
 
-wait_for_rebuild() {
-  local expected_count=$1
+wait_for_stable_watch_state() {
+  local expected_rebuild_count=$1
+  local expected_completed_count=$2
+  local stable_samples=0
+  local last_signature=
   for _ in $(seq 1 "$(verification_watch_poll_iterations 250)"); do
     local rebuild_count
     local completed_count
+    local log_bytes
+    local signature
     rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
     completed_count=$(grep -Fc 'Build completed (Rust frontend)' "$log_path" || true)
-    if ((rebuild_count >= expected_count && completed_count >= expected_count + 1)); then
-      return 0
+    if ((rebuild_count > expected_rebuild_count || completed_count > expected_completed_count)); then
+      fail "watch observed extra work (rebuilds=$rebuild_count completed=$completed_count; expected=$expected_rebuild_count/$expected_completed_count)"
+    fi
+    if ((rebuild_count == expected_rebuild_count && completed_count == expected_completed_count)); then
+      log_bytes=$(wc -c <"$log_path")
+      signature="$rebuild_count:$completed_count:$log_bytes"
+      if [[ "$signature" == "$last_signature" ]]; then
+        ((stable_samples += 1))
+      else
+        stable_samples=0
+      fi
+      if ((stable_samples >= 8)); then
+        return 0
+      fi
+      last_signature=$signature
+    else
+      stable_samples=0
+      last_signature=
     fi
     kill -0 "$watch_pid" 2>/dev/null || fail 'watch process exited during rebuild'
     sleep 0.25
   done
-  fail "watch rebuild timed out at event count $expected_count"
+  fail "watch state did not settle at rebuild/completion counts $expected_rebuild_count/$expected_completed_count"
 }
 
 wait_for_initial_build
+wait_for_stable_watch_state 0 1
 cp "$watch_dir/lib/model.g.dart" "$results_dir/model.before.g.dart"
 
 find "$watch_dir/lib" -maxdepth 1 -type f -name 'model.g.dart' -delete
-wait_for_rebuild 1
-sleep 1
-rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
-((rebuild_count == 1)) || fail "generated output deletion caused $rebuild_count rebuild events"
+wait_for_stable_watch_state 1 2
 [[ -f "$watch_dir/lib/model.g.dart" ]] || fail 'generated output was not restored'
 cmp "$results_dir/model.before.g.dart" "$watch_dir/lib/model.g.dart" || \
   fail 'restored generated output differs from baseline'
 
 sed -i 's/displayName/displayNameChanged/g' "$watch_dir/lib/model.dart"
-wait_for_rebuild 2
-sleep 1
-rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
-((rebuild_count == 2)) || fail "source edit caused $rebuild_count rebuild events"
+wait_for_stable_watch_state 2 3
 if cmp -s "$results_dir/model.before.g.dart" "$watch_dir/lib/model.g.dart"; then
   fail 'source edit did not change generated output'
 fi
@@ -127,20 +143,14 @@ cp "$watch_dir/lib/model.g.dart" "$results_dir/model.after-source-edit.g.dart"
 
 sed -i 's/conditional_html.dart/conditional_web.dart/' \
   "$watch_dir/lib/model.dart"
-wait_for_rebuild 3
-sleep 1
-rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
-((rebuild_count == 3)) || fail "conditional import target edit caused $rebuild_count rebuild events"
+wait_for_stable_watch_state 3 4
 cmp "$results_dir/model.after-source-edit.g.dart" "$watch_dir/lib/model.g.dart" || \
   fail 'conditional import target edit changed generated output'
 model_metric_count_before=$(grep -Fc '"input":"json_serializable_app|lib/model.dart"' "$log_path" || true)
 
 printf '%s\n' "const conditionalDefault = 'webChanged';" \
   >"$watch_dir/lib/conditional_web.dart"
-wait_for_rebuild 4
-sleep 1
-rebuild_count=$(grep -Fc 'Change detected; rebuilding' "$log_path" || true)
-((rebuild_count == 4)) || fail "conditional import dependency edit caused $rebuild_count rebuild events"
+wait_for_stable_watch_state 4 5
 cmp "$results_dir/model.after-source-edit.g.dart" "$watch_dir/lib/model.g.dart" || \
   fail 'inactive conditional import changed generated output'
 model_metric_count_after=$(grep -Fc '"input":"json_serializable_app|lib/model.dart"' "$log_path" || true)

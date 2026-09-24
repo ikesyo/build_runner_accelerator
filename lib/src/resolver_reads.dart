@@ -13,6 +13,10 @@ import 'remote_build_step.dart';
 /// Call [clear] when a build starts or the resolver is reset for a new source
 /// phase. Asset contents are stable within those boundaries, while a source
 /// output from an earlier phase can change what the resolver sees.
+///
+/// This cache does not cache action visibility. Callers must read each asset
+/// through the active [RemoteAssetReaderWriter] action before using a cached
+/// dependency list.
 class ResolverDependencyCache {
   final Map<AssetId, List<AssetId>> _dependencies = <AssetId, List<AssetId>>{};
 
@@ -50,17 +54,20 @@ Future<void> collectResolverReads(
     final asset = pending.removeFirst();
     if (!visited.add(asset)) continue;
 
+    List<int> bytes;
+    try {
+      // Validate the asset under this action's visibility before consulting
+      // cached parse results. The reader also records this action's observed
+      // read, and its shared byte cache avoids another RPC when available.
+      bytes = await io.readAsBytes(asset);
+    } on AssetNotFoundException {
+      // A demanded optional output can appear later in this phase. Do not
+      // memoize a missing asset across actions.
+      continue;
+    }
+
     var dependencies = cache.dependenciesFor(asset);
     if (dependencies == null) {
-      List<int> bytes;
-      try {
-        bytes = await io.readAsBytes(asset);
-      } on AssetNotFoundException {
-        // A demanded optional output can appear later in this phase. Do not
-        // memoize a missing asset across actions.
-        continue;
-      }
-
       final content = utf8.decode(bytes, allowMalformed: true);
       if (_containsNamespaceDirectiveCandidate(content)) {
         final unit = parseString(

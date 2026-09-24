@@ -1,13 +1,69 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:isolate';
 
 import 'package:build/build.dart';
+import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:build_runner_accelerator/src/remote_build_step.dart';
 import 'package:build_runner_accelerator/src/resolver_reads.dart';
 import 'package:package_config/package_config.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('cached dependencies still obey the active action visibility', () async {
+    final packageConfigUri = await Isolate.packageConfig;
+    expect(packageConfigUri, isNotNull);
+    final packageConfig = await loadPackageConfigUri(packageConfigUri!);
+    final shared = AssetId('app', 'lib/shared.dart');
+    final dependency = AssetId('app', 'lib/dependency.dart');
+    final anotherInput = AssetId('app', 'lib/other.dart');
+    final readCache = <AssetId, List<int>>{
+      shared: utf8.encode("import 'dependency.dart';"),
+      dependency: utf8.encode('class Dependency {}'),
+    };
+    final io = RemoteAssetReaderWriter(
+      readCache: readCache,
+      readableCache: <AssetId>{},
+    );
+    final cache = ResolverDependencyCache();
+
+    io.beginAction(
+      rpc: _rpc(),
+      package: 'app',
+      primaryInput: null,
+      blockedAssets: <AssetId>{},
+    );
+    io.observedReads.add(shared);
+    await collectResolverReads(io, packageConfig, cache);
+    expect(io.observedReads, contains(dependency));
+    io.endAction();
+
+    io.beginAction(
+      rpc: _rpc(),
+      package: 'app',
+      primaryInput: anotherInput,
+      blockedAssets: <AssetId>{},
+    );
+    io.observedReads.add(shared);
+    await collectResolverReads(io, packageConfig, cache);
+    expect(io.observedReads, contains(shared));
+    expect(io.observedReads, isNot(contains(dependency)));
+    io.endAction();
+
+    io.beginAction(
+      rpc: _rpc(),
+      package: 'app',
+      primaryInput: null,
+      blockedAssets: <AssetId>{shared},
+    );
+    io.observedReads.add(shared);
+    await collectResolverReads(io, packageConfig, cache);
+    expect(io.observedReads, contains(shared));
+    expect(io.observedReads, isNot(contains(dependency)));
+    io.endAction();
+  });
+
   test('propagates non-asset-not-found read failures', () async {
     final packageConfigUri = await Isolate.packageConfig;
     expect(packageConfigUri, isNotNull);
@@ -145,4 +201,20 @@ final text = "export 'string.dart' if (dart.library.io) 'string_io.dart';";''',
       expect(cache.scannedAssetCount, 7);
     },
   );
+}
+
+RpcSession _rpc() => RpcSession(
+  FrameReader(Stream<List<int>>.empty()),
+  FrameWriter(IOSink(_DiscardingConsumer())),
+  buildId: 1,
+  phase: 0,
+  postProcess: false,
+);
+
+class _DiscardingConsumer implements StreamConsumer<List<int>> {
+  @override
+  Future<void> addStream(Stream<List<int>> stream) => stream.drain<void>();
+
+  @override
+  Future<void> close() async {}
 }
