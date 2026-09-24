@@ -94,13 +94,13 @@ void main() {
       final main = AssetId('app', 'lib/main.dart');
       final fallback = AssetId('app', 'lib/fallback.dart');
       final replacement = AssetId('app', 'lib/replacement.dart');
-      final ioVariant = AssetId('app', 'lib/io.dart');
+      final fallbackIo = AssetId('app', 'lib/fallback_io.dart');
       final replacementIo = AssetId('app', 'lib/replacement_io.dart');
       final io = RemoteAssetReaderWriter(
         readCache: <AssetId, List<int>>{
           fallback: utf8.encode('class Fallback {}'),
           replacement: utf8.encode('class Replacement {}'),
-          ioVariant: utf8.encode('class IoVariant {}'),
+          fallbackIo: utf8.encode('class FallbackIo {}'),
           replacementIo: utf8.encode('class ReplacementIo {}'),
         },
         readableCache: <AssetId>{},
@@ -129,7 +129,7 @@ void main() {
       }
 
       final firstReads = await collectPostProcessOutput('fallback.dart');
-      expect(firstReads, containsAll(<AssetId>[main, fallback, ioVariant]));
+      expect(firstReads, containsAll(<AssetId>[main, fallback, fallbackIo]));
       expect(firstReads, isNot(contains(replacement)));
 
       final secondReads = await collectPostProcessOutput('replacement.dart');
@@ -138,7 +138,7 @@ void main() {
         containsAll(<AssetId>[main, replacement, replacementIo]),
       );
       expect(secondReads, isNot(contains(fallback)));
-      expect(secondReads, isNot(contains(ioVariant)));
+      expect(secondReads, isNot(contains(fallbackIo)));
     },
   );
 
@@ -258,7 +258,7 @@ final text = "export 'string.dart' if (dart.library.io) 'string_io.dart';";''',
       );
       expect(samePhaseReads, isNot(contains(fallback)));
       expect(samePhaseReads, isNot(contains(ioVariant)));
-      expect(cache.scannedAssetCount, 9);
+      expect(cache.scannedAssetCount, 11);
 
       cache.clear();
       final nextPhaseReads = await collectPass();
