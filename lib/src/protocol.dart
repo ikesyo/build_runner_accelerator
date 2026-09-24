@@ -76,12 +76,42 @@ class WorkerResetMessage extends WorkerMessage {
 }
 
 class WorkerResetResolverMessage extends WorkerMessage {
-  WorkerResetResolverMessage({required int id}) : super(id: id);
+  WorkerResetResolverMessage({
+    required int id,
+    required this.updatedSources,
+    required this.deletedSources,
+    required this.incremental,
+  }) : super(id: id);
 
-  factory WorkerResetResolverMessage.fromJson(JsonMap message) =>
-      WorkerResetResolverMessage(
-        id: _requiredInt(message, 'id', 'reset_resolver'),
-      );
+  /// Assets whose overlay content changed since the last phase commit.
+  final List<String> updatedSources;
+
+  /// Assets removed from the overlay since the last phase commit.
+  final List<String> deletedSources;
+
+  /// Whether the worker may keep its resolver state and apply only the
+  /// listed changes. False when any output was produced by another worker.
+  final bool incremental;
+
+  factory WorkerResetResolverMessage.fromJson(JsonMap message) {
+    final incremental = message['incremental'] == true;
+    return WorkerResetResolverMessage(
+      id: _requiredInt(message, 'id', 'reset_resolver'),
+      updatedSources: incremental
+          ? _stringList(
+              message['updated_sources'],
+              'reset_resolver updated_sources',
+            )
+          : const [],
+      deletedSources: incremental
+          ? _stringList(
+              message['deleted_sources'],
+              'reset_resolver deleted_sources',
+            )
+          : const [],
+      incremental: incremental,
+    );
+  }
 }
 
 class WorkerBuildMessage extends WorkerMessage {

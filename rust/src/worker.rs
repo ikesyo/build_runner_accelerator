@@ -12,6 +12,7 @@ use crate::visibility::AssetVisibility;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
+use std::fs;
 use std::io::{self, BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -23,6 +24,11 @@ const BINARY_READ_CAPABILITY: &str = "asset-rpc-binary-read-v1";
 const BINARY_BUILD_RESULT_CAPABILITY: &str = "build-result-binary-v1";
 const OPTIONAL_BUILD_CAPABILITY: &str = "optional-builder-demand-v1";
 const SHARED_BLOCKED_ASSETS_CAPABILITY: &str = "shared-blocked-assets-v1";
+
+/// Workspace-relative directory where committed overlay contents are spooled
+/// for multi-worker incremental resolver resets. The Dart worker resolves
+/// `<spool>/<package>/<asset path>` relative to its working directory.
+const OVERLAY_SPOOL_DIR: &str = ".dart_tool/build_runner_accelerator/overlay";
 
 /// A successful optional action that was requested while another action was
 /// suspended in the resident Dart worker. The build frontend commits these
@@ -248,13 +254,21 @@ impl WorkerClient {
         Ok(())
     }
 
-    pub fn reset_resolver(&mut self) -> io::Result<()> {
+    pub fn reset_resolver(
+        &mut self,
+        updated_sources: &Value,
+        deleted_sources: &Value,
+        incremental: bool,
+    ) -> io::Result<()> {
         let started = Instant::now();
         let id = self.next_id();
         self.send(&json!({
             "v": 1,
             "type": "reset_resolver",
             "id": id,
+            "updated_sources": updated_sources,
+            "deleted_sources": deleted_sources,
+            "incremental": incremental,
         }))?;
         let response = self.receive_json()?;
         if response.get("type").and_then(Value::as_str) != Some("reset_resolver")
@@ -1605,10 +1619,52 @@ impl WorkerPool {
         )
     }
 
-    pub fn reset_resolver(&mut self) -> io::Result<()> {
+    pub fn reset_resolver(
+        &mut self,
+        root: &Path,
+        overlay: &BTreeMap<String, Vec<u8>>,
+        updated_sources: BTreeSet<String>,
+        deleted_sources: BTreeSet<String>,
+    ) -> io::Result<()> {
         let count = self.initialized_workers.min(self.workers.len());
+        if count == 0 {
+            return Ok(());
+        }
+        // Each worker serves updated contents from the outputs it produced
+        // itself. With multiple workers, updated assets may come from another
+        // producer, so spool them under the workspace overlay directory where
+        // any worker can read them during its reset.
+        if count > 1 {
+            let spool_root = root.join(OVERLAY_SPOOL_DIR);
+            for asset in &updated_sources {
+                let spool_path = spool_root.join(asset.replacen('|', "/", 1));
+                let Some(bytes) = overlay.get(asset) else {
+                    // Do not let a leftover file from an earlier build be
+                    // mistaken for the current overlay value.
+                    let _ = fs::remove_file(&spool_path);
+                    continue;
+                };
+                if let Some(parent) = spool_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&spool_path, bytes)?;
+            }
+            for asset in &deleted_sources {
+                let _ = fs::remove_file(spool_root.join(asset.replacen('|', "/", 1)));
+            }
+        } else {
+            // A previous multi-worker build may have left files for these
+            // assets. A single worker serves its current outputs from memory,
+            // so discard stale spool files before it receives the reset.
+            let spool_root = root.join(OVERLAY_SPOOL_DIR);
+            for asset in updated_sources.iter().chain(deleted_sources.iter()) {
+                let _ = fs::remove_file(spool_root.join(asset.replacen('|', "/", 1)));
+            }
+        }
+        let updated = json!(updated_sources);
+        let deleted = json!(deleted_sources);
         for worker in self.workers.iter_mut().take(count) {
-            worker.reset_resolver()?;
+            worker.reset_resolver(&updated, &deleted, true)?;
         }
         self.resolver_resets += count as u64;
         Ok(())

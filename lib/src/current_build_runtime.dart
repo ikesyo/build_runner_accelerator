@@ -1,5 +1,6 @@
 import 'package:build/build.dart';
 import 'package:built_collection/built_collection.dart';
+import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
 import 'package:build_runner/src/build/builder_filesystem.dart'
     show BuilderFilesystem;
 import 'package:build_runner/src/build/build_state/build_state.dart'
@@ -82,10 +83,24 @@ BuildStepPlan _emptyBuildStepPlan(int phaseCount) {
 /// source set. Asset existence remains an RPC decision, so the worker does not
 /// need to scan every dependency package before the first resolver request.
 class RemoteBuildState extends BuildState {
-  RemoteBuildState(this._packages, {required int phaseCount})
-    : super(buildStepPlan: _emptyBuildStepPlan(phaseCount), sources: const {});
+  RemoteBuildState(
+    this._packages, {
+    required int phaseCount,
+    Map<AssetId, AssetContent> committedContents = const {},
+  }) : _committedContents = committedContents,
+       super(buildStepPlan: _emptyBuildStepPlan(phaseCount), sources: const {});
 
   final Set<String> _packages;
+
+  /// Contents of outputs the worker produced earlier in this build series.
+  ///
+  /// Source outputs stay in the Rust overlay until the final commit, so they
+  /// cannot be re-read from disk here; the worker already holds their bytes
+  /// from the build results it returned.
+  final Map<AssetId, AssetContent> _committedContents;
+
+  @override
+  AssetContent? contentOf(AssetId id) => _committedContents[id];
 
   @override
   bool isSource(AssetId id) => _packages.contains(id.package);

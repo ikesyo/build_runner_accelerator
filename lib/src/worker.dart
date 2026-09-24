@@ -5,13 +5,15 @@ import 'dart:isolate';
 import 'package:build/build.dart';
 import 'package:build_runner/src/build/build_step_impl.dart' show BuildStepImpl;
 import 'package:build_runner/src/build/input_tracker.dart' show InputTracker;
-import 'package:build_runner/src/build/resolver/resolvers_impl.dart'
-    show ResolversImpl;
+import 'worker_resolvers.dart' show WorkerResolversImpl;
 import 'package:build_runner/src/build_plan/build_packages.dart'
     show BuildPackages;
 import 'package:build_runner/src/logging/build_log.dart' show buildLog;
 import 'package:logging/logging.dart';
 import 'package:package_config/package_config.dart';
+
+import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
+import 'package:build_runner/src/build_plan/build_inputs.dart' show BuildInputs;
 
 import 'current_build_runtime.dart';
 import 'protocol.dart';
@@ -81,7 +83,15 @@ Future<void> runWorker({
               'id': reset.id,
             });
           case WorkerResetResolverMessage resetResolver:
-            await runtime.resetResolver();
+            await runtime.resetResolver(
+              updatedSources: resetResolver.updatedSources
+                  .map(AssetId.parse)
+                  .toSet(),
+              deletedSources: resetResolver.deletedSources
+                  .map(AssetId.parse)
+                  .toSet(),
+              incremental: resetResolver.incremental,
+            );
             await writer.send(<String, dynamic>{
               'v': 1,
               'type': 'reset_resolver',
@@ -134,12 +144,19 @@ class _WorkerRuntime {
 
   final PackageConfig packageConfig;
   final ResolverInitializationProfile resolverProfile;
-  final ResolversImpl resolver;
+  final WorkerResolversImpl resolver;
   final ResourceManager resourceManager = ResourceManager();
   final Map<AssetId, List<int>> readCache = <AssetId, List<int>>{};
   final Set<AssetId> readableCache = <AssetId>{};
   final ResolverDependencyCache resolverDependencyCache =
       ResolverDependencyCache();
+
+  /// Bytes of outputs this worker produced during the current build.
+  ///
+  /// Source outputs stay in the Rust overlay until the final commit, so they
+  /// cannot be re-read from disk after a phase commit; the worker already
+  /// holds their bytes from the build results it returned.
+  final Map<AssetId, AssetContent> producedOutputs = <AssetId, AssetContent>{};
   final Map<String, Builder> builders = <String, Builder>{};
   final Map<String, PostProcessBuilder> postProcessBuilders =
       <String, PostProcessBuilder>{};
@@ -181,12 +198,66 @@ class _WorkerRuntime {
   /// Reopens the current resolver's analysis model after Rust commits a
   /// source-output phase. A new BuilderFilesystem is required because current
   /// build_runner allows a filesystem to register its content listener once.
-  Future<void> resetResolver() async {
+  ///
+  /// With [incremental], the analyzer's in-memory filesystem and the loaded
+  /// library-cycle graph are kept: only [updatedSources] are refreshed (the
+  /// worker supplies their new contents itself since they are not committed
+  /// to disk yet) and [deletedSources] evicted, so unchanged sources do not
+  /// get re-analyzed. Only valid when this worker produced every committed
+  /// output itself.
+  Future<void> resetResolver({
+    Set<AssetId> updatedSources = const <AssetId>{},
+    Set<AssetId> deletedSources = const <AssetId>{},
+    bool incremental = false,
+  }) async {
     if (!_buildStarted) return;
     resolverDependencyCache.clear();
-    resolver.reset();
+    if (!incremental) {
+      resolver.reset();
+      _buildStarted = false;
+      await _startBuild(clearReadCaches: false, clearBuilders: false);
+      return;
+    }
+    for (final id in updatedSources.followedBy(deletedSources)) {
+      readCache.remove(id);
+      readableCache.remove(id);
+    }
+    for (final id in deletedSources) {
+      producedOutputs.remove(id);
+    }
+    // Updated assets this worker did not produce itself were spooled by Rust
+    // under the workspace overlay directory (multi-worker builds only).
+    // If any content is unavailable, fall back to a clean reset rather than
+    // exposing a missing file to the analyzer.
+    for (final id in updatedSources) {
+      final spoolFile = File(
+        '${Directory.current.path}/.dart_tool/build_runner_accelerator/'
+        'overlay/${id.package}/${id.path}',
+      );
+      if (spoolFile.existsSync()) {
+        // The spool is the current overlay value, even if this worker produced
+        // an earlier version of the same asset in a previous phase.
+        producedOutputs[id] = AssetContent.bytes(spoolFile.readAsBytesSync());
+      } else if (producedOutputs.containsKey(id)) {
+        // In a single-worker build the current value is already in memory.
+      } else {
+        resolver.reset();
+        _buildStarted = false;
+        await _startBuild(clearReadCaches: false, clearBuilders: false);
+        return;
+      }
+    }
+    resolver.reset(clearGraph: false);
     _buildStarted = false;
-    await _startBuild(clearReadCaches: false, clearBuilders: false);
+    await _startBuild(
+      buildInputs: BuildInputs((builder) {
+        builder.cleanBuild = false;
+        builder.updatedSources.addAll(updatedSources);
+        builder.deletedSources.addAll(deletedSources);
+      }),
+      clearReadCaches: false,
+      clearBuilders: false,
+    );
   }
 
   Future<void> close() async {
@@ -202,11 +273,13 @@ class _WorkerRuntime {
     readCache.clear();
     readableCache.clear();
     resolverDependencyCache.clear();
+    producedOutputs.clear();
     builders.clear();
     postProcessBuilders.clear();
   }
 
   Future<void> _startBuild({
+    BuildInputs? buildInputs,
     bool clearReadCaches = false,
     bool clearBuilders = false,
   }) async {
@@ -230,6 +303,7 @@ class _WorkerRuntime {
     buildState = RemoteBuildState(
       buildPackages.packages.keys.toSet(),
       phaseCount: _phaseCount,
+      committedContents: producedOutputs,
     );
     buildFilesystem = RemoteBuilderFilesystem(
       buildPackages: buildPackages,
@@ -238,7 +312,7 @@ class _WorkerRuntime {
     );
     await resolver.takeLockAndStartBuild(
       builderFilesystem: buildFilesystem,
-      buildInputs: cleanBuildInputs(),
+      buildInputs: buildInputs ?? cleanBuildInputs(),
     );
     _buildStarted = true;
   }
@@ -595,6 +669,13 @@ Future<JsonMap> _runBuild(
             'bytes': entry.value.bytes,
           },
     ];
+    if (isPostProcess) {
+      for (final entry in runtime.io.outputs.entries) {
+        runtime.producedOutputs[entry.key] = AssetContent.bytes(entry.value);
+      }
+    } else if (step != null) {
+      runtime.producedOutputs.addAll(step.outputs);
+    }
     final reads = <String>{
       input.toString(),
       if (triggerInputTracker != null)
