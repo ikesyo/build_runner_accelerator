@@ -33,7 +33,7 @@ class ResolverDependencyCache {
 /// build_runner's library-cycle loader already records the ordinary directive
 /// graph. The compact worker graph has no library-cycle node, so we retain the
 /// same observed asset set and inspect observed Dart sources for conditional
-/// directives, parsing only files that can contribute extra candidates.
+/// directives, parsing only files that might contain namespace directives.
 ///
 /// This is intentionally a dependency collector, not a second Dart resolver:
 /// builders still use build_runner's Analyzer-backed resolver.
@@ -62,7 +62,7 @@ Future<void> collectResolverReads(
       }
 
       final content = utf8.decode(bytes, allowMalformed: true);
-      if (_containsConditionalDirective(content)) {
+      if (_containsNamespaceDirectiveCandidate(content)) {
         final unit = parseString(
           content: content,
           throwIfDiagnostics: false,
@@ -105,13 +105,13 @@ Future<void> collectResolverReads(
   }
 }
 
-final _conditionalDirective = RegExp(
-  r'^\s*(?:import|export)\b[^;]*\bif\s*\(',
-  multiLine: true,
-);
+// This permissive candidate check may match comments and strings, but the AST
+// pass below recognizes only real directives. Avoid punctuation-sensitive
+// checks here because valid directive URIs can contain semicolons.
+final _namespaceDirectiveCandidate = RegExp(r'\b(?:import|export)\b');
 
-bool _containsConditionalDirective(String content) =>
-    _conditionalDirective.hasMatch(content);
+bool _containsNamespaceDirectiveCandidate(String content) =>
+    _namespaceDirectiveCandidate.hasMatch(content);
 
 AssetId? _resolveDirectiveUri(
   String? rawUri,

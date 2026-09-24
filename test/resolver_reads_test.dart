@@ -35,11 +35,19 @@ void main() {
       final ioVariant = AssetId('app', 'lib/io.dart');
       final base = AssetId('app', 'lib/base.dart');
       final htmlVariant = AssetId('app', 'lib/html.dart');
+      final semicolonMain = AssetId('app', 'lib/semicolon_main.dart');
       final replacement = AssetId('app', 'lib/replacement.dart');
       final replacementIo = AssetId('app', 'lib/replacement_io.dart');
+      final semicolonFallback = AssetId('app', 'lib/semicolon;fallback.dart');
+      final semicolonVariant = AssetId('app', 'lib/semicolon;html.dart');
+      final noise = AssetId('app', 'lib/noise.dart');
       final readCache = <AssetId, List<int>>{
         main: utf8.encode(
           "import 'fallback.dart' if (dart.library.io) 'io.dart';",
+        ),
+        semicolonMain: utf8.encode(
+          "import 'semicolon;fallback.dart' if (dart.library.html) "
+          "'semicolon;html.dart';",
         ),
         fallback: utf8.encode(
           "export 'base.dart' if (dart.library.html) 'html.dart';",
@@ -47,8 +55,14 @@ void main() {
         ioVariant: utf8.encode('class IoVariant {}'),
         base: utf8.encode('class Base {}'),
         htmlVariant: utf8.encode('class HtmlVariant {}'),
+        semicolonFallback: utf8.encode('class SemicolonFallback {}'),
+        semicolonVariant: utf8.encode('class SemicolonVariant {}'),
         replacement: utf8.encode('class Replacement {}'),
         replacementIo: utf8.encode('class ReplacementIo {}'),
+        noise: utf8.encode(
+          '''// import 'comment.dart' if (dart.library.io) 'comment_io.dart';
+final text = "export 'string.dart' if (dart.library.io) 'string_io.dart';";''',
+        ),
       };
       final cache = ResolverDependencyCache();
 
@@ -58,6 +72,8 @@ void main() {
           readableCache: <AssetId>{},
         );
         io.observedReads.add(main);
+        io.observedReads.add(semicolonMain);
+        io.observedReads.add(noise);
         await collectResolverReads(io, packageConfig, cache);
         return Set<AssetId>.of(io.observedReads);
       }
@@ -65,18 +81,47 @@ void main() {
       final firstReads = await collectPass();
       expect(
         firstReads,
-        containsAll(<AssetId>[main, fallback, ioVariant, base, htmlVariant]),
+        containsAll(<AssetId>[
+          main,
+          fallback,
+          ioVariant,
+          base,
+          htmlVariant,
+          semicolonMain,
+          semicolonFallback,
+          semicolonVariant,
+          noise,
+        ]),
       );
-      expect(cache.scannedAssetCount, 5);
+      expect(cache.scannedAssetCount, 9);
+      expect(
+        firstReads.intersection(<AssetId>{
+          AssetId('app', 'lib/comment.dart'),
+          AssetId('app', 'lib/comment_io.dart'),
+          AssetId('app', 'lib/string.dart'),
+          AssetId('app', 'lib/string_io.dart'),
+        }),
+        isEmpty,
+      );
       final cachedMainDependencies = cache.dependenciesFor(main);
       expect(cachedMainDependencies, isNotNull);
 
       final repeatedReads = await collectPass();
       expect(
         repeatedReads,
-        containsAll(<AssetId>[main, fallback, ioVariant, base, htmlVariant]),
+        containsAll(<AssetId>[
+          main,
+          fallback,
+          ioVariant,
+          base,
+          htmlVariant,
+          semicolonMain,
+          semicolonFallback,
+          semicolonVariant,
+          noise,
+        ]),
       );
-      expect(cache.scannedAssetCount, 5);
+      expect(cache.scannedAssetCount, 9);
       expect(cache.dependenciesFor(main), same(cachedMainDependencies));
 
       readCache[main] = utf8.encode(
@@ -93,7 +138,11 @@ void main() {
       );
       expect(nextPhaseReads, isNot(contains(fallback)));
       expect(nextPhaseReads, isNot(contains(ioVariant)));
-      expect(cache.scannedAssetCount, 3);
+      expect(
+        nextPhaseReads,
+        containsAll(<AssetId>[semicolonFallback, semicolonVariant]),
+      );
+      expect(cache.scannedAssetCount, 7);
     },
   );
 }
