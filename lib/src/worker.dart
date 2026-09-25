@@ -224,8 +224,8 @@ class _WorkerRuntime {
   /// With [incremental], the analyzer's in-memory filesystem and the loaded
   /// library-cycle graph are kept: only [updatedSources] are refreshed and
   /// [deletedSources] evicted, so unchanged sources do not get re-analyzed.
-  /// Cache-tree changes are supplied separately and refresh the same caches
-  /// without becoming Analyzer sources.
+  /// Cache-tree changes are supplied separately and refresh the same caches;
+  /// generated Dart files there stay Analyzer-visible like source outputs.
   Future<void> resetResolver({
     Set<AssetId> updatedSources = const <AssetId>{},
     Set<AssetId> deletedSources = const <AssetId>{},
@@ -249,9 +249,8 @@ class _WorkerRuntime {
       producedOutputs.remove(id);
     }
     // Updated assets produced by another worker are spooled by Rust under the
-    // workspace overlay directory. Cache outputs use the same transport on a
-    // clean reset but are never added to Analyzer's updated source set.
-    // On incremental resets they refresh the shared caches only.
+    // workspace overlay directory. Cache outputs ride the same transport and
+    // are refreshed into the shared caches on incremental resets too.
     for (final id in updatedSources.followedBy(updatedCache)) {
       final spoolFile = File(
         '${Directory.current.path}/.dart_tool/build_runner_accelerator/'
@@ -311,8 +310,10 @@ class _WorkerRuntime {
     await _startBuild(
       buildInputs: BuildInputs((builder) {
         builder.cleanBuild = false;
-        builder.updatedSources.addAll(updatedSources);
-        builder.deletedSources.addAll(deletedSources);
+        // Cache-tree Dart assets are Analyzer-visible too (generated sources
+        // of dependency packages), so they refresh the same in-memory view.
+        builder.updatedSources.addAll(updatedSources.followedBy(updatedCache));
+        builder.deletedSources.addAll(deletedSources.followedBy(deletedCache));
       }),
       clearReadCaches: false,
       clearBuilders: false,
