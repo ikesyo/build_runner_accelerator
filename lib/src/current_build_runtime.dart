@@ -87,13 +87,15 @@ class RemoteBuildState extends BuildState {
     this._packages, {
     required int phaseCount,
     Map<AssetId, AssetContent> committedContents = const {},
-  }) : _committedContents = committedContents,
+  }) : _committedContents = Map.unmodifiable(committedContents),
        super(
          buildStepPlan: _emptyBuildStepPlan(phaseCount),
          // A clean Analyzer reset must seed its in-memory filesystem with
          // source outputs retained from earlier phases. Rust keeps these in
          // the overlay until the whole build commits, so they are not on disk.
-         sources: committedContents,
+         // Snapshot the map: the worker keeps mutating its producedOutputs,
+         // and same-phase outputs must stay hidden from this state.
+         sources: Map.unmodifiable(committedContents),
        );
 
   final Set<String> _packages;
