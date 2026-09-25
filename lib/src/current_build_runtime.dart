@@ -20,6 +20,8 @@ import 'package:build_runner/src/build_plan/build_step_plan.dart'
 import 'package:build_runner/src/build_plan/placeholders.dart'
     show Placeholders;
 import 'package:build_runner/src/build/build_state/glob_id.dart' show GlobId;
+import 'package:build_runner/src/build/library_cycle_graph/phased_value.dart'
+    show PhasedValue;
 import 'package:glob/glob.dart';
 import 'package:package_config/package_config.dart';
 
@@ -155,6 +157,21 @@ class RemoteBuilderFilesystem extends BuilderFilesystem {
     // Rust owns the source/output index and visibility rules. The Dart
     // BuildConfigs adapter is intentionally empty, so its normal input-glob
     // check would reject readable source parts before the remote RPC runs.
+  }
+
+  /// The build plan declares no outputs, so the inherited implementation
+  /// records a missing asset as `fixed('')` — a dep-graph entry the loader
+  /// never reloads even after the asset gets generated. Give the empty value
+  /// the current phase as expiry instead, so a later-phase load sees the
+  /// committed content and its real deps.
+  @override
+  Future<PhasedValue<String>> readPhased(int phase, AssetId id) async {
+    final read = await super.readPhased(phase, id);
+    if (read.values.last.expiresAfter == null &&
+        read.values.last.value.isEmpty) {
+      return PhasedValue.unavailable(before: '', expiresAfter: phase);
+    }
+    return read;
   }
 
   @override

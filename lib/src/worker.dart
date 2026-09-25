@@ -294,6 +294,7 @@ class _WorkerRuntime {
     // asset leaves dependents' directives untouched, so their cached cycles
     // stay as valid as they are under a clear.
     var dartGraphChanged = false;
+    PhasedAssetDeps? depGraph;
     for (final id in updatedSources.followedBy(updatedCache)) {
       if (!id.path.endsWith('.dart') && !id.path.endsWith('.part')) {
         continue;
@@ -301,8 +302,22 @@ class _WorkerRuntime {
       final key = '${id.package}|${id.path}';
       final directives = _dartDirectives(producedOutputs[id]);
       final previous = _committedDartDirectives[key] ?? _directivesOnDisk(id);
-      if (previous != null && !_sameDirectives(previous, directives)) {
-        dartGraphChanged = true;
+      if (previous != null) {
+        if (!_sameDirectives(previous, directives)) {
+          dartGraphChanged = true;
+        }
+      } else if (directives.isNotEmpty) {
+        // With no earlier record, an asset that was dependency-loaded
+        // while still missing may hold a stale empty-deps entry. Entries
+        // with an expiry reload on the next read on their own; only a
+        // permanent (`fixed`) entry leaves the graph stale.
+        depGraph ??= resolver.phasedAssetDeps();
+        final recorded = depGraph.assetDeps[id];
+        if (recorded != null &&
+            recorded.expiresAfter == null &&
+            recorded.values.last.value.deps.isEmpty) {
+          dartGraphChanged = true;
+        }
       }
       _committedDartDirectives[key] = directives;
     }
