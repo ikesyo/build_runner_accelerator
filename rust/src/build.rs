@@ -211,6 +211,10 @@ pub(crate) fn run_with_config(
         .collect::<BTreeMap<String, (BuildTo, bool)>>();
     let mut specs = normal_specs;
     specs.extend(post_specs);
+    let primary_inputs = specs
+        .iter()
+        .map(|spec| spec.input.as_str())
+        .collect::<BTreeSet<_>>();
     let visibility = AssetVisibility::from_specs(&specs, &state, &build_config);
 
     if plan_metrics_enabled() {
@@ -411,11 +415,11 @@ pub(crate) fn run_with_config(
 
         // Outputs remain in the Rust overlay until the transaction commits.
         let mut resolver_needs_reset = false;
-        // Source-tree and cache-tree deltas both ride the incremental reset:
-        // the worker applies them to its Analyzer filesystem and read caches
-        // without dropping the loaded library-cycle graph. A committed Dart
-        // asset whose directive set changed is detected by the worker itself,
-        // which clears the cached graph only then.
+        // Cache-tree changes and generated Dart primary inputs can introduce
+        // libraries that an incremental Analyzer refresh cannot see. Retain
+        // the clean-reset fallback for those cases; source-only changes can
+        // still use the incremental refresh and directive-aware graph reset.
+        let mut resolver_requires_clean_reset = false;
         let mut initialized_package = first_package;
         // Overlay mutations since the last resolver reset. A single-worker
         // reset can forward them so the worker refreshes only those assets
@@ -473,6 +477,7 @@ pub(crate) fn run_with_config(
             }
             if !resolver_cache_updated.is_empty() || !resolver_cache_deleted.is_empty() {
                 resolver_needs_reset = true;
+                resolver_requires_clean_reset = true;
             }
             let requests = runnable_phase_specs
                 .iter()
@@ -501,11 +506,13 @@ pub(crate) fn run_with_config(
                 )?;
                 initialized_package = configured_builder.package.clone();
                 resolver_needs_reset = false;
+                resolver_requires_clean_reset = false;
                 resolver_updated.clear();
                 resolver_deleted.clear();
                 resolver_cache_updated.clear();
                 resolver_cache_deleted.clear();
             } else if resolver_needs_reset {
+                let incremental = !resolver_requires_clean_reset;
                 active_pool.reset_resolver(
                     &workspace.root,
                     &overlay,
@@ -513,9 +520,10 @@ pub(crate) fn run_with_config(
                     std::mem::take(&mut resolver_deleted),
                     std::mem::take(&mut resolver_cache_updated),
                     std::mem::take(&mut resolver_cache_deleted),
-                    true,
+                    incremental,
                 )?;
                 resolver_needs_reset = false;
+                resolver_requires_clean_reset = false;
             }
             let results = if !lazy_demand_possible {
                 active_pool.build_parallel(
@@ -563,6 +571,8 @@ pub(crate) fn run_with_config(
                     &mut resolver_deleted,
                     &mut resolver_cache_updated,
                     &mut resolver_cache_deleted,
+                    &mut resolver_requires_clean_reset,
+                    &primary_inputs,
                 )?;
             }
             if lazy_source_output {
@@ -584,6 +594,8 @@ pub(crate) fn run_with_config(
                     &mut resolver_deleted,
                     &mut resolver_cache_updated,
                     &mut resolver_cache_deleted,
+                    &mut resolver_requires_clean_reset,
+                    &primary_inputs,
                 )?;
             }
 
@@ -592,6 +604,7 @@ pub(crate) fn run_with_config(
             }
             if !resolver_cache_updated.is_empty() || !resolver_cache_deleted.is_empty() {
                 resolver_needs_reset = true;
+                resolver_requires_clean_reset = true;
             }
 
             if builder.kind == BuilderKind::Normal && builder.build_to == BuildTo::Source {
@@ -685,7 +698,6 @@ fn record_missing_primary_input(
     resolver_cache_updated: &mut BTreeSet<String>,
     resolver_cache_deleted: &mut BTreeSet<String>,
 ) -> io::Result<()> {
-
     let key = spec.action_key();
     let mut outputs_to_delete = state
         .actions
@@ -742,6 +754,8 @@ fn record_build_result(
     resolver_deleted: &mut BTreeSet<String>,
     resolver_cache_updated: &mut BTreeSet<String>,
     resolver_cache_deleted: &mut BTreeSet<String>,
+    resolver_requires_clean_reset: &mut bool,
+    primary_inputs: &BTreeSet<&str>,
 ) -> io::Result<()> {
     let builder = spec.builder.as_ref();
     if result.status != "success" && result.status != "not_triggered" {
@@ -824,6 +838,12 @@ fn record_build_result(
                     generated.asset
                 )));
             }
+        }
+        if builder.build_to == BuildTo::Source
+            && generated.asset.ends_with(".dart")
+            && primary_inputs.contains(generated.asset.as_str())
+        {
+            *resolver_requires_clean_reset = true;
         }
         overlay.insert(generated.asset.clone(), generated.bytes.clone());
         deleted_overlay.remove(&generated.asset);
