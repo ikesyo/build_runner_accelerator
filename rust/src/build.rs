@@ -1009,6 +1009,7 @@ fn expand_dirty_dependents(
                 .map(|spec| spec.outputs.clone())
                 .unwrap_or_default(),
         };
+        let mut ancestors_seen = BTreeSet::<&str>::new();
         for output in &source_outputs {
             let mut dependent_keys: Vec<&str> = dependents_by_asset
                 .get(output.as_str())
@@ -1019,18 +1020,14 @@ fn expand_dirty_dependents(
             // Assets whose resolver dependency closure contains this output
             // are exactly its ancestors in the dep graph plus the output
             // itself. A BFS per queried output replaces per-action closure
-            // expansion over the whole graph.
-            let mut ancestors = BTreeSet::new();
+            // expansion over the whole graph, and the seen set is shared
+            // across outputs because every visited asset contributes the
+            // same actions (dirty_keys deduplicates them anyway).
             let mut stack = vec![output.as_str()];
             while let Some(asset) = stack.pop() {
-                if !ancestors.insert(asset) {
+                if !ancestors_seen.insert(asset) {
                     continue;
                 }
-                if let Some(parents) = parents_by_asset.get(asset) {
-                    stack.extend(parents.iter().copied());
-                }
-            }
-            for asset in ancestors {
                 dependent_keys.extend(
                     actions_by_entrypoint
                         .get(asset)
@@ -1038,6 +1035,9 @@ fn expand_dirty_dependents(
                         .flatten()
                         .copied(),
                 );
+                if let Some(parents) = parents_by_asset.get(asset) {
+                    stack.extend(parents.iter().copied());
+                }
             }
             for dependent_key in dependent_keys {
                 if dirty_keys.insert(dependent_key.to_owned()) {
