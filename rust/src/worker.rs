@@ -76,6 +76,8 @@ pub struct WorkerClient {
     output: BufReader<ChildStdout>,
     next_id: u64,
     metrics: WorkerClientMetrics,
+    /// Resolver dependency edges reported with this client's batch results.
+    dep_graph: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -187,6 +189,7 @@ impl WorkerClient {
                 worker_start_us: started.elapsed().as_micros() as u64,
                 ..WorkerClientMetrics::default()
             },
+            dep_graph: BTreeMap::new(),
         })
     }
 
@@ -422,6 +425,7 @@ impl WorkerClient {
                     if decoded.id != id {
                         return Err(io::Error::other("worker batch response id mismatch"));
                     }
+                    self.dep_graph.extend(decoded.dep_graph);
                     let results = decoded.results;
                     if results.len() != requests.len() {
                         return Err(io::Error::other("worker batch result count mismatch"));
@@ -586,6 +590,7 @@ impl WorkerClient {
                     if decoded.id != id {
                         return Err(io::Error::other("worker batch response id mismatch"));
                     }
+                    self.dep_graph.extend(decoded.dep_graph);
                     let results = decoded.results;
                     if results.len() != requests.len() {
                         return Err(io::Error::other("worker batch result count mismatch"));
@@ -1257,6 +1262,15 @@ impl WorkerPool {
             worker_resets: 0,
             resolver_resets: 0,
         })
+    }
+
+    /// Resolver dependency edges reported by every worker in the pool.
+    pub fn take_dep_graph(&mut self) -> BTreeMap<String, Vec<String>> {
+        let mut dep_graph = BTreeMap::new();
+        for worker in &mut self.workers {
+            dep_graph.append(&mut worker.dep_graph);
+        }
+        dep_graph
     }
 
     pub fn initialize(

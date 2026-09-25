@@ -40,6 +40,8 @@ pub struct BuildResult {
     pub reads: Vec<String>,
     #[serde(default)]
     pub resolver_reads: Vec<String>,
+    #[serde(default)]
+    pub resolver_entrypoints: Vec<String>,
     pub resolver_used: bool,
     #[serde(default)]
     pub glob_reads: Vec<GlobRead>,
@@ -208,6 +210,8 @@ struct BinaryBuildResultMetadata {
     reads: Vec<String>,
     #[serde(default)]
     resolver_reads: Vec<String>,
+    #[serde(default)]
+    resolver_entrypoints: Vec<String>,
     resolver_used: bool,
     #[serde(default)]
     glob_reads: Vec<GlobRead>,
@@ -261,6 +265,7 @@ impl BinaryBuildResultMetadata {
             deleted: self.deleted,
             reads: self.reads,
             resolver_reads: self.resolver_reads,
+            resolver_entrypoints: self.resolver_entrypoints,
             resolver_used: self.resolver_used,
             glob_reads: self.glob_reads,
             diagnostics: self.diagnostics,
@@ -304,11 +309,17 @@ struct BinaryBuildBatchResultMetadata {
     #[serde(default)]
     encoding: Option<String>,
     results: Vec<BinaryBuildResultMetadata>,
+    /// Direct resolver dependency edges the worker's shared loader holds.
+    /// Batch-level because every action's result expands through the same
+    /// graph, like stock's `previousLibraryCycleGraphLoader`.
+    #[serde(default)]
+    dep_graph: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 pub struct DecodedBuildBatchResult {
     pub id: u64,
     pub results: Vec<BuildResult>,
+    pub dep_graph: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 pub fn decode_build_batch_result_frame(frame: BinaryFrame) -> io::Result<DecodedBuildBatchResult> {
@@ -355,6 +366,7 @@ pub fn decode_build_batch_result_frame(frame: BinaryFrame) -> io::Result<Decoded
     Ok(DecodedBuildBatchResult {
         id: metadata.id,
         results,
+        dep_graph: metadata.dep_graph,
     })
 }
 

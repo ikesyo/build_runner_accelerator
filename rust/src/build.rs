@@ -258,6 +258,7 @@ pub(crate) fn run_with_config(
     let mut dirty = Vec::new();
     let mut dirty_roots = Vec::new();
     let dirty_check_started = Instant::now();
+    let dirty_context = state.dirty_context(&current_snapshot);
     for spec in &specs {
         for output in &spec.outputs {
             if let Some(digest) = output_digest(&workspace, &spec.builder, output)? {
@@ -268,7 +269,12 @@ pub(crate) fn run_with_config(
         let key = spec.action_key();
         let needs_build = match state.actions.get(&key) {
             Some(action) if state.is_compatible(&config_digest) => {
-                state.changed_since_previous(action, &current_snapshot, &current_output_digests)
+                state.changed_since_previous_with(
+                    action,
+                    &dirty_context,
+                    &current_snapshot,
+                    &current_output_digests,
+                )
             }
             _ => true,
         };
@@ -404,13 +410,12 @@ pub(crate) fn run_with_config(
         )?;
 
         // Outputs remain in the Rust overlay until the transaction commits.
-        // Source-only changes can refresh the Analyzer graph incrementally;
-        // cache-tree changes require a clean graph rebuild.
         let mut resolver_needs_reset = false;
-        // Incremental Analyzer refreshes describe source-tree files only.
-        // Cache-tree outputs can still participate in generated-library
-        // resolution, so their changes require a clean resolver reset.
-        let mut resolver_requires_clean_reset = false;
+        // Source-tree and cache-tree deltas both ride the incremental reset:
+        // the worker applies them to its Analyzer filesystem and read caches
+        // without dropping the loaded library-cycle graph. A committed Dart
+        // asset whose directive set changed is detected by the worker itself,
+        // which clears the cached graph only then.
         let mut initialized_package = first_package;
         // Overlay mutations since the last resolver reset. A single-worker
         // reset can forward them so the worker refreshes only those assets
@@ -468,7 +473,6 @@ pub(crate) fn run_with_config(
             }
             if !resolver_cache_updated.is_empty() || !resolver_cache_deleted.is_empty() {
                 resolver_needs_reset = true;
-                resolver_requires_clean_reset = true;
             }
             let requests = runnable_phase_specs
                 .iter()
@@ -497,13 +501,11 @@ pub(crate) fn run_with_config(
                 )?;
                 initialized_package = configured_builder.package.clone();
                 resolver_needs_reset = false;
-                resolver_requires_clean_reset = false;
                 resolver_updated.clear();
                 resolver_deleted.clear();
                 resolver_cache_updated.clear();
                 resolver_cache_deleted.clear();
             } else if resolver_needs_reset {
-                let incremental = !resolver_requires_clean_reset;
                 active_pool.reset_resolver(
                     &workspace.root,
                     &overlay,
@@ -511,10 +513,9 @@ pub(crate) fn run_with_config(
                     std::mem::take(&mut resolver_deleted),
                     std::mem::take(&mut resolver_cache_updated),
                     std::mem::take(&mut resolver_cache_deleted),
-                    incremental,
+                    true,
                 )?;
                 resolver_needs_reset = false;
-                resolver_requires_clean_reset = false;
             }
             let results = if !lazy_demand_possible {
                 active_pool.build_parallel(
@@ -536,6 +537,13 @@ pub(crate) fn run_with_config(
                 )?
             };
 
+            // Merge resolver dependency edges the workers reported with
+            // these results so dirty checks can expand entrypoints through
+            // them, like stock's previousLibraryCycleGraphLoader.
+            state
+                .resolver_dep_graph
+                .extend(active_pool.take_dep_graph());
+
             let lazy_results = lazy_state.take_results();
             let lazy_source_output = lazy_results
                 .iter()
@@ -555,8 +563,6 @@ pub(crate) fn run_with_config(
                     &mut resolver_deleted,
                     &mut resolver_cache_updated,
                     &mut resolver_cache_deleted,
-                    &mut resolver_requires_clean_reset,
-                    &specs,
                 )?;
             }
             if lazy_source_output {
@@ -578,8 +584,6 @@ pub(crate) fn run_with_config(
                     &mut resolver_deleted,
                     &mut resolver_cache_updated,
                     &mut resolver_cache_deleted,
-                    &mut resolver_requires_clean_reset,
-                    &specs,
                 )?;
             }
 
@@ -588,7 +592,6 @@ pub(crate) fn run_with_config(
             }
             if !resolver_cache_updated.is_empty() || !resolver_cache_deleted.is_empty() {
                 resolver_needs_reset = true;
-                resolver_requires_clean_reset = true;
             }
 
             if builder.kind == BuilderKind::Normal && builder.build_to == BuildTo::Source {
@@ -682,6 +685,7 @@ fn record_missing_primary_input(
     resolver_cache_updated: &mut BTreeSet<String>,
     resolver_cache_deleted: &mut BTreeSet<String>,
 ) -> io::Result<()> {
+
     let key = spec.action_key();
     let mut outputs_to_delete = state
         .actions
@@ -714,6 +718,7 @@ fn record_missing_primary_input(
             input: spec.input.clone(),
             reads: Vec::new(),
             resolver_reads: Vec::new(),
+            resolver_entrypoints: Vec::new(),
             glob_reads: Vec::new(),
             outputs: Vec::new(),
             output_digests: BTreeMap::new(),
@@ -737,8 +742,6 @@ fn record_build_result(
     resolver_deleted: &mut BTreeSet<String>,
     resolver_cache_updated: &mut BTreeSet<String>,
     resolver_cache_deleted: &mut BTreeSet<String>,
-    resolver_requires_clean_reset: &mut bool,
-    specs: &[BuildSpec],
 ) -> io::Result<()> {
     let builder = spec.builder.as_ref();
     if result.status != "success" && result.status != "not_triggered" {
@@ -822,17 +825,6 @@ fn record_build_result(
                 )));
             }
         }
-        if builder.build_to == BuildTo::Source && generated.asset.ends_with(".dart") {
-            if let Some(consumer) = specs.iter().find(|s| s.input == generated.asset) {
-                // A build action uses this generated library as its primary
-                // input. Put it in a fresh Analyzer graph before resolving it.
-                eprintln!(
-                    "Rust resolver reset: {} is a primary input at phase {}",
-                    generated.asset, consumer.phase
-                );
-                *resolver_requires_clean_reset = true;
-            }
-        }
         overlay.insert(generated.asset.clone(), generated.bytes.clone());
         deleted_overlay.remove(&generated.asset);
         if builder.build_to == BuildTo::Source {
@@ -905,6 +897,7 @@ fn record_build_result(
             input: spec.input.clone(),
             reads: result.reads,
             resolver_reads: result.resolver_reads,
+            resolver_entrypoints: result.resolver_entrypoints,
             glob_reads: result.glob_reads,
             outputs: result
                 .outputs
@@ -952,13 +945,24 @@ fn expand_dirty_dependents(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let mut dependents_by_asset = BTreeMap::<String, Vec<String>>::new();
+    let mut dependents_by_asset = BTreeMap::<&str, Vec<&str>>::new();
+    let mut actions_by_entrypoint = BTreeMap::<&str, Vec<&str>>::new();
     for (action_key, action) in &state.actions {
         for dependency in action.reads.iter().chain(action.resolver_reads.iter()) {
             dependents_by_asset
-                .entry(dependency.clone())
+                .entry(dependency.as_str())
                 .or_default()
-                .push(action_key.clone());
+                .push(action_key.as_str());
+        }
+        // Entrypoint edges stay lazy: expanding every entrypoint's closure
+        // here would duplicate the whole dep graph per action. When a dirty
+        // output is queried below, its ancestors in the dep graph are walked
+        // once and every action entrypointed on them is invalidated.
+        for entrypoint in &action.resolver_entrypoints {
+            actions_by_entrypoint
+                .entry(entrypoint.as_str())
+                .or_default()
+                .push(action_key.as_str());
         }
         // A consumer whose primary input was unavailable has no read or
         // resolver dependency to record. Preserve that edge so a producer
@@ -967,9 +971,18 @@ fn expand_dirty_dependents(
         // handled by GraphState::changed_since_previous).
         if action.status == "skipped_missing_input" {
             dependents_by_asset
-                .entry(action.input.clone())
+                .entry(action.input.as_str())
                 .or_default()
-                .push(action_key.clone());
+                .push(action_key.as_str());
+        }
+    }
+    let mut parents_by_asset = BTreeMap::<&str, Vec<&str>>::new();
+    for (asset, deps) in &state.resolver_dep_graph {
+        for dep in deps {
+            parents_by_asset
+                .entry(dep.as_str())
+                .or_default()
+                .push(asset.as_str());
         }
     }
 
@@ -996,13 +1009,38 @@ fn expand_dirty_dependents(
                 .map(|spec| spec.outputs.clone())
                 .unwrap_or_default(),
         };
-        for output in source_outputs {
-            for dependent_key in dependents_by_asset
-                .get(&output)
+        for output in &source_outputs {
+            let mut dependent_keys: Vec<&str> = dependents_by_asset
+                .get(output.as_str())
                 .into_iter()
                 .flatten()
-            {
-                if dirty_keys.insert(dependent_key.clone()) {
+                .copied()
+                .collect();
+            // Assets whose resolver dependency closure contains this output
+            // are exactly its ancestors in the dep graph plus the output
+            // itself. A BFS per queried output replaces per-action closure
+            // expansion over the whole graph.
+            let mut ancestors = BTreeSet::new();
+            let mut stack = vec![output.as_str()];
+            while let Some(asset) = stack.pop() {
+                if !ancestors.insert(asset) {
+                    continue;
+                }
+                if let Some(parents) = parents_by_asset.get(asset) {
+                    stack.extend(parents.iter().copied());
+                }
+            }
+            for asset in ancestors {
+                dependent_keys.extend(
+                    actions_by_entrypoint
+                        .get(asset)
+                        .into_iter()
+                        .flatten()
+                        .copied(),
+                );
+            }
+            for dependent_key in dependent_keys {
+                if dirty_keys.insert(dependent_key.to_owned()) {
                     if let Some(spec) = specs_by_key.get(dependent_key) {
                         dirty.push(spec.clone());
                     }
