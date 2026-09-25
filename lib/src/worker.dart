@@ -171,6 +171,10 @@ class _WorkerRuntime {
   /// not by content.
   final Map<AssetId, Object> sentDepGraphValues = <AssetId, Object>{};
 
+  /// Resolver entrypoints recorded by every `_runBuild` of the current
+  /// batch, including nested builds whose results do not join `results`.
+  final Set<AssetId> batchResolverEntrypoints = <AssetId>{};
+
   /// Directive lines (`import`/`export`/`part`/`part of`/`library`) of Dart
   /// assets committed to the overlay while this worker is alive. The
   /// library-cycle loader caches parsed directives per asset, so a committed
@@ -341,6 +345,7 @@ class _WorkerRuntime {
     producedOutputs.clear();
     _committedDartDirectives.clear();
     sentDepGraphValues.clear();
+    batchResolverEntrypoints.clear();
     builders.clear();
     postProcessBuilders.clear();
   }
@@ -580,6 +585,7 @@ Future<void> _handleBuildBatch(
 ) async {
   final results = <JsonMap>[];
   final blockedAssets = message.blockedAssets.map(AssetId.parse).toSet();
+  runtime.batchResolverEntrypoints.clear();
   for (final request in message.requests) {
     results.add(
       await _runBuild(
@@ -600,12 +606,7 @@ Future<void> _handleBuildBatch(
     'results': results,
     'dep_graph': _resolverDepGraphJson(
       runtime.resolver.phasedAssetDeps(),
-      results
-          .expand(
-            (result) => (result['resolver_entrypoints'] as List).cast<String>(),
-          )
-          .map(AssetId.parse)
-          .toSet(),
+      runtime.batchResolverEntrypoints,
       runtime.sentDepGraphValues,
     ),
   });
@@ -797,6 +798,10 @@ Future<JsonMap> _runBuild(
         ...step.inputTracker.resolverEntrypoints.map((id) => id.toString()),
       if (triggered) ...runtime.io.observedReads.map((id) => id.toString()),
     }.toList()..sort();
+    final resolverEntrypoints = <AssetId>{
+      if (triggered && step != null) ...step.inputTracker.resolverEntrypoints,
+    };
+    runtime.batchResolverEntrypoints.addAll(resolverEntrypoints);
     final globReads = runtime.io.observedGlobs.toList()
       ..sort((left, right) {
         final packageOrder = left.package.compareTo(right.package);
@@ -821,8 +826,7 @@ Future<JsonMap> _runBuild(
       'reads': reads,
       'resolver_reads': resolverReads,
       'resolver_entrypoints': <String>[
-        if (triggered && step != null)
-          for (final id in step.inputTracker.resolverEntrypoints) id.toString(),
+        for (final id in resolverEntrypoints) id.toString(),
       ]..sort(),
       'resolver_used': resolverUsed,
       'glob_reads': <Map<String, String>>[
