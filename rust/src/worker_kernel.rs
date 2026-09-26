@@ -64,15 +64,21 @@ pub(crate) fn resolve_worker_artifact(
                 let aot = prepare_worker_aot(root, dart_binary, worker_executable)?;
                 return Ok(WorkerArtifact::Aot(aot));
             }
-            AotRequest::Synchronous => match prepare_worker_aot(root, dart_binary, worker_executable)
-            {
-                Ok(aot) => return Ok(WorkerArtifact::Aot(aot)),
-                Err(error) => {
-                    eprintln!(
-                        "Rust worker AOT cache unavailable; using kernel/script ({error})"
-                    );
+            AotRequest::Synchronous => {
+                // An explicit kernel artifact wins over the automatic
+                // synchronous compile. `force` remains strict above.
+                if let Some(kernel) = configured_worker_kernel()? {
+                    return Ok(WorkerArtifact::Kernel(kernel));
                 }
-            },
+                match prepare_worker_aot(root, dart_binary, worker_executable) {
+                    Ok(aot) => return Ok(WorkerArtifact::Aot(aot)),
+                    Err(error) => {
+                        eprintln!(
+                            "Rust worker AOT cache unavailable; using kernel/script ({error})"
+                        );
+                    }
+                }
+            }
             AotRequest::Background => {
                 // An explicit kernel artifact wins over the automatic
                 // background selection and its cached-AOT result.
