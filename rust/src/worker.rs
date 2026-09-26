@@ -1502,59 +1502,81 @@ impl WorkerPool {
             .map(|(_, _, _, phase_count, _)| *phase_count)
             .unwrap_or(1);
 
-        if let Some(key) = homogeneous_resolver_usage_key(requests) {
-            match self.resolver_usage.get(&key).copied() {
-                Some(true) => {
-                    self.initialize_pending_workers(&root, &package, phase_count, false)?;
-                    let results = self.workers[0].build_batch(
-                        workspace,
-                        requests,
-                        overlay,
-                        deleted_overlay,
-                        visibility,
-                    )?;
-                    self.record_resolver_usage(requests, &results);
-                    return Ok(results);
-                }
-                Some(false) => {}
-                None if requests.len() > 1 && self.max_jobs > 1 => {
-                    // Keep an unclassified homogeneous batch on one worker:
-                    // Resolver use may depend on the input, so the first
-                    // action cannot safely classify the remaining actions.
-                    self.initialize_pending_workers(&root, &package, phase_count, false)?;
-                    let first_results = self.workers[0].build_batch(
-                        workspace,
-                        &requests[..1],
-                        overlay,
-                        deleted_overlay,
-                        visibility,
-                    )?;
-                    self.record_resolver_usage(&requests[..1], &first_results);
+        // Serializing resolver-backed batches on one resident worker only pays
+        // off while each worker's analysis state is process-local. With the
+        // shared on-disk byte store, an independent AnalysisDriver reuses the
+        // same cache, so homogeneous batches fan out like any other.
+        if !shared_analysis_cache_enabled() {
+            if let Some(key) = homogeneous_resolver_usage_key(requests) {
+                match self.resolver_usage.get(&key).copied() {
+                    Some(true) => {
+                        self.initialize_pending_workers(&root, &package, phase_count, false)?;
+                        let results = self.workers[0].build_batch(
+                            workspace,
+                            requests,
+                            overlay,
+                            deleted_overlay,
+                            visibility,
+                        )?;
+                        self.record_resolver_usage(requests, &results);
+                        return Ok(results);
+                    }
+                    Some(false) => {}
+                    None if requests.len() > 1 && self.max_jobs > 1 => {
+                        // Keep an unclassified homogeneous batch on one worker:
+                        // Resolver use may depend on the input, so the first
+                        // action cannot safely classify the remaining actions.
+                        self.initialize_pending_workers(&root, &package, phase_count, false)?;
+                        let first_results = self.workers[0].build_batch(
+                            workspace,
+                            &requests[..1],
+                            overlay,
+                            deleted_overlay,
+                            visibility,
+                        )?;
+                        self.record_resolver_usage(&requests[..1], &first_results);
 
-                    let mut results = first_results;
-                    let remaining_results = self.workers[0].build_batch(
-                        workspace,
-                        &requests[1..],
-                        overlay,
-                        deleted_overlay,
-                        visibility,
-                    )?;
-                    self.record_resolver_usage(&requests[1..], &remaining_results);
-                    results.extend(remaining_results);
-                    return Ok(results);
+                        let mut results = first_results;
+                        let remaining_results = self.workers[0].build_batch(
+                            workspace,
+                            &requests[1..],
+                            overlay,
+                            deleted_overlay,
+                            visibility,
+                        )?;
+                        self.record_resolver_usage(&requests[1..], &remaining_results);
+                        results.extend(remaining_results);
+                        return Ok(results);
+                    }
+                    None => {}
                 }
-                None => {}
             }
         }
 
         self.prepare_for_requests(&root, requests.len())?;
         self.initialize_pending_workers(&root, &package, phase_count, false)?;
+        // Resolver-backed batches share the on-disk byte store, so extra
+        // workers mostly duplicate each other's analysis warm-up instead of
+        // splitting useful work. Roughly half the pool is the measured sweet
+        // spot on the reference workspace; non-resolver batches keep the full
+        // pool. The pool itself is not shrunk: worker processes stay resident
+        // so a smaller limit does not discard their analysis state.
+        let worker_limit = if shared_analysis_cache_enabled()
+            && homogeneous_resolver_usage_key(requests)
+                .map(|key| self.resolver_usage.get(&key).copied().unwrap_or(true))
+                .unwrap_or(false)
+        {
+            self.max_jobs.div_ceil(2)
+        } else {
+            usize::MAX
+        };
         let results = self.build_parallel_on_current_workers(
             workspace,
             requests,
             overlay,
             deleted_overlay,
             visibility,
+            worker_limit,
         )?;
         self.record_resolver_usage(requests, &results);
         Ok(results)
@@ -1567,11 +1589,12 @@ impl WorkerPool {
         overlay: &BTreeMap<String, Vec<u8>>,
         deleted_overlay: &BTreeSet<String>,
         visibility: &AssetVisibility,
+        worker_limit: usize,
     ) -> io::Result<Vec<BuildResult>> {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
-        if self.workers.len() == 1 {
+        if self.workers.len() == 1 || worker_limit == 1 {
             return self.workers[0].build_batch(
                 workspace,
                 requests,
@@ -1581,7 +1604,7 @@ impl WorkerPool {
             );
         }
 
-        let worker_count = self.workers.len().min(requests.len());
+        let worker_count = self.workers.len().min(requests.len()).min(worker_limit);
         let ranges = balanced_request_ranges(requests.len(), worker_count);
         let batches = ranges
             .iter()
@@ -1723,14 +1746,47 @@ impl WorkerPool {
         let deleted = json!(deleted_sources);
         let updated_cache = json!(updated_cache);
         let deleted_cache = json!(deleted_cache);
-        for worker in self.workers.iter_mut().take(count) {
-            worker.reset_resolver(
+        if count == 1 {
+            self.workers[0].reset_resolver(
                 &updated,
                 &deleted,
                 &updated_cache,
                 &deleted_cache,
                 incremental,
             )?;
+        } else {
+            // Workers reset their resolver independently; waiting on them one
+            // at a time would make every phase boundary cost count × reset.
+            thread::scope(|scope| {
+                let handles = self
+                    .workers
+                    .iter_mut()
+                    .take(count)
+                    .map(|worker| {
+                        let updated = &updated;
+                        let deleted = &deleted;
+                        let updated_cache = &updated_cache;
+                        let deleted_cache = &deleted_cache;
+                        scope.spawn(move || {
+                            worker.reset_resolver(
+                                updated,
+                                deleted,
+                                updated_cache,
+                                deleted_cache,
+                                incremental,
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                handles
+                    .into_iter()
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .map_err(|_| io::Error::other("worker thread panicked"))?
+                    })
+                    .collect::<io::Result<Vec<_>>>()
+            })?;
         }
         self.resolver_resets += count as u64;
         Ok(())
@@ -1762,6 +1818,16 @@ fn remember_resolver_usage(
         .entry(key)
         .and_modify(|previous| *previous |= used)
         .or_insert(used);
+}
+
+/// Whether workers share the on-disk analyzer byte store. The Dart worker
+/// reads the same variable for its driver setup; keep the disabled values in
+/// sync with `lib/src/worker_resolvers.dart`.
+fn shared_analysis_cache_enabled() -> bool {
+    match std::env::var("BUILD_RUNNER_ACCELERATOR_BYTE_STORE") {
+        Ok(value) => !matches!(value.to_lowercase().as_str(), "0" | "false" | "off"),
+        Err(_) => true,
+    }
 }
 
 fn target_worker_count(max_jobs: usize, request_count: usize) -> usize {

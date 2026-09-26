@@ -3,14 +3,25 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:analyzer/dart/analysis/features.dart';
+import 'package:analyzer/file_system/file_system.dart' show ResourceProvider;
 // ignore: implementation_imports
 import 'package:analyzer/src/clients/build_resolvers/build_resolvers.dart';
+// ignore: implementation_imports
+import 'package:analyzer/src/dart/analysis/byte_store.dart';
+// ignore: implementation_imports
+import 'package:analyzer/src/dart/analysis/file_byte_store.dart';
 import 'package:build/build.dart';
 import 'package:build/experiments.dart';
-import 'package:package_config/package_config.dart';
+import 'package:crypto/crypto.dart';
+import 'package:package_config/package_config.dart' hide Package;
+import 'package:path/path.dart' as p;
 import 'package:pool/pool.dart';
+import 'package:pub_semver/pub_semver.dart';
 
 // ignore: implementation_imports
 import 'package:build_runner/src/bootstrap/build_process_state.dart';
@@ -26,6 +37,8 @@ import 'package:build_runner/src/build/builder_filesystem.dart';
 import 'package:build_runner/src/build/library_cycle_graph/phased_asset_deps.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/analysis_driver.dart';
+// ignore: implementation_imports
+import 'package:build_runner/src/build/resolver/analysis_driver_filesystem.dart';
 import 'worker_analysis_driver_model.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/build_resolver.dart';
@@ -89,15 +102,19 @@ class WorkerResolversImpl implements Resolvers {
       final loadedConfig = _packageConfig ??= await loadPackageConfigUri(
         Uri.parse(buildProcessState.packageConfigUri),
       );
-      final driver = analysisDriver(
+      final sdkSummaryBytes = await File(
+        await defaultSdkSummaryGenerator(),
+      ).readAsBytes();
+      final driver = _analysisDriver(
         _analysisDriverModel,
         AnalysisOptionsImpl()
           // ignore: deprecated_member_use
           ..contextFeatures = _featureSet(
             enableExperiments: enabledExperiments,
           ),
-        await defaultSdkSummaryGenerator(),
+        sdkSummaryBytes,
         loadedConfig,
+        _byteStore(sdkSummaryBytes, loadedConfig),
       );
 
       _buildResolver = BuildResolver(driver, _driverPool, _analysisDriverModel);
@@ -146,6 +163,115 @@ class WorkerResolversImpl implements Resolvers {
   void reset({bool clearGraph = true}) {
     _analysisDriverModel.endBuildAndUnlock(clearGraph: clearGraph);
   }
+}
+
+/// Builds an [AnalysisDriverForPackageBuild] backed by a summary SDK and a
+/// shared on-disk byte store.
+///
+/// Forked from build_runner's `analysisDriver` to pass [byteStore]; it must
+/// stay in sync with `package:build_runner/src/build/resolver/analysis_driver.dart`.
+AnalysisDriverForPackageBuild _analysisDriver(
+  WorkerAnalysisDriverModel analysisDriverModel,
+  AnalysisOptions analysisOptions,
+  Uint8List sdkSummaryBytes,
+  PackageConfig packageConfig,
+  ByteStore byteStore,
+) {
+  return createAnalysisDriver(
+    analysisOptions: analysisOptions,
+    packages: _buildAnalyzerPackages(
+      packageConfig,
+      analysisDriverModel.filesystem,
+    ),
+    resourceProvider: analysisDriverModel.filesystem,
+    fileContentCache: analysisDriverModel.filesystem,
+    sdkSummaryBytes: sdkSummaryBytes,
+    uriResolvers: [analysisDriverModel.filesystem],
+    byteStore: byteStore,
+  );
+}
+
+/// Mirrors build_runner's private `_buildAnalyzerPackages`; see
+/// `package:build_runner/src/build/resolver/analysis_driver.dart`.
+Packages _buildAnalyzerPackages(
+  PackageConfig packageConfig,
+  ResourceProvider resourceProvider,
+) => Packages({
+  for (final package in packageConfig.packages)
+    package.name: Package(
+      name: package.name,
+      languageVersion: package.languageVersion == null
+          ? sdkLanguageVersion
+          : Version(
+              package.languageVersion!.major,
+              package.languageVersion!.minor,
+              0,
+            ),
+      // Analyzer does not see the original file paths at all, we need to
+      // make them match the paths that we give it, so we use the
+      // `assetPath` function to create those.
+      rootFolder: resourceProvider.getFolder(
+        p.url.normalize(
+          AnalysisDriverFilesystem.assetPathFor(
+            package: package.name,
+            path: '',
+          ),
+        ),
+      ),
+      libFolder: resourceProvider.getFolder(
+        p.url.normalize(
+          AnalysisDriverFilesystem.assetPathFor(
+            package: package.name,
+            path: 'lib',
+          ),
+        ),
+      ),
+    ),
+});
+
+/// Upper bound of the in-memory layer in front of the on-disk store.
+const _memoryCacheBytes = 128 * 1024 * 1024;
+
+/// Environment variable that disables the shared on-disk byte store when set
+/// to `0`, `false`, or `off`.
+const _byteStoreEnv = 'BUILD_RUNNER_ACCELERATOR_BYTE_STORE';
+
+/// A [ByteStore] shared between workers and across builds.
+///
+/// Analyzer byte-store keys are content- and version-addressed (salt,
+/// feature set, language version, file content), so entries produced by other
+/// workers or previous builds are reusable and stale keys are simply ignored.
+/// Because the key does not include SDK or analyzer identity, the cache
+/// directory is namespaced by a fingerprint of the SDK summary, the resolved
+/// analyzer package, and the enabled experiments so that upgrading any of
+/// them cannot reuse element models built against a different toolchain.
+ByteStore _byteStore(Uint8List sdkSummaryBytes, PackageConfig packageConfig) {
+  final disabled = switch ((Platform.environment[_byteStoreEnv] ?? '')
+      .toLowerCase()) {
+    '0' || 'false' || 'off' => true,
+    _ => false,
+  };
+  if (disabled) return MemoryByteStore();
+
+  final fingerprint = sha256
+      .convert([
+        ...sdkSummaryBytes,
+        ...utf8.encode(enabledExperiments.join(' ')),
+        ...utf8.encode(packageConfig['analyzer']?.root.toString() ?? ''),
+      ])
+      .toString()
+      .substring(0, 16);
+  final dir = p.join(
+    Directory.current.path,
+    '.dart_tool',
+    'build_runner_accelerator',
+    'byte_store',
+    fingerprint,
+  );
+  // FileByteStore does not create the directory itself; without it the async
+  // temp-file writes fail silently.
+  Directory(dir).createSync(recursive: true);
+  return MemoryCachingByteStore(FileByteStore(dir), _memoryCacheBytes);
 }
 
 /// Checks that the current analyzer version supports the current language
