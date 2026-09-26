@@ -290,6 +290,18 @@ fn prepare_aot_context(
     fs::create_dir_all(&aot_bin)?;
     link_sdk_entry(&sdk_root, &aot_sdk_root, "lib")?;
     link_sdk_entry(&sdk_root, &aot_sdk_root, "version")?;
+    // Flutter keeps dart:ui outside the Dart SDK root at
+    // `<cache>/pkg/sky_engine`. Mirror it next to `aot-sdk` so lookups
+    // relative to `Platform.resolvedExecutable` (e.g. build_runner's
+    // `isFlutter` detection when generating the SDK summary) still work
+    // inside the self-contained worker executable.
+    if let (Some(sdk_parent), Some(aot_parent)) =
+        (sdk_root.parent(), aot_sdk_root.parent())
+    {
+        if sdk_parent.join("pkg").is_dir() {
+            link_sdk_entry(sdk_parent, aot_parent, "pkg")?;
+        }
+    }
     let aot_path = aot_bin.join(aot_file_name(&worker_path));
     let depfile_path = PathBuf::from(format!("{}.d", aot_path.display()));
     let sdk_metadata_path = PathBuf::from(format!("{}.sdk", aot_path.display()));
