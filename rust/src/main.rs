@@ -30,8 +30,14 @@ fn main() -> io::Result<()> {
             println!("{}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        "build" => build::run(&options, None),
-        "watch" => watch::run(&options),
+        "build" => {
+            worker_kernel::apply_default_worker_aot_policy(&options.command);
+            build::run(&options, None)
+        }
+        "watch" => {
+            worker_kernel::apply_default_worker_aot_policy(&options.command);
+            watch::run(&options)
+        }
         "aot-cache-key" => frontend::run_aot_cache_key(&options),
         "aot-prewarm" => frontend::run_aot_prewarm(&options),
         command => {

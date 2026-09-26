@@ -34,14 +34,18 @@ Use the following policy:
 - Scope read, resolver, glob, and SDK-summary caches to a workspace/build or
   worker lifetime whose invalidation rules are explicit. Do not share cache
   state across incompatible SDK, package, or workspace identities.
-- Treat worker AOT/kernel caches as derived artifacts. The launcher defaults
-  to compiling the workspace-local AOT worker in the background so the first
-  build does not wait on the one-time compile, because dirty-build startup is
-  a primary release performance target. This is worker AOT, not AOT
+- Treat worker AOT/kernel caches as derived artifacts. The launcher default
+  depends on the command: `watch`/`serve` compile the workspace-local AOT
+  worker in the background so the session does not wait on the one-time
+  compile, while one-shot commands like `build` compile synchronously
+  because the script worker's slower execution outweighs the deferred start
+  on large cold builds. This is worker AOT, not AOT
   compilation of the project-facing launcher. A cache miss must preserve
   correctness and provide a usable kernel/script-worker path;
-  `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1` requests a synchronous compile and
-  `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=0` remains an explicit opt-out. The
+  `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1` requests a synchronous compile,
+  `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background` requests the background
+  compile, and `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=0` remains an explicit
+  opt-out. The
   launcher also accepts stock-compatible `--force-aot` and `--force-jit`
   flags, with explicit flags taking precedence over the environment variable.
 - Keep release artifact verification off the steady-state launcher startup

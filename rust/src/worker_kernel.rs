@@ -8,6 +8,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
@@ -44,9 +45,10 @@ struct AotMetadata {
 
 /// Select the worker launch artifact.
 ///
-/// The launcher requests a background AOT worker by default. The request can
-/// be disabled, made synchronous, or made strict through the environment.
-/// An explicit AOT path takes precedence over every other mode.
+/// The launcher requests a synchronous AOT worker for one-shot commands and
+/// a background compile for `watch` by default. The request can be disabled,
+/// made synchronous, or made strict through the environment. An explicit AOT
+/// path takes precedence over every other mode.
 pub(crate) fn resolve_worker_artifact(
     root: &Path,
     dart_binary: &str,
@@ -205,9 +207,26 @@ fn configured_worker_aot() -> io::Result<Option<PathBuf>> {
     Ok(Some(fs::canonicalize(path)?))
 }
 
+/// Command-dependent default worker AOT policy used when the environment
+/// does not override it: `watch` favors startup latency (background
+/// compile), while one-shot commands favor total wall-clock time
+/// (synchronous compile).
+static DEFAULT_WORKER_AOT_POLICY: OnceLock<AotRequest> = OnceLock::new();
+
+pub(crate) fn apply_default_worker_aot_policy(command: &str) {
+    let _ = DEFAULT_WORKER_AOT_POLICY.set(if command == "watch" {
+        AotRequest::Background
+    } else {
+        AotRequest::Synchronous
+    });
+}
+
 fn aot_request() -> AotRequest {
     let Ok(value) = env::var("BUILD_RUNNER_ACCELERATOR_WORKER_AOT") else {
-        return AotRequest::Background;
+        return DEFAULT_WORKER_AOT_POLICY
+            .get()
+            .copied()
+            .unwrap_or(AotRequest::Synchronous);
     };
     match value.to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "auto" => AotRequest::Synchronous,

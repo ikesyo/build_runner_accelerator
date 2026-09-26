@@ -67,16 +67,20 @@ Future<int> runLauncher(List<String> arguments) async {
     );
   }
   final environment = Map<String, String>.from(Platform.environment);
-  // AOT startup is substantially faster for dirty builds. Compile it in the
-  // background so the first build does not wait on the one-time
-  // workspace-local compilation; keep the setting overridable so users can
-  // opt back into the synchronous or kernel/script worker path.
+  // AOT startup is substantially faster for dirty builds. Long-running
+  // commands start the worker immediately and compile it in the background;
+  // one-shot commands compile synchronously so the whole build runs on the
+  // AOT worker, which is faster end-to-end for large builds. The setting
+  // stays overridable for the kernel/script worker path.
   if (options.forceAot) {
     environment[_workerAotEnvironment] = 'force';
   } else if (options.forceJit) {
     environment[_workerAotEnvironment] = '0';
   } else {
-    environment.putIfAbsent(_workerAotEnvironment, () => 'background');
+    environment.putIfAbsent(
+      _workerAotEnvironment,
+      () => _defaultWorkerAotPolicy(options.command),
+    );
   }
   return processRunner.run(
     binary,
@@ -85,6 +89,13 @@ Future<int> runLauncher(List<String> arguments) async {
     environment: environment,
   );
 }
+
+/// `watch`/`serve` are long-running commands where startup latency matters,
+/// so the worker starts on the kernel/script path while the AOT binary is
+/// compiled in the background. Every other command is a one-shot where total
+/// wall-clock time dominates, so the AOT compile runs before the build.
+String _defaultWorkerAotPolicy(String command) =>
+    const {'watch', 'serve'}.contains(command) ? 'background' : '1';
 
 const launcherHelp =
     '''Usage: dart run build_runner_accelerator <build|watch> [options]
@@ -105,7 +116,9 @@ Launcher options:
   BUILD_RUNNER_ACCELERATOR_BIN   Use a preinstalled frontend binary
   BUILD_RUNNER_ACCELERATOR_CACHE Override the frontend cache directory
   BUILD_RUNNER_ACCELERATOR_WORKER_AOT
-                               Override worker AOT policy (default: background)
+                               Override worker AOT policy (default:
+                               synchronous for build, background for
+                               watch/serve)
   BUILD_RUNNER_ACCELERATOR_RELEASE_BASE_URL  Use a signed HTTPS mirror
   --version              Print the package version
   -h, --help             Show this help
