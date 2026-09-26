@@ -11,7 +11,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub(crate) fn run(options: &Options) -> io::Result<()> {
     let mut pool = None;
@@ -110,10 +110,31 @@ fn wait_for_relevant_event(
         }
 
         // Coalesce the burst from one save/atomic rename into one build.
-        while receiver
-            .recv_timeout(Duration::from_millis(debounce_ms))
-            .is_ok()
-        {}
+        // Only relevant events extend the quiet window, and an absolute
+        // deadline caps the total wait, so sustained unrelated writes (for
+        // example a background AOT compile under .dart_tool) cannot starve
+        // the rebuild.
+        let debounce = Duration::from_millis(debounce_ms);
+        let deadline = Instant::now() + debounce.saturating_mul(8).max(Duration::from_secs(2));
+        let mut quiet_until = Instant::now() + debounce;
+        loop {
+            let now = Instant::now();
+            let remaining = deadline
+                .saturating_duration_since(now)
+                .min(quiet_until.saturating_duration_since(now));
+            if remaining.is_zero() {
+                break;
+            }
+            match receiver.recv_timeout(remaining) {
+                Ok(Ok(event)) => {
+                    if is_relevant_event(workspace, &event, source_post_process_outputs) {
+                        quiet_until = Instant::now() + debounce;
+                    }
+                }
+                Ok(Err(_)) => {}
+                Err(_) => break,
+            }
+        }
         return Ok(true);
     }
 }
