@@ -244,6 +244,36 @@ run_unmeasured() {
     >"$package_dir/$label.stdout" 2>"$package_dir/$label.stderr"
 }
 
+prewarm_aot_worker() {
+  local package_dir=$1
+  local label=$2
+  local log_prefix="$results_dir/$label.aot-prewarm"
+  local aot_path="$package_dir/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker"
+
+  if ! (
+    cd "$package_dir"
+    DART_BIN="$dart_bin" \
+      PUB_CACHE="$pub_cache" \
+      BUILD_RUNNER_ACCELERATOR_BIN="$accelerator_bin" \
+      "$script_dir/aot_prewarm.sh" "$package_dir"
+  ) >"$log_prefix.stdout" 2>"$log_prefix.stderr"; then
+    cat "$log_prefix.stdout" >&2 || true
+    cat "$log_prefix.stderr" >&2 || true
+    fail "AOT worker prewarm failed for $label"
+  fi
+
+  if [[ ! -f "$aot_path" && -f "$aot_path.exe" ]]; then
+    aot_path="$aot_path.exe"
+  fi
+  [[ -x "$aot_path" ]] || fail "AOT prewarm did not leave an executable: $aot_path"
+  grep -Fq 'AOT prewarm complete' "$log_prefix.stdout" || \
+    fail "AOT prewarm did not confirm completion for $label"
+
+  aot_path=$(cd -- "$(dirname -- "$aot_path")" && pwd)/$(basename -- "$aot_path")
+  printf 'current-baseline: AOT-prewarmed worker for %s: %s\n' "$label" "$aot_path" >&2
+  printf '%s\n' "$aot_path"
+}
+
 set_marker() {
   local package_dir=$1
   local marker=$2
@@ -260,6 +290,16 @@ measure_case() {
   local repeat_index=$4
   local package_lock_sha=$5
   local fixture_sha=$6
+  shift 6
+  local -a case_command=("$@")
+  local worker_aot_state=stock-default
+  if [[ "$lane" == accelerator ]]; then
+    if [[ "$case_name" == clean ]]; then
+      worker_aot_state=background-cold
+    else
+      worker_aot_state=prewarmed-explicit-path
+    fi
+  fi
   local output_path="$results_dir/${mode}.${case_name}.r${repeat_index}"
   local metric_path="$output_path.json"
   local trace_path="$output_path.strace"
@@ -290,8 +330,9 @@ measure_case() {
     --metadata pubspec_lock_sha256="$package_lock_sha" \
     --metadata fixture_sha256="$fixture_sha" \
     --metadata input_count=10 \
+    --metadata worker_aot_state="$worker_aot_state" \
     "${trace_args[@]}" \
-    -- "${BUILD_COMMAND[@]}"
+    -- "${case_command[@]}"
 
   local output_count
   local output_sha
@@ -311,6 +352,11 @@ with open(metric_path, "w", encoding="utf-8") as stream:
     json.dump(record, stream, ensure_ascii=False, sort_keys=True)
     stream.write("\n")
 PY
+  if [[ "$worker_aot_state" == prewarmed-explicit-path ]] &&
+    rg -q -e 'using Dart script' -e 'using kernel/script' -e 'Generated:.*\.aot' \
+      "$output_path.stdout" "$output_path.stderr"; then
+    fail "measured build did not use the prewarmed AOT worker for $case_name/r$repeat_index"
+  fi
   cat "$metric_path" >>"$results_jsonl"
 }
 
@@ -325,12 +371,22 @@ for mode in "${modes[@]}"; do
       package_dir="$work_root/$mode/r$repeat_index/$case_name"
       prepare_package "$package_dir" "current_json_${mode//-/_}_${repeat_index}_${case_name//-/_}"
       package_lock_sha=$(sha256sum "$package_dir/pubspec.lock" | awk '{print $1}')
+      case_build_command=("${BUILD_COMMAND[@]}")
+
+      if [[ "$lane" == accelerator && "$case_name" != clean ]]; then
+        prewarmed_aot_path=$(prewarm_aot_worker "$package_dir" "${mode}.${case_name}.r${repeat_index}")
+        case_build_command=(
+          env
+          "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH=$prewarmed_aot_path"
+          "${BUILD_COMMAND[@]:1}"
+        )
+      fi
 
       case "$case_name" in
         clean)
           ;;
         no-op|one-file|broad)
-          run_unmeasured "$package_dir" warmup "${BUILD_COMMAND[@]}"
+          run_unmeasured "$package_dir" warmup "${case_build_command[@]}"
           ;;
       esac
       case "$case_name" in
@@ -339,7 +395,7 @@ for mode in "${modes[@]}"; do
       esac
 
       measure_case "$package_dir" "$mode" "$case_name" "$repeat_index" \
-        "$package_lock_sha" "$fixture_sha"
+        "$package_lock_sha" "$fixture_sha" "${case_build_command[@]}"
     done
   done
 done
