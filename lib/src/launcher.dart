@@ -67,15 +67,16 @@ Future<int> runLauncher(List<String> arguments) async {
     );
   }
   final environment = Map<String, String>.from(Platform.environment);
-  // AOT startup is substantially faster for dirty builds. Keep the setting
-  // overridable so users can opt back into the kernel/script worker path when
-  // the one-time workspace-local AOT compilation is undesirable.
+  // AOT startup is substantially faster for dirty builds. Compile it in the
+  // background so the first build does not wait on the one-time
+  // workspace-local compilation; keep the setting overridable so users can
+  // opt back into the synchronous or kernel/script worker path.
   if (options.forceAot) {
     environment[_workerAotEnvironment] = 'force';
   } else if (options.forceJit) {
     environment[_workerAotEnvironment] = '0';
   } else {
-    environment.putIfAbsent(_workerAotEnvironment, () => '1');
+    environment.putIfAbsent(_workerAotEnvironment, () => 'background');
   }
   return processRunner.run(
     binary,
@@ -104,7 +105,7 @@ Launcher options:
   BUILD_RUNNER_ACCELERATOR_BIN   Use a preinstalled frontend binary
   BUILD_RUNNER_ACCELERATOR_CACHE Override the frontend cache directory
   BUILD_RUNNER_ACCELERATOR_WORKER_AOT
-                               Override worker AOT policy (default: 1)
+                               Override worker AOT policy (default: background)
   BUILD_RUNNER_ACCELERATOR_RELEASE_BASE_URL  Use a signed HTTPS mirror
   --version              Print the package version
   -h, --help             Show this help

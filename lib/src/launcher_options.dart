@@ -21,7 +21,7 @@ class LauncherOptions {
     var commandSeen = false;
     var mode = 'auto';
     var root = Directory.current.absolute.path;
-    var dartBinary = Platform.resolvedExecutable;
+    var dartBinary = _defaultDartBinary();
     var forceAot = false;
     var forceJit = false;
     var showHelp = false;
@@ -155,4 +155,45 @@ class LauncherOptions {
   final bool forceJit;
   final bool showHelp;
   final bool showVersion;
+}
+
+/// The Dart SDK executable to default to.
+///
+/// `Platform.resolvedExecutable` is the running `dart` only while the
+/// launcher runs under the VM; an AOT-compiled launcher resolves to itself.
+/// Only accept a path that looks like a real Dart SDK binary
+/// (`<sdk>/bin/dart` beside `<sdk>/lib`), then try `DART`/`FLUTTER` and
+/// `PATH` lookups before giving up.
+String _defaultDartBinary() {
+  final resolved = Platform.resolvedExecutable;
+  if (_isDartSdkExecutable(resolved)) return resolved;
+
+  final candidates = <String>[
+    if (Platform.environment['DART'] case final env?) env,
+    if (_which('dart') case final onPath?) onPath,
+    if (_which('flutter') case final flutter?)
+      '${FileSystemEntity.parentOf(flutter)}/cache/dart-sdk/bin/dart',
+  ];
+  for (final candidate in candidates) {
+    if (_isDartSdkExecutable(candidate)) return candidate;
+  }
+  return resolved;
+}
+
+bool _isDartSdkExecutable(String path) {
+  final name = path.replaceAll('\\', '/').split('/').last.toLowerCase();
+  if (name != 'dart' && name != 'dart.exe') return false;
+  return Directory('${FileSystemEntity.parentOf(path)}/../lib').existsSync();
+}
+
+String? _which(String executable) {
+  final result = Process.runSync(Platform.isWindows ? 'where' : 'which', [
+    executable,
+  ]);
+  if (result.exitCode != 0) return null;
+  final first = (result.stdout as String)
+      .trim()
+      .split(RegExp(r'\r?\n'))
+      .firstWhere((line) => line.isNotEmpty, orElse: () => '');
+  return first.isEmpty ? null : first;
 }

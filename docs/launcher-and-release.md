@@ -47,10 +47,12 @@ The launcher keeps the selected build process's standard streams intact. Its
 own diagnostics are written to standard error.
 
 When a native frontend is selected, the launcher enables the workspace-local
-worker AOT cache unless `BUILD_RUNNER_ACCELERATOR_WORKER_AOT` is already set.
-This makes dirty builds use the fast AOT worker after the first cache build.
-Set the variable to `0` to keep the kernel/script worker path, or to
-`background` when an asynchronous prewarm is preferred. Explicit
+worker AOT cache in background mode unless
+`BUILD_RUNNER_ACCELERATOR_WORKER_AOT` is already set. The first build after a
+cache miss runs the Dart script worker while the AOT compilation proceeds
+asynchronously, so no build waits on the one-time compile; dirty builds then
+use the fast AOT worker. Set the variable to `1` for a synchronous compile on
+the first build, or to `0` to keep the kernel/script worker path. Explicit
 `--force-aot` and `--force-jit` take precedence over the environment variable;
 `--force-aot` also makes an AOT compilation failure fatal, matching stock
 build_runner's force semantics.

@@ -44,8 +44,8 @@ struct AotMetadata {
 
 /// Select the worker launch artifact.
 ///
-/// The launcher requests a synchronous AOT worker by default. The request can
-/// be disabled, run in the background, or made strict through the environment.
+/// The launcher requests a background AOT worker by default. The request can
+/// be disabled, made synchronous, or made strict through the environment.
 /// An explicit AOT path takes precedence over every other mode.
 pub(crate) fn resolve_worker_artifact(
     root: &Path,
@@ -202,7 +202,7 @@ fn configured_worker_aot() -> io::Result<Option<PathBuf>> {
 
 fn aot_request() -> AotRequest {
     let Ok(value) = env::var("BUILD_RUNNER_ACCELERATOR_WORKER_AOT") else {
-        return AotRequest::Disabled;
+        return AotRequest::Background;
     };
     match value.to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "auto" => AotRequest::Synchronous,
