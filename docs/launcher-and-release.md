@@ -51,8 +51,11 @@ worker AOT cache in background mode unless
 `BUILD_RUNNER_ACCELERATOR_WORKER_AOT` is already set. The first build after a
 cache miss runs the Dart script worker while the AOT compilation proceeds
 asynchronously, so no build waits on the one-time compile; dirty builds then
-use the fast AOT worker. Set the variable to `1` for a synchronous compile on
-the first build, or to `0` to keep the kernel/script worker path. Explicit
+use the fast AOT worker. A long-running `watch` session keeps the artifact it
+started with so the resident worker is not replaced mid-session; a later
+invocation can use the completed AOT cache. Set the variable to `1` for a
+synchronous compile on the first build, or to `0` to keep the kernel/script
+worker path. Explicit
 `--force-aot` and `--force-jit` take precedence over the environment variable;
 `--force-aot` also makes an AOT compilation failure fatal, matching stock
 build_runner's force semantics.

@@ -82,13 +82,15 @@ fn run_watch_build(options: &Options, pool: &mut Option<WorkerPool>) -> io::Resu
     if pool.is_none() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
         let worker_command = worker_executable(options, &build_config)?;
-        *pool = Some(WorkerPool::start(
+        let mut worker_pool = WorkerPool::start(
             &workspace.root,
             dart_binary,
             &worker_command,
             options.jobs,
             options.worker.is_none(),
-        )?);
+        )?;
+        worker_pool.pin_worker_artifact();
+        *pool = Some(worker_pool);
     }
     build::run_with_config(options, pool.as_mut(), workspace, build_config)?;
     Ok(true)
