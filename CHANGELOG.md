@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.5.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.4.1...v0.5.0) - 2026-09-26
+
+- perf: skip hidden paths in package scans by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/49
+- perf: avoid duplicate Analyzer resolution across actions by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/51
+- perf: share cached package asset index for tracked globs by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/52
+- perf: cache conditional resolver dependencies by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/53
+- perf: incrementally reset resolver state across phases by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/55
+- perf: make worker AOT defaults command-aware by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/54
+- perf: share analyzer byte store across workers by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/56
+
 ## [v0.4.1](https://github.com/ikesyo/build_runner_accelerator/compare/v0.4.0...v0.4.1) - 2026-09-22
 
 - ci: show benchmark results in job summaries by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/44
