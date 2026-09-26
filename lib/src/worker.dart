@@ -905,7 +905,8 @@ Map<String, List<String>> _resolverDepGraphJson(
     final values = deps.assetDeps[id]?.values;
     if (values == null || values.isEmpty) continue;
     final assetDeps = values.last.value.deps;
-    if (assetDeps.isEmpty) continue;
+    // Empty dep lists are serialized too: the Rust merge replaces edges per
+    // key, and skipping the record would leave stale edges behind.
     // An entry already sent with the same recorded value does not need
     // another copy; a rebuilt graph produces fresh value objects.
     if (identical(sent[id], values.last)) {
