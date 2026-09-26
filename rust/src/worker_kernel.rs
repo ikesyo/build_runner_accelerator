@@ -72,6 +72,11 @@ pub(crate) fn resolve_worker_artifact(
                 }
             },
             AotRequest::Background => {
+                // An explicit kernel artifact wins over the automatic
+                // background selection and its cached-AOT result.
+                if let Some(kernel) = configured_worker_kernel()? {
+                    return Ok(WorkerArtifact::Kernel(kernel));
+                }
                 match prepare_aot_context(root, dart_binary, worker_executable)
                     .and_then(|context| {
                         if let Some(aot) = current_aot_from_context(&context)? {
@@ -330,6 +335,11 @@ pub(crate) fn background_worker_aot_if_ready(
     worker_executable: &str,
 ) -> io::Result<Option<PathBuf>> {
     if !background_aot_requested() || !is_dart_source(worker_executable) {
+        return Ok(None);
+    }
+    // Explicitly configured worker artifacts are never swapped for a cached
+    // background AOT compile result.
+    if configured_worker_aot()?.is_some() || configured_worker_kernel()?.is_some() {
         return Ok(None);
     }
     let context = prepare_aot_context(root, dart_binary, worker_executable)?;

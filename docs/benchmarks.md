@@ -33,6 +33,10 @@ default `dart run build_runner build` path. The accelerator uses the normal
 Dart launcher with a prebuilt release frontend and `ACCELERATOR_LAUNCHER=1`.
 The accelerator worker count is varied with `--jobs 1/2/4`.
 
+These conditions apply to future runs. The recorded Latest run predates this
+method: it used the historical benchmark script with internal runtime metrics
+enabled.
+
 - `clean` measures a first build with a cold worker-AOT cache. The
   background policy can use the Dart script worker while the AOT executable is
   being generated; treat this as a separate cold-start control.
