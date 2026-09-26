@@ -41,10 +41,16 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
     required BuildInputs buildInputs,
   }) async {
     _workerLock = await _workerPool.request();
-    filesystem.startBuild(
-      builderFilesystem: builderFilesystem,
-      buildInputs: buildInputs,
-    );
+    try {
+      filesystem.startBuild(
+        builderFilesystem: builderFilesystem,
+        buildInputs: buildInputs,
+      );
+    } catch (_) {
+      _workerLock?.release();
+      _workerLock = null;
+      rethrow;
+    }
   }
 
   /// Clears build state and frees the lock taken by [takeLockAndStartBuild].
