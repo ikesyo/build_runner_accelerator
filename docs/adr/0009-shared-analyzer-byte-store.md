@@ -32,12 +32,27 @@ and element models addressed by content- and version-derived keys.
 - `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0` (also `false`/`off`) restores the
   previous process-local `MemoryByteStore` behavior for debugging and A/B
   measurement.
+- While the shared store is enabled, the scheduler fans homogeneous
+  resolver-backed batches out across the worker pool instead of pinning them
+  to one resident worker. The per-instance serialization in ADR 0005 existed
+  to avoid independent AnalysisDrivers repeating the same workspace analysis;
+  with a shared store that duplicated work is already cheap, so parallelism
+  wins. Dispatch is still capped at roughly half the pool
+  (`ceil(jobs / 2)`) because every extra worker re-pays analysis warm-up;
+  workers stay resident, so the cap only limits how many take part in a
+  resolver phase, not pool size. When the store is disabled the serial
+  policy is kept unchanged. The frontend and the worker read the same
+  `BUILD_RUNNER_ACCELERATOR_BYTE_STORE` variable so the scheduling policy
+  always matches the driver's cache mode.
 
 ## Consequences
 
-- Clean warm-build execution drops to roughly stock single-process time on the
-  reference workspace (worker count unchanged; the resolver work is reused
-  instead of duplicated).
+- Clean warm-build execution approaches stock single-process time, and with
+  resolver fan-out can run below it (the resolver phases no longer serialize
+  on one worker).
+- Resolver-backed actions still report resolver usage per request, so
+  disabling the store mid-session (watch mode) falls back to the serial
+  policy without losing classification.
 - Concurrent writers are safe: `FileByteStore` writes to a pid-suffixed temp
   name and atomically renames, so identical keys written by two workers
   converge on the same bytes.
