@@ -289,6 +289,41 @@ fn current_aot_from_context(context: &AotContext) -> io::Result<Option<PathBuf>>
     Ok(None)
 }
 
+/// Checks whether a pinned compiled worker still matches its current inputs.
+/// Script workers are deliberately treated as current so a watch session does
+/// not switch to an AOT worker that finished compiling after the session began.
+pub(crate) fn pinned_worker_artifact_is_current(
+    root: &Path,
+    dart_binary: &str,
+    worker_executable: &str,
+    artifact: &WorkerArtifact,
+) -> io::Result<bool> {
+    match artifact {
+        WorkerArtifact::Script => Ok(true),
+        WorkerArtifact::Aot(path) => {
+            if let Some(configured) = configured_worker_aot()? {
+                return Ok(configured.as_path() == path.as_path());
+            }
+            let context = prepare_aot_context(root, dart_binary, worker_executable)?;
+            Ok(current_aot_from_context(&context)?
+                .as_ref()
+                .is_some_and(|current| current.as_path() == path.as_path()))
+        }
+        WorkerArtifact::Kernel(path) => {
+            if let Some(configured) = configured_worker_kernel()? {
+                return Ok(configured.as_path() == path.as_path());
+            }
+            let worker_path = absolute_worker_path(root, Path::new(worker_executable))?;
+            let kernel_path = worker_path.with_extension("dill");
+            let depfile_path = PathBuf::from(format!("{}.d", kernel_path.display()));
+            if !worker_artifact_is_current(&kernel_path, &depfile_path, &worker_path) {
+                return Ok(false);
+            }
+            Ok(fs::canonicalize(kernel_path)?.as_path() == path.as_path())
+        }
+    }
+}
+
 pub(crate) fn background_worker_aot_if_ready(
     root: &Path,
     dart_binary: &str,
@@ -881,11 +916,14 @@ fn aot_compile_status_error(worker: &Path, status: std::process::ExitStatus) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{acquire_background_aot_lock, background_aot_lock_is_stale, parse_depfile_dependencies, WorkerArtifact};
+    use super::{
+        acquire_background_aot_lock, background_aot_lock_is_stale,
+        parse_depfile_dependencies, pinned_worker_artifact_is_current, WorkerArtifact,
+    };
     use std::fs::{self, OpenOptions};
     use std::sync::{Arc, Barrier};
     use std::thread;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn depfile_parser_handles_continuations_and_escaped_spaces() {
@@ -910,6 +948,17 @@ mod tests {
             WorkerArtifact::Aot(PathBuf::from("worker.aot")),
             WorkerArtifact::Kernel(PathBuf::from("worker.dill"))
         );
+    }
+
+    #[test]
+    fn pinned_script_worker_stays_current_when_aot_may_finish() {
+        assert!(pinned_worker_artifact_is_current(
+            Path::new("unused"),
+            "unused",
+            "unused.dart",
+            &WorkerArtifact::Script,
+        )
+        .unwrap());
     }
 
     #[test]

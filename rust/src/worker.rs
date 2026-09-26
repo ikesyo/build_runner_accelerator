@@ -4,7 +4,8 @@ use crate::protocol::{
     decode_build_result_frame, read_message_with_size, write_binary_frame, write_frame,
 };
 use crate::worker_kernel::{
-    WorkerArtifact, background_worker_aot_if_ready, resolve_worker_artifact,
+    WorkerArtifact, background_worker_aot_if_ready, pinned_worker_artifact_is_current,
+    resolve_worker_artifact,
 };
 use crate::plan::BuildSpec;
 use crate::workspace::{Workspace, matches_glob};
@@ -1346,8 +1347,26 @@ impl WorkerPool {
                     &self.worker_executable,
                     self.auto_worker_artifact,
                 )?
-            } else {
+            } else if pinned_worker_artifact_is_current(
+                root,
+                &self.dart_binary,
+                &self.worker_executable,
+                &self.worker_artifact,
+            )
+            .unwrap_or_else(|error| {
+                eprintln!(
+                    "Rust pinned worker artifact could not be validated; resolving it again ({error})"
+                );
+                false
+            }) {
                 self.worker_artifact.clone()
+            } else {
+                resolve_worker_artifact(
+                    root,
+                    &self.dart_binary,
+                    &self.worker_executable,
+                    self.auto_worker_artifact,
+                )?
             };
             self.restart_workers(root, worker_artifact)?;
         }

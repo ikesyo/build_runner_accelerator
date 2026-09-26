@@ -21,7 +21,8 @@ class LauncherOptions {
     var commandSeen = false;
     var mode = 'auto';
     var root = Directory.current.absolute.path;
-    var dartBinary = _defaultDartBinary();
+    var dartBinary = Platform.resolvedExecutable;
+    var dartBinaryExplicit = false;
     var forceAot = false;
     var forceJit = false;
     var showHelp = false;
@@ -72,6 +73,7 @@ class LauncherOptions {
             : takeValue(arguments, '--dart', index);
         if (!argument.startsWith('--dart=')) index++;
         dartBinary = value;
+        dartBinaryExplicit = true;
         continue;
       }
       if (argument == '--force-aot') {
@@ -106,6 +108,8 @@ class LauncherOptions {
         passthrough.add(argument);
       }
     }
+
+    if (!dartBinaryExplicit) dartBinary = _defaultDartBinary();
 
     if (forceAot && forceJit) {
       throw FormatException(
@@ -165,16 +169,41 @@ class LauncherOptions {
 /// (`<sdk>/bin/dart` beside `<sdk>/lib`), then try `DART`/`FLUTTER` and
 /// `PATH` lookups before giving up.
 String _defaultDartBinary() {
-  final resolved = Platform.resolvedExecutable;
+  return resolveDartSdkExecutable(
+    resolvedExecutable: Platform.resolvedExecutable,
+    environmentDart: Platform.environment['DART'],
+    pathLookup: _which,
+    isWindows: Platform.isWindows,
+  );
+}
+
+/// Resolves a usable Dart SDK executable from the running process, `DART`,
+/// `PATH`, and a Flutter SDK found on `PATH`, in that order.
+String resolveDartSdkExecutable({
+  required String resolvedExecutable,
+  required String? environmentDart,
+  required List<String> Function(String executable) pathLookup,
+  required bool isWindows,
+}) {
+  final resolved = resolvedExecutable;
   if (_isDartSdkExecutable(resolved)) return resolved;
 
-  final candidates = <String>[
-    if (Platform.environment['DART'] case final env?) env,
-    if (_which('dart') case final onPath?) onPath,
-    if (_which('flutter') case final flutter?)
-      '${FileSystemEntity.parentOf(flutter)}/cache/dart-sdk/bin/dart',
-  ];
-  for (final candidate in candidates) {
+  if (environmentDart != null && _isDartSdkExecutable(environmentDart)) {
+    return environmentDart;
+  }
+
+  for (final onPath in pathLookup('dart')) {
+    if (_isDartSdkExecutable(onPath)) return onPath;
+  }
+
+  for (final flutter in pathLookup('flutter')) {
+    final candidate = <String>[
+      FileSystemEntity.parentOf(flutter),
+      'cache',
+      'dart-sdk',
+      'bin',
+      isWindows ? 'dart.exe' : 'dart',
+    ].join(Platform.pathSeparator);
     if (_isDartSdkExecutable(candidate)) return candidate;
   }
   return resolved;
@@ -183,17 +212,23 @@ String _defaultDartBinary() {
 bool _isDartSdkExecutable(String path) {
   final name = path.replaceAll('\\', '/').split('/').last.toLowerCase();
   if (name != 'dart' && name != 'dart.exe') return false;
-  return Directory('${FileSystemEntity.parentOf(path)}/../lib').existsSync();
+  return File(path).existsSync() &&
+      Directory('${FileSystemEntity.parentOf(path)}/../lib').existsSync();
 }
 
-String? _which(String executable) {
-  final result = Process.runSync(Platform.isWindows ? 'where' : 'which', [
-    executable,
-  ]);
-  if (result.exitCode != 0) return null;
-  final first = (result.stdout as String)
-      .trim()
+List<String> _which(String executable) {
+  late final ProcessResult result;
+  try {
+    result = Process.runSync(Platform.isWindows ? 'where' : 'which', [
+      executable,
+    ]);
+  } on ProcessException {
+    return const [];
+  }
+  if (result.exitCode != 0) return const [];
+  return (result.stdout as String)
       .split(RegExp(r'\r?\n'))
-      .firstWhere((line) => line.isNotEmpty, orElse: () => '');
-  return first.isEmpty ? null : first;
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
 }
