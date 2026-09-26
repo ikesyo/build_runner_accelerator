@@ -1746,14 +1746,47 @@ impl WorkerPool {
         let deleted = json!(deleted_sources);
         let updated_cache = json!(updated_cache);
         let deleted_cache = json!(deleted_cache);
-        for worker in self.workers.iter_mut().take(count) {
-            worker.reset_resolver(
+        if count == 1 {
+            self.workers[0].reset_resolver(
                 &updated,
                 &deleted,
                 &updated_cache,
                 &deleted_cache,
                 incremental,
             )?;
+        } else {
+            // Workers reset their resolver independently; waiting on them one
+            // at a time would make every phase boundary cost count × reset.
+            thread::scope(|scope| {
+                let handles = self
+                    .workers
+                    .iter_mut()
+                    .take(count)
+                    .map(|worker| {
+                        let updated = &updated;
+                        let deleted = &deleted;
+                        let updated_cache = &updated_cache;
+                        let deleted_cache = &deleted_cache;
+                        scope.spawn(move || {
+                            worker.reset_resolver(
+                                updated,
+                                deleted,
+                                updated_cache,
+                                deleted_cache,
+                                incremental,
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                handles
+                    .into_iter()
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .map_err(|_| io::Error::other("worker thread panicked"))?
+                    })
+                    .collect::<io::Result<Vec<_>>>()
+            })?;
         }
         self.resolver_resets += count as u64;
         Ok(())

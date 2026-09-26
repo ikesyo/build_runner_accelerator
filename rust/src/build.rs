@@ -27,6 +27,7 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::thread;
 use std::time::Instant;
 
 pub(crate) fn graph_path(workspace: &Workspace) -> PathBuf {
@@ -259,12 +260,15 @@ pub(crate) fn run_with_config(
     let mut dirty_roots = Vec::new();
     let dirty_check_started = Instant::now();
     let dirty_context = state.dirty_context(&current_snapshot);
-    for spec in &specs {
-        for output in &spec.outputs {
-            if let Some(digest) = output_digest(&workspace, &spec.builder, output)? {
-                current_output_digests.insert(output.clone(), digest);
-            }
-        }
+    // Reading and hashing every declared output is the bulk of the dirty
+    // check; fan it out across cores before the serial evaluation loop.
+    let spec_output_digests = collect_output_digests(&workspace, &specs)?;
+    for (spec, digests) in specs.iter().zip(spec_output_digests) {
+        current_output_digests.extend(
+            digests
+                .into_iter()
+                .filter_map(|(output, digest)| digest.map(|digest| (output, digest))),
+        );
 
         let key = spec.action_key();
         let needs_build = match state.actions.get(&key) {
@@ -909,6 +913,52 @@ fn record_build_result(
         },
     ));
     Ok(())
+}
+
+/// Reads and digests every declared output across `specs`, returning one
+/// `(output, Option<digest>)` pair list per spec in input order. The reads
+/// run on a scoped thread pool because they are the bulk of the dirty check.
+fn collect_output_digests(
+    workspace: &Workspace,
+    specs: &[crate::plan::BuildSpec],
+) -> io::Result<Vec<Vec<(String, Option<String>)>>> {
+    let digests_for = |spec: &crate::plan::BuildSpec| {
+        spec.outputs
+            .iter()
+            .map(|output| {
+                output_digest(workspace, &spec.builder, output)
+                    .map(|digest| (output.clone(), digest))
+            })
+            .collect::<io::Result<Vec<_>>>()
+    };
+    let worker_count = thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4)
+        .min(specs.len().max(1));
+    if worker_count <= 1 {
+        return specs.iter().map(digests_for).collect();
+    }
+    let chunk_size = specs.len().div_ceil(worker_count);
+    let chunks = specs.chunks(chunk_size).collect::<Vec<_>>();
+    thread::scope(|scope| {
+        let handles = chunks
+            .iter()
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk.iter().map(digests_for).collect::<io::Result<Vec<_>>>()
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| io::Error::other("output digest thread panicked"))?
+            })
+            .collect::<io::Result<Vec<_>>>()
+            .map(|nested| nested.into_iter().flatten().collect())
+    })
 }
 
 /// Return the order in which configured builders may observe each other's
