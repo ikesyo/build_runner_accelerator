@@ -24,6 +24,7 @@ boundary rather than restoring commit-level history.
 | [0006](0006-distribution-and-release-artifacts.md) | Public package, launcher, and native release artifacts |
 | [0007](0007-sdk-and-dependency-compatibility-window.md) | Supported Dart SDK and dependency compatibility window |
 | [0008](0008-runtime-expected-output-mappings.md) | Runtime expected-output mappings and conservative fallback |
+| [0009](0009-shared-analyzer-byte-store.md) | Shared analyzer byte store across workers and builds |
 
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for
