@@ -59,6 +59,33 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
   @override
   PhasedAssetDeps phasedAssetDeps() => _workerGraphLoader.phasedAssetDeps();
 
+  /// Completes dep loads queued for [phase] or earlier.
+  ///
+  /// An expired `PhasedValue.unavailable` entry is queued in the loader's
+  /// `_idsToLoad` and is re-loaded eagerly by the next `_load` at a late
+  /// enough phase, under whichever action happens to run it. Draining the
+  /// queue while no action owns the reader keeps those bookkeeping reload
+  /// reads out of any action's observed reads; the completed deps still
+  /// reach the dep graph exported for dependency-based invalidation.
+  Future<void> drainPendingDepLoads({
+    required BuilderFilesystem builderFilesystem,
+    required int phase,
+  }) async {
+    final deps = _workerGraphLoader.phasedAssetDeps();
+    AssetId? id;
+    for (final entry in deps.assetDeps.entries) {
+      final expiresAfter = entry.value.expiresAfter;
+      if (expiresAfter == null || expiresAfter >= phase) {
+        id = entry.key;
+        break;
+      }
+      id ??= entry.key;
+    }
+    if (id == null) return;
+    final loader = AssetDepsLoader(builderFilesystem, phase);
+    await _workerGraphLoader.libraryCycleGraphOf(loader, id);
+  }
+
   @override
   Future<void> updateDriver({
     required Future<void> Function(

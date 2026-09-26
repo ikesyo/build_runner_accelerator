@@ -65,10 +65,15 @@ String _contentDigest(List<int> bytes) =>
 Future<void> collectResolverReads(
   RemoteAssetReaderWriter io,
   PackageConfig packageConfig,
-  ResolverDependencyCache cache,
-) async {
+  ResolverDependencyCache cache, {
+  Set<AssetId> excludeReads = const <AssetId>{},
+}) async {
   final pending = Queue<AssetId>();
-  pending.addAll(io.observedReads.where((asset) => asset.extension == '.dart'));
+  pending.addAll(
+    io.observedReads.where(
+      (asset) => asset.extension == '.dart' && !excludeReads.contains(asset),
+    ),
+  );
   final visited = <AssetId>{};
 
   while (pending.isNotEmpty) {

@@ -196,6 +196,12 @@ class _WorkerRuntime {
   bool resolverInitialized = false;
   int _phaseCount = 1;
 
+  /// Highest phase at which the dep-load queue was drained. Assets that
+  /// expired before a phase are re-loaded by the next library load at any
+  /// later phase, regardless of which closure they belong to; running that
+  /// drain between actions keeps the reload reads unattributed.
+  int _lastDepDrainPhase = -1;
+
   /// Starts a new build series for [package].
   Future<void> startBuild(String package, {required int phaseCount}) async {
     if (_buildStarted) {
@@ -363,6 +369,7 @@ class _WorkerRuntime {
     batchResolverEntrypoints.clear();
     builders.clear();
     postProcessBuilders.clear();
+    _lastDepDrainPhase = -1;
   }
 
   static final RegExp _dartDirectivePattern = RegExp(
@@ -684,6 +691,21 @@ Future<JsonMap> _runBuild(
       blockedAssets: blockedAssets,
     );
     actionStarted = true;
+    var drainReads = const <AssetId>{};
+    if (request.phase > runtime._lastDepDrainPhase) {
+      runtime._lastDepDrainPhase = request.phase;
+      // Expired dep entries are re-loaded eagerly by the next library load
+      // regardless of which closure they belong to. Completing those queued
+      // loads first keeps the bookkeeping reads attributable so they can be
+      // excluded from this action's recorded reads; the completed deps still
+      // reach the exported dep graph.
+      final readsBeforeDrain = Set<AssetId>.of(runtime.io.observedReads);
+      await runtime.resolver.drainPendingDepLoads(
+        builderFilesystem: runtime.buildFilesystem,
+        phase: request.phase,
+      );
+      drainReads = runtime.io.observedReads.difference(readsBeforeDrain);
+    }
     final deleted = <AssetId>{};
     BuildStepImpl? step;
     InputTracker? triggerInputTracker;
@@ -777,6 +799,7 @@ Future<JsonMap> _runBuild(
         runtime.io,
         runtime.packageConfig,
         runtime.resolverDependencyCache,
+        excludeReads: drainReads,
       );
       profile.resolverReadsUs = resolverReadsTimer.elapsedMicroseconds;
     }
@@ -800,18 +823,21 @@ Future<JsonMap> _runBuild(
     } else if (step != null) {
       runtime.producedOutputs.addAll(step.outputs);
     }
+    final observedReads = drainReads.isEmpty
+        ? runtime.io.observedReads
+        : runtime.io.observedReads.difference(drainReads);
     final reads = <String>{
       input.toString(),
       if (triggerInputTracker != null)
         ...triggerInputTracker.inputs.map((id) => id.toString()),
       if (step != null) ...step.inputTracker.inputs.map((id) => id.toString()),
-      ...runtime.io.observedReads.map((id) => id.toString()),
+      ...observedReads.map((id) => id.toString()),
       ...runtime.io.observedGlobResults.map((id) => id.toString()),
     }.toList()..sort();
     final resolverReads = <String>{
       if (triggered && step != null)
         ...step.inputTracker.resolverEntrypoints.map((id) => id.toString()),
-      if (triggered) ...runtime.io.observedReads.map((id) => id.toString()),
+      if (triggered) ...observedReads.map((id) => id.toString()),
     }.toList()..sort();
     final resolverEntrypoints = <AssetId>{
       if (triggered && step != null) ...step.inputTracker.resolverEntrypoints,

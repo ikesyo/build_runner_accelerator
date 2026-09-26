@@ -127,6 +127,16 @@ class WorkerResolversImpl implements Resolvers {
 
   PhasedAssetDeps phasedAssetDeps() => _analysisDriverModel.phasedAssetDeps();
 
+  /// Completes dep loads queued for [phase] or earlier while no action owns
+  /// the reader; see [WorkerAnalysisDriverModel.drainPendingDepLoads].
+  Future<void> drainPendingDepLoads({
+    required BuilderFilesystem builderFilesystem,
+    required int phase,
+  }) => _analysisDriverModel.drainPendingDepLoads(
+    builderFilesystem: builderFilesystem,
+    phase: phase,
+  );
+
   /// Frees the lock taken by [takeLockAndStartBuild].
   ///
   /// Or if none was taken, does nothing.
