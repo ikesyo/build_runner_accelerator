@@ -8,6 +8,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
@@ -44,9 +45,10 @@ struct AotMetadata {
 
 /// Select the worker launch artifact.
 ///
-/// The launcher requests a synchronous AOT worker by default. The request can
-/// be disabled, run in the background, or made strict through the environment.
-/// An explicit AOT path takes precedence over every other mode.
+/// The launcher requests a synchronous AOT worker for one-shot commands and
+/// a background compile for `watch` by default. The request can be disabled,
+/// made synchronous, or made strict through the environment. An explicit AOT
+/// path takes precedence over every other mode.
 pub(crate) fn resolve_worker_artifact(
     root: &Path,
     dart_binary: &str,
@@ -62,16 +64,27 @@ pub(crate) fn resolve_worker_artifact(
                 let aot = prepare_worker_aot(root, dart_binary, worker_executable)?;
                 return Ok(WorkerArtifact::Aot(aot));
             }
-            AotRequest::Synchronous => match prepare_worker_aot(root, dart_binary, worker_executable)
-            {
-                Ok(aot) => return Ok(WorkerArtifact::Aot(aot)),
-                Err(error) => {
-                    eprintln!(
-                        "Rust worker AOT cache unavailable; using kernel/script ({error})"
-                    );
+            AotRequest::Synchronous => {
+                // An explicit kernel artifact wins over the automatic
+                // synchronous compile. `force` remains strict above.
+                if let Some(kernel) = configured_worker_kernel()? {
+                    return Ok(WorkerArtifact::Kernel(kernel));
                 }
-            },
+                match prepare_worker_aot(root, dart_binary, worker_executable) {
+                    Ok(aot) => return Ok(WorkerArtifact::Aot(aot)),
+                    Err(error) => {
+                        eprintln!(
+                            "Rust worker AOT cache unavailable; using kernel/script ({error})"
+                        );
+                    }
+                }
+            }
             AotRequest::Background => {
+                // An explicit kernel artifact wins over the automatic
+                // background selection and its cached-AOT result.
+                if let Some(kernel) = configured_worker_kernel()? {
+                    return Ok(WorkerArtifact::Kernel(kernel));
+                }
                 match prepare_aot_context(root, dart_binary, worker_executable)
                     .and_then(|context| {
                         if let Some(aot) = current_aot_from_context(&context)? {
@@ -200,9 +213,26 @@ fn configured_worker_aot() -> io::Result<Option<PathBuf>> {
     Ok(Some(fs::canonicalize(path)?))
 }
 
+/// Command-dependent default worker AOT policy used when the environment
+/// does not override it: `watch` favors startup latency (background
+/// compile), while one-shot commands favor total wall-clock time
+/// (synchronous compile).
+static DEFAULT_WORKER_AOT_POLICY: OnceLock<AotRequest> = OnceLock::new();
+
+pub(crate) fn apply_default_worker_aot_policy(command: &str) {
+    let _ = DEFAULT_WORKER_AOT_POLICY.set(if command == "watch" {
+        AotRequest::Background
+    } else {
+        AotRequest::Synchronous
+    });
+}
+
 fn aot_request() -> AotRequest {
     let Ok(value) = env::var("BUILD_RUNNER_ACCELERATOR_WORKER_AOT") else {
-        return AotRequest::Disabled;
+        return DEFAULT_WORKER_AOT_POLICY
+            .get()
+            .copied()
+            .unwrap_or(AotRequest::Synchronous);
     };
     match value.to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "auto" => AotRequest::Synchronous,
@@ -289,12 +319,52 @@ fn current_aot_from_context(context: &AotContext) -> io::Result<Option<PathBuf>>
     Ok(None)
 }
 
+/// Checks whether a pinned compiled worker still matches its current inputs.
+/// Script workers are deliberately treated as current so a watch session does
+/// not switch to an AOT worker that finished compiling after the session began.
+pub(crate) fn pinned_worker_artifact_is_current(
+    root: &Path,
+    dart_binary: &str,
+    worker_executable: &str,
+    artifact: &WorkerArtifact,
+) -> io::Result<bool> {
+    match artifact {
+        WorkerArtifact::Script => Ok(true),
+        WorkerArtifact::Aot(path) => {
+            if let Some(configured) = configured_worker_aot()? {
+                return Ok(configured.as_path() == path.as_path());
+            }
+            let context = prepare_aot_context(root, dart_binary, worker_executable)?;
+            Ok(current_aot_from_context(&context)?
+                .as_ref()
+                .is_some_and(|current| current.as_path() == path.as_path()))
+        }
+        WorkerArtifact::Kernel(path) => {
+            if let Some(configured) = configured_worker_kernel()? {
+                return Ok(configured.as_path() == path.as_path());
+            }
+            let worker_path = absolute_worker_path(root, Path::new(worker_executable))?;
+            let kernel_path = worker_path.with_extension("dill");
+            let depfile_path = PathBuf::from(format!("{}.d", kernel_path.display()));
+            if !worker_artifact_is_current(&kernel_path, &depfile_path, &worker_path) {
+                return Ok(false);
+            }
+            Ok(fs::canonicalize(kernel_path)?.as_path() == path.as_path())
+        }
+    }
+}
+
 pub(crate) fn background_worker_aot_if_ready(
     root: &Path,
     dart_binary: &str,
     worker_executable: &str,
 ) -> io::Result<Option<PathBuf>> {
     if !background_aot_requested() || !is_dart_source(worker_executable) {
+        return Ok(None);
+    }
+    // Explicitly configured worker artifacts are never swapped for a cached
+    // background AOT compile result.
+    if configured_worker_aot()?.is_some() || configured_worker_kernel()?.is_some() {
         return Ok(None);
     }
     let context = prepare_aot_context(root, dart_binary, worker_executable)?;
@@ -881,11 +951,14 @@ fn aot_compile_status_error(worker: &Path, status: std::process::ExitStatus) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{acquire_background_aot_lock, background_aot_lock_is_stale, parse_depfile_dependencies, WorkerArtifact};
+    use super::{
+        acquire_background_aot_lock, background_aot_lock_is_stale,
+        parse_depfile_dependencies, pinned_worker_artifact_is_current, WorkerArtifact,
+    };
     use std::fs::{self, OpenOptions};
     use std::sync::{Arc, Barrier};
     use std::thread;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn depfile_parser_handles_continuations_and_escaped_spaces() {
@@ -910,6 +983,17 @@ mod tests {
             WorkerArtifact::Aot(PathBuf::from("worker.aot")),
             WorkerArtifact::Kernel(PathBuf::from("worker.dill"))
         );
+    }
+
+    #[test]
+    fn pinned_script_worker_stays_current_when_aot_may_finish() {
+        assert!(pinned_worker_artifact_is_current(
+            Path::new("unused"),
+            "unused",
+            "unused.dart",
+            &WorkerArtifact::Script,
+        )
+        .unwrap());
     }
 
     #[test]

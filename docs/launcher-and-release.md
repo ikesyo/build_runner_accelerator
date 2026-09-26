@@ -48,9 +48,17 @@ own diagnostics are written to standard error.
 
 When a native frontend is selected, the launcher enables the workspace-local
 worker AOT cache unless `BUILD_RUNNER_ACCELERATOR_WORKER_AOT` is already set.
-This makes dirty builds use the fast AOT worker after the first cache build.
-Set the variable to `0` to keep the kernel/script worker path, or to
-`background` when an asynchronous prewarm is preferred. Explicit
+The default policy depends on the command: `build` and other one-shot
+commands compile the AOT worker synchronously, because running a large cold
+build on the script worker costs more than the one-time compile, while
+`watch` starts the Dart script worker immediately and compiles the AOT
+binary in the background so the session is not held up. A long-running
+`watch` session keeps the artifact it
+started with so the resident worker is not replaced mid-session; a later
+invocation can use the completed AOT cache. Set the variable to `1` for a
+synchronous compile on the first build, to `background` for the background
+compile, or to `0` to keep the kernel/script
+worker path. Explicit
 `--force-aot` and `--force-jit` take precedence over the environment variable;
 `--force-aot` also makes an AOT compilation failure fatal, matching stock
 build_runner's force semantics.

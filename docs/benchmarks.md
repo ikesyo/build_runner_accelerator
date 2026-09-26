@@ -33,10 +33,20 @@ default `dart run build_runner build` path. The accelerator uses the normal
 Dart launcher with a prebuilt release frontend and `ACCELERATOR_LAUNCHER=1`.
 The accelerator worker count is varied with `--jobs 1/2/4`.
 
-- `clean` measures the first build without a warm-up.
-- `no-op`, `one-file`, and `broad` perform an unmeasured warm-up in the
-  same staged package before the measured build.
+These conditions apply to future runs. The recorded Latest run predates this
+method: it used the historical benchmark script with internal runtime metrics
+enabled.
+
+- `clean` measures a first build with a cold worker-AOT cache. The
+  background policy can use the Dart script worker while the AOT executable is
+  being generated; treat this as a separate cold-start control.
+- Accelerator `no-op`, `one-file`, and `broad` cases synchronously run
+  `scripts/aot_prewarm.sh` before the unmeasured warm-up. The harness verifies
+  the executable and passes its exact path to both the warm-up and timed build,
+  so these measurements use a prebuilt AOT worker.
 - `one-file` changes one input marker; `broad` changes all ten markers.
+- The timed workflow disables internal runtime metrics so diagnostic output
+  does not inflate wall time.
 - Dependency resolution uses the tracked lockfile and the current package
   versions above.
 - `scripts/measure_process.py` records wall time, child user/system CPU time,

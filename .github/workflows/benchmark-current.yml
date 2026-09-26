@@ -77,7 +77,7 @@ jobs:
           REPEATS: '5'
           CASES: 'clean no-op one-file broad'
           PUB_GET_OFFLINE: '0'
-          BUILD_RUNNER_ACCELERATOR_METRICS: '1'
+          BUILD_RUNNER_ACCELERATOR_METRICS: '0'
           RESULTS_DIR: ${{ github.workspace }}/benchmark-results/${{ matrix.id }}
         run: |
           mkdir -p "$RESULTS_DIR"

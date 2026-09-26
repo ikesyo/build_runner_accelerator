@@ -4,7 +4,8 @@ use crate::protocol::{
     decode_build_result_frame, read_message_with_size, write_binary_frame, write_frame,
 };
 use crate::worker_kernel::{
-    WorkerArtifact, background_worker_aot_if_ready, resolve_worker_artifact,
+    WorkerArtifact, background_worker_aot_if_ready, pinned_worker_artifact_is_current,
+    resolve_worker_artifact,
 };
 use crate::plan::BuildSpec;
 use crate::workspace::{Workspace, matches_glob};
@@ -1181,6 +1182,7 @@ pub struct WorkerPool {
     worker_executable: String,
     worker_artifact: WorkerArtifact,
     auto_worker_artifact: bool,
+    allow_worker_artifact_upgrade: bool,
     max_jobs: usize,
     initialized: Option<(PathBuf, String, String, usize, bool)>,
     initialized_workers: usize,
@@ -1252,6 +1254,7 @@ impl WorkerPool {
             worker_executable,
             worker_artifact,
             auto_worker_artifact,
+            allow_worker_artifact_upgrade: true,
             max_jobs,
             initialized: None,
             initialized_workers: 0,
@@ -1273,6 +1276,13 @@ impl WorkerPool {
         dep_graph
     }
 
+    /// Keep the initial worker artifact for the lifetime of a long-running
+    /// session such as `watch`. A background AOT compile may finish mid-session,
+    /// but replacing the resident worker would reset its state and counters.
+    pub fn pin_worker_artifact(&mut self) {
+        self.allow_worker_artifact_upgrade = false;
+    }
+
     pub fn initialize(
         &mut self,
         root: &Path,
@@ -1289,7 +1299,7 @@ impl WorkerPool {
             requires_optional_builder,
         );
         if self.initialized.as_ref() == Some(&signature) {
-            if self.auto_worker_artifact {
+            if self.auto_worker_artifact && self.allow_worker_artifact_upgrade {
                 match background_worker_aot_if_ready(
                     root,
                     &self.dart_binary,
@@ -1330,12 +1340,34 @@ impl WorkerPool {
 
         if self.initialized.is_some() {
             self.resolver_usage.clear();
-            let worker_artifact = resolve_worker_artifact(
+            let worker_artifact = if self.allow_worker_artifact_upgrade {
+                resolve_worker_artifact(
+                    root,
+                    &self.dart_binary,
+                    &self.worker_executable,
+                    self.auto_worker_artifact,
+                )?
+            } else if pinned_worker_artifact_is_current(
                 root,
                 &self.dart_binary,
                 &self.worker_executable,
-                self.auto_worker_artifact,
-            )?;
+                &self.worker_artifact,
+            )
+            .unwrap_or_else(|error| {
+                eprintln!(
+                    "Rust pinned worker artifact could not be validated; resolving it again ({error})"
+                );
+                false
+            }) {
+                self.worker_artifact.clone()
+            } else {
+                resolve_worker_artifact(
+                    root,
+                    &self.dart_binary,
+                    &self.worker_executable,
+                    self.auto_worker_artifact,
+                )?
+            };
             self.restart_workers(root, worker_artifact)?;
         }
         self.initialized_workers = 0;
