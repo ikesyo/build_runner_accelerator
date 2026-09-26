@@ -1,21 +1,21 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:build_runner/src/build/resolver/resolvers_impl.dart'
-    show ResolversImpl;
 import 'package:package_config/package_config.dart';
+
+import 'worker_resolvers.dart';
 
 /// Creates the resolver used by the current build_runner execution layer.
 ///
 /// `build_resolvers` was folded into build_runner in the current stable
 /// release. Supplying the worker's package config keeps the resolver's
 /// analyzer view aligned with the remote asset filesystem.
-ResolversImpl createResolver(
+WorkerResolversImpl createResolver(
   PackageConfig packageConfig,
   ResolverInitializationProfile profile,
 ) {
   final constructorTimer = profile.enabled ? (Stopwatch()..start()) : null;
-  final resolver = ResolversImpl.custom(packageConfig: packageConfig);
+  final resolver = WorkerResolversImpl.custom(packageConfig: packageConfig);
   if (constructorTimer != null) {
     profile.resolverConstructorUs = constructorTimer.elapsedMicroseconds;
   }

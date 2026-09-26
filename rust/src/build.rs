@@ -258,6 +258,7 @@ pub(crate) fn run_with_config(
     let mut dirty = Vec::new();
     let mut dirty_roots = Vec::new();
     let dirty_check_started = Instant::now();
+    let dirty_context = state.dirty_context(&current_snapshot);
     for spec in &specs {
         for output in &spec.outputs {
             if let Some(digest) = output_digest(&workspace, &spec.builder, output)? {
@@ -268,7 +269,12 @@ pub(crate) fn run_with_config(
         let key = spec.action_key();
         let needs_build = match state.actions.get(&key) {
             Some(action) if state.is_compatible(&config_digest) => {
-                state.changed_since_previous(action, &current_snapshot, &current_output_digests)
+                state.changed_since_previous_with(
+                    action,
+                    &dirty_context,
+                    &current_snapshot,
+                    &current_output_digests,
+                )
             }
             _ => true,
         };
@@ -403,12 +409,21 @@ pub(crate) fn run_with_config(
             lazy_demand_possible,
         )?;
 
-        // Source outputs remain in the Rust overlay until the transaction commits.
-        // Invalidate only the worker's Analyzer graph before a later phase so
-        // resolver-backed builders can re-sync those overlay parts without
-        // discarding the resident worker's asset-read cache.
+        // Outputs remain in the Rust overlay until the transaction commits.
         let mut resolver_needs_reset = false;
+        // Source-tree and cache-tree deltas both ride the incremental reset:
+        // the worker applies them to its Analyzer filesystem and read caches
+        // without dropping the loaded library-cycle graph. A committed Dart
+        // asset whose directive set changed is detected by the worker itself,
+        // which clears the cached graph only then.
         let mut initialized_package = first_package;
+        // Overlay mutations since the last resolver reset. A single-worker
+        // reset can forward them so the worker refreshes only those assets
+        // in its Analyzer filesystem instead of re-walking every source.
+        let mut resolver_updated = BTreeSet::<String>::new();
+        let mut resolver_deleted = BTreeSet::<String>::new();
+        let mut resolver_cache_updated = BTreeSet::<String>::new();
+        let mut resolver_cache_deleted = BTreeSet::<String>::new();
 
         for configured_builder_index in execution_order(&build_config.builders) {
             let configured_builder = &build_config.builders[configured_builder_index];
@@ -442,12 +457,22 @@ pub(crate) fn run_with_config(
                                 &mut deleted_overlay,
                                 &mut pending_deletions,
                                 &mut pending_actions,
+                                &mut resolver_updated,
+                                &mut resolver_deleted,
+                                &mut resolver_cache_updated,
+                                &mut resolver_cache_deleted,
                             )?;
                             continue;
                         }
                     }
                 }
                 runnable_phase_specs.push(spec);
+            }
+            if !resolver_updated.is_empty() || !resolver_deleted.is_empty() {
+                resolver_needs_reset = true;
+            }
+            if !resolver_cache_updated.is_empty() || !resolver_cache_deleted.is_empty() {
+                resolver_needs_reset = true;
             }
             let requests = runnable_phase_specs
                 .iter()
@@ -476,8 +501,20 @@ pub(crate) fn run_with_config(
                 )?;
                 initialized_package = configured_builder.package.clone();
                 resolver_needs_reset = false;
+                resolver_updated.clear();
+                resolver_deleted.clear();
+                resolver_cache_updated.clear();
+                resolver_cache_deleted.clear();
             } else if resolver_needs_reset {
-                active_pool.reset_resolver()?;
+                active_pool.reset_resolver(
+                    &workspace.root,
+                    &overlay,
+                    std::mem::take(&mut resolver_updated),
+                    std::mem::take(&mut resolver_deleted),
+                    std::mem::take(&mut resolver_cache_updated),
+                    std::mem::take(&mut resolver_cache_deleted),
+                    true,
+                )?;
                 resolver_needs_reset = false;
             }
             let results = if !lazy_demand_possible {
@@ -500,6 +537,13 @@ pub(crate) fn run_with_config(
                 )?
             };
 
+            // Merge resolver dependency edges the workers reported with
+            // these results so dirty checks can expand entrypoints through
+            // them, like stock's previousLibraryCycleGraphLoader.
+            state
+                .resolver_dep_graph
+                .extend(active_pool.take_dep_graph());
+
             let lazy_results = lazy_state.take_results();
             let lazy_source_output = lazy_results
                 .iter()
@@ -515,6 +559,10 @@ pub(crate) fn run_with_config(
                     &mut pending_outputs,
                     &mut pending_deletions,
                     &mut pending_actions,
+                    &mut resolver_updated,
+                    &mut resolver_deleted,
+                    &mut resolver_cache_updated,
+                    &mut resolver_cache_deleted,
                 )?;
             }
             if lazy_source_output {
@@ -532,7 +580,18 @@ pub(crate) fn run_with_config(
                     &mut pending_outputs,
                     &mut pending_deletions,
                     &mut pending_actions,
+                    &mut resolver_updated,
+                    &mut resolver_deleted,
+                    &mut resolver_cache_updated,
+                    &mut resolver_cache_deleted,
                 )?;
+            }
+
+            if !resolver_updated.is_empty() || !resolver_deleted.is_empty() {
+                resolver_needs_reset = true;
+            }
+            if !resolver_cache_updated.is_empty() || !resolver_cache_deleted.is_empty() {
+                resolver_needs_reset = true;
             }
 
             if builder.kind == BuilderKind::Normal && builder.build_to == BuildTo::Source {
@@ -621,7 +680,12 @@ fn record_missing_primary_input(
     deleted_overlay: &mut BTreeSet<String>,
     pending_deletions: &mut Vec<(Arc<BuilderDefinition>, String)>,
     pending_actions: &mut Vec<(String, ActionState)>,
+    resolver_updated: &mut BTreeSet<String>,
+    resolver_deleted: &mut BTreeSet<String>,
+    resolver_cache_updated: &mut BTreeSet<String>,
+    resolver_cache_deleted: &mut BTreeSet<String>,
 ) -> io::Result<()> {
+
     let key = spec.action_key();
     let mut outputs_to_delete = state
         .actions
@@ -636,6 +700,13 @@ fn record_missing_primary_input(
     for output in outputs_to_delete {
         deleted_overlay.insert(output.clone());
         overlay.remove(&output);
+        if spec.builder.build_to == BuildTo::Source {
+            resolver_deleted.insert(output.clone());
+            resolver_updated.remove(&output);
+        } else {
+            resolver_cache_deleted.insert(output.clone());
+            resolver_cache_updated.remove(&output);
+        }
         if workspace.asset_exists_at(&output, spec.builder.build_to)? {
             pending_deletions.push((spec.builder.clone(), output));
         }
@@ -647,6 +718,7 @@ fn record_missing_primary_input(
             input: spec.input.clone(),
             reads: Vec::new(),
             resolver_reads: Vec::new(),
+            resolver_entrypoints: Vec::new(),
             glob_reads: Vec::new(),
             outputs: Vec::new(),
             output_digests: BTreeMap::new(),
@@ -666,6 +738,10 @@ fn record_build_result(
     pending_outputs: &mut Vec<(Arc<BuilderDefinition>, String, Vec<u8>)>,
     pending_deletions: &mut Vec<(Arc<BuilderDefinition>, String)>,
     pending_actions: &mut Vec<(String, ActionState)>,
+    resolver_updated: &mut BTreeSet<String>,
+    resolver_deleted: &mut BTreeSet<String>,
+    resolver_cache_updated: &mut BTreeSet<String>,
+    resolver_cache_deleted: &mut BTreeSet<String>,
 ) -> io::Result<()> {
     let builder = spec.builder.as_ref();
     if result.status != "success" && result.status != "not_triggered" {
@@ -698,6 +774,13 @@ fn record_build_result(
             }
             deleted_overlay.insert(deleted.clone());
             overlay.remove(deleted);
+            if builder.build_to == BuildTo::Source {
+                resolver_deleted.insert(deleted.clone());
+                resolver_updated.remove(deleted);
+            } else {
+                resolver_cache_deleted.insert(deleted.clone());
+                resolver_cache_updated.remove(deleted);
+            }
             pending_deletions.push((spec.builder.clone(), deleted.clone()));
         }
     }
@@ -744,6 +827,13 @@ fn record_build_result(
         }
         overlay.insert(generated.asset.clone(), generated.bytes.clone());
         deleted_overlay.remove(&generated.asset);
+        if builder.build_to == BuildTo::Source {
+            resolver_updated.insert(generated.asset.clone());
+            resolver_deleted.remove(&generated.asset);
+        } else {
+            resolver_cache_updated.insert(generated.asset.clone());
+            resolver_cache_deleted.remove(&generated.asset);
+        }
         pending_outputs.push((
             spec.builder.clone(),
             generated.asset.clone(),
@@ -764,6 +854,13 @@ fn record_build_result(
             for previous_output in &previous.outputs {
                 if !actual_outputs.contains(previous_output.as_str()) {
                     deleted_overlay.insert(previous_output.clone());
+                    if builder.build_to == BuildTo::Source {
+                        resolver_deleted.insert(previous_output.clone());
+                        resolver_updated.remove(previous_output);
+                    } else {
+                        resolver_cache_deleted.insert(previous_output.clone());
+                        resolver_cache_updated.remove(previous_output);
+                    }
                     pending_deletions.push((spec.builder.clone(), previous_output.clone()));
                 }
             }
@@ -778,6 +875,13 @@ fn record_build_result(
                 continue;
             }
             deleted_overlay.insert(expected.clone());
+            if builder.build_to == BuildTo::Source {
+                resolver_deleted.insert(expected.clone());
+                resolver_updated.remove(expected);
+            } else {
+                resolver_cache_deleted.insert(expected.clone());
+                resolver_cache_updated.remove(expected);
+            }
             if workspace.asset_exists_at(expected, builder.build_to)? {
                 pending_deletions.push((spec.builder.clone(), expected.clone()));
             }
@@ -793,6 +897,7 @@ fn record_build_result(
             input: spec.input.clone(),
             reads: result.reads,
             resolver_reads: result.resolver_reads,
+            resolver_entrypoints: result.resolver_entrypoints,
             glob_reads: result.glob_reads,
             outputs: result
                 .outputs
@@ -840,13 +945,24 @@ fn expand_dirty_dependents(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let mut dependents_by_asset = BTreeMap::<String, Vec<String>>::new();
+    let mut dependents_by_asset = BTreeMap::<&str, Vec<&str>>::new();
+    let mut actions_by_entrypoint = BTreeMap::<&str, Vec<&str>>::new();
     for (action_key, action) in &state.actions {
         for dependency in action.reads.iter().chain(action.resolver_reads.iter()) {
             dependents_by_asset
-                .entry(dependency.clone())
+                .entry(dependency.as_str())
                 .or_default()
-                .push(action_key.clone());
+                .push(action_key.as_str());
+        }
+        // Entrypoint edges stay lazy: expanding every entrypoint's closure
+        // here would duplicate the whole dep graph per action. When a dirty
+        // output is queried below, its ancestors in the dep graph are walked
+        // once and every action entrypointed on them is invalidated.
+        for entrypoint in &action.resolver_entrypoints {
+            actions_by_entrypoint
+                .entry(entrypoint.as_str())
+                .or_default()
+                .push(action_key.as_str());
         }
         // A consumer whose primary input was unavailable has no read or
         // resolver dependency to record. Preserve that edge so a producer
@@ -855,9 +971,18 @@ fn expand_dirty_dependents(
         // handled by GraphState::changed_since_previous).
         if action.status == "skipped_missing_input" {
             dependents_by_asset
-                .entry(action.input.clone())
+                .entry(action.input.as_str())
                 .or_default()
-                .push(action_key.clone());
+                .push(action_key.as_str());
+        }
+    }
+    let mut parents_by_asset = BTreeMap::<&str, Vec<&str>>::new();
+    for (asset, deps) in &state.resolver_dep_graph {
+        for dep in deps {
+            parents_by_asset
+                .entry(dep.as_str())
+                .or_default()
+                .push(asset.as_str());
         }
     }
 
@@ -884,13 +1009,38 @@ fn expand_dirty_dependents(
                 .map(|spec| spec.outputs.clone())
                 .unwrap_or_default(),
         };
-        for output in source_outputs {
-            for dependent_key in dependents_by_asset
-                .get(&output)
+        let mut ancestors_seen = BTreeSet::<&str>::new();
+        for output in &source_outputs {
+            let mut dependent_keys: Vec<&str> = dependents_by_asset
+                .get(output.as_str())
                 .into_iter()
                 .flatten()
-            {
-                if dirty_keys.insert(dependent_key.clone()) {
+                .copied()
+                .collect();
+            // Assets whose resolver dependency closure contains this output
+            // are exactly its ancestors in the dep graph plus the output
+            // itself. A BFS per queried output replaces per-action closure
+            // expansion over the whole graph, and the seen set is shared
+            // across outputs because every visited asset contributes the
+            // same actions (dirty_keys deduplicates them anyway).
+            let mut stack = vec![output.as_str()];
+            while let Some(asset) = stack.pop() {
+                if !ancestors_seen.insert(asset) {
+                    continue;
+                }
+                dependent_keys.extend(
+                    actions_by_entrypoint
+                        .get(asset)
+                        .into_iter()
+                        .flatten()
+                        .copied(),
+                );
+                if let Some(parents) = parents_by_asset.get(asset) {
+                    stack.extend(parents.iter().copied());
+                }
+            }
+            for dependent_key in dependent_keys {
+                if dirty_keys.insert(dependent_key.to_owned()) {
                     if let Some(spec) = specs_by_key.get(dependent_key) {
                         dirty.push(spec.clone());
                     }

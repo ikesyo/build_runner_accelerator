@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-pub const GRAPH_SCHEMA_VERSION: u32 = 3;
+pub const GRAPH_SCHEMA_VERSION: u32 = 4;
 const GRAPH_MAGIC: &[u8; 4] = b"BRAG";
 const GRAPH_FORMAT_VERSION: u8 = 1;
 const GRAPH_HEADER_LENGTH: usize = GRAPH_MAGIC.len() + 1 + 4;
@@ -18,6 +18,10 @@ pub struct ActionState {
     pub input: String,
     pub reads: Vec<String>,
     pub resolver_reads: Vec<String>,
+    /// Entrypoints the action passed to the resolver. Dependency edges are
+    /// expanded through [`GraphState::resolver_dep_graph`] at dirty-check
+    /// time, mirroring stock build_runner's `previousLibraryCycleGraphLoader`.
+    pub resolver_entrypoints: Vec<String>,
     pub glob_reads: Vec<GlobRead>,
     pub outputs: Vec<String>,
     pub output_digests: BTreeMap<String, String>,
@@ -30,6 +34,10 @@ pub struct GraphState {
     pub config_digest: String,
     pub assets: Snapshot,
     pub actions: BTreeMap<String, ActionState>,
+    /// Direct dependency edges the Dart resolver loader has observed.
+    /// Actions that resolve an already-loaded library cycle observe no new
+    /// IO, so their dependency edges cannot be recovered from reads alone.
+    pub resolver_dep_graph: BTreeMap<String, Vec<String>>,
 }
 
 impl GraphState {
@@ -63,7 +71,16 @@ impl GraphState {
         }
 
         let mut decoder = Decoder::new(&contents[GRAPH_HEADER_LENGTH..]);
-        let state = decoder.read_graph_state()?;
+        let schema_version = decoder.read_u32()?;
+        if schema_version != GRAPH_SCHEMA_VERSION {
+            // Payloads from another schema version are not decodable:
+            // rebuild from a clean graph instead of failing the build.
+            return Ok(Self {
+                schema_version: GRAPH_SCHEMA_VERSION,
+                ..Self::default()
+            });
+        }
+        let state = decoder.read_graph_state(schema_version)?;
         decoder.finish()?;
         Ok(state)
     }
@@ -104,9 +121,72 @@ impl GraphState {
         changed
     }
 
+    /// Precomputed change information shared by every per-action dirty
+    /// check: the assets whose snapshot entry differs between the previous
+    /// and current runs, plus the reverse closure of that set through
+    /// [`GraphState::resolver_dep_graph`]. An entrypoint in `tainted` means
+    /// something it transitively depends on changed, which is exactly what
+    /// expanding `action_entrypoint_deps` per action was checking — once
+    /// instead of per action.
+    pub fn dirty_context<'a>(
+        &'a self,
+        current_assets: &'a Snapshot,
+    ) -> DirtyContext<'a> {
+        let mut changed = std::collections::HashSet::new();
+        for (asset, entry) in &self.assets {
+            let current = current_assets
+                .get(asset)
+                .map(|entry| (entry.exists, entry.digest.as_str()));
+            if Some((entry.exists, entry.digest.as_str())) != current {
+                changed.insert(asset.as_str());
+            }
+        }
+        // Assets present only in the current snapshot are new (and therefore
+        // changed); entries present in both were compared above.
+        for asset in current_assets.keys() {
+            if !self.assets.contains_key(asset) {
+                changed.insert(asset.as_str());
+            }
+        }
+        let mut parents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (node, deps) in &self.resolver_dep_graph {
+            for dep in deps {
+                parents.entry(dep.as_str()).or_default().push(node.as_str());
+            }
+        }
+        let mut tainted = std::collections::HashSet::new();
+        let mut stack: Vec<&str> = changed.iter().copied().collect();
+        while let Some(asset) = stack.pop() {
+            if !tainted.insert(asset) {
+                continue;
+            }
+            if let Some(dependents) = parents.get(asset) {
+                stack.extend(dependents.iter().copied());
+            }
+        }
+        DirtyContext { changed, tainted }
+    }
+
+    #[cfg(test)]
     pub fn changed_since_previous(
         &self,
         action: &ActionState,
+        current_assets: &Snapshot,
+        current_output_digests: &BTreeMap<String, String>,
+    ) -> bool {
+        let context = self.dirty_context(current_assets);
+        self.changed_since_previous_with(
+            action,
+            &context,
+            current_assets,
+            current_output_digests,
+        )
+    }
+
+    pub fn changed_since_previous_with(
+        &self,
+        action: &ActionState,
+        context: &DirtyContext<'_>,
         current_assets: &Snapshot,
         current_output_digests: &BTreeMap<String, String>,
     ) -> bool {
@@ -114,16 +194,12 @@ impl GraphState {
         dependencies.push(action.input.as_str());
         dependencies.extend(action.reads.iter().map(String::as_str));
         dependencies.extend(action.resolver_reads.iter().map(String::as_str));
-        dependencies.into_iter().any(|asset| {
-            let previous = self
-                .assets
-                .get(asset)
-                .map(|entry| (entry.exists, entry.digest.as_str()));
-            let current = current_assets
-                .get(asset)
-                .map(|entry| (entry.exists, entry.digest.as_str()));
-            previous != current
-        }) || action.glob_reads.iter().any(|glob| {
+        dependencies.into_iter().any(|asset| context.changed.contains(asset))
+        || action
+            .resolver_entrypoints
+            .iter()
+            .any(|entrypoint| context.tainted.contains(entrypoint.as_str()))
+        || action.glob_reads.iter().any(|glob| {
             let key = glob_asset_key(glob);
             let previous = self
                 .assets
@@ -150,6 +226,15 @@ impl GraphState {
 
 fn invalid_graph(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
+/// Shared per-pass dirty-check state: `changed` holds the assets whose
+/// snapshot entry differs between the previous and current runs, and
+/// `tainted` is the reverse closure of `changed` through the resolver
+/// dependency graph (assets that transitively depend on a changed one).
+pub struct DirtyContext<'a> {
+    changed: std::collections::HashSet<&'a str>,
+    tainted: std::collections::HashSet<&'a str>,
 }
 
 struct Encoder {
@@ -240,6 +325,7 @@ impl Encoder {
         self.write_string(&action.input)?;
         self.write_strings(&action.reads, "action reads")?;
         self.write_strings(&action.resolver_reads, "resolver reads")?;
+        self.write_strings(&action.resolver_entrypoints, "resolver entrypoints")?;
         self.write_count(action.glob_reads.len(), "glob reads")?;
         for glob in &action.glob_reads {
             self.write_string(&glob.package)?;
@@ -258,6 +344,16 @@ impl Encoder {
         for (key, action) in &state.actions {
             self.write_string(key)?;
             self.write_action(action)?;
+        }
+        self.write_string_list_map(&state.resolver_dep_graph)?;
+        Ok(())
+    }
+
+    fn write_string_list_map(&mut self, values: &BTreeMap<String, Vec<String>>) -> io::Result<()> {
+        self.write_count(values.len(), "resolver dep graph")?;
+        for (key, value) in values {
+            self.write_string(key)?;
+            self.write_strings(value, "resolver dep graph edges")?;
         }
         Ok(())
     }
@@ -367,6 +463,7 @@ impl<'a> Decoder<'a> {
         let input = self.read_string()?;
         let reads = self.read_strings("action reads")?;
         let resolver_reads = self.read_strings("resolver reads")?;
+        let resolver_entrypoints = self.read_strings("resolver entrypoints")?;
         let glob_count = self.read_count("glob reads")?;
         let mut glob_reads = Vec::with_capacity(glob_count);
         for _ in 0..glob_count {
@@ -383,6 +480,7 @@ impl<'a> Decoder<'a> {
             input,
             reads,
             resolver_reads,
+            resolver_entrypoints,
             glob_reads,
             outputs,
             output_digests,
@@ -390,8 +488,22 @@ impl<'a> Decoder<'a> {
         })
     }
 
-    fn read_graph_state(&mut self) -> io::Result<GraphState> {
-        let schema_version = self.read_u32()?;
+    fn read_string_list_map(&mut self) -> io::Result<BTreeMap<String, Vec<String>>> {
+        let count = self.read_count("resolver dep graph")?;
+        let mut values = BTreeMap::new();
+        for _ in 0..count {
+            let key = self.read_string()?;
+            let value = self.read_strings("resolver dep graph edges")?;
+            if values.insert(key, value).is_some() {
+                return Err(invalid_graph(
+                    "graph contains a duplicate resolver dep graph key",
+                ));
+            }
+        }
+        Ok(values)
+    }
+
+    fn read_graph_state(&mut self, schema_version: u32) -> io::Result<GraphState> {
         let config_digest = self.read_string()?;
         let assets = self.read_snapshot()?;
         let action_count = self.read_count("action graph")?;
@@ -403,11 +515,13 @@ impl<'a> Decoder<'a> {
                 return Err(invalid_graph("graph contains a duplicate action key"));
             }
         }
+        let resolver_dep_graph = self.read_string_list_map()?;
         Ok(GraphState {
             schema_version,
             config_digest,
             assets,
             actions,
+            resolver_dep_graph,
         })
     }
 
@@ -442,6 +556,7 @@ mod tests {
             config_digest: String::new(),
             assets,
             actions: BTreeMap::new(),
+            resolver_dep_graph: BTreeMap::new(),
         }
     }
 
@@ -541,6 +656,10 @@ mod tests {
                     size: 12,
                 },
             )]),
+            resolver_dep_graph: BTreeMap::from([(
+                "app|lib/model.dart".to_owned(),
+                vec!["app|lib/conditional.dart".to_owned()],
+            )]),
             actions: BTreeMap::from([(
                 "example:builder|app|lib/model.dart".to_owned(),
                 ActionState {
@@ -548,6 +667,7 @@ mod tests {
                     input: "app|lib/model.dart".to_owned(),
                     reads: vec!["app|lib/model.dart".to_owned()],
                     resolver_reads: vec!["app|lib/conditional.dart".to_owned()],
+                    resolver_entrypoints: vec!["app|lib/model.dart".to_owned()],
                     glob_reads: vec![GlobRead {
                         package: "app".to_owned(),
                         pattern: "lib/*.part".to_owned(),

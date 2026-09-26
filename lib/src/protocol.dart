@@ -76,12 +76,54 @@ class WorkerResetMessage extends WorkerMessage {
 }
 
 class WorkerResetResolverMessage extends WorkerMessage {
-  WorkerResetResolverMessage({required int id}) : super(id: id);
+  WorkerResetResolverMessage({
+    required int id,
+    required this.updatedSources,
+    required this.deletedSources,
+    required this.updatedCache,
+    required this.deletedCache,
+    required this.incremental,
+  }) : super(id: id);
 
-  factory WorkerResetResolverMessage.fromJson(JsonMap message) =>
-      WorkerResetResolverMessage(
-        id: _requiredInt(message, 'id', 'reset_resolver'),
-      );
+  /// Assets whose overlay content changed since the last phase commit.
+  final List<String> updatedSources;
+
+  /// Assets removed from the overlay since the last phase commit.
+  final List<String> deletedSources;
+
+  /// Changed cache-tree assets. These are applied to the worker's asset view
+  /// but are never passed to Analyzer as source-file updates.
+  final List<String> updatedCache;
+
+  /// Cache-tree assets removed from the overlay.
+  final List<String> deletedCache;
+
+  /// Whether the worker may keep its resolver state and apply source changes
+  /// incrementally. False when a clean resolver rebuild is required.
+  final bool incremental;
+
+  factory WorkerResetResolverMessage.fromJson(JsonMap message) {
+    return WorkerResetResolverMessage(
+      id: _requiredInt(message, 'id', 'reset_resolver'),
+      updatedSources: _stringList(
+        message['updated_sources'],
+        'reset_resolver updated_sources',
+      ),
+      deletedSources: _stringList(
+        message['deleted_sources'],
+        'reset_resolver deleted_sources',
+      ),
+      updatedCache: _stringList(
+        message['updated_cache'],
+        'reset_resolver updated_cache',
+      ),
+      deletedCache: _stringList(
+        message['deleted_cache'],
+        'reset_resolver deleted_cache',
+      ),
+      incremental: _requiredBool(message, 'incremental', 'reset_resolver'),
+    );
+  }
 }
 
 class WorkerBuildMessage extends WorkerMessage {
@@ -223,6 +265,14 @@ int _requiredInt(JsonMap message, String key, String type) {
   final value = message[key];
   if (value is! int) {
     throw FormatException('$type requires an integer $key');
+  }
+  return value;
+}
+
+bool _requiredBool(JsonMap message, String key, String type) {
+  final value = message[key];
+  if (value is! bool) {
+    throw FormatException('$type requires a boolean $key');
   }
   return value;
 }

@@ -1,5 +1,6 @@
 import 'package:build/build.dart';
 import 'package:built_collection/built_collection.dart';
+import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
 import 'package:build_runner/src/build/builder_filesystem.dart'
     show BuilderFilesystem;
 import 'package:build_runner/src/build/build_state/build_state.dart'
@@ -19,6 +20,8 @@ import 'package:build_runner/src/build_plan/build_step_plan.dart'
 import 'package:build_runner/src/build_plan/placeholders.dart'
     show Placeholders;
 import 'package:build_runner/src/build/build_state/glob_id.dart' show GlobId;
+import 'package:build_runner/src/build/library_cycle_graph/phased_value.dart'
+    show PhasedValue;
 import 'package:glob/glob.dart';
 import 'package:package_config/package_config.dart';
 
@@ -82,10 +85,32 @@ BuildStepPlan _emptyBuildStepPlan(int phaseCount) {
 /// source set. Asset existence remains an RPC decision, so the worker does not
 /// need to scan every dependency package before the first resolver request.
 class RemoteBuildState extends BuildState {
-  RemoteBuildState(this._packages, {required int phaseCount})
-    : super(buildStepPlan: _emptyBuildStepPlan(phaseCount), sources: const {});
+  RemoteBuildState(
+    this._packages, {
+    required int phaseCount,
+    Map<AssetId, AssetContent> committedContents = const {},
+  }) : _committedContents = Map.unmodifiable(committedContents),
+       super(
+         buildStepPlan: _emptyBuildStepPlan(phaseCount),
+         // A clean Analyzer reset must seed its in-memory filesystem with
+         // source outputs retained from earlier phases. Rust keeps these in
+         // the overlay until the whole build commits, so they are not on disk.
+         // Snapshot the map: the worker keeps mutating its producedOutputs,
+         // and same-phase outputs must stay hidden from this state.
+         sources: Map.unmodifiable(committedContents),
+       );
 
   final Set<String> _packages;
+
+  /// Contents of outputs the worker produced earlier in this build series.
+  ///
+  /// Source outputs stay in the Rust overlay until the final commit, so they
+  /// cannot be re-read from disk here; the worker already holds their bytes
+  /// from the build results it returned.
+  final Map<AssetId, AssetContent> _committedContents;
+
+  @override
+  AssetContent? contentOf(AssetId id) => _committedContents[id];
 
   @override
   bool isSource(AssetId id) => _packages.contains(id.package);
@@ -132,6 +157,21 @@ class RemoteBuilderFilesystem extends BuilderFilesystem {
     // Rust owns the source/output index and visibility rules. The Dart
     // BuildConfigs adapter is intentionally empty, so its normal input-glob
     // check would reject readable source parts before the remote RPC runs.
+  }
+
+  /// The build plan declares no outputs, so the inherited implementation
+  /// records a missing asset as `fixed('')` — a dep-graph entry the loader
+  /// never reloads even after the asset gets generated. Give the empty value
+  /// the current phase as expiry instead, so a later-phase load sees the
+  /// committed content and its real deps.
+  @override
+  Future<PhasedValue<String>> readPhased(int phase, AssetId id) async {
+    final read = await super.readPhased(phase, id);
+    if (read.values.last.expiresAfter == null &&
+        read.values.last.value.isEmpty) {
+      return PhasedValue.unavailable(before: '', expiresAfter: phase);
+    }
+    return read;
   }
 
   @override

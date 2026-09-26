@@ -3,6 +3,52 @@ import 'package:test/test.dart';
 
 void main() {
   group('WorkerMessage.decode', () {
+    test('decodes cache deltas on clean resolver resets', () {
+      final message = WorkerMessage.decode(<String, dynamic>{
+        'type': 'reset_resolver',
+        'id': 4,
+        'updated_sources': <dynamic>['app|lib/generated.dart'],
+        'deleted_sources': <dynamic>['app|lib/old.dart'],
+        'updated_cache': <dynamic>['app|lib/generated.json'],
+        'deleted_cache': <dynamic>['app|lib/old.json'],
+        'incremental': false,
+      });
+
+      expect(message, isA<WorkerResetResolverMessage>());
+      final reset = message as WorkerResetResolverMessage;
+      expect(reset.id, 4);
+      expect(reset.updatedSources, ['app|lib/generated.dart']);
+      expect(reset.deletedSources, ['app|lib/old.dart']);
+      expect(reset.updatedCache, ['app|lib/generated.json']);
+      expect(reset.deletedCache, ['app|lib/old.json']);
+      expect(reset.incremental, isFalse);
+    });
+
+    test('rejects resolver resets with omitted deltas', () {
+      expect(
+        () => WorkerMessage.decode(<String, dynamic>{
+          'type': 'reset_resolver',
+          'id': 5,
+          'incremental': false,
+        }),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('requires the resolver reset mode', () {
+      expect(
+        () => WorkerMessage.decode(<String, dynamic>{
+          'type': 'reset_resolver',
+          'id': 6,
+          'updated_sources': <dynamic>[],
+          'deleted_sources': <dynamic>[],
+          'updated_cache': <dynamic>[],
+          'deleted_cache': <dynamic>[],
+        }),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
     test('decodes initialize messages into typed values', () {
       final message = WorkerMessage.decode(<String, dynamic>{
         'type': 'initialize',

@@ -57,7 +57,15 @@ assert_same_file() {
   local actual=$2
   [[ -f "$expected" ]] || fail "missing expected file: $expected"
   [[ -f "$actual" ]] || fail "missing actual file: $actual"
-  cmp "$expected" "$actual" || fail "file mismatch: $expected vs $actual"
+  if ! cmp -s "$expected" "$actual"; then
+    printf 'expected prefix: ' >&2
+    head -c 256 "$expected" >&2
+    printf '\nactual prefix: ' >&2
+    head -c 256 "$actual" >&2
+    printf '\nfirst differing bytes:\n' >&2
+    cmp -l "$expected" "$actual" | head -n 8 >&2 || true
+    fail "file mismatch: $expected vs $actual"
+  fi
 }
 
 assert_same_tree() {

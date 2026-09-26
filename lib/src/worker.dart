@@ -4,14 +4,18 @@ import 'dart:isolate';
 
 import 'package:build/build.dart';
 import 'package:build_runner/src/build/build_step_impl.dart' show BuildStepImpl;
+import 'package:build_runner/src/build/library_cycle_graph/phased_asset_deps.dart'
+    show PhasedAssetDeps;
 import 'package:build_runner/src/build/input_tracker.dart' show InputTracker;
-import 'package:build_runner/src/build/resolver/resolvers_impl.dart'
-    show ResolversImpl;
+import 'worker_resolvers.dart' show WorkerResolversImpl;
 import 'package:build_runner/src/build_plan/build_packages.dart'
     show BuildPackages;
 import 'package:build_runner/src/logging/build_log.dart' show buildLog;
 import 'package:logging/logging.dart';
 import 'package:package_config/package_config.dart';
+
+import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
+import 'package:build_runner/src/build_plan/build_inputs.dart' show BuildInputs;
 
 import 'current_build_runtime.dart';
 import 'protocol.dart';
@@ -81,7 +85,21 @@ Future<void> runWorker({
               'id': reset.id,
             });
           case WorkerResetResolverMessage resetResolver:
-            await runtime.resetResolver();
+            await runtime.resetResolver(
+              updatedSources: resetResolver.updatedSources
+                  .map(AssetId.parse)
+                  .toSet(),
+              deletedSources: resetResolver.deletedSources
+                  .map(AssetId.parse)
+                  .toSet(),
+              updatedCache: resetResolver.updatedCache
+                  .map(AssetId.parse)
+                  .toSet(),
+              deletedCache: resetResolver.deletedCache
+                  .map(AssetId.parse)
+                  .toSet(),
+              incremental: resetResolver.incremental,
+            );
             await writer.send(<String, dynamic>{
               'v': 1,
               'type': 'reset_resolver',
@@ -134,12 +152,37 @@ class _WorkerRuntime {
 
   final PackageConfig packageConfig;
   final ResolverInitializationProfile resolverProfile;
-  final ResolversImpl resolver;
+  WorkerResolversImpl resolver;
   final ResourceManager resourceManager = ResourceManager();
   final Map<AssetId, List<int>> readCache = <AssetId, List<int>>{};
   final Set<AssetId> readableCache = <AssetId>{};
   final ResolverDependencyCache resolverDependencyCache =
       ResolverDependencyCache();
+
+  /// Bytes of outputs this worker produced during the current build.
+  ///
+  /// Source outputs stay in the Rust overlay until the final commit, so they
+  /// cannot be re-read from disk after a phase commit; the worker already
+  /// holds their bytes from the build results it returned.
+  final Map<AssetId, AssetContent> producedOutputs = <AssetId, AssetContent>{};
+
+  /// Dep-graph values already transmitted to Rust, keyed by asset. Entries
+  /// are re-sent only when a reset rebuilt them — identified by instance,
+  /// not by content.
+  final Map<AssetId, Object> sentDepGraphValues = <AssetId, Object>{};
+
+  /// Resolver entrypoints recorded by every `_runBuild` of the current
+  /// batch, including nested builds whose results do not join `results`.
+  final Set<AssetId> batchResolverEntrypoints = <AssetId>{};
+
+  /// Directive lines (`import`/`export`/`part`/`part of`/`library`) of Dart
+  /// assets committed to the overlay while this worker is alive. The
+  /// library-cycle loader caches parsed directives per asset, so a committed
+  /// asset whose directives changed invalidates that cache. Content-only
+  /// regeneration keeps the cached entry accurate and does not need a graph
+  /// clear.
+  final Map<String, Set<String>> _committedDartDirectives =
+      <String, Set<String>>{};
   final Map<String, Builder> builders = <String, Builder>{};
   final Map<String, PostProcessBuilder> postProcessBuilders =
       <String, PostProcessBuilder>{};
@@ -153,11 +196,17 @@ class _WorkerRuntime {
   bool resolverInitialized = false;
   int _phaseCount = 1;
 
+  /// Highest phase at which the dep-load queue was drained. Assets that
+  /// expired before a phase are re-loaded by the next library load at any
+  /// later phase, regardless of which closure they belong to; running that
+  /// drain between actions keeps the reload reads unattributed.
+  int _lastDepDrainPhase = -1;
+
   /// Starts a new build series for [package].
   Future<void> startBuild(String package, {required int phaseCount}) async {
     if (_buildStarted) {
       await resourceManager.disposeAll();
-      resolver.reset();
+      _replaceResolver();
       _buildStarted = false;
     }
     currentPackage = package;
@@ -172,7 +221,7 @@ class _WorkerRuntime {
   Future<void> reset() async {
     if (!_buildStarted) return;
     await resourceManager.disposeAll();
-    resolver.reset();
+    _replaceResolver();
     _buildStarted = false;
     _clearPerBuildState();
     await _startBuild();
@@ -181,12 +230,119 @@ class _WorkerRuntime {
   /// Reopens the current resolver's analysis model after Rust commits a
   /// source-output phase. A new BuilderFilesystem is required because current
   /// build_runner allows a filesystem to register its content listener once.
-  Future<void> resetResolver() async {
+  ///
+  /// With [incremental], the analyzer's in-memory filesystem and the loaded
+  /// library-cycle graph are kept: only [updatedSources] are refreshed and
+  /// [deletedSources] evicted, so unchanged sources do not get re-analyzed.
+  /// Cache-tree changes are supplied separately and refresh the same caches;
+  /// generated Dart files there stay Analyzer-visible like source outputs.
+  Future<void> resetResolver({
+    Set<AssetId> updatedSources = const <AssetId>{},
+    Set<AssetId> deletedSources = const <AssetId>{},
+    Set<AssetId> updatedCache = const <AssetId>{},
+    Set<AssetId> deletedCache = const <AssetId>{},
+    bool incremental = false,
+  }) async {
     if (!_buildStarted) return;
     resolverDependencyCache.clear();
-    resolver.reset();
+    final changedAssets = <AssetId>{
+      ...updatedSources,
+      ...deletedSources,
+      ...updatedCache,
+      ...deletedCache,
+    };
+    for (final id in changedAssets) {
+      readCache.remove(id);
+      readableCache.remove(id);
+    }
+    for (final id in deletedSources.followedBy(deletedCache)) {
+      producedOutputs.remove(id);
+    }
+    // Updated assets produced by another worker are spooled by Rust under the
+    // workspace overlay directory. Cache outputs ride the same transport and
+    // are refreshed into the shared caches on incremental resets too.
+    for (final id in updatedSources.followedBy(updatedCache)) {
+      final spoolFile = File(
+        '${Directory.current.path}/.dart_tool/build_runner_accelerator/'
+        'overlay/${id.package}/${id.path}',
+      );
+      if (spoolFile.existsSync()) {
+        // The spool is the current overlay value, even if this worker produced
+        // an earlier version of the same asset in a previous phase.
+        producedOutputs[id] = AssetContent.bytes(spoolFile.readAsBytesSync());
+      } else if (producedOutputs.containsKey(id)) {
+        // In a single-worker build the current value is already in memory.
+      }
+    }
+    if (!incremental) {
+      _replaceResolver();
+      _buildStarted = false;
+      await _startBuild(clearReadCaches: false, clearBuilders: false);
+      return;
+    }
+    for (final id in updatedSources.followedBy(updatedCache)) {
+      if (producedOutputs.containsKey(id)) continue;
+      final spoolFile = File(
+        '${Directory.current.path}/.dart_tool/build_runner_accelerator/'
+        'overlay/${id.package}/${id.path}',
+      );
+      if (!spoolFile.existsSync()) {
+        _replaceResolver();
+        _buildStarted = false;
+        await _startBuild(clearReadCaches: false, clearBuilders: false);
+        return;
+      }
+    }
+    // A committed Dart asset whose directive set changed can change the
+    // import graph: the cycle loader caches parsed directives per asset, so
+    // keeping the graph would let the resolver reuse stale dependencies.
+    // Content-only regeneration keeps the cached entry accurate. A deleted
+    // asset leaves dependents' directives untouched, so their cached cycles
+    // stay as valid as they are under a clear.
+    var dartGraphChanged = false;
+    PhasedAssetDeps? depGraph;
+    for (final id in updatedSources.followedBy(updatedCache)) {
+      if (!id.path.endsWith('.dart') && !id.path.endsWith('.part')) {
+        continue;
+      }
+      final key = '${id.package}|${id.path}';
+      final directives = _dartDirectives(producedOutputs[id]);
+      final previous = _committedDartDirectives[key] ?? _directivesOnDisk(id);
+      if (previous != null) {
+        if (!_sameDirectives(previous, directives)) {
+          dartGraphChanged = true;
+        }
+      } else if (directives.isNotEmpty) {
+        // With no earlier record, an asset that was dependency-loaded
+        // while still missing may hold a stale empty-deps entry. Entries
+        // with an expiry reload on the next read on their own; only a
+        // permanent (`fixed`) entry leaves the graph stale.
+        depGraph ??= resolver.phasedAssetDeps();
+        final recorded = depGraph.assetDeps[id];
+        if (recorded != null &&
+            recorded.expiresAfter == null &&
+            recorded.values.last.value.deps.isEmpty) {
+          dartGraphChanged = true;
+        }
+      }
+      _committedDartDirectives[key] = directives;
+    }
+    for (final id in deletedSources.followedBy(deletedCache)) {
+      _committedDartDirectives.remove('${id.package}|${id.path}');
+    }
+    resolver.reset(clearGraph: dartGraphChanged);
     _buildStarted = false;
-    await _startBuild(clearReadCaches: false, clearBuilders: false);
+    await _startBuild(
+      buildInputs: BuildInputs((builder) {
+        builder.cleanBuild = false;
+        // Cache-tree Dart assets are Analyzer-visible too (generated sources
+        // of dependency packages), so they refresh the same in-memory view.
+        builder.updatedSources.addAll(updatedSources.followedBy(updatedCache));
+        builder.deletedSources.addAll(deletedSources.followedBy(deletedCache));
+      }),
+      clearReadCaches: false,
+      clearBuilders: false,
+    );
   }
 
   Future<void> close() async {
@@ -198,15 +354,57 @@ class _WorkerRuntime {
     await resourceManager.beforeExit();
   }
 
+  void _replaceResolver() {
+    resolver.reset();
+    resolver = createResolver(packageConfig, resolverProfile);
+  }
+
   void _clearPerBuildState() {
     readCache.clear();
     readableCache.clear();
     resolverDependencyCache.clear();
+    producedOutputs.clear();
+    _committedDartDirectives.clear();
+    sentDepGraphValues.clear();
+    batchResolverEntrypoints.clear();
     builders.clear();
     postProcessBuilders.clear();
+    _lastDepDrainPhase = -1;
   }
 
+  static final RegExp _dartDirectivePattern = RegExp(
+    r'''^\s*(?:import|export|part(?:\s+of)?|library)\s[^;]*;''',
+    multiLine: true,
+  );
+
+  /// Directive set of [id]'s pre-build version on disk, or null when it did
+  /// not exist. Source outputs stay in the overlay until the final commit,
+  /// so the on-disk file is still the pre-build content during a reset.
+  Set<String>? _directivesOnDisk(AssetId id) {
+    for (final package in packageConfig.packages) {
+      if (package.name != id.package || !package.root.isScheme('file')) {
+        continue;
+      }
+      final file = File.fromUri(package.root.resolve(id.path));
+      if (!file.existsSync()) return null;
+      return _dartDirectives(AssetContent.bytes(file.readAsBytesSync()));
+    }
+    return null;
+  }
+
+  static Set<String> _dartDirectives(AssetContent? content) {
+    if (content == null) return const <String>{};
+    return _dartDirectivePattern
+        .allMatches(content.stringValue())
+        .map((match) => match.group(0)!.trim())
+        .toSet();
+  }
+
+  static bool _sameDirectives(Set<String> a, Set<String> b) =>
+      a.length == b.length && a.containsAll(b);
+
   Future<void> _startBuild({
+    BuildInputs? buildInputs,
     bool clearReadCaches = false,
     bool clearBuilders = false,
   }) async {
@@ -230,6 +428,7 @@ class _WorkerRuntime {
     buildState = RemoteBuildState(
       buildPackages.packages.keys.toSet(),
       phaseCount: _phaseCount,
+      committedContents: producedOutputs,
     );
     buildFilesystem = RemoteBuilderFilesystem(
       buildPackages: buildPackages,
@@ -238,7 +437,7 @@ class _WorkerRuntime {
     );
     await resolver.takeLockAndStartBuild(
       builderFilesystem: buildFilesystem,
-      buildInputs: cleanBuildInputs(),
+      buildInputs: buildInputs ?? cleanBuildInputs(),
     );
     _buildStarted = true;
   }
@@ -408,6 +607,7 @@ Future<void> _handleBuildBatch(
 ) async {
   final results = <JsonMap>[];
   final blockedAssets = message.blockedAssets.map(AssetId.parse).toSet();
+  runtime.batchResolverEntrypoints.clear();
   for (final request in message.requests) {
     results.add(
       await _runBuild(
@@ -426,6 +626,11 @@ Future<void> _handleBuildBatch(
     'type': 'build_batch_result',
     'id': message.id,
     'results': results,
+    'dep_graph': _resolverDepGraphJson(
+      runtime.resolver.phasedAssetDeps(),
+      runtime.batchResolverEntrypoints,
+      runtime.sentDepGraphValues,
+    ),
   });
 }
 
@@ -486,6 +691,21 @@ Future<JsonMap> _runBuild(
       blockedAssets: blockedAssets,
     );
     actionStarted = true;
+    var drainReads = const <AssetId>{};
+    if (request.phase > runtime._lastDepDrainPhase) {
+      runtime._lastDepDrainPhase = request.phase;
+      // Expired dep entries are re-loaded eagerly by the next library load
+      // regardless of which closure they belong to. Completing those queued
+      // loads first keeps the bookkeeping reads attributable so they can be
+      // excluded from this action's recorded reads; the completed deps still
+      // reach the exported dep graph.
+      final readsBeforeDrain = Set<AssetId>.of(runtime.io.observedReads);
+      await runtime.resolver.drainPendingDepLoads(
+        builderFilesystem: runtime.buildFilesystem,
+        phase: request.phase,
+      );
+      drainReads = runtime.io.observedReads.difference(readsBeforeDrain);
+    }
     final deleted = <AssetId>{};
     BuildStepImpl? step;
     InputTracker? triggerInputTracker;
@@ -579,6 +799,7 @@ Future<JsonMap> _runBuild(
         runtime.io,
         runtime.packageConfig,
         runtime.resolverDependencyCache,
+        excludeReads: drainReads,
       );
       profile.resolverReadsUs = resolverReadsTimer.elapsedMicroseconds;
     }
@@ -595,19 +816,33 @@ Future<JsonMap> _runBuild(
             'bytes': entry.value.bytes,
           },
     ];
+    if (isPostProcess) {
+      for (final entry in runtime.io.outputs.entries) {
+        runtime.producedOutputs[entry.key] = AssetContent.bytes(entry.value);
+      }
+    } else if (step != null) {
+      runtime.producedOutputs.addAll(step.outputs);
+    }
+    final observedReads = drainReads.isEmpty
+        ? runtime.io.observedReads
+        : runtime.io.observedReads.difference(drainReads);
     final reads = <String>{
       input.toString(),
       if (triggerInputTracker != null)
         ...triggerInputTracker.inputs.map((id) => id.toString()),
       if (step != null) ...step.inputTracker.inputs.map((id) => id.toString()),
-      ...runtime.io.observedReads.map((id) => id.toString()),
+      ...observedReads.map((id) => id.toString()),
       ...runtime.io.observedGlobResults.map((id) => id.toString()),
     }.toList()..sort();
     final resolverReads = <String>{
       if (triggered && step != null)
         ...step.inputTracker.resolverEntrypoints.map((id) => id.toString()),
-      if (triggered) ...runtime.io.observedReads.map((id) => id.toString()),
+      if (triggered) ...observedReads.map((id) => id.toString()),
     }.toList()..sort();
+    final resolverEntrypoints = <AssetId>{
+      if (triggered && step != null) ...step.inputTracker.resolverEntrypoints,
+    };
+    runtime.batchResolverEntrypoints.addAll(resolverEntrypoints);
     final globReads = runtime.io.observedGlobs.toList()
       ..sort((left, right) {
         final packageOrder = left.package.compareTo(right.package);
@@ -631,6 +866,9 @@ Future<JsonMap> _runBuild(
         ..sort(),
       'reads': reads,
       'resolver_reads': resolverReads,
+      'resolver_entrypoints': <String>[
+        for (final id in resolverEntrypoints) id.toString(),
+      ]..sort(),
       'resolver_used': resolverUsed,
       'glob_reads': <Map<String, String>>[
         for (final glob in globReads)
@@ -642,6 +880,46 @@ Future<JsonMap> _runBuild(
     if (actionStarted) runtime.io.endAction();
     profile.emit();
   }
+}
+
+/// Direct dependency edges the resolver loader has recorded so far.
+///
+/// Actions that resolve an already-loaded library cycle observe no new IO,
+/// so their dependency edges cannot be recovered from reads alone. The
+/// Rust graph expands resolver entrypoints through this map at dirty-check
+/// time, the same way stock build_runner expands them via
+/// `previousLibraryCycleGraphLoader`. Only the subgraph reachable from
+/// [entrypoints] is serialized: entries for assets this batch never resolved
+/// cannot affect the dirty checks that follow from these entrypoints.
+Map<String, List<String>> _resolverDepGraphJson(
+  PhasedAssetDeps deps,
+  Set<AssetId> entrypoints,
+  Map<AssetId, Object> sent,
+) {
+  final result = <String, List<String>>{};
+  final visited = <AssetId>{};
+  final pending = entrypoints.toList();
+  while (pending.isNotEmpty) {
+    final id = pending.removeLast();
+    if (!visited.add(id)) continue;
+    final values = deps.assetDeps[id]?.values;
+    if (values == null || values.isEmpty) continue;
+    final assetDeps = values.last.value.deps;
+    // Empty dep lists are serialized too: the Rust merge replaces edges per
+    // key, and skipping the record would leave stale edges behind.
+    // An entry already sent with the same recorded value does not need
+    // another copy; a rebuilt graph produces fresh value objects.
+    if (identical(sent[id], values.last)) {
+      pending.addAll(assetDeps);
+      continue;
+    }
+    sent[id] = values.last;
+    result[id.toString()] = <String>[
+      for (final dep in assetDeps) dep.toString(),
+    ];
+    pending.addAll(assetDeps);
+  }
+  return result;
 }
 
 String _instanceKey(WorkerBuildRequest request) {
