@@ -26,50 +26,43 @@ void main() {
     );
   });
 
-  test(
-    'explicit --dart skips PATH lookup while showing help',
-    () async {
-      final pathDirectory = await Directory.systemTemp.createTemp(
-        'build-runner-accelerator-path-lookup-',
-      );
-      final lookupMarker = File('${pathDirectory.path}/lookup-called');
-      final which = File('${pathDirectory.path}/which');
-      final packageConfig =
-          File('.dart_tool/package_config.json').absolute.path;
-      final launcher = File('bin/build_runner_accelerator.dart').absolute.path;
-      try {
-        await which.writeAsString(
-          '#!/bin/sh\n: > "$LOOKUP_MARKER"\nexit 1\n',
-        );
-        final chmod = await Process.run('/bin/chmod', ['+x', which.path]);
-        expect(chmod.exitCode, 0, reason: '${chmod.stderr}');
+  test('explicit --dart skips lookup', () async {
+    final pathDirectory = await Directory.systemTemp.createTemp(
+      'build-runner-accelerator-path-lookup-',
+    );
+    final lookupMarker = File('${pathDirectory.path}/lookup-called');
+    final which = File('${pathDirectory.path}/which');
+    final packageConfig = File('.dart_tool/package_config.json').absolute.path;
+    final launcher = File('bin/build_runner_accelerator.dart').absolute.path;
+    try {
+      await which.writeAsString('#!/bin/sh\n: > "\$LOOKUP_MARKER"\nexit 1\n');
+      final chmod = await Process.run('/bin/chmod', ['+x', which.path]);
+      expect(chmod.exitCode, 0, reason: '${chmod.stderr}');
 
-        final result = await Process.run(
+      final result = await Process.run(
+        Platform.resolvedExecutable,
+        [
+          '--packages=$packageConfig',
+          launcher,
+          '--dart',
           Platform.resolvedExecutable,
-          [
-            '--packages=$packageConfig',
-            launcher,
-            '--dart',
-            Platform.resolvedExecutable,
-            '--help',
-          ],
-          workingDirectory: Directory.current.path,
-          environment: <String, String>{
-            ...Platform.environment,
-            'PATH': pathDirectory.path,
-            'LOOKUP_MARKER': lookupMarker.path,
-          },
-        );
+          '--help',
+        ],
+        workingDirectory: Directory.current.path,
+        environment: <String, String>{
+          ...Platform.environment,
+          'PATH': pathDirectory.path,
+          'LOOKUP_MARKER': lookupMarker.path,
+        },
+      );
 
-        expect(result.exitCode, 0, reason: '${result.stderr}');
-        expect(result.stdout, contains('Usage: dart run'));
-        expect(lookupMarker.existsSync(), isFalse);
-      } finally {
-        await pathDirectory.delete(recursive: true);
-      }
-    },
-    skip: Platform.isWindows ? 'requires a Unix PATH shim' : false,
-  );
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+      expect(result.stdout, contains('Usage: dart run'));
+      expect(lookupMarker.existsSync(), isFalse);
+    } finally {
+      await pathDirectory.delete(recursive: true);
+    }
+  }, skip: Platform.isWindows);
 
   test('Dart SDK resolution continues past invalid PATH matches', () async {
     final temporary = await Directory.systemTemp.createTemp(
@@ -92,10 +85,7 @@ void main() {
         pathLookup: (executable) {
           lookups.add(executable);
           return executable == 'dart'
-              ? <String>[
-                  '${invalidSdk.path}/bin/dart',
-                  validDart.path,
-                ]
+              ? <String>['${invalidSdk.path}/bin/dart', validDart.path]
               : const <String>[];
         },
         isWindows: false,
@@ -133,43 +123,48 @@ void main() {
     }
   });
 
-  test('Flutter lookup uses and validates the platform Dart executable', () async {
-    final temporary = await Directory.systemTemp.createTemp(
-      'build-runner-accelerator-flutter-dart-',
-    );
-    try {
-      final flutter = '${temporary.path}/flutter/bin/flutter';
-      final sdkRoot = Directory('${temporary.path}/flutter/bin/cache/dart-sdk');
-      final sdkBin = Directory('${sdkRoot.path}/bin');
-      await sdkBin.create(recursive: true);
-      await Directory('${sdkRoot.path}/lib').create();
-      final windowsDart = File('${sdkBin.path}/dart.exe');
-      final lookup = (String executable) => switch (executable) {
-        'dart' => const <String>[],
-        'flutter' => <String>[flutter],
-        _ => const <String>[],
-      };
-
-      final fallback = resolveDartSdkExecutable(
-        resolvedExecutable: '${temporary.path}/launcher',
-        environmentDart: null,
-        pathLookup: lookup,
-        isWindows: true,
+  test(
+    'Flutter lookup uses and validates the platform Dart executable',
+    () async {
+      final temporary = await Directory.systemTemp.createTemp(
+        'build-runner-accelerator-flutter-dart-',
       );
-      expect(fallback, '${temporary.path}/launcher');
+      try {
+        final flutter = '${temporary.path}/flutter/bin/flutter';
+        final sdkRoot = Directory(
+          '${temporary.path}/flutter/bin/cache/dart-sdk',
+        );
+        final sdkBin = Directory('${sdkRoot.path}/bin');
+        await sdkBin.create(recursive: true);
+        await Directory('${sdkRoot.path}/lib').create();
+        final windowsDart = File('${sdkBin.path}/dart.exe');
+        final lookup = (String executable) => switch (executable) {
+          'dart' => const <String>[],
+          'flutter' => <String>[flutter],
+          _ => const <String>[],
+        };
 
-      await windowsDart.writeAsString('dart');
-      final result = resolveDartSdkExecutable(
-        resolvedExecutable: '${temporary.path}/launcher',
-        environmentDart: null,
-        pathLookup: lookup,
-        isWindows: true,
-      );
-      expect(result, windowsDart.path);
-    } finally {
-      await temporary.delete(recursive: true);
-    }
-  });
+        final fallback = resolveDartSdkExecutable(
+          resolvedExecutable: '${temporary.path}/launcher',
+          environmentDart: null,
+          pathLookup: lookup,
+          isWindows: true,
+        );
+        expect(fallback, '${temporary.path}/launcher');
+
+        await windowsDart.writeAsString('dart');
+        final result = resolveDartSdkExecutable(
+          resolvedExecutable: '${temporary.path}/launcher',
+          environmentDart: null,
+          pathLookup: lookup,
+          isWindows: true,
+        );
+        expect(result, windowsDart.path);
+      } finally {
+        await temporary.delete(recursive: true);
+      }
+    },
+  );
 
   test(
     'consumes launcher options and preserves stock build_runner options',
