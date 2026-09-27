@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:build/build.dart';
@@ -178,6 +179,15 @@ class RemoteAssetReaderWriter extends ReaderWriter {
       final response = await _state.activeRpc.call('read', <String, dynamic>{
         'asset': id.toString(),
       });
+      // The frontend answers disk-backed assets with their absolute path so
+      // the worker reads them directly; only in-memory overlay values arrive
+      // as binary payloads.
+      final path = response['path'];
+      if (path is String) {
+        final bytes = await File(path).readAsBytes();
+        _state.readCache[id] = bytes;
+        return List<int>.from(bytes);
+      }
       final rawBytes = response['bytes'];
       if (rawBytes is! List) {
         throw const FormatException('Asset read response bytes must be a list');
@@ -192,6 +202,8 @@ class RemoteAssetReaderWriter extends ReaderWriter {
         throw AssetNotFoundException(id);
       }
       rethrow;
+    } on FileSystemException {
+      throw AssetNotFoundException(id);
     }
   }
 

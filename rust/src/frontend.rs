@@ -1,6 +1,9 @@
 use crate::builder::{BuilderManifestFile, RustBuildConfig, rust_build_config_from_manifest};
 use crate::cli::{FrontendMode, Options};
-use crate::worker_kernel::{prewarm_worker_aot, take_background_aot_lock, worker_aot_cache_key};
+use crate::worker_kernel::{
+    prewarm_worker_aot, start_analysis_prewarm, take_background_aot_lock,
+    worker_aot_cache_key,
+};
 use crate::workspace::Workspace;
 use std::fs;
 use std::io;
@@ -192,7 +195,13 @@ pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
     })?;
     let worker = worker_executable(options, &build_config)?;
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
+    // Warm the shared analyzer byte store alongside the worker AOT compile:
+    // the JIT prewarm overlaps the compile and continues to completion.
+    let analysis_prewarm = start_analysis_prewarm(&workspace.root, dart_binary);
     let artifact = prewarm_worker_aot(&workspace.root, dart_binary, &worker)?;
+    if let Some(analysis_prewarm) = analysis_prewarm {
+        analysis_prewarm.wait_for_children();
+    }
     let cache_key = worker_aot_cache_key(&workspace.root, dart_binary, &worker)?;
     println!("AOT prewarm ready: {}", artifact.display());
     println!("AOT cache key: {cache_key}");

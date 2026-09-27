@@ -12,6 +12,9 @@ dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 fixture_dir="$repo_root/fixtures/current_json_app"
 temporary_dir=$(mktemp -d)
+# Keep the machine-wide accelerator cache hermetic: these scenarios assert
+# on whether a workspace compiles or reuses its AOT worker.
+export BUILD_RUNNER_ACCELERATOR_CACHE="$temporary_dir/shared-cache"
 workspace_root="$temporary_dir/workspace"
 rust_dir="$workspace_root/fixtures/rust"
 first_log="$temporary_dir/first.log"

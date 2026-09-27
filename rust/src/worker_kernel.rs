@@ -7,12 +7,12 @@ use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
-const AOT_METADATA_VERSION: u32 = 2;
+const AOT_METADATA_VERSION: u32 = 3;
 const AOT_CACHE_KEY_VERSION: &str = "v2";
 const BACKGROUND_AOT_LOCK_ENV: &str = "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_BACKGROUND_LOCK";
 const BACKGROUND_AOT_LOCK_MAX_AGE: Duration = Duration::from_secs(60 * 60);
@@ -40,6 +40,7 @@ struct AotMetadata {
     allowed_experiments: String,
     package_config: String,
     worker: String,
+    executable: String,
     dependencies: BTreeMap<String, String>,
 }
 
@@ -49,6 +50,7 @@ struct AotMetadata {
 /// a background compile for `watch` by default. The request can be disabled,
 /// made synchronous, or made strict through the environment. An explicit AOT
 /// path takes precedence over every other mode.
+///
 pub(crate) fn resolve_worker_artifact(
     root: &Path,
     dart_binary: &str,
@@ -172,6 +174,15 @@ pub(crate) fn prewarm_worker_aot(
     prepare_worker_aot(root, dart_binary, worker_executable)
 }
 
+/// Spawn JIT `AnalysisDriver` processes that resolve the workspace package's
+/// sources into the shared byte store, priming both cold-start caches in one
+/// `aot-prewarm` step. The caller joins with [`AnalysisPrewarm::wait_for_children`];
+/// `None` means the shared byte store is disabled, the accelerator package
+/// cannot be located, or the workspace has no package config yet.
+pub(crate) fn start_analysis_prewarm(root: &Path, dart_binary: &str) -> Option<AnalysisPrewarm> {
+    spawn_analysis_prewarm(root, dart_binary)
+}
+
 fn is_dart_source(worker_executable: &str) -> bool {
     Path::new(worker_executable)
         .extension()
@@ -260,6 +271,161 @@ impl Drop for BackgroundAotLock {
     fn drop(&mut self) {
         remove_if_present(&self.path);
     }
+}
+
+/// Machine-wide cache root shared by all workspaces, mirroring the Dart
+/// `FrontendBinaryResolver.cacheDirectory` contract:
+/// `BUILD_RUNNER_ACCELERATOR_CACHE` wins, then the platform cache directory.
+/// A relative override resolves against the workspace root so the Rust
+/// frontend and its workers agree even when the launcher runs elsewhere.
+fn shared_cache_root(workspace_root: &Path) -> Option<PathBuf> {
+    if let Ok(configured) = env::var("BUILD_RUNNER_ACCELERATOR_CACHE") {
+        if !configured.is_empty() {
+            let path = PathBuf::from(configured);
+            return Some(if path.is_absolute() {
+                path
+            } else {
+                workspace_root.join(path)
+            });
+        }
+    }
+    if cfg!(target_os = "windows") {
+        for variable in ["LOCALAPPDATA", "USERPROFILE"] {
+            if let Ok(value) = env::var(variable) {
+                if !value.is_empty() {
+                    let root = if variable == "USERPROFILE" {
+                        PathBuf::from(value).join("AppData").join("Local")
+                    } else {
+                        PathBuf::from(value)
+                    };
+                    return Some(root.join("build_runner_accelerator"));
+                }
+            }
+        }
+        return None;
+    }
+    if cfg!(target_os = "macos") {
+        let home = env::var_os("HOME")?;
+        return Some(
+            PathBuf::from(home)
+                .join("Library")
+                .join("Caches")
+                .join("build_runner_accelerator"),
+        );
+    }
+    if let Ok(xdg) = env::var("XDG_CACHE_HOME") {
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg).join("build_runner_accelerator"));
+        }
+    }
+    let home = env::var_os("HOME")?;
+    Some(
+        PathBuf::from(home)
+            .join(".cache")
+            .join("build_runner_accelerator"),
+    )
+}
+
+/// Directory holding the shared copy of one compiled worker artifact, keyed
+/// by the content-derived cache key so different workspaces and checkouts
+/// publish and restore the same slot.
+fn shared_aot_dir(workspace_root: &Path, cache_key: &str) -> Option<PathBuf> {
+    Some(
+        shared_cache_root(workspace_root)?
+            .join("worker-aot")
+            .join(digest_bytes(cache_key.as_bytes())),
+    )
+}
+
+/// File names making up one cached worker artifact.
+fn aot_artifact_file_names(context: &AotContext) -> Option<[OsString; 3]> {
+    Some([
+        context.aot_path.file_name()?.to_owned(),
+        context.depfile_path.file_name()?.to_owned(),
+        context.sdk_metadata_path.file_name()?.to_owned(),
+    ])
+}
+
+/// Restore a previously published artifact into the workspace's `aot-sdk`.
+/// Returns the local artifact path when the staged generation passed the same
+/// staleness check a local artifact would.
+fn restore_shared_aot(context: &AotContext) -> io::Result<Option<PathBuf>> {
+    let Some(dir) = shared_aot_dir(&context.workspace.root, &context.cache_key) else {
+        return Ok(None);
+    };
+    let Some([aot_name, depfile_name, metadata_name]) = aot_artifact_file_names(context) else {
+        return Ok(None);
+    };
+    let aot_dir = context
+        .aot_path
+        .parent()
+        .ok_or_else(|| io::Error::other("worker AOT path has no parent directory"))?;
+    fs::create_dir_all(aot_dir)?;
+    let process_id = std::process::id();
+
+    // Stage the shared trio under temporary names and validate the staged
+    // copy. A concurrent `publish_shared_aot` can rotate any of the three
+    // files mid-restore; validating the staged generation ensures a mixed
+    // set is discarded instead of restored and run.
+    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for name in [&aot_name, &depfile_name, &metadata_name] {
+        let destination = aot_dir.join(name);
+        let temp = temporary_sibling(&destination, process_id, "shared");
+        if fs::copy(dir.join(name), &temp).is_err() {
+            remove_if_present(&temp);
+            for (staged_temp, _) in staged.drain(..) {
+                remove_if_present(&staged_temp);
+            }
+            return Ok(None);
+        }
+        staged.push((temp, destination));
+    }
+    if !aot_metadata_is_current(
+        &staged[0].0,
+        &staged[2].0,
+        &context.workspace,
+        &context.sdk_root,
+        &context.worker_path,
+        &context.cache_key,
+    ) {
+        for (staged_temp, _) in staged.drain(..) {
+            remove_if_present(&staged_temp);
+        }
+        return Ok(None);
+    }
+    for (temp, destination) in staged {
+        replace_file(&temp, &destination)?;
+    }
+    Ok(Some(fs::canonicalize(&context.aot_path)?))
+}
+
+/// Publish the freshly compiled artifact so other checkouts and workspaces
+/// with the same cache key skip the synchronous compile. The SDK metadata —
+/// the file restore validation depends on — is written last, so a slot
+/// interrupted mid-publish stays invalid. Best-effort: any failure leaves
+/// the shared slot untouched.
+fn publish_shared_aot(context: &AotContext) {
+    let Some(dir) = shared_aot_dir(&context.workspace.root, &context.cache_key) else {
+        return;
+    };
+    let Some([aot_name, depfile_name, metadata_name]) = aot_artifact_file_names(context) else {
+        return;
+    };
+    let _ = (|| -> io::Result<()> {
+        fs::create_dir_all(&dir)?;
+        let process_id = std::process::id();
+        for (source, name) in [
+            (&context.aot_path, aot_name),
+            (&context.depfile_path, depfile_name),
+            (&context.sdk_metadata_path, metadata_name),
+        ] {
+            let destination = dir.join(name);
+            let temp = temporary_sibling(&destination, process_id, "publish");
+            fs::copy(source, &temp)?;
+            replace_file(&temp, &destination)?;
+        }
+        Ok(())
+    })();
 }
 
 struct AotContext {
@@ -392,6 +558,12 @@ fn prepare_worker_aot(
     if let Some(aot) = current_aot_from_context(&context)? {
         return Ok(aot);
     }
+    // A fresh checkout has no workspace-local artifact, but a previous build
+    // (here or in another checkout) may have published this exact key to the
+    // machine-wide cache.
+    if let Ok(Some(aot)) = restore_shared_aot(&context) {
+        return Ok(aot);
+    }
 
     let process_id = std::process::id();
     let temp_aot = temporary_sibling(&context.aot_path, process_id, "aot");
@@ -420,6 +592,7 @@ fn prepare_worker_aot(
         &context.sdk_root,
         &context.worker_path,
         &temp_depfile,
+        &temp_aot,
         &context.cache_key,
     )?;
     fs::write(&temp_sdk_metadata, serde_json::to_vec_pretty(&metadata).map_err(io::Error::other)?)?;
@@ -429,6 +602,7 @@ fn prepare_worker_aot(
     replace_file(&temp_depfile, &context.depfile_path)?;
     replace_file(&temp_sdk_metadata, &context.sdk_metadata_path)?;
     replace_file(&temp_aot, &context.aot_path)?;
+    publish_shared_aot(&context);
     fs::canonicalize(context.aot_path)
 }
 
@@ -559,6 +733,7 @@ fn build_aot_metadata(
     sdk_root: &Path,
     worker_path: &Path,
     depfile: &Path,
+    executable_path: &Path,
     cache_key: &str,
 ) -> io::Result<AotMetadata> {
     let dependencies = parse_depfile_dependencies(&fs::read_to_string(depfile)?)
@@ -595,6 +770,7 @@ fn build_aot_metadata(
         allowed_experiments,
         package_config: workspace.package_config_identity().to_owned(),
         worker: digest_file(worker_path)?,
+        executable: digest_file(executable_path)?,
         dependencies: dependency_digests,
     })
 }
@@ -632,6 +808,15 @@ fn aot_metadata_is_current(
         return false;
     };
     if metadata.worker != worker_digest {
+        return false;
+    }
+    // The digest ties the metadata to the exact executable that produced it,
+    // so a staged restore cannot pair a truncated file with an older
+    // machine-wide generation.
+    let Ok(executable_digest) = digest_file(artifact) else {
+        return false;
+    };
+    if metadata.executable != executable_digest {
         return false;
     }
     metadata.dependencies.iter().all(|(key, expected)| {
@@ -959,6 +1144,171 @@ fn aot_compile_status_error(worker: &Path, status: std::process::ExitStatus) -> 
         "worker AOT compilation exited with {status}: {}",
         worker.display()
     ))
+}
+
+/// JIT analyzer prewarm spawned by `aot-prewarm` to fill the shared byte
+/// store.
+///
+/// `bin/prewarm_analysis.dart` resolves workspace sources through a plain Dart
+/// `AnalysisDriver` writing the same content-addressed on-disk byte store the
+/// compiled workers read (see `shared_analysis_cache_enabled` /
+/// `lib/src/worker_resolvers.dart`), so worker first-touch analysis becomes a
+/// disk hit instead of recomputing the same graph per worker.
+pub(crate) struct AnalysisPrewarm {
+    children: Vec<Child>,
+}
+
+impl AnalysisPrewarm {
+    /// Wait for every prewarm process to finish on its own.
+    pub(crate) fn wait_for_children(mut self) {
+        for mut child in std::mem::take(&mut self.children) {
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for AnalysisPrewarm {
+    fn drop(&mut self) {
+        for child in &mut self.children {
+            let _ = child.kill();
+        }
+        for child in &mut self.children {
+            let _ = child.wait();
+        }
+    }
+}
+
+fn env_flag_disabled(name: &str) -> bool {
+    match env::var(name) {
+        Ok(value) => matches!(value.to_lowercase().as_str(), "0" | "false" | "off"),
+        Err(_) => false,
+    }
+}
+
+fn prewarm_jobs() -> usize {
+    if let Ok(value) = env::var("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS") {
+        if let Ok(jobs) = value.parse::<usize>() {
+            return jobs;
+        }
+    }
+    // The AOT compile is mostly single-threaded; spend about half the
+    // machine on prewarm.
+    thread::available_parallelism()
+        .map(|count| count.get() / 2)
+        .unwrap_or(0)
+}
+
+fn prewarm_script_path(root: &Path) -> Option<PathBuf> {
+    let config_path = root.join(".dart_tool/package_config.json");
+    let text = fs::read_to_string(&config_path).ok()?;
+    let config: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let package = config
+        .get("packages")?
+        .as_array()?
+        .iter()
+        .find(|package| {
+            package.get("name").and_then(|name| name.as_str())
+                == Some("build_runner_accelerator")
+        })?;
+    let root_uri = package.get("rootUri")?.as_str()?;
+    let package_root = resolve_package_root_uri(&config_path, root_uri)?;
+    let script = package_root.join("bin/prewarm_analysis.dart");
+    script.is_file().then_some(script)
+}
+
+/// Convert a package-config `rootUri` to a filesystem path. `file://`
+/// URIs are percent-decoded and lose the leading `/` of a Windows
+/// drive-letter spelling (`file:///C:/...`); relative references resolve
+/// against the package config's directory after decoding.
+fn resolve_package_root_uri(config_path: &Path, root_uri: &str) -> Option<PathBuf> {
+    if let Some(path) = root_uri.strip_prefix("file://") {
+        let decoded = decode_uri_escapes(path);
+        let decoded = decoded
+            .strip_prefix('/')
+            .filter(|rest| {
+                let bytes = rest.as_bytes();
+                bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+            })
+            .unwrap_or(&decoded);
+        Some(PathBuf::from(decoded))
+    } else {
+        Some(config_path.parent()?.join(decode_uri_escapes(root_uri)))
+    }
+}
+
+/// Expand `%XX` escapes in a URI path component. Invalid escapes and
+/// non-UTF-8 results degrade gracefully: the caller only probes existence.
+fn decode_uri_escapes(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let (Some(high), Some(low)) =
+                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+            {
+                out.push(high * 16 + low);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn spawn_analysis_prewarm(root: &Path, dart_binary: &str) -> Option<AnalysisPrewarm> {
+    if env_flag_disabled("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM")
+        || !crate::worker::shared_analysis_cache_enabled()
+    {
+        return None;
+    }
+    let script = prewarm_script_path(root)?;
+    let shards = prewarm_jobs();
+    if shards == 0 {
+        return None;
+    }
+    let package_config = root.join(".dart_tool/package_config.json");
+    let children: Vec<Child> = (0..shards)
+        .filter_map(|shard| {
+            Command::new(dart_binary)
+                .arg(format!("--packages={}", package_config.display()))
+                .arg(&script)
+                .arg("--shard")
+                .arg(shard.to_string())
+                .arg("--shards")
+                .arg(shards.to_string())
+                .current_dir(root)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .map_err(|error| {
+                    eprintln!("analysis prewarm shard {shard} failed to spawn: {error}");
+                    error
+                })
+                .ok()
+        })
+        .collect();
+    if children.is_empty() {
+        None
+    } else {
+        eprintln!(
+            "analysis prewarm: {} shard(s) resolving workspace sources",
+            children.len()
+        );
+        Some(AnalysisPrewarm { children })
+    }
 }
 
 #[cfg(test)]

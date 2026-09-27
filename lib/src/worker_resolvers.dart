@@ -23,6 +23,8 @@ import 'package:path/path.dart' as p;
 import 'package:pool/pool.dart';
 import 'package:pub_semver/pub_semver.dart';
 
+import 'cache_directory.dart';
+
 // ignore: implementation_imports
 import 'package:build_runner/src/bootstrap/build_process_state.dart';
 // ignore: implementation_imports
@@ -114,7 +116,7 @@ class WorkerResolversImpl implements Resolvers {
           ),
         sdkSummaryBytes,
         loadedConfig,
-        _byteStore(sdkSummaryBytes, loadedConfig),
+        sharedAnalysisByteStore(sdkSummaryBytes, loadedConfig),
       );
 
       _buildResolver = BuildResolver(driver, _driverPool, _analysisDriverModel);
@@ -236,6 +238,14 @@ const _memoryCacheBytes = 128 * 1024 * 1024;
 /// to `0`, `false`, or `off`.
 const _byteStoreEnv = 'BUILD_RUNNER_ACCELERATOR_BYTE_STORE';
 
+/// Byte-store instances per fingerprint for this process. Phase resets
+/// rebuild the analysis driver; keeping the [MemoryCachingByteStore] layer
+/// alive across those rebuilds means a later phase does not re-pay the disk
+/// store look-ups the earlier phase already warmed. Keys are content- and
+/// version-addressed, so entries stay valid and missed keys are simply
+/// recomputed — the memory layer never caches nulls.
+final _sharedByteStores = <String, ByteStore>{};
+
 /// A [ByteStore] shared between workers and across builds.
 ///
 /// Analyzer byte-store keys are content- and version-addressed (salt,
@@ -245,7 +255,13 @@ const _byteStoreEnv = 'BUILD_RUNNER_ACCELERATOR_BYTE_STORE';
 /// directory is namespaced by a fingerprint of the SDK summary, the resolved
 /// analyzer package, and the enabled experiments so that upgrading any of
 /// them cannot reuse element models built against a different toolchain.
-ByteStore _byteStore(Uint8List sdkSummaryBytes, PackageConfig packageConfig) {
+/// The store lives under the machine-wide accelerator cache so fresh
+/// checkouts and sibling workspaces reuse it instead of rebuilding per
+/// workspace.
+ByteStore sharedAnalysisByteStore(
+  Uint8List sdkSummaryBytes,
+  PackageConfig packageConfig,
+) {
   final disabled = switch ((Platform.environment[_byteStoreEnv] ?? '')
       .toLowerCase()) {
     '0' || 'false' || 'off' => true,
@@ -261,17 +277,13 @@ ByteStore _byteStore(Uint8List sdkSummaryBytes, PackageConfig packageConfig) {
       ])
       .toString()
       .substring(0, 16);
-  final dir = p.join(
-    Directory.current.path,
-    '.dart_tool',
-    'build_runner_accelerator',
-    'byte_store',
-    fingerprint,
-  );
+  final dir = p.join(acceleratorCacheDirectory(), 'byte_store', fingerprint);
   // FileByteStore does not create the directory itself; without it the async
   // temp-file writes fail silently.
-  Directory(dir).createSync(recursive: true);
-  return MemoryCachingByteStore(FileByteStore(dir), _memoryCacheBytes);
+  return _sharedByteStores.putIfAbsent(fingerprint, () {
+    Directory(dir).createSync(recursive: true);
+    return MemoryCachingByteStore(FileByteStore(dir), _memoryCacheBytes);
+  });
 }
 
 /// Checks that the current analyzer version supports the current language

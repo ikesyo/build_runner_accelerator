@@ -168,7 +168,11 @@ BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 scripts/worker.sh run-frontend \
 ```
 
 The cache should contain `.dart_tool/build_runner_accelerator/aot-sdk/`,
-`dynamic_worker.dart`, and `builder-manifest.json`. The key includes OS/arch,
+`dynamic_worker.dart`, and `builder-manifest.json`. Since ADR 0012 the
+machine-wide cache (`BUILD_RUNNER_ACCELERATOR_CACHE` or the platform cache
+directory, `build_runner_accelerator` subtree) also holds `worker-aot/` and
+`byte_store/`; caching that directory makes fresh checkouts warm without a
+per-workspace seed. The key includes OS/arch,
 SDK identity, stable package configuration, lockfile/manifest inputs, and the
 generated worker digest; it contains no checkout or SDK absolute path. The
 version-2 metadata sidecar records logical package/workspace dependencies and

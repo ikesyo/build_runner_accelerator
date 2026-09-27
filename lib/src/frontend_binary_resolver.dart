@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'cache_directory.dart';
 import 'launcher_process.dart';
 import 'release_cache_metadata.dart';
 import 'release_downloader_api.dart';
@@ -55,7 +56,7 @@ class FrontendBinaryResolver {
       );
     }
 
-    final releaseCacheDirectory = cacheDirectory();
+    final releaseCacheDirectory = cacheDirectory(workspaceRoot);
     final cachedRelease = await ReleaseCacheMetadata.validBinary(
       cacheDirectory: releaseCacheDirectory,
       version: buildRunnerAcceleratorVersion,
@@ -77,50 +78,10 @@ class FrontendBinaryResolver {
     );
   }
 
-  String cacheDirectory() {
-    if (environmentCache != null && environmentCache!.isNotEmpty) {
-      return _resolvePath(environmentCache!, Directory.current.path);
-    }
-    if (Platform.isWindows) {
-      final localAppData = Platform.environment['LOCALAPPDATA'];
-      if (localAppData != null && localAppData.isNotEmpty) {
-        return p.join(localAppData, 'build_runner_accelerator');
-      }
-      final userProfile = Platform.environment['USERPROFILE'];
-      if (userProfile != null && userProfile.isNotEmpty) {
-        return p.join(
-          userProfile,
-          'AppData',
-          'Local',
-          'build_runner_accelerator',
-        );
-      }
-      return p.join(
-        Directory.current.path,
-        '.cache',
-        'build_runner_accelerator',
-      );
-    }
-    if (Platform.isMacOS) {
-      final home = Platform.environment['HOME'];
-      return p.join(
-        home ?? Directory.current.path,
-        'Library',
-        'Caches',
-        'build_runner_accelerator',
-      );
-    }
-    final xdg = Platform.environment['XDG_CACHE_HOME'];
-    if (xdg != null && xdg.isNotEmpty) {
-      return p.join(xdg, 'build_runner_accelerator');
-    }
-    final home = Platform.environment['HOME'];
-    return p.join(
-      home ?? Directory.current.path,
-      '.cache',
-      'build_runner_accelerator',
-    );
-  }
+  String cacheDirectory(String workspaceRoot) => acceleratorCacheDirectory(
+    environmentCache: environmentCache,
+    workspaceRoot: workspaceRoot,
+  );
 
   static Future<String> detectTarget() async {
     final os = Platform.isMacOS
