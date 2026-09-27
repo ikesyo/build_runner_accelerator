@@ -38,7 +38,7 @@ The byte store and the worker AOT store simply needed to join it.
   `<cache>/byte_store/<fingerprint>` (`sharedAnalysisByteStore`). It is
   written in place — no workspace copy — because its entries are
   content-addressed and published by atomic temp-file rename.
-- The worker AOT store is `<cache>/worker-aot/<sha256(cache-key)>`. On a
+- The worker AOT store is `<cache>/worker-aot/<fnv1a64(cache-key)>`. On a
   workspace-local miss, `prepare_worker_aot` restores the shared copy after
   running it through the same staleness check a local artifact would take
   (dep digests resolve against the current workspace's logical dependency
