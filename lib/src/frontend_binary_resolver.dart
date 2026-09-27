@@ -56,7 +56,7 @@ class FrontendBinaryResolver {
       );
     }
 
-    final releaseCacheDirectory = cacheDirectory();
+    final releaseCacheDirectory = cacheDirectory(workspaceRoot);
     final cachedRelease = await ReleaseCacheMetadata.validBinary(
       cacheDirectory: releaseCacheDirectory,
       version: buildRunnerAcceleratorVersion,
@@ -78,8 +78,10 @@ class FrontendBinaryResolver {
     );
   }
 
-  String cacheDirectory() =>
-      acceleratorCacheDirectory(environmentCache: environmentCache);
+  String cacheDirectory(String workspaceRoot) => acceleratorCacheDirectory(
+    environmentCache: environmentCache,
+    workspaceRoot: workspaceRoot,
+  );
 
   static Future<String> detectTarget() async {
     final os = Platform.isMacOS

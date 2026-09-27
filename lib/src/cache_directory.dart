@@ -5,15 +5,19 @@ import 'package:path/path.dart' as p;
 /// Machine-wide cache root shared by all workspaces.
 ///
 /// `BUILD_RUNNER_ACCELERATOR_CACHE` wins when set; otherwise the platform
-/// cache directory is used. This mirrors the Rust frontend's
-/// `shared_cache_root` so the launcher, workers, and release installer agree
-/// on one location.
-String acceleratorCacheDirectory({String? environmentCache}) {
+/// cache directory is used. A relative override resolves against
+/// [workspaceRoot], falling back to the current directory — matching the
+/// Rust frontend's `shared_cache_root`, which anchors at the workspace root
+/// so the launcher, workers, and release installer agree on one location.
+String acceleratorCacheDirectory({
+  String? environmentCache,
+  String? workspaceRoot,
+}) {
   environmentCache ??= Platform.environment['BUILD_RUNNER_ACCELERATOR_CACHE'];
   if (environmentCache != null && environmentCache.isNotEmpty) {
     return p.isAbsolute(environmentCache)
         ? environmentCache
-        : p.join(Directory.current.path, environmentCache);
+        : p.join(workspaceRoot ?? Directory.current.path, environmentCache);
   }
   if (Platform.isWindows) {
     final localAppData = Platform.environment['LOCALAPPDATA'];
