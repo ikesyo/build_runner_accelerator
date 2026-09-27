@@ -1198,12 +1198,60 @@ fn prewarm_script_path(root: &Path) -> Option<PathBuf> {
                 == Some("build_runner_accelerator")
         })?;
     let root_uri = package.get("rootUri")?.as_str()?;
-    let package_root = match root_uri.strip_prefix("file://") {
-        Some(path) => PathBuf::from(path),
-        None => config_path.parent()?.join(root_uri),
-    };
+    let package_root = resolve_package_root_uri(&config_path, root_uri)?;
     let script = package_root.join("bin/prewarm_analysis.dart");
     script.is_file().then_some(script)
+}
+
+/// Convert a package-config `rootUri` to a filesystem path. `file://`
+/// URIs are percent-decoded and lose the leading `/` of a Windows
+/// drive-letter spelling (`file:///C:/...`); relative references resolve
+/// against the package config's directory after decoding.
+fn resolve_package_root_uri(config_path: &Path, root_uri: &str) -> Option<PathBuf> {
+    if let Some(path) = root_uri.strip_prefix("file://") {
+        let decoded = decode_uri_escapes(path);
+        let decoded = decoded
+            .strip_prefix('/')
+            .filter(|rest| {
+                let bytes = rest.as_bytes();
+                bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+            })
+            .unwrap_or(&decoded);
+        Some(PathBuf::from(decoded))
+    } else {
+        Some(config_path.parent()?.join(decode_uri_escapes(root_uri)))
+    }
+}
+
+/// Expand `%XX` escapes in a URI path component. Invalid escapes and
+/// non-UTF-8 results degrade gracefully: the caller only probes existence.
+fn decode_uri_escapes(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let (Some(high), Some(low)) =
+                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+            {
+                out.push(high * 16 + low);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn spawn_analysis_prewarm(root: &Path, dart_binary: &str) -> Option<AnalysisPrewarm> {
