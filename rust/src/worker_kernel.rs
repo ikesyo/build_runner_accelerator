@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
-const AOT_METADATA_VERSION: u32 = 2;
+const AOT_METADATA_VERSION: u32 = 3;
 const AOT_CACHE_KEY_VERSION: &str = "v2";
 const BACKGROUND_AOT_LOCK_ENV: &str = "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_BACKGROUND_LOCK";
 const BACKGROUND_AOT_LOCK_MAX_AGE: Duration = Duration::from_secs(60 * 60);
@@ -40,6 +40,7 @@ struct AotMetadata {
     allowed_experiments: String,
     package_config: String,
     worker: String,
+    executable: String,
     dependencies: BTreeMap<String, String>,
 }
 
@@ -591,6 +592,7 @@ fn prepare_worker_aot(
         &context.sdk_root,
         &context.worker_path,
         &temp_depfile,
+        &temp_aot,
         &context.cache_key,
     )?;
     fs::write(&temp_sdk_metadata, serde_json::to_vec_pretty(&metadata).map_err(io::Error::other)?)?;
@@ -731,6 +733,7 @@ fn build_aot_metadata(
     sdk_root: &Path,
     worker_path: &Path,
     depfile: &Path,
+    executable_path: &Path,
     cache_key: &str,
 ) -> io::Result<AotMetadata> {
     let dependencies = parse_depfile_dependencies(&fs::read_to_string(depfile)?)
@@ -767,6 +770,7 @@ fn build_aot_metadata(
         allowed_experiments,
         package_config: workspace.package_config_identity().to_owned(),
         worker: digest_file(worker_path)?,
+        executable: digest_file(executable_path)?,
         dependencies: dependency_digests,
     })
 }
@@ -804,6 +808,15 @@ fn aot_metadata_is_current(
         return false;
     };
     if metadata.worker != worker_digest {
+        return false;
+    }
+    // The digest ties the metadata to the exact executable that produced it,
+    // so a staged restore cannot pair a truncated file with an older
+    // machine-wide generation.
+    let Ok(executable_digest) = digest_file(artifact) else {
+        return false;
+    };
+    if metadata.executable != executable_digest {
         return false;
     }
     metadata.dependencies.iter().all(|(key, expected)| {
