@@ -23,6 +23,9 @@ pub(crate) struct BuildSpec {
     pub(crate) input: String,
     pub(crate) outputs: Vec<String>,
     pub(crate) options: BTreeMap<String, Value>,
+    /// `part` directive suffix the input must declare before this builder can
+    /// emit anything; copied from the configured builder's manifest flag.
+    pub(crate) part_directive_suffix: Option<String>,
 }
 
 impl BuildSpec {
@@ -233,6 +236,7 @@ fn build_specs(
                     "{}|{}|{}|{}",
                     builder.target, definition.id, builder.phase, builder.package
                 ),
+                part_directive_suffix: builder.part_directive_suffix.clone(),
                 input: input.clone(),
                 outputs: if definition.kind == BuilderKind::PostProcess {
                     Vec::new()
@@ -576,6 +580,7 @@ mod tests {
                 input: "app|lib/input.txt".to_owned(),
                 outputs: vec!["app|lib/generated.txt".to_owned()],
                 options: BTreeMap::new(),
+                part_directive_suffix: None,
             },
             BuildSpec {
                 builder: second,
@@ -587,6 +592,7 @@ mod tests {
                 input: "app|lib/input.txt".to_owned(),
                 outputs: vec!["app|lib/generated.txt".to_owned()],
                 options: BTreeMap::new(),
+                part_directive_suffix: None,
             },
         ];
         let error = validate_unique_outputs(&specs).unwrap_err();

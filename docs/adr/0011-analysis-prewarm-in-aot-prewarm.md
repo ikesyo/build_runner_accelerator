@@ -42,11 +42,15 @@ shared by every subsequent build until the toolchain or dependencies change.
   fingerprint partitioning match exactly. Misses are impossible to
   distinguish from a cold entry; at worst workers recompute what the
   prewarmer did not reach.
-- The prewarm is strictly additive and outside the build path: `build`
-  never spawns it. `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` disables
-  it; `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS` overrides the shard
-  count; `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0` disables it along with the
-  shared store itself.
+- The prewarm is strictly additive. `build` only spawns it under the
+  opt-in `BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM=1`, where the shards
+  overlap the synchronous worker AOT compile and are killed the moment the
+  compile finishes so they never compete with workers. In `aot-prewarm`
+  the shards run to completion.
+  `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` disables analysis prewarm
+  in both paths; `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS`
+  overrides the shard count; `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0`
+  disables it along with the shared store itself.
 - Correctness is unaffected: the byte store is read-through with
   content-addressed keys, prewarm uses identical key derivation, and
   generated outputs must remain byte-identical to stock `build_runner`

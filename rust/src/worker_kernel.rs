@@ -565,6 +565,15 @@ fn prepare_worker_aot(
         return Ok(aot);
     }
 
+    // Opt-in overlap: the compile is mostly single-threaded, so JIT
+    // analysis shards can start filling the shared byte store meanwhile.
+    // The shards are killed as soon as the compile ends (see `AnalysisPrewarm`'s
+    // `Drop`) so they never compete with the workers that follow.
+    let analysis_prewarm = if compile_prewarm_enabled() {
+        spawn_analysis_prewarm(&context.workspace.root, dart_binary)
+    } else {
+        None
+    };
     let process_id = std::process::id();
     let temp_aot = temporary_sibling(&context.aot_path, process_id, "aot");
     let temp_depfile = temporary_sibling(&context.depfile_path, process_id, "d");
@@ -580,6 +589,7 @@ fn prepare_worker_aot(
         .current_dir(&context.workspace.root)
         .status()
         .map_err(|error| aot_compile_error(&context.worker_path, error))?;
+    drop(analysis_prewarm);
     if !status.success() {
         remove_if_present(&temp_aot);
         remove_if_present(&temp_depfile);
@@ -1183,6 +1193,22 @@ fn env_flag_disabled(name: &str) -> bool {
         Ok(value) => matches!(value.to_lowercase().as_str(), "0" | "false" | "off"),
         Err(_) => false,
     }
+}
+
+/// `BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM=1` opts into overlapping the
+/// synchronous worker AOT compile with JIT analysis shards (ADR 0011). Off
+/// by default: on fast machines the compile window is too short to fill a
+/// meaningful share of the byte store, so the extra processes only add
+/// startup cost.
+fn compile_prewarm_enabled() -> bool {
+    env::var("BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM")
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn prewarm_jobs() -> usize {

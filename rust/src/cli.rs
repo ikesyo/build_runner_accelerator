@@ -37,7 +37,12 @@ impl Options {
         let mut dart_binary = None;
         let mut worker = None;
         let mut interval_ms = 200;
-        let mut jobs = 1;
+        // Worker processes each carry a full analyzer instance, so the
+        // default follows the machine's parallelism rather than a fixed
+        // count. --jobs overrides it (including down to 1 on small runners).
+        let mut jobs = std::thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(1);
         let mut mode = FrontendMode::Auto;
         while let Some(argument) = args.next() {
             match argument.as_str() {

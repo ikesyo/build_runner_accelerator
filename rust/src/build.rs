@@ -351,6 +351,7 @@ pub(crate) fn run_with_config(
     let mut worker_pool = pool;
     let mut pool_metrics = None;
     let mut overlay = BTreeMap::new();
+    let mut part_filtered_actions: usize = 0;
     let expected_outputs = specs
         .iter()
         .flat_map(|spec| spec.outputs.iter().cloned())
@@ -379,6 +380,10 @@ pub(crate) fn run_with_config(
         .collect::<BTreeMap<_, _>>();
     let lazy_demand_possible =
         !lazy_force_keys.is_empty() && !lazy_specs_by_output.is_empty();
+    // The optional-builder capability flag is part of the pool signature, so
+    // derive it from the plan rather than the dirty set: an optional spec
+    // leaving the dirty set must not restart the resident workers.
+    let optional_builder_capability_required = !lazy_specs_by_output.is_empty();
     let mut lazy_state = LazyBuildState::new(lazy_force_keys);
     if !dirty.is_empty() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
@@ -410,7 +415,7 @@ pub(crate) fn run_with_config(
             &first_package,
             &config_digest,
             phase_count,
-            lazy_demand_possible,
+            optional_builder_capability_required,
         )?;
 
         // Outputs remain in the Rust overlay until the transaction commits.
@@ -478,6 +483,37 @@ pub(crate) fn run_with_config(
             if !resolver_cache_updated.is_empty() || !resolver_cache_deleted.is_empty() {
                 resolver_needs_reset = true;
             }
+            // A part-family builder provably emits nothing when its input
+            // does not declare the generated file in a `part` directive, so
+            // dispatching it to a worker only pays IPC, resolver setup, and
+            // generator warmup to arrive at the same empty result. Skip those
+            // actions here and record the empty result directly.
+            let (skipped_specs, runnable_phase_specs): (Vec<BuildSpec>, Vec<BuildSpec>) =
+                if part_directive_filter_disabled() {
+                    (Vec::new(), runnable_phase_specs)
+                } else {
+                    runnable_phase_specs
+                        .into_iter()
+                        .partition(|spec| part_directive_skips(&workspace, &overlay, spec))
+                };
+            part_filtered_actions += skipped_specs.len();
+            for spec in skipped_specs {
+                record_build_result(
+                    &workspace,
+                    &state,
+                    &spec,
+                    empty_build_result(&spec),
+                    &mut overlay,
+                    &mut deleted_overlay,
+                    &mut pending_outputs,
+                    &mut pending_deletions,
+                    &mut pending_actions,
+                    &mut resolver_updated,
+                    &mut resolver_deleted,
+                    &mut resolver_cache_updated,
+                    &mut resolver_cache_deleted,
+                )?;
+            }
             let requests = runnable_phase_specs
                 .iter()
                 .map(|spec| BuildRequest {
@@ -501,7 +537,7 @@ pub(crate) fn run_with_config(
                     &configured_builder.package,
                     &config_digest,
                     phase_count,
-                    lazy_demand_possible,
+                    optional_builder_capability_required,
                 )?;
                 initialized_package = configured_builder.package.clone();
                 resolver_needs_reset = false;
@@ -666,6 +702,9 @@ pub(crate) fn run_with_config(
             false,
         );
         print_workspace_read_metrics(workspace.read_metrics());
+        if part_filtered_actions > 0 {
+            eprintln!("part_filtered={part_filtered_actions}");
+        }
     }
     println!("Build completed (Rust frontend)");
     Ok(())
@@ -1101,9 +1140,166 @@ fn expand_dirty_dependents(
     }
 }
 
+fn part_directive_filter_disabled() -> bool {
+    std::env::var("BUILD_RUNNER_ACCELERATOR_PART_FILTER").is_ok_and(|value| value == "0")
+}
+
+/// Whether the spec's action provably emits nothing: the builders the
+/// manifest flags with `part_directive_suffix` can only produce output when
+/// the input declares the generated file as a `part` directive, matching
+/// source_gen's `hasExpectedPartDirective` (literal URI equality against
+/// `<stem><suffix>`). Any doubt — unreadable input, non-UTF8 bytes, escaped
+/// or unterminated URIs — keeps the action.
+fn part_directive_skips(
+    workspace: &Workspace,
+    overlay: &BTreeMap<String, Vec<u8>>,
+    spec: &BuildSpec,
+) -> bool {
+    let Some(suffix) = spec.part_directive_suffix.as_deref() else {
+        return false;
+    };
+    let input_path = spec
+        .input
+        .split_once('|')
+        .map(|(_, path)| path)
+        .unwrap_or(&spec.input);
+    let stem = input_path
+        .rsplit('/')
+        .next()
+        .and_then(|name| name.strip_suffix(".dart"));
+    let Some(stem) = stem else { return false };
+    let expected = format!("{stem}{suffix}");
+    let bytes = match overlay.get(&spec.input) {
+        Some(bytes) => bytes.clone(),
+        None => match workspace.read_asset_or_cache_shared(&spec.input) {
+            Ok(bytes) => bytes.as_ref().clone(),
+            Err(_) => return false,
+        },
+    };
+    let Ok(source) = std::str::from_utf8(&bytes) else {
+        return false;
+    };
+    !declares_part_directive(source, &expected)
+}
+
+fn declares_part_directive(source: &str, expected: &str) -> bool {
+    let bytes = source.as_bytes();
+    let len = bytes.len();
+    let mut i = 0usize;
+    while i + 4 <= len {
+        if &bytes[i..i + 4] != b"part"
+            || (i > 0 && is_ident_byte(bytes[i - 1]))
+            || (i + 4 < len && is_ident_byte(bytes[i + 4]))
+        {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 4;
+        // Dart allows trivia — whitespace and comments — between `part` and
+        // its URI, e.g. `part /* note */ 'foo.g.dart';`.
+        loop {
+            while j < len && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j + 1 < len && bytes[j] == b'/' && bytes[j + 1] == b'/' {
+                j += 2;
+                while j < len && bytes[j] != b'\n' {
+                    j += 1;
+                }
+                continue;
+            }
+            if j + 1 < len && bytes[j] == b'/' && bytes[j + 1] == b'*' {
+                let mut k = j + 2;
+                while k + 1 < len && !(bytes[k] == b'*' && bytes[k + 1] == b'/') {
+                    k += 1;
+                }
+                if k + 1 >= len {
+                    // Unterminated comment — ambiguous; keep the action.
+                    return true;
+                }
+                j = k + 2;
+                continue;
+            }
+            break;
+        }
+        // `part of 'uri'` declares this library as a part, not a part list.
+        if j + 2 <= len
+            && &bytes[j..j + 2] == b"of"
+            && (j + 2 == len || !is_ident_byte(bytes[j + 2]))
+        {
+            i += 4;
+            continue;
+        }
+        // Optional raw-string prefix.
+        if j + 1 < len && bytes[j] == b'r' && (bytes[j + 1] == b'\'' || bytes[j + 1] == b'"') {
+            j += 1;
+        }
+        if j < len && (bytes[j] == b'\'' || bytes[j] == b'"') {
+            let quote = bytes[j];
+            // `part '''uri'''` / `part """uri"""` are valid Dart: the URI is
+            // terminated by the same quote repeated three times.
+            let quote_len = if j + 2 < len && bytes[j + 1] == quote && bytes[j + 2] == quote {
+                3
+            } else {
+                1
+            };
+            let rest = &source[j + quote_len..];
+            let end = if quote_len == 3 {
+                rest.as_bytes()
+                    .windows(3)
+                    .position(|w| w == [quote; 3])
+            } else {
+                rest.find(quote as char)
+            };
+            match end {
+                Some(end) => {
+                    let uri = &rest[..end];
+                    if uri.contains('\\') {
+                        return true;
+                    }
+                    if uri == expected {
+                        return true;
+                    }
+                    i = j + quote_len + end + quote_len;
+                    continue;
+                }
+                // Unterminated string literal — let the real builder see it.
+                None => return true,
+            }
+        } else if j < len {
+            // Anything else after `part` is a shape this scanner does not
+            // model — ambiguous, so keep the action.
+            return true;
+        }
+        i += 4;
+    }
+    false
+}
+
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+}
+
+fn empty_build_result(spec: &BuildSpec) -> BuildResult {
+    BuildResult {
+        message_type: "build_result".to_owned(),
+        id: 0,
+        status: "success".to_owned(),
+        outputs: Vec::new(),
+        deleted: Vec::new(),
+        reads: vec![spec.input.clone()],
+        resolver_reads: Vec::new(),
+        resolver_entrypoints: Vec::new(),
+        resolver_used: false,
+        glob_reads: Vec::new(),
+        diagnostics: Vec::new(),
+        error: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{execution_order, expand_dirty_dependents};
+    use super::{declares_part_directive, execution_order, expand_dirty_dependents};
     use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder};
     use crate::graph::{ActionState, GraphState};
     use crate::plan::BuildSpec;
@@ -1144,6 +1340,7 @@ mod tests {
             options: BTreeMap::new(),
             runtime_extensions: None,
             runtime_post_process_input_extensions: None,
+            part_directive_suffix: None,
         }
     }
 
@@ -1165,6 +1362,7 @@ mod tests {
             input: input.to_owned(),
             outputs: outputs.iter().map(|output| (*output).to_owned()).collect(),
             options: builder.options.clone(),
+            part_directive_suffix: None,
         }
     }
 
@@ -1238,5 +1436,92 @@ mod tests {
             &successful_empty_state,
         );
         assert_eq!(dirty.len(), 1);
+    }
+
+    #[test]
+    fn part_directive_scanner_matches_source_gen_semantics() {
+        // Declared with the expected URI.
+        assert!(declares_part_directive(
+            "part 'foo.g.dart';\n",
+            "foo.g.dart"
+        ));
+        // Double quotes, extra spacing, raw-string prefix, leading directives.
+        assert!(declares_part_directive(
+            "library x;\npart   \"foo.g.dart\";\n",
+            "foo.g.dart"
+        ));
+        assert!(declares_part_directive("part r'foo.g.dart';", "foo.g.dart"));
+        assert!(declares_part_directive(
+            "import 'a.dart';\npart 'other.dart';\npart 'foo.g.dart';",
+            "foo.g.dart"
+        ));
+        // Different URI does not qualify.
+        assert!(!declares_part_directive("part 'foo.g.dart';", "bar.g.dart"));
+        assert!(!declares_part_directive(
+            "part 'foo.freezed.dart';",
+            "foo.g.dart"
+        ));
+        // `part of` is a part-of declaration, never a part list.
+        assert!(!declares_part_directive(
+            "part of 'foo.g.dart';",
+            "foo.g.dart"
+        ));
+        assert!(!declares_part_directive("part of foo;\n", "foo.g.dart"));
+        // Word boundary: "departure" and "parts" are not the keyword.
+        assert!(!declares_part_directive(
+            "departure 'foo.g.dart';\n",
+            "foo.g.dart"
+        ));
+        // A `part 'uri'` shape inside a comment over-matches to running the
+        // action — the conservative direction.
+        assert!(declares_part_directive(
+            "// part 'foo.g.dart' is missing\nimport 'dart:io';",
+            "foo.g.dart"
+        ));
+        // Comments between `part` and the URI are valid Dart trivia.
+        assert!(declares_part_directive(
+            "part /* note */ 'foo.g.dart';",
+            "foo.g.dart"
+        ));
+        assert!(declares_part_directive(
+            "part // note\n'foo.g.dart';",
+            "foo.g.dart"
+        ));
+        // Unterminated comment or an unrecognized token after `part` is
+        // ambiguous — keep the action.
+        assert!(declares_part_directive(
+            "part /* note 'foo.g.dart';",
+            "foo.g.dart"
+        ));
+        assert!(declares_part_directive("part foo;", "foo.g.dart"));
+        // Triple-quoted URIs are valid Dart and are parsed normally.
+        assert!(declares_part_directive(
+            "part '''foo.g.dart''';",
+            "foo.g.dart"
+        ));
+        assert!(declares_part_directive(
+            "part \"\"\"foo.g.dart\"\"\";",
+            "foo.g.dart"
+        ));
+        assert!(declares_part_directive(
+            "part r'''foo.g.dart''';",
+            "foo.g.dart"
+        ));
+        // A lone quote inside a triple-quoted URI does not terminate it.
+        assert!(!declares_part_directive(
+            "part '''don't.dart''';",
+            "foo.g.dart"
+        ));
+        assert!(!declares_part_directive(
+            "part '''other.dart''';",
+            "foo.g.dart"
+        ));
+        // Conservative: escaped and unterminated URIs keep the action.
+        assert!(declares_part_directive(
+            "part 'foo\\u002eg.dart';",
+            "foo.g.dart"
+        ));
+        assert!(declares_part_directive("part 'foo.g.dart", "foo.g.dart"));
+        assert!(declares_part_directive("part '''foo.g.dart", "foo.g.dart"));
     }
 }
