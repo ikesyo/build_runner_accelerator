@@ -334,7 +334,25 @@ _NormalizedManifest _normalizeManifest(
         if (definition.builderType == 'CombiningBuilder')
           ...definition.outputSuffixes,
   };
-  final combiningSuffix = combiningSuffixes.length == 1
+  // A shared part's intermediates are only safe to skip when the combining
+  // builder (plus the part_cleanup post-processor) are their sole consumers:
+  // another builder or post-processor declaring `.part` inputs could read
+  // them.
+  final sharedPartConsumedElsewhere = runtime.compatibleDefinitions.values
+      .expand((definitions) => definitions)
+      .any(
+        (definition) =>
+            definition.builderType != 'CombiningBuilder' &&
+            definition.id != 'source_gen:part_cleanup' &&
+            (definition.isPostProcess
+                    ? definition.inputExtensions
+                    : definition.extensions.map(
+                        (extension) => extension.inputSuffix,
+                      ))
+                .any((input) => input.endsWith('.part')),
+      );
+  final combiningSuffix =
+      combiningSuffixes.length == 1 && !sharedPartConsumedElsewhere
       ? combiningSuffixes.single
       : null;
   // Flatten the factory phases in the same order as build_runner's phase
@@ -490,9 +508,15 @@ Future<void> _emitArtifacts(
 ///
 /// - `PartBuilder`/`CombiningBuilder` write their single output only when the
 ///   input declares it, so the suffix is their own output extension.
-/// - `SharedPartBuilder` writes `.part` intermediates that only reach source
-///   outputs through the combining builder, so the suffix is the combining
-///   output extension; extra non-part outputs disqualify the builder.
+/// - `SharedPartBuilder` writes its `.part` intermediates unconditionally,
+///   but they only reach source outputs through the combining builder, which
+///   performs the directive check — so the suffix is the combining output
+///   extension. The intermediates must stay uncommitted (cache builds only),
+///   and extra non-part outputs disqualify the builder.
+///
+/// Only plain extension suffixes like `.g.dart` qualify: a remapped
+/// `build_extensions` output (a path or `{{}}` capture) changes the `part`
+/// URI the input must declare, so the filter stays off for those shapes.
 String? _partDirectiveSuffix(
   ManifestDefinition definition,
   String? combiningSuffix,
@@ -501,18 +525,39 @@ String? _partDirectiveSuffix(
   switch (definition.builderType) {
     case 'PartBuilder':
     case 'CombiningBuilder':
-      if (outputs.length == 1 && outputs.single.endsWith('.dart')) {
-        return outputs.single;
+      if (outputs.length == 1) {
+        return _simplePartDirectiveSuffix(outputs.single);
       }
       return null;
     case 'SharedPartBuilder':
-      if (combiningSuffix != null &&
+      if (definition.buildTo == 'cache' &&
+          combiningSuffix != null &&
           outputs.every((output) => output.endsWith('.part'))) {
-        return combiningSuffix;
+        return _simplePartDirectiveSuffix(combiningSuffix);
       }
       return null;
   }
   return null;
+}
+
+/// Returns [suffix] when it is a plain extension (`'.g.dart'`) — the only
+/// form whose `part` directive is `<input stem><suffix>` — else null.
+String? _simplePartDirectiveSuffix(String suffix) {
+  if (!suffix.startsWith('.') ||
+      !suffix.endsWith('.dart') ||
+      suffix.contains('/') ||
+      suffix.contains(r'\') ||
+      suffix.contains("'") ||
+      suffix.contains('"') ||
+      suffix.contains('*') ||
+      suffix.contains('?') ||
+      suffix.contains('{') ||
+      suffix.contains('}') ||
+      suffix.contains('[') ||
+      suffix.contains(']')) {
+    return null;
+  }
+  return suffix;
 }
 
 Map<String, dynamic> _jsonMap(Map<String, dynamic> value) =>
