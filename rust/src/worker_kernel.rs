@@ -346,7 +346,7 @@ fn aot_artifact_file_names(context: &AotContext) -> Option<[OsString; 3]> {
 }
 
 /// Restore a previously published artifact into the workspace's `aot-sdk`.
-/// Returns the local artifact path when the shared copy passed the same
+/// Returns the local artifact path when the staged generation passed the same
 /// staleness check a local artifact would.
 fn restore_shared_aot(context: &AotContext) -> io::Result<Option<PathBuf>> {
     let Some(dir) = shared_aot_dir(&context.workspace.root, &context.cache_key) else {
@@ -355,40 +355,54 @@ fn restore_shared_aot(context: &AotContext) -> io::Result<Option<PathBuf>> {
     let Some([aot_name, depfile_name, metadata_name]) = aot_artifact_file_names(context) else {
         return Ok(None);
     };
-    let shared_aot = dir.join(&aot_name);
-    let shared_metadata = dir.join(&metadata_name);
-    if !aot_metadata_is_current(
-        &shared_aot,
-        &shared_metadata,
-        &context.workspace,
-        &context.sdk_root,
-        &context.worker_path,
-        &context.cache_key,
-    ) {
-        return Ok(None);
-    }
     let aot_dir = context
         .aot_path
         .parent()
         .ok_or_else(|| io::Error::other("worker AOT path has no parent directory"))?;
     fs::create_dir_all(aot_dir)?;
     let process_id = std::process::id();
-    for (source, name) in [
-        (&shared_aot, &aot_name),
-        (&dir.join(&depfile_name), &depfile_name),
-        (&shared_metadata, &metadata_name),
-    ] {
+
+    // Stage the shared trio under temporary names and validate the staged
+    // copy. A concurrent `publish_shared_aot` can rotate any of the three
+    // files mid-restore; validating the staged generation ensures a mixed
+    // set is discarded instead of restored and run.
+    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for name in [&aot_name, &depfile_name, &metadata_name] {
         let destination = aot_dir.join(name);
         let temp = temporary_sibling(&destination, process_id, "shared");
-        fs::copy(source, &temp)?;
+        if fs::copy(dir.join(name), &temp).is_err() {
+            remove_if_present(&temp);
+            for (staged_temp, _) in staged.drain(..) {
+                remove_if_present(&staged_temp);
+            }
+            return Ok(None);
+        }
+        staged.push((temp, destination));
+    }
+    if !aot_metadata_is_current(
+        &staged[0].0,
+        &staged[2].0,
+        &context.workspace,
+        &context.sdk_root,
+        &context.worker_path,
+        &context.cache_key,
+    ) {
+        for (staged_temp, _) in staged.drain(..) {
+            remove_if_present(&staged_temp);
+        }
+        return Ok(None);
+    }
+    for (temp, destination) in staged {
         replace_file(&temp, &destination)?;
     }
     Ok(Some(fs::canonicalize(&context.aot_path)?))
 }
 
 /// Publish the freshly compiled artifact so other checkouts and workspaces
-/// with the same cache key skip the synchronous compile. Best-effort: any
-/// failure leaves the shared slot untouched.
+/// with the same cache key skip the synchronous compile. The SDK metadata —
+/// the file restore validation depends on — is written last, so a slot
+/// interrupted mid-publish stays invalid. Best-effort: any failure leaves
+/// the shared slot untouched.
 fn publish_shared_aot(context: &AotContext) {
     let Some(dir) = shared_aot_dir(&context.workspace.root, &context.cache_key) else {
         return;
