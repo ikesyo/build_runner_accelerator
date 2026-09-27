@@ -236,6 +236,14 @@ const _memoryCacheBytes = 128 * 1024 * 1024;
 /// to `0`, `false`, or `off`.
 const _byteStoreEnv = 'BUILD_RUNNER_ACCELERATOR_BYTE_STORE';
 
+/// Byte-store instances per fingerprint for this process. Phase resets
+/// rebuild the analysis driver; keeping the [MemoryCachingByteStore] layer
+/// alive across those rebuilds means a later phase does not re-pay the disk
+/// store look-ups the earlier phase already warmed. Keys are content- and
+/// version-addressed, so entries stay valid and missed keys are simply
+/// recomputed — the memory layer never caches nulls.
+final _sharedByteStores = <String, ByteStore>{};
+
 /// A [ByteStore] shared between workers and across builds.
 ///
 /// Analyzer byte-store keys are content- and version-addressed (salt,
@@ -270,8 +278,10 @@ ByteStore _byteStore(Uint8List sdkSummaryBytes, PackageConfig packageConfig) {
   );
   // FileByteStore does not create the directory itself; without it the async
   // temp-file writes fail silently.
-  Directory(dir).createSync(recursive: true);
-  return MemoryCachingByteStore(FileByteStore(dir), _memoryCacheBytes);
+  return _sharedByteStores.putIfAbsent(fingerprint, () {
+    Directory(dir).createSync(recursive: true);
+    return MemoryCachingByteStore(FileByteStore(dir), _memoryCacheBytes);
+  });
 }
 
 /// Checks that the current analyzer version supports the current language

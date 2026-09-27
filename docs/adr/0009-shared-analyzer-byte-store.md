@@ -22,6 +22,11 @@ and element models addressed by content- and version-derived keys.
   `MemoryCachingByteStore(FileByteStore(dir))` under
   `.dart_tool/build_runner_accelerator/byte_store/<fingerprint>`. The
   directory is shared by every worker in the build and reused across builds.
+  The store instance itself is kept per fingerprint for the life of the
+  worker process so phase-reset driver rebuilds keep the in-memory layer the
+  earlier phases already warmed; keys are content- and version-addressed and
+  the memory layer never caches misses, so a rebuilt driver cannot observe a
+  stale or phantom entry.
 - `<fingerprint>` is the truncated SHA-256 of the SDK summary bytes, the
   enabled experiments, and the resolved analyzer package root. Byte-store keys
   do not include SDK or analyzer identity, so the fingerprint keeps entries
