@@ -52,8 +52,10 @@ future dirty checks still run.
   (`part /* note */ 'x.g.dart';` is a real directive). On any ambiguity
   — unreadable or non-UTF-8 source, escaped or unterminated strings or
   comments, an unrecognized token after `part`, comment over-matches —
-  the action runs normally. Skipped actions record
-  a synthetic successful `BuildResult` that reads only the input, so
+  the action runs normally. The action is skipped only when the scan
+  completes without ambiguity: the input has no `part` directive at all,
+  or every parseable directive names a different URI. Skipped actions
+  record a synthetic successful `BuildResult` that reads only the input, so
   transactional commit and stale-output deletion behave exactly as if the
   builder had run and emitted nothing.
 - `BUILD_RUNNER_ACCELERATOR_PART_FILTER=0` disables the filter. The number
@@ -65,8 +67,10 @@ future dirty checks still run.
   eliminating their worker dispatch and resolver cost. On the reference
   workspace this removed ~87% of eligible actions and shortened the warm
   clean build measurably.
-- The filter intentionally over-matches: a `part` directive inside a
-  comment or an unmatched URI still lets the action run. The only hard
-  skip is a present, parseable `part` list that lacks the expected suffix.
+- The filter intentionally over-matches toward running: ambiguity of any
+  kind — a `part` shape inside a comment, an escaped or unterminated URI,
+  an unrecognized token after `part` — keeps the action. The skip side is
+  strict and cheap to reason about: a missing `part` directive, or a
+  parseable `part` list whose URIs all differ from the expected suffix.
 - Semantics stay anchored to source_gen's own rule — outputs remain
   byte-identical to stock build_runner.
