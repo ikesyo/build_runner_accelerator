@@ -1618,13 +1618,16 @@ impl WorkerPool {
         // splitting useful work. Roughly half the pool is the measured sweet
         // spot on the reference workspace; non-resolver batches keep the full
         // pool. The pool itself is not shrunk: worker processes stay resident
-        // so a smaller limit does not discard their analysis state.
+        // so a smaller limit does not discard their analysis state. The floor
+        // is two workers: at --jobs 2 a one-worker limit would serialize the
+        // resolver phase while the second worker idles, which is strictly
+        // worse than a little duplicated warm-up.
         let worker_limit = if shared_analysis_cache_enabled()
             && homogeneous_resolver_usage_key(requests)
                 .map(|key| self.resolver_usage.get(&key).copied().unwrap_or(true))
                 .unwrap_or(false)
         {
-            self.max_jobs.div_ceil(2)
+            self.max_jobs.div_ceil(2).max(2.min(self.max_jobs))
         } else {
             usize::MAX
         };

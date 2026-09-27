@@ -108,7 +108,7 @@ Launcher options:
   --mode auto|rust|dart  Select frontend policy (default: auto)
   --root PATH            Build workspace (default: current directory)
   --dart PATH            Dart executable used by the frontend/fallback
-  --jobs N               Rust worker count
+  --jobs N               Rust worker count (default: logical CPUs)
   --interval-ms N        Rust watch debounce interval
   --worker VALUE         Rust worker override
   --force-aot             Force the AOT worker (stock-compatible)

@@ -45,7 +45,8 @@ and element models addressed by content- and version-derived keys.
   to avoid independent AnalysisDrivers repeating the same workspace analysis;
   with a shared store that duplicated work is already cheap, so parallelism
   wins. Dispatch is still capped at roughly half the pool
-  (`ceil(jobs / 2)`) because every extra worker re-pays analysis warm-up;
+  (`ceil(jobs / 2)`, but at least two so `--jobs 2` does not serialize the
+  resolver phase) because every extra worker re-pays analysis warm-up;
   workers stay resident, so the cap only limits how many take part in a
   resolver phase, not pool size. When the store is disabled the serial
   policy is kept unchanged. The frontend and the worker read the same

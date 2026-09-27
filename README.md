@@ -180,9 +180,17 @@ synchronous worker AOT compile and the first-touch analysis once per toolchain;
 running `aot-prewarm` ahead of the next build performs the compile and
 concurrently warms the byte store with JIT analysis shards.
 
+`--jobs` defaults to the machine's logical CPU count. Each worker process
+carries a full analyzer instance, so memory scales with the worker count —
+peaking when the byte store is first filled (roughly 1 GB per worker on a
+large workspace). Pass an explicit `--jobs` on memory-constrained CI
+runners.
+
 Byte-store entries are content-addressed and safe to share across workers,
 but stale fingerprint directories are not garbage-collected yet — reclaim
-space by deleting directories for toolchains you no longer use.
+space by deleting directories for toolchains you no longer use, or prune
+the whole store (`rm -rf ~/.cache/build_runner_accelerator/byte_store`;
+adjust the root for your platform or `BUILD_RUNNER_ACCELERATOR_CACHE`).
 
 | Variable | Effect |
 | --- | --- |
