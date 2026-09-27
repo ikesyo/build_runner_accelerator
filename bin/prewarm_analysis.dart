@@ -5,8 +5,9 @@
 /// Warms the shared on-disk analyzer byte store while the Rust frontend
 /// compiles the worker AOT executable.
 ///
-/// The Rust launcher spawns N copies of this script during the synchronous
-/// `dart compile exe` window and kills them when compilation finishes. They
+/// The Rust launcher spawns N copies of this script alongside the
+/// synchronous `dart compile exe` call, then waits for them to finish after
+/// compilation completes. They
 /// run a plain (JIT) `AnalysisDriver` over the workspace sources and resolve
 /// libraries into the same content-addressed byte store the AOT workers use,
 /// so worker first-touch analysis becomes a disk hit.
