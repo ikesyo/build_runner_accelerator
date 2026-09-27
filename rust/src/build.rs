@@ -380,6 +380,10 @@ pub(crate) fn run_with_config(
         .collect::<BTreeMap<_, _>>();
     let lazy_demand_possible =
         !lazy_force_keys.is_empty() && !lazy_specs_by_output.is_empty();
+    // The optional-builder capability flag is part of the pool signature, so
+    // derive it from the plan rather than the dirty set: an optional spec
+    // leaving the dirty set must not restart the resident workers.
+    let optional_builder_capability_required = !lazy_specs_by_output.is_empty();
     let mut lazy_state = LazyBuildState::new(lazy_force_keys);
     if !dirty.is_empty() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
@@ -411,7 +415,7 @@ pub(crate) fn run_with_config(
             &first_package,
             &config_digest,
             phase_count,
-            lazy_demand_possible,
+            optional_builder_capability_required,
         )?;
 
         // Outputs remain in the Rust overlay until the transaction commits.
@@ -533,7 +537,7 @@ pub(crate) fn run_with_config(
                     &configured_builder.package,
                     &config_digest,
                     phase_count,
-                    lazy_demand_possible,
+                    optional_builder_capability_required,
                 )?;
                 initialized_package = configured_builder.package.clone();
                 resolver_needs_reset = false;
