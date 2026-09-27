@@ -1881,7 +1881,7 @@ fn remember_resolver_usage(
 /// Whether workers share the on-disk analyzer byte store. The Dart worker
 /// reads the same variable for its driver setup; keep the disabled values in
 /// sync with `lib/src/worker_resolvers.dart`.
-fn shared_analysis_cache_enabled() -> bool {
+pub(crate) fn shared_analysis_cache_enabled() -> bool {
     match std::env::var("BUILD_RUNNER_ACCELERATOR_BYTE_STORE") {
         Ok(value) => !matches!(value.to_lowercase().as_str(), "0" | "false" | "off"),
         Err(_) => true,

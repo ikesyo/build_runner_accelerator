@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
@@ -49,6 +49,7 @@ struct AotMetadata {
 /// a background compile for `watch` by default. The request can be disabled,
 /// made synchronous, or made strict through the environment. An explicit AOT
 /// path takes precedence over every other mode.
+///
 pub(crate) fn resolve_worker_artifact(
     root: &Path,
     dart_binary: &str,
@@ -170,6 +171,15 @@ pub(crate) fn prewarm_worker_aot(
         ));
     }
     prepare_worker_aot(root, dart_binary, worker_executable)
+}
+
+/// Spawn JIT `AnalysisDriver` processes that resolve the workspace package's
+/// sources into the shared byte store, priming both cold-start caches in one
+/// `aot-prewarm` step. The caller joins with [`AnalysisPrewarm::wait_for_children`];
+/// `None` means the shared byte store is disabled, the accelerator package
+/// cannot be located, or the workspace has no package config yet.
+pub(crate) fn start_analysis_prewarm(root: &Path, dart_binary: &str) -> Option<AnalysisPrewarm> {
+    spawn_analysis_prewarm(root, dart_binary)
 }
 
 fn is_dart_source(worker_executable: &str) -> bool {
@@ -959,6 +969,123 @@ fn aot_compile_status_error(worker: &Path, status: std::process::ExitStatus) -> 
         "worker AOT compilation exited with {status}: {}",
         worker.display()
     ))
+}
+
+/// JIT analyzer prewarm spawned by `aot-prewarm` to fill the shared byte
+/// store.
+///
+/// `bin/prewarm_analysis.dart` resolves workspace sources through a plain Dart
+/// `AnalysisDriver` writing the same content-addressed on-disk byte store the
+/// compiled workers read (see `shared_analysis_cache_enabled` /
+/// `lib/src/worker_resolvers.dart`), so worker first-touch analysis becomes a
+/// disk hit instead of recomputing the same graph per worker.
+pub(crate) struct AnalysisPrewarm {
+    children: Vec<Child>,
+}
+
+impl AnalysisPrewarm {
+    /// Wait for every prewarm process to finish on its own.
+    pub(crate) fn wait_for_children(mut self) {
+        for mut child in std::mem::take(&mut self.children) {
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for AnalysisPrewarm {
+    fn drop(&mut self) {
+        for child in &mut self.children {
+            let _ = child.kill();
+        }
+        for child in &mut self.children {
+            let _ = child.wait();
+        }
+    }
+}
+
+fn env_flag_disabled(name: &str) -> bool {
+    match env::var(name) {
+        Ok(value) => matches!(value.to_lowercase().as_str(), "0" | "false" | "off"),
+        Err(_) => false,
+    }
+}
+
+fn prewarm_jobs() -> usize {
+    if let Ok(value) = env::var("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS") {
+        if let Ok(jobs) = value.parse::<usize>() {
+            return jobs;
+        }
+    }
+    // The AOT compile is mostly single-threaded; spend about half the
+    // machine on prewarm.
+    thread::available_parallelism()
+        .map(|count| count.get() / 2)
+        .unwrap_or(0)
+}
+
+fn prewarm_script_path(root: &Path) -> Option<PathBuf> {
+    let config_path = root.join(".dart_tool/package_config.json");
+    let text = fs::read_to_string(&config_path).ok()?;
+    let config: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let package = config
+        .get("packages")?
+        .as_array()?
+        .iter()
+        .find(|package| {
+            package.get("name").and_then(|name| name.as_str())
+                == Some("build_runner_accelerator")
+        })?;
+    let root_uri = package.get("rootUri")?.as_str()?;
+    let package_root = match root_uri.strip_prefix("file://") {
+        Some(path) => PathBuf::from(path),
+        None => config_path.parent()?.join(root_uri),
+    };
+    let script = package_root.join("bin/prewarm_analysis.dart");
+    script.is_file().then_some(script)
+}
+
+fn spawn_analysis_prewarm(root: &Path, dart_binary: &str) -> Option<AnalysisPrewarm> {
+    if env_flag_disabled("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM")
+        || !crate::worker::shared_analysis_cache_enabled()
+    {
+        return None;
+    }
+    let script = prewarm_script_path(root)?;
+    let shards = prewarm_jobs();
+    if shards == 0 {
+        return None;
+    }
+    let package_config = root.join(".dart_tool/package_config.json");
+    let children: Vec<Child> = (0..shards)
+        .filter_map(|shard| {
+            Command::new(dart_binary)
+                .arg(format!("--packages={}", package_config.display()))
+                .arg(&script)
+                .arg("--shard")
+                .arg(shard.to_string())
+                .arg("--shards")
+                .arg(shards.to_string())
+                .current_dir(root)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .map_err(|error| {
+                    eprintln!("analysis prewarm shard {shard} failed to spawn: {error}");
+                    error
+                })
+                .ok()
+        })
+        .collect();
+    if children.is_empty() {
+        None
+    } else {
+        eprintln!(
+            "analysis prewarm: {} shard(s) resolving workspace sources",
+            children.len()
+        );
+        Some(AnalysisPrewarm { children })
+    }
 }
 
 #[cfg(test)]

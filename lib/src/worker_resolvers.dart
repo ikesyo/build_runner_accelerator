@@ -114,7 +114,7 @@ class WorkerResolversImpl implements Resolvers {
           ),
         sdkSummaryBytes,
         loadedConfig,
-        _byteStore(sdkSummaryBytes, loadedConfig),
+        sharedAnalysisByteStore(sdkSummaryBytes, loadedConfig),
       );
 
       _buildResolver = BuildResolver(driver, _driverPool, _analysisDriverModel);
@@ -253,7 +253,10 @@ final _sharedByteStores = <String, ByteStore>{};
 /// directory is namespaced by a fingerprint of the SDK summary, the resolved
 /// analyzer package, and the enabled experiments so that upgrading any of
 /// them cannot reuse element models built against a different toolchain.
-ByteStore _byteStore(Uint8List sdkSummaryBytes, PackageConfig packageConfig) {
+ByteStore sharedAnalysisByteStore(
+  Uint8List sdkSummaryBytes,
+  PackageConfig packageConfig,
+) {
   final disabled = switch ((Platform.environment[_byteStoreEnv] ?? '')
       .toLowerCase()) {
     '0' || 'false' || 'off' => true,
