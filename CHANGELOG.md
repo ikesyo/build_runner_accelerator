@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.6.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.5.0...v0.6.0) - 2026-09-27
+
+- perf: add v0.5.0 follow-up optimizations by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/58
+
 ## [v0.5.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.4.1...v0.5.0) - 2026-09-27
 
 - perf: skip hidden paths in package scans by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/49
