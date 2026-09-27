@@ -1195,8 +1195,32 @@ fn declares_part_directive(source: &str, expected: &str) -> bool {
             continue;
         }
         let mut j = i + 4;
-        while j < len && bytes[j].is_ascii_whitespace() {
-            j += 1;
+        // Dart allows trivia — whitespace and comments — between `part` and
+        // its URI, e.g. `part /* note */ 'foo.g.dart';`.
+        loop {
+            while j < len && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j + 1 < len && bytes[j] == b'/' && bytes[j + 1] == b'/' {
+                j += 2;
+                while j < len && bytes[j] != b'\n' {
+                    j += 1;
+                }
+                continue;
+            }
+            if j + 1 < len && bytes[j] == b'/' && bytes[j + 1] == b'*' {
+                let mut k = j + 2;
+                while k + 1 < len && !(bytes[k] == b'*' && bytes[k + 1] == b'/') {
+                    k += 1;
+                }
+                if k + 1 >= len {
+                    // Unterminated comment — ambiguous; keep the action.
+                    return true;
+                }
+                j = k + 2;
+                continue;
+            }
+            break;
         }
         // `part of 'uri'` declares this library as a part, not a part list.
         if j + 2 <= len
@@ -1210,7 +1234,7 @@ fn declares_part_directive(source: &str, expected: &str) -> bool {
         if j + 1 < len && bytes[j] == b'r' && (bytes[j + 1] == b'\'' || bytes[j + 1] == b'"') {
             j += 1;
         }
-        if j < len && (bytes[j] == b'\'' || bytes[j] == b'"') {
+        if j < len && (bytes[j] == b'\'' || bytes[j] == b'"') { 
             let rest = &source[j + 1..];
             match rest.find(bytes[j] as char) {
                 Some(end) => {
@@ -1227,6 +1251,10 @@ fn declares_part_directive(source: &str, expected: &str) -> bool {
                 // Unterminated string literal — let the real builder see it.
                 None => return true,
             }
+        } else if j < len {
+            // Anything else after `part` is a shape this scanner does not
+            // model — ambiguous, so keep the action.
+            return true;
         }
         i += 4;
     }
@@ -1435,6 +1463,22 @@ mod tests {
             "// part 'foo.g.dart' is missing\nimport 'dart:io';",
             "foo.g.dart"
         ));
+        // Comments between `part` and the URI are valid Dart trivia.
+        assert!(declares_part_directive(
+            "part /* note */ 'foo.g.dart';",
+            "foo.g.dart"
+        ));
+        assert!(declares_part_directive(
+            "part // note\n'foo.g.dart';",
+            "foo.g.dart"
+        ));
+        // Unterminated comment or an unrecognized token after `part` is
+        // ambiguous — keep the action.
+        assert!(declares_part_directive(
+            "part /* note 'foo.g.dart';",
+            "foo.g.dart"
+        ));
+        assert!(declares_part_directive("part foo;", "foo.g.dart"));
         // Conservative: escaped and unterminated URIs keep the action.
         assert!(declares_part_directive(
             "part 'foo\\u002eg.dart';",
