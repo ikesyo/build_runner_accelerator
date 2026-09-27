@@ -114,5 +114,8 @@ sleep 1
 cmp -s "$results_dir/model.before.g.dart" "$watch_dir/lib/model.g.dart" && \
   fail 'source edit did not change Riverpod output'
 
-grep -Fq 'worker_starts_total=1' "$log_path" || fail 'watch did not retain the initial worker'
+# The resident pool may scale out during the first build (--jobs defaults to
+# the CPU count); the invariant is that later builds never spawn again.
+starts_variants=$(grep -o 'worker_starts_total=[0-9]*' "$log_path" | sort -u | wc -l)
+((starts_variants == 1)) || fail 'watch did not retain the initial worker'
 printf 'riverpod-watch-smoke: generated-output-delete=yes source-edit=yes event-count=2\n'

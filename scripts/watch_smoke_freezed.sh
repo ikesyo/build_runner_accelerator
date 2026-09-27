@@ -122,9 +122,17 @@ fi
 
 metrics_count=$(grep -Fc 'Rust metrics:' "$log_path" || true)
 ((metrics_count >= 3)) || fail "watch emitted only $metrics_count metrics lines"
-grep -Fq 'worker_starts_total=1' "$log_path" || \
+# The resident pool may scale out during the first build (--jobs defaults to
+# the CPU count); the invariant is that later builds never spawn again.
+starts_variants=$(grep -o 'worker_starts_total=[0-9]*' "$log_path" | sort -u | wc -l)
+((starts_variants == 1)) || \
   fail 'watch did not retain the initial worker'
-grep -Fq 'worker_resets_total=2' "$log_path" || \
+# Every rebuild resets each resident worker once, so resets_total equals
+# starts_total times the number of rebuilds (2).
+final_metrics=$(grep -F 'Rust metrics:' "$log_path" | tail -n 1 || true)
+starts_total=$(grep -o 'worker_starts_total=[0-9]*' <<<"$final_metrics" | grep -o '[0-9]*')
+resets_total=$(grep -o 'worker_resets_total=[0-9]*' <<<"$final_metrics" | grep -o '[0-9]*')
+((resets_total == starts_total * 2)) || \
   fail 'watch did not reset the resident worker between builds'
 
 printf 'freezed-watch-smoke: generated-output-delete=yes source-edit=yes event-count=2\n'

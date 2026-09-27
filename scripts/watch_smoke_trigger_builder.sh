@@ -168,7 +168,10 @@ assert_same_file \
 
 grep -Fq '"status":"not_triggered"' "$rust_log" || \
   fail 'Rust watch did not record a trigger skip'
-grep -Fq 'worker_starts_total=1' "$rust_log" || \
+# The resident pool may scale out during the first build (--jobs defaults to
+# the CPU count); the invariant is that later builds never spawn again.
+starts_variants=$(grep -o 'worker_starts_total=[0-9]*' "$rust_log" | sort -u | wc -l)
+((starts_variants == 1)) || \
   fail 'Rust watch did not retain the resident worker'
 
 printf 'trigger-builder-watch: trigger-transition=yes generated-chain=yes stock-match=yes worker-lifetime=yes\n'
