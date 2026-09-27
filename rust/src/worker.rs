@@ -1459,10 +1459,10 @@ impl WorkerPool {
 
     pub fn prepare_for_requests(&mut self, root: &Path, request_count: usize) -> io::Result<()> {
         let target = target_worker_count(self.max_jobs, request_count);
-        if self.workers.len() > target {
-            self.retire_workers(target);
-            self.initialized_workers = self.initialized_workers.min(target);
-        }
+        // Never shrink the pool here: an idle worker that is retired now has to
+        // be restarted and re-initialized by the next wider phase, which costs
+        // far more than keeping it resident. Retirement only happens on a full
+        // restart (artifact upgrade or signature change).
         while self.workers.len() < target {
             self.workers.push(WorkerClient::start(
                 root,
