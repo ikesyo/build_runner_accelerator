@@ -207,9 +207,19 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
   // build.yaml remains the ordering source, while the instantiated Builder is
   // the expected-output source. Probe selected multi-factory and
   // option-dependent applications so target-local mapping overrides remain
-  // lossless and package-specific Rust branches are unnecessary.
+  // lossless and package-specific Rust branches are unnecessary. Normal
+  // builders are also probed for their runtime type — the manifest flags
+  // part-family builders for the frontend's part-directive pre-filter.
+  final probeRequiredKeys = <String>{
+    for (final entry in selection.selected.entries)
+      if (requiresRuntimeProbe(entry.value)) entry.key,
+  };
   final probeRequests = selection.selected.entries
-      .where((entry) => requiresRuntimeProbe(entry.value))
+      .where(
+        (entry) =>
+            probeRequiredKeys.contains(entry.key) ||
+            !entry.value.definition.isPostProcess,
+      )
       .map(
         (entry) => FactoryProbeRequest(
           id: entry.key,
@@ -221,11 +231,17 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
       .toList(growable: false);
   final probedMappings = await probeFactoryMappings(root, probeRequests);
   final canonicalMappings = <String, List<FactoryMapping>>{};
+  final builderTypes = <String, List<String?>>{};
   for (final request in probeRequests) {
     final mappings = probedMappings[request.id];
-    if (mappings != null) {
+    if (mappings == null) continue;
+    if (probeRequiredKeys.contains(request.id)) {
       canonicalMappings.putIfAbsent(request.definition.key, () => mappings);
     }
+    builderTypes.putIfAbsent(
+      request.definition.key,
+      () => [for (final mapping in mappings) mapping.builderType],
+    );
   }
   final compatibleDefinitions = <String, List<ManifestDefinition>>{};
   for (final info in resolved.definitions.values) {
@@ -233,6 +249,7 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
       info,
       canonicalMappings[info.key],
       triggers: resolved.normalizedTriggerMap[info.key] ?? const [],
+      builderTypes: builderTypes[info.key],
     );
     if (converted != null && converted.isNotEmpty) {
       compatibleDefinitions[info.key] = converted;
@@ -304,6 +321,22 @@ _NormalizedManifest _normalizeManifest(
     builderOrdering,
     globalRunsBefore,
   );
+  // Part-family builders validate that the input declares their output as a
+  // `part` directive before writing anything; when the directive is absent
+  // the action provably emits nothing, so the frontend can skip it after a
+  // cheap source scan instead of dispatching it to a worker. The suffix the
+  // input must declare is the combining builder's output extension for
+  // shared-part builders, and the builder's own output extension for direct
+  // part builders. Only resolve it when it is unambiguous.
+  final combiningSuffixes = <String>{
+    for (final definitions in runtime.compatibleDefinitions.values)
+      for (final definition in definitions)
+        if (definition.builderType == 'CombiningBuilder')
+          ...definition.outputSuffixes,
+  };
+  final combiningSuffix = combiningSuffixes.length == 1
+      ? combiningSuffixes.single
+      : null;
   // Flatten the factory phases in the same order as build_runner's phase
   // creator: definition order first, then factory order within a definition.
   final builderOrder = <String, int>{};
@@ -380,6 +413,11 @@ _NormalizedManifest _normalizeManifest(
             targetSourcesExclude: target.sources.exclude,
             options: _jsonMap(selectedBuilder.options),
             isRoot: target.package.isRoot,
+            partDirectiveSuffix: _partDirectiveSuffix(
+              converted,
+              combiningSuffix,
+              runtimeSuffixesById[converted.id] ?? converted.outputSuffixes,
+            ),
             runtimeMapping: runtimeMappingJson(
               selectedBuilder.definition,
               runtime.probedMappings[_selectedKey(target.target.key, key)],
@@ -445,6 +483,37 @@ Future<void> _emitArtifacts(
   catalogEntries: normalized.catalogEntries,
   triggerDigest: triggerDigest,
 );
+
+/// Resolves the `part` directive suffix an input must declare before a
+/// part-family builder can emit anything, or null when the builder is not a
+/// recognized part-family shape or the suffix is ambiguous.
+///
+/// - `PartBuilder`/`CombiningBuilder` write their single output only when the
+///   input declares it, so the suffix is their own output extension.
+/// - `SharedPartBuilder` writes `.part` intermediates that only reach source
+///   outputs through the combining builder, so the suffix is the combining
+///   output extension; extra non-part outputs disqualify the builder.
+String? _partDirectiveSuffix(
+  ManifestDefinition definition,
+  String? combiningSuffix,
+  List<String> outputs,
+) {
+  switch (definition.builderType) {
+    case 'PartBuilder':
+    case 'CombiningBuilder':
+      if (outputs.length == 1 && outputs.single.endsWith('.dart')) {
+        return outputs.single;
+      }
+      return null;
+    case 'SharedPartBuilder':
+      if (combiningSuffix != null &&
+          outputs.every((output) => output.endsWith('.part'))) {
+        return combiningSuffix;
+      }
+      return null;
+  }
+  return null;
+}
 
 Map<String, dynamic> _jsonMap(Map<String, dynamic> value) =>
     Map<String, dynamic>.from(jsonDecode(jsonEncode(value)) as Map);

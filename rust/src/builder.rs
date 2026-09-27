@@ -72,6 +72,10 @@ pub(crate) struct ConfiguredBuilder {
     /// Builder instance configuration used for planning.
     pub(crate) runtime_extensions: Option<Vec<BuilderExtension>>,
     pub(crate) runtime_post_process_input_extensions: Option<Vec<String>>,
+    /// Output suffix the input must declare as a `part` directive before this
+    /// builder can emit anything (e.g. `.g.dart` for shared-part builders).
+    /// Absent when the builder is not a recognized part-family shape.
+    pub(crate) part_directive_suffix: Option<String>,
 }
 
 impl ConfiguredBuilder {
@@ -194,6 +198,8 @@ pub(crate) struct BuilderManifestDefinition {
     pub(crate) target_order: u32,
     #[serde(default)]
     pub(crate) triggers: Vec<BuilderTrigger>,
+    #[serde(default)]
+    pub(crate) part_directive_suffix: Option<String>,
 }
 
 impl RustBuildConfig {
@@ -288,6 +294,25 @@ pub(crate) fn rust_build_config_from_manifest(
                 Some(mapping) => runtime_mapping_from_manifest(&entry, mapping)?,
                 None => (None, None),
             };
+        if let Some(suffix) = &entry.part_directive_suffix {
+            let valid = suffix.starts_with('.')
+                && suffix.len() > 1
+                && !suffix.chars().any(|c| {
+                    matches!(
+                        c,
+                        '*' | '?' | '{' | '}' | '[' | ']' | '/' | '\\' | '|' | '\'' | '"'
+                    )
+                });
+            if !valid {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "unsupported part_directive_suffix for {}: {suffix}",
+                        entry.id
+                    ),
+                ));
+            }
+        }
         builders.push(ConfiguredBuilder {
             definition,
             target: entry.target,
@@ -303,6 +328,7 @@ pub(crate) fn rust_build_config_from_manifest(
             options: entry.options,
             runtime_extensions,
             runtime_post_process_input_extensions,
+            part_directive_suffix: entry.part_directive_suffix,
         });
     }
     builders.sort_by_key(|builder| {

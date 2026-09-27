@@ -157,11 +157,13 @@ Map<String, List<FactoryMapping>> decodeFactoryProbeResult(
         valid = false;
         break;
       }
+      final builderType = raw['builder_type'];
       mappings.add(
         FactoryMapping(
           factory: raw['factory'] as String,
           buildExtensions: buildExtensions,
           inputExtensions: inputExtensions,
+          builderType: builderType is String ? builderType : null,
         ),
       );
     }
@@ -246,12 +248,8 @@ String _factoryProbeSource(Iterable<FactoryProbeRequest> requests) {
     } else {
       for (final factory in request.definition.normal!.builderFactories) {
         output
-          ..writeln('      <String, dynamic>{')
-          ..writeln('        \'factory\': ${dartSourceString(factory)},')
-          ..writeln("        'build_extensions': _builderBuildExtensions(")
-          ..writeln('          $importPrefix.$factory($builderOptions),')
-          ..writeln('        ),')
-          ..writeln('      },');
+          ..writeln('      _builderEntry(${dartSourceString(factory)},')
+          ..writeln('          $importPrefix.$factory($builderOptions)),');
       }
     }
     output
@@ -263,10 +261,16 @@ String _factoryProbeSource(Iterable<FactoryProbeRequest> requests) {
     ..writeln('}')
     ..writeln()
     ..writeln(
-      'Map<String, List<String>> _builderBuildExtensions(Builder builder) => '
-      '<String, List<String>>{'
+      'Map<String, dynamic> _builderEntry(String factory, Builder builder) => '
+      '<String, dynamic>{'
+      "'factory': factory,"
+      // The instantiated builder's runtime type drives the part-directive
+      // pre-filter classification, so capture it next to the mapping.
+      "'builder_type': builder.runtimeType.toString(),"
+      "'build_extensions': <String, List<String>>{"
       'for (final entry in builder.buildExtensions.entries) '
       'entry.key: entry.value.toList(growable: false),'
+      '},'
       '};',
     )
     ..writeln()

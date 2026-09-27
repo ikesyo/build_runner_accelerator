@@ -198,9 +198,10 @@ adjust the root for your platform or `BUILD_RUNNER_ACCELERATOR_CACHE`).
 | `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0` | Disable the shared analyzer byte store. |
 | `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` | Disable the analysis shards spawned by `aot-prewarm`. |
 | `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS=<n>` | Override the prewarm shard count (default: half of available CPUs). |
+| `BUILD_RUNNER_ACCELERATOR_PART_FILTER=0` | Disable the `part` directive pre-filter that skips part-family actions whose input cannot produce output. |
 | `BUILD_RUNNER_ACCELERATOR_WORKER_AOT` | `1`/`auto` (default for `build`) compiles the worker synchronously; `background` compiles in the background and keeps kernel workers running meanwhile (default for `watch`); `force` compiles synchronously with no kernel fallback; any other value keeps script workers. |
 
-Design details are recorded in [ADRs 0009–0012](docs/adr/README.md).
+Design details are recorded in [ADRs 0009–0013](docs/adr/README.md).
 
 ## Current compatibility and limitations
 

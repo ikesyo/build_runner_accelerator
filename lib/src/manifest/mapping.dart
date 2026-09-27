@@ -99,6 +99,7 @@ List<ManifestDefinition>? tryConvertDefinition(
   DefinitionInfo info,
   List<FactoryMapping>? probedMappings, {
   required List<ManifestTrigger> triggers,
+  List<String?>? builderTypes,
 }) {
   if (info.isPostProcess) {
     final runtimeInputExtensions = probedMappings?.length == 1
@@ -131,6 +132,7 @@ List<ManifestDefinition>? tryConvertDefinition(
               FactoryMapping(
                 factory: definition.builderFactories.single,
                 buildExtensions: definition.buildExtensions,
+                builderType: builderTypes?.singleOrNull,
               ),
             ]
           : null);
@@ -168,6 +170,7 @@ List<ManifestDefinition>? tryConvertDefinition(
         isOptional: definition.isOptional,
         requiredInputSuffixes: requiredInputSuffixes,
         triggers: triggers,
+        builderType: mapping.builderType,
       ),
     );
   }

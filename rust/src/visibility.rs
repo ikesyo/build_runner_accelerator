@@ -168,6 +168,7 @@ mod tests {
             input: "app|lib/input.txt".to_owned(),
             outputs: vec![output.to_owned()],
             options: BTreeMap::new(),
+            part_directive_suffix: None,
         }
     }
 

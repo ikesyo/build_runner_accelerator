@@ -92,11 +92,16 @@ class FactoryMapping {
     required this.factory,
     required this.buildExtensions,
     this.inputExtensions,
+    this.builderType,
   });
 
   final String factory;
   final Map<String, List<String>> buildExtensions;
   final List<String>? inputExtensions;
+
+  /// `runtimeType` of the instantiated builder, captured by the factory
+  /// probe. Drives the part-directive pre-filter classification.
+  final String? builderType;
 }
 
 class ManifestExtension {
@@ -145,6 +150,7 @@ class ManifestDefinition {
     required this.isOptional,
     required this.requiredInputSuffixes,
     required this.triggers,
+    this.builderType,
   });
 
   final String id;
@@ -158,6 +164,10 @@ class ManifestDefinition {
   final bool isOptional;
   final List<String> requiredInputSuffixes;
   final List<ManifestTrigger> triggers;
+
+  /// Runtime type of the instantiated builder (e.g. `SharedPartBuilder`),
+  /// when the factory probe captured one. Not emitted to the manifest.
+  final String? builderType;
 
   bool get isPostProcess => kind == 'post_process';
 
@@ -182,6 +192,7 @@ class ManifestDefinition {
     required Map<String, dynamic> options,
     bool isRoot = false,
     Map<String, dynamic>? runtimeMapping,
+    String? partDirectiveSuffix,
     required int phase,
     required String? target,
     required String? package,
@@ -216,6 +227,8 @@ class ManifestDefinition {
     'options': options,
     if (target != null) 'is_root': isRoot,
     if (runtimeMapping != null) 'runtime_mapping': runtimeMapping,
+    if (partDirectiveSuffix != null)
+      'part_directive_suffix': partDirectiveSuffix,
   };
 }
 
