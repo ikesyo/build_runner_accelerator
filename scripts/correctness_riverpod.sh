@@ -195,8 +195,11 @@ run_case_generated_output_delete() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_outputs "$stock_dir" "$rust_dir"
   # Cache-output invalidation also dirties the cache consumers, so this path
-  # now executes eight actions while preserving the stock output inventory.
-  assert_actions "$results_dir/$name.rust.change.log" 8
+  # now executes seven actions while preserving the stock output inventory.
+  # The part-directive pre-filter records a minimal result for secondary.dart's
+  # freezed action (no `part 'secondary.freezed.dart'` directive), so it stays
+  # clean here where stock would re-run it as another no-op.
+  assert_actions "$results_dir/$name.rust.change.log" 7
   printf 'riverpod-correctness: generated-output-delete: pass\n'
 }
 
