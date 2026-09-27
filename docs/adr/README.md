@@ -27,6 +27,7 @@ boundary rather than restoring commit-level history.
 | [0009](0009-shared-analyzer-byte-store.md) | Shared analyzer byte store across workers and builds |
 | [0010](0010-path-based-asset-reads.md) | Path-based asset reads |
 | [0011](0011-analysis-prewarm-in-aot-prewarm.md) | Analysis prewarm in `aot-prewarm` |
+| [0012](0012-machine-wide-cache.md) | Machine-wide cache for the worker AOT and analyzer byte store |
 
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for

@@ -14,6 +14,9 @@ fixture_dir="$repo_root/fixtures/current_json_app"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 temporary_dir=$(mktemp -d)
+# Keep the machine-wide accelerator cache hermetic: these scenarios assert
+# on whether a workspace compiles or reuses its AOT worker.
+export BUILD_RUNNER_ACCELERATOR_CACHE="$temporary_dir/shared-cache"
 workspace_parent="$temporary_dir/workspaces"
 workspace_a="$workspace_parent/a"
 workspace_b="$workspace_parent/b"
@@ -97,10 +100,12 @@ key_b=$(DART_BIN="$dart_bin" BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" \
 [[ "$key_a" == "$key_b" ]] || fail 'relocated workspaces produced different cache keys'
 
 sdk_probe="$temporary_dir/sdk-probe"
+sdk_dir=$(resolve_toolchain_dart_sdk)
+[[ -n "$sdk_dir" ]] || fail 'could not resolve the Dart SDK root'
 mkdir -p "$sdk_probe/lib/_internal"
-cp "$repo_root/.toolchains/dart/dart-sdk/lib/_internal/allowed_experiments.json" \
+cp "$sdk_dir/lib/_internal/allowed_experiments.json" \
   "$sdk_probe/lib/_internal/allowed_experiments.json"
-cp "$repo_root/.toolchains/dart/dart-sdk/version" "$sdk_probe/version"
+cp "$sdk_dir/version" "$sdk_probe/version"
 sdk_key_a=$(DART_SDK="$sdk_probe" DART_BIN="$dart_bin" \
   BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" "$script_dir/aot_cache_key.sh" "$workspace_a") || \
   fail 'SDK identity probe key generation failed'

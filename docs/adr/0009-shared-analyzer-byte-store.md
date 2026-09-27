@@ -19,9 +19,11 @@ and element models addressed by content- and version-derived keys.
 ## Decision
 
 - Construct each worker's analysis driver with a
-  `MemoryCachingByteStore(FileByteStore(dir))` under
-  `.dart_tool/build_runner_accelerator/byte_store/<fingerprint>`. The
-  directory is shared by every worker in the build and reused across builds.
+  `MemoryCachingByteStore(FileByteStore(dir))` under the machine-wide cache
+  root (`acceleratorCacheDirectory()`, overridable via
+  `BUILD_RUNNER_ACCELERATOR_CACHE`): `byte_store/<fingerprint>`. The
+  directory is shared by every worker in the build, across builds, and
+  across checkouts of the same toolchain (ADR 0012).
   The store instance itself is kept per fingerprint for the life of the
   worker process so phase-reset driver rebuilds keep the in-memory layer the
   earlier phases already warmed; keys are content- and version-addressed and
@@ -62,8 +64,9 @@ and element models addressed by content- and version-derived keys.
   name and atomically renames, so identical keys written by two workers
   converge on the same bytes.
 - The byte-store directory is not part of the incremental graph. Deleting
-  `.dart_tool/build_runner_accelerator/{graph,cache}` keeps it; deleting
-  `byte_store/` forfeits the warm benefit without affecting correctness.
+  `.dart_tool/build_runner_accelerator/{graph,cache}` keeps it; deleting the
+  `byte_store/` subtree under the machine-wide cache root forfeits the warm
+  benefit without affecting correctness.
 - Output compatibility is unchanged: the store only changes how analysis
   results are cached, not what is resolved.
 

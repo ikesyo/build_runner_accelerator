@@ -23,6 +23,8 @@ import 'package:path/path.dart' as p;
 import 'package:pool/pool.dart';
 import 'package:pub_semver/pub_semver.dart';
 
+import 'cache_directory.dart';
+
 // ignore: implementation_imports
 import 'package:build_runner/src/bootstrap/build_process_state.dart';
 // ignore: implementation_imports
@@ -253,6 +255,9 @@ final _sharedByteStores = <String, ByteStore>{};
 /// directory is namespaced by a fingerprint of the SDK summary, the resolved
 /// analyzer package, and the enabled experiments so that upgrading any of
 /// them cannot reuse element models built against a different toolchain.
+/// The store lives under the machine-wide accelerator cache so fresh
+/// checkouts and sibling workspaces reuse it instead of rebuilding per
+/// workspace.
 ByteStore sharedAnalysisByteStore(
   Uint8List sdkSummaryBytes,
   PackageConfig packageConfig,
@@ -272,13 +277,7 @@ ByteStore sharedAnalysisByteStore(
       ])
       .toString()
       .substring(0, 16);
-  final dir = p.join(
-    Directory.current.path,
-    '.dart_tool',
-    'build_runner_accelerator',
-    'byte_store',
-    fingerprint,
-  );
+  final dir = p.join(acceleratorCacheDirectory(), 'byte_store', fingerprint);
   // FileByteStore does not create the directory itself; without it the async
   // temp-file writes fail silently.
   return _sharedByteStores.putIfAbsent(fingerprint, () {

@@ -23,8 +23,8 @@ rejected:
 
 The `aot-prewarm` command already exists as the cold-priming step for the
 worker executable (e.g. CI image/cache warming). Priming the analysis byte
-store belongs to the same step: both caches live under
-`.dart_tool/build_runner_accelerator/` and both are keyed by toolchain- and
+store belongs to the same step: the byte store lives under the machine-wide cache root and the AOT
+store publishes into it (ADR 0012), and both are keyed by toolchain- and
 workspace-derived fingerprints, so they can be warmed in one pass and then
 shared by every subsequent build until the toolchain or dependencies change.
 

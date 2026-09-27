@@ -272,6 +272,140 @@ impl Drop for BackgroundAotLock {
     }
 }
 
+/// Machine-wide cache root shared by all workspaces, mirroring the Dart
+/// `FrontendBinaryResolver.cacheDirectory` contract:
+/// `BUILD_RUNNER_ACCELERATOR_CACHE` wins, then the platform cache directory.
+fn shared_cache_root() -> Option<PathBuf> {
+    if let Ok(configured) = env::var("BUILD_RUNNER_ACCELERATOR_CACHE") {
+        if !configured.is_empty() {
+            return Some(PathBuf::from(configured));
+        }
+    }
+    if cfg!(target_os = "windows") {
+        for variable in ["LOCALAPPDATA", "USERPROFILE"] {
+            if let Ok(value) = env::var(variable) {
+                if !value.is_empty() {
+                    let root = if variable == "USERPROFILE" {
+                        PathBuf::from(value).join("AppData").join("Local")
+                    } else {
+                        PathBuf::from(value)
+                    };
+                    return Some(root.join("build_runner_accelerator"));
+                }
+            }
+        }
+        return None;
+    }
+    if cfg!(target_os = "macos") {
+        let home = env::var_os("HOME")?;
+        return Some(
+            PathBuf::from(home)
+                .join("Library")
+                .join("Caches")
+                .join("build_runner_accelerator"),
+        );
+    }
+    if let Ok(xdg) = env::var("XDG_CACHE_HOME") {
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg).join("build_runner_accelerator"));
+        }
+    }
+    let home = env::var_os("HOME")?;
+    Some(
+        PathBuf::from(home)
+            .join(".cache")
+            .join("build_runner_accelerator"),
+    )
+}
+
+/// Directory holding the shared copy of one compiled worker artifact, keyed
+/// by the content-derived cache key so different workspaces and checkouts
+/// publish and restore the same slot.
+fn shared_aot_dir(cache_key: &str) -> Option<PathBuf> {
+    Some(
+        shared_cache_root()?
+            .join("worker-aot")
+            .join(digest_bytes(cache_key.as_bytes())),
+    )
+}
+
+/// File names making up one cached worker artifact.
+fn aot_artifact_file_names(context: &AotContext) -> Option<[OsString; 3]> {
+    Some([
+        context.aot_path.file_name()?.to_owned(),
+        context.depfile_path.file_name()?.to_owned(),
+        context.sdk_metadata_path.file_name()?.to_owned(),
+    ])
+}
+
+/// Restore a previously published artifact into the workspace's `aot-sdk`.
+/// Returns the local artifact path when the shared copy passed the same
+/// staleness check a local artifact would.
+fn restore_shared_aot(context: &AotContext) -> io::Result<Option<PathBuf>> {
+    let Some(dir) = shared_aot_dir(&context.cache_key) else {
+        return Ok(None);
+    };
+    let Some([aot_name, depfile_name, metadata_name]) = aot_artifact_file_names(context) else {
+        return Ok(None);
+    };
+    let shared_aot = dir.join(&aot_name);
+    let shared_metadata = dir.join(&metadata_name);
+    if !aot_metadata_is_current(
+        &shared_aot,
+        &shared_metadata,
+        &context.workspace,
+        &context.sdk_root,
+        &context.worker_path,
+        &context.cache_key,
+    ) {
+        return Ok(None);
+    }
+    let aot_dir = context
+        .aot_path
+        .parent()
+        .ok_or_else(|| io::Error::other("worker AOT path has no parent directory"))?;
+    fs::create_dir_all(aot_dir)?;
+    let process_id = std::process::id();
+    for (source, name) in [
+        (&shared_aot, &aot_name),
+        (&dir.join(&depfile_name), &depfile_name),
+        (&shared_metadata, &metadata_name),
+    ] {
+        let destination = aot_dir.join(name);
+        let temp = temporary_sibling(&destination, process_id, "shared");
+        fs::copy(source, &temp)?;
+        replace_file(&temp, &destination)?;
+    }
+    Ok(Some(fs::canonicalize(&context.aot_path)?))
+}
+
+/// Publish the freshly compiled artifact so other checkouts and workspaces
+/// with the same cache key skip the synchronous compile. Best-effort: any
+/// failure leaves the shared slot untouched.
+fn publish_shared_aot(context: &AotContext) {
+    let Some(dir) = shared_aot_dir(&context.cache_key) else {
+        return;
+    };
+    let Some([aot_name, depfile_name, metadata_name]) = aot_artifact_file_names(context) else {
+        return;
+    };
+    let _ = (|| -> io::Result<()> {
+        fs::create_dir_all(&dir)?;
+        let process_id = std::process::id();
+        for (source, name) in [
+            (&context.aot_path, aot_name),
+            (&context.depfile_path, depfile_name),
+            (&context.sdk_metadata_path, metadata_name),
+        ] {
+            let destination = dir.join(name);
+            let temp = temporary_sibling(&destination, process_id, "publish");
+            fs::copy(source, &temp)?;
+            replace_file(&temp, &destination)?;
+        }
+        Ok(())
+    })();
+}
+
 struct AotContext {
     workspace: Workspace,
     sdk_root: PathBuf,
@@ -402,6 +536,12 @@ fn prepare_worker_aot(
     if let Some(aot) = current_aot_from_context(&context)? {
         return Ok(aot);
     }
+    // A fresh checkout has no workspace-local artifact, but a previous build
+    // (here or in another checkout) may have published this exact key to the
+    // machine-wide cache.
+    if let Ok(Some(aot)) = restore_shared_aot(&context) {
+        return Ok(aot);
+    }
 
     let process_id = std::process::id();
     let temp_aot = temporary_sibling(&context.aot_path, process_id, "aot");
@@ -439,6 +579,7 @@ fn prepare_worker_aot(
     replace_file(&temp_depfile, &context.depfile_path)?;
     replace_file(&temp_sdk_metadata, &context.sdk_metadata_path)?;
     replace_file(&temp_aot, &context.aot_path)?;
+    publish_shared_aot(&context);
     fs::canonicalize(context.aot_path)
 }
 

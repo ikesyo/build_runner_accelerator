@@ -50,6 +50,9 @@ else
   results_dir=$(cd -- "$results_dir" && pwd)
 fi
 work_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-current-baseline-work.XXXXXX")
+# A warm machine-wide accelerator cache would mask the cold rows this
+# benchmark measures; isolate it under the work root.
+export BUILD_RUNNER_ACCELERATOR_CACHE="$work_root/shared-cache"
 results_jsonl="$results_dir/results.jsonl"
 metadata_file="$results_dir/metadata.txt"
 
