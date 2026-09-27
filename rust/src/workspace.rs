@@ -188,36 +188,6 @@ impl Workspace {
         Ok(self.read_asset_or_cache_shared(asset)?.as_ref().clone())
     }
 
-    /// Read an asset from the physical location declared by its producer.
-    ///
-    /// This is intentionally separate from [`read_asset_or_cache_shared`].
-    /// The latter is useful for ordinary sources and dependency assets, but a
-    /// logical ID which is a generated output must not silently switch from
-    /// the artifact tree to a package-path file (or vice versa).
-    pub fn read_asset_at_shared(
-        &self,
-        asset: &str,
-        build_to: BuildTo,
-    ) -> io::Result<Arc<Vec<u8>>> {
-        let cache_key = location_cache_key(asset, build_to);
-        if let Some(bytes) = self
-            .asset_read_cache
-            .lock()
-            .map_err(|_| io::Error::other("asset read cache mutex is poisoned"))?
-            .get(&cache_key)
-        {
-            self.asset_read_cache_hits.fetch_add(1, Ordering::Relaxed);
-            return Ok(Arc::clone(bytes));
-        }
-
-        self.asset_read_cache_misses.fetch_add(1, Ordering::Relaxed);
-        let path = match build_to {
-            BuildTo::Cache => self.cache_path_for_asset(asset)?,
-            BuildTo::Source => self.path_for_asset(asset)?,
-        };
-        self.cache_read_bytes(&cache_key, fs::read(path)?)
-    }
-
     /// Read an asset once per Workspace build and share the bytes across workers.
     ///
     /// The cache is deliberately scoped to this Workspace instance. A new
@@ -396,14 +366,6 @@ impl Workspace {
             .map(|(path, absolute)| (format!("{package}|{path}"), absolute))
             .collect())
     }
-}
-
-fn location_cache_key(asset: &str, build_to: BuildTo) -> String {
-    let location = match build_to {
-        BuildTo::Cache => "cache",
-        BuildTo::Source => "source",
-    };
-    format!("{location}\0{asset}")
 }
 
 fn stable_package_config_identity(config: &PackageConfigFile) -> String {
