@@ -275,10 +275,17 @@ impl Drop for BackgroundAotLock {
 /// Machine-wide cache root shared by all workspaces, mirroring the Dart
 /// `FrontendBinaryResolver.cacheDirectory` contract:
 /// `BUILD_RUNNER_ACCELERATOR_CACHE` wins, then the platform cache directory.
-fn shared_cache_root() -> Option<PathBuf> {
+/// A relative override resolves against the workspace root so the Rust
+/// frontend and its workers agree even when the launcher runs elsewhere.
+fn shared_cache_root(workspace_root: &Path) -> Option<PathBuf> {
     if let Ok(configured) = env::var("BUILD_RUNNER_ACCELERATOR_CACHE") {
         if !configured.is_empty() {
-            return Some(PathBuf::from(configured));
+            let path = PathBuf::from(configured);
+            return Some(if path.is_absolute() {
+                path
+            } else {
+                workspace_root.join(path)
+            });
         }
     }
     if cfg!(target_os = "windows") {
@@ -321,9 +328,9 @@ fn shared_cache_root() -> Option<PathBuf> {
 /// Directory holding the shared copy of one compiled worker artifact, keyed
 /// by the content-derived cache key so different workspaces and checkouts
 /// publish and restore the same slot.
-fn shared_aot_dir(cache_key: &str) -> Option<PathBuf> {
+fn shared_aot_dir(workspace_root: &Path, cache_key: &str) -> Option<PathBuf> {
     Some(
-        shared_cache_root()?
+        shared_cache_root(workspace_root)?
             .join("worker-aot")
             .join(digest_bytes(cache_key.as_bytes())),
     )
@@ -342,7 +349,7 @@ fn aot_artifact_file_names(context: &AotContext) -> Option<[OsString; 3]> {
 /// Returns the local artifact path when the shared copy passed the same
 /// staleness check a local artifact would.
 fn restore_shared_aot(context: &AotContext) -> io::Result<Option<PathBuf>> {
-    let Some(dir) = shared_aot_dir(&context.cache_key) else {
+    let Some(dir) = shared_aot_dir(&context.workspace.root, &context.cache_key) else {
         return Ok(None);
     };
     let Some([aot_name, depfile_name, metadata_name]) = aot_artifact_file_names(context) else {
@@ -383,7 +390,7 @@ fn restore_shared_aot(context: &AotContext) -> io::Result<Option<PathBuf>> {
 /// with the same cache key skip the synchronous compile. Best-effort: any
 /// failure leaves the shared slot untouched.
 fn publish_shared_aot(context: &AotContext) {
-    let Some(dir) = shared_aot_dir(&context.cache_key) else {
+    let Some(dir) = shared_aot_dir(&context.workspace.root, &context.cache_key) else {
         return;
     };
     let Some([aot_name, depfile_name, metadata_name]) = aot_artifact_file_names(context) else {
