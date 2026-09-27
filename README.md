@@ -141,9 +141,11 @@ The release matrix, cache locations, signature rules, and mirror override are
 documented in [`docs/launcher-and-release.md`](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/launcher-and-release.md).
 The launcher adds one process launch and local cache/target resolution, but it
 does not proxy worker IPC or participate in action scheduling. Worker AOT
-artifacts remain workspace-local and are invalidated by the SDK, package
-configuration, or worker dependency changes. For startup benchmarks or
-offline use, run a preinstalled binary through
+artifacts live under the workspace's `aot-sdk` directory and are invalidated
+by the SDK, package configuration, or worker dependency changes; compiled
+artifacts are additionally cached machine-wide (see
+[Performance and caching](#performance-and-caching)). For startup
+benchmarks or offline use, run a preinstalled binary through
 `BUILD_RUNNER_ACCELERATOR_BIN`.
 
 The launcher keeps archive extraction, signature verification, and release
@@ -151,6 +153,46 @@ download dependencies out of its normal startup path. A valid user-cache hit
 is checked with lightweight metadata and executable hashing; the heavier
 release downloader is started only when the cache needs to be filled or
 repaired.
+
+## Performance and caching
+
+The accelerator keeps two shared caches under a machine-wide cache root
+so repeated builds — including builds in fresh checkouts on the same
+machine — skip the expensive cold paths:
+
+- `<cache>/byte_store/<fingerprint>` — the analyzer byte store shared by all
+  workers. The fingerprint covers the SDK summary and analyzer-relevant
+  configuration, so resolved entries are reused across workers, workspaces,
+  checkouts, and phase resets within a build.
+- `<cache>/worker-aot/<fnv1a64(cache-key)>` — compiled worker AOT artifacts.
+  The cache key is content-derived (SDK, worker source, manifest, lockfile,
+  and package-config identity); a shared artifact is validated against the
+  current workspace's dependency digests before it is restored into the
+  workspace-local `aot-sdk` directory.
+
+The cache root resolves `BUILD_RUNNER_ACCELERATOR_CACHE` first — a relative
+path is anchored at the workspace root — then the platform cache directory
+(`%LOCALAPPDATA%` on Windows, `~/Library/Caches` on macOS,
+`$XDG_CACHE_HOME` or `~/.cache` elsewhere) plus
+`build_runner_accelerator`. Caching that directory in CI gives every build
+warm-start behavior. Where the caches are cold, the first build still pays the
+synchronous worker AOT compile and the first-touch analysis once per toolchain;
+running `aot-prewarm` ahead of the next build performs the compile and
+concurrently warms the byte store with JIT analysis shards.
+
+Byte-store entries are content-addressed and safe to share across workers,
+but stale fingerprint directories are not garbage-collected yet — reclaim
+space by deleting directories for toolchains you no longer use.
+
+| Variable | Effect |
+| --- | --- |
+| `BUILD_RUNNER_ACCELERATOR_CACHE` | Relocate or isolate all machine-wide caches. |
+| `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0` | Disable the shared analyzer byte store. |
+| `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` | Disable the analysis shards spawned by `aot-prewarm`. |
+| `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS=<n>` | Override the prewarm shard count (default: half of available CPUs). |
+| `BUILD_RUNNER_ACCELERATOR_WORKER_AOT` | `1`/`auto` (default for `build`) compiles the worker synchronously; `background` compiles in the background and keeps kernel workers running meanwhile (default for `watch`); `force` compiles synchronously with no kernel fallback; any other value keeps script workers. |
+
+Design details are recorded in [ADRs 0009–0012](docs/adr/README.md).
 
 ## Current compatibility and limitations
 
