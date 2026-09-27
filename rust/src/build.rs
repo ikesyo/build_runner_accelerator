@@ -1234,9 +1234,24 @@ fn declares_part_directive(source: &str, expected: &str) -> bool {
         if j + 1 < len && bytes[j] == b'r' && (bytes[j + 1] == b'\'' || bytes[j + 1] == b'"') {
             j += 1;
         }
-        if j < len && (bytes[j] == b'\'' || bytes[j] == b'"') { 
-            let rest = &source[j + 1..];
-            match rest.find(bytes[j] as char) {
+        if j < len && (bytes[j] == b'\'' || bytes[j] == b'"') {
+            let quote = bytes[j];
+            // `part '''uri'''` / `part """uri"""` are valid Dart: the URI is
+            // terminated by the same quote repeated three times.
+            let quote_len = if j + 2 < len && bytes[j + 1] == quote && bytes[j + 2] == quote {
+                3
+            } else {
+                1
+            };
+            let rest = &source[j + quote_len..];
+            let end = if quote_len == 3 {
+                rest.as_bytes()
+                    .windows(3)
+                    .position(|w| w == [quote; 3])
+            } else {
+                rest.find(quote as char)
+            };
+            match end {
                 Some(end) => {
                     let uri = &rest[..end];
                     if uri.contains('\\') {
@@ -1245,7 +1260,7 @@ fn declares_part_directive(source: &str, expected: &str) -> bool {
                     if uri == expected {
                         return true;
                     }
-                    i = j + 1 + end + 1;
+                    i = j + quote_len + end + quote_len;
                     continue;
                 }
                 // Unterminated string literal — let the real builder see it.
@@ -1479,11 +1494,34 @@ mod tests {
             "foo.g.dart"
         ));
         assert!(declares_part_directive("part foo;", "foo.g.dart"));
+        // Triple-quoted URIs are valid Dart and are parsed normally.
+        assert!(declares_part_directive(
+            "part '''foo.g.dart''';",
+            "foo.g.dart"
+        ));
+        assert!(declares_part_directive(
+            "part \"\"\"foo.g.dart\"\"\";",
+            "foo.g.dart"
+        ));
+        assert!(declares_part_directive(
+            "part r'''foo.g.dart''';",
+            "foo.g.dart"
+        ));
+        // A lone quote inside a triple-quoted URI does not terminate it.
+        assert!(!declares_part_directive(
+            "part '''don't.dart''';",
+            "foo.g.dart"
+        ));
+        assert!(!declares_part_directive(
+            "part '''other.dart''';",
+            "foo.g.dart"
+        ));
         // Conservative: escaped and unterminated URIs keep the action.
         assert!(declares_part_directive(
             "part 'foo\\u002eg.dart';",
             "foo.g.dart"
         ));
         assert!(declares_part_directive("part 'foo.g.dart", "foo.g.dart"));
+        assert!(declares_part_directive("part '''foo.g.dart", "foo.g.dart"));
     }
 }
