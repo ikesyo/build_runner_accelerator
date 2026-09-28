@@ -155,6 +155,10 @@ assert_same_file "$stock_dir/lib/input.final.txt" "$rust_dir/lib/input.final.txt
 assert_same_file "$stock_dir/lib/input.primary.txt" "$rust_dir/lib/input.primary.txt"
 assert_same_file "$stock_dir/lib/input.glob.txt" "$rust_dir/lib/input.glob.txt"
 
+# Initial outputs can exist just before the Rust native watcher is armed.
+# Wait for its readiness marker so the first atomic write cannot be missed.
+wait_for_text "$rust_log" "Watching $rust_dir (native filesystem events)" "$rust_pid"
+
 atomic_write "$stock_dir/lib/input.txt"
 atomic_write "$rust_dir/lib/input.txt"
 wait_for_text "$stock_dir/lib/input.optional.txt" 'changed optional' "$stock_pid"
