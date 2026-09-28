@@ -248,15 +248,18 @@ pub(crate) fn run_with_config(
                 specs.len()
             );
         } else {
-            // Plan-only has no overlay yet; the filter falls back to reading
-            // each input from disk, which matches a clean build's first pass.
+            // Plan-only runs before the dirty check and overlay resolution
+            // (the empty overlay makes the filter read each input from disk,
+            // matching a clean build's first pass), so this is a plan-level
+            // clean-build estimate — phase-produced inputs and up-to-date
+            // outputs are not accounted for.
             let overlay = BTreeMap::new();
             let filtered = specs
                 .iter()
                 .filter(|spec| part_directive_skips(&workspace, &overlay, spec))
                 .count();
             eprintln!(
-                "Rust plan only: {} actions expected, {} filtered by part directives, {} would dispatch",
+                "Rust plan only: {} actions expected, {} filtered by part directives, ~{} would dispatch (clean-build estimate before dirty check)",
                 specs.len(),
                 filtered,
                 specs.len() - filtered
