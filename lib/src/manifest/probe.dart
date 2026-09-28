@@ -276,7 +276,6 @@ Map<String, List<FactoryMapping>> decodeFactoryProbeResult(
   return probed;
 }
 
-
 /// Derives the effective probe-cache key by mixing [cacheKey] with an
 /// identity for each probed package's implementation. Entries under the pub
 /// cache (hosted/git) are addressed by name plus their versioned directory —
@@ -402,9 +401,9 @@ String _factoryProbeSource(Iterable<FactoryProbeRequest> requests) {
   // probe boundary as strict as the manifest converter: only package imports
   // and identifier-shaped factory names may cross it. In particular, a raw
   // factory value must never reach the importPrefix.factory expression below.
-  final safeRequests = requests.where(isProbeableRequest).toList(
-    growable: false,
-  );
+  final safeRequests = requests
+      .where(isProbeableRequest)
+      .toList(growable: false);
   final sorted = safeRequests.toList()
     ..sort((left, right) => left.id.compareTo(right.id));
   final imports = <String, String>{};
