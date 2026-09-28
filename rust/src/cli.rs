@@ -171,29 +171,123 @@ fn cgroup_available_memory_gib() -> Option<f64> {
 /// (`memory.limit_in_bytes`/`memory.usage_in_bytes`).
 #[cfg(target_os = "linux")]
 fn cgroup_memory_files() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
-    let mounts = std::fs::read_to_string("/proc/self/cgroup").ok()?;
-    for line in mounts.lines() {
+    let cgroup = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok();
+    for line in cgroup.lines() {
         let mut fields = line.splitn(3, ':');
-        let _hierarchy = fields.next();
-        let Some(controllers) = fields.next() else {
+        let Some(controllers) = fields.nth(1) else {
             continue;
         };
         let path = fields.next().unwrap_or("");
         if controllers.is_empty() {
             // v2 unified hierarchy ("0::/path").
-            return Some((
-                format!("/sys/fs/cgroup{path}/memory.max").into(),
-                format!("/sys/fs/cgroup{path}/memory.current").into(),
-            ));
+            let Some(dir) = cgroup_dir(
+                path,
+                "cgroup2",
+                None,
+                mountinfo.as_deref(),
+                "/sys/fs/cgroup",
+            ) else {
+                continue;
+            };
+            return Some((dir.join("memory.max"), dir.join("memory.current")));
         }
         if controllers.split(',').any(|c| c == "memory") {
+            let Some(dir) = cgroup_dir(
+                path,
+                "cgroup",
+                Some("memory"),
+                mountinfo.as_deref(),
+                "/sys/fs/cgroup/memory",
+            ) else {
+                continue;
+            };
             return Some((
-                format!("/sys/fs/cgroup/memory{path}/memory.limit_in_bytes").into(),
-                format!("/sys/fs/cgroup/memory{path}/memory.usage_in_bytes").into(),
+                dir.join("memory.limit_in_bytes"),
+                dir.join("memory.usage_in_bytes"),
             ));
         }
     }
     None
+}
+
+/// Maps a cgroup path from /proc/self/cgroup onto the mount point
+/// /proc/self/mountinfo reports for the hierarchy of `fstype` (v1 mounts are
+/// further matched by `controller` in their super options). Falls back to
+/// the conventional sysfs location when mountinfo is unavailable or lacks
+/// the mount; a mount under which the path cannot be expressed yields None
+/// — appending blindly would read the hierarchy root instead of the
+/// process's cgroup.
+#[cfg(target_os = "linux")]
+fn cgroup_dir(
+    path: &str,
+    fstype: &str,
+    controller: Option<&str>,
+    mountinfo: Option<&str>,
+    fallback: &str,
+) -> Option<std::path::PathBuf> {
+    if let Some(info) = mountinfo {
+        if let Some((root, point)) = cgroup_mount(info, fstype, controller) {
+            return cgroup_dir_for(root, point, path);
+        }
+    }
+    Some(std::path::PathBuf::from(fallback).join(path.trim_start_matches('/')))
+}
+
+/// Finds the (root, mount point) of the cgroup hierarchy of `fstype` in
+/// /proc/self/mountinfo text; v1 mounts match only when `controller` appears
+/// in their super options.
+#[cfg(any(target_os = "linux", test))]
+fn cgroup_mount<'a>(
+    mountinfo: &'a str,
+    fstype: &str,
+    controller: Option<&str>,
+) -> Option<(&'a str, &'a str)> {
+    for line in mountinfo.lines() {
+        let Some((before, after)) = line.split_once(" - ") else {
+            continue;
+        };
+        let pre: Vec<&str> = before.split_whitespace().collect();
+        let (Some(&root), Some(&point)) = (pre.get(3), pre.get(4)) else {
+            continue;
+        };
+        let mut post = after.split_whitespace();
+        let (Some(fs), Some(_source), Some(super_options)) =
+            (post.next(), post.next(), post.next())
+        else {
+            continue;
+        };
+        if fs != fstype {
+            continue;
+        }
+        if let Some(want) = controller {
+            if !super_options.split(',').any(|opt| opt == want) {
+                continue;
+            }
+        }
+        return Some((root, point));
+    }
+    None
+}
+
+/// Maps a cgroup path from /proc/self/cgroup to a directory under the
+/// hierarchy's mount point, given the mount's root. Returns None when the
+/// path cannot be expressed under that root — the process's cgroup is then
+/// not visible inside the mount, and no files exist to read.
+#[cfg(any(target_os = "linux", test))]
+fn cgroup_dir_for(
+    mount_root: &str,
+    mount_point: &str,
+    cgroup_path: &str,
+) -> Option<std::path::PathBuf> {
+    let relative = if mount_root == "/" {
+        cgroup_path
+    } else if cgroup_path == mount_root {
+        "/"
+    } else {
+        cgroup_path.strip_prefix(&format!("{mount_root}/"))?
+    };
+    Some(std::path::PathBuf::from(mount_point).join(relative.trim_start_matches('/')))
 }
 
 /// Effective headroom from a cgroup limit/usage pair. `max` and the v1
@@ -254,7 +348,10 @@ fn available_memory_gib() -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrontendMode, cgroup_available_bytes, parse_vm_stat_available_gib};
+    use super::{
+        FrontendMode, cgroup_available_bytes, cgroup_dir_for, cgroup_mount,
+        parse_vm_stat_available_gib,
+    };
 
     #[test]
     fn frontend_mode_accepts_only_explicit_values() {
@@ -262,6 +359,52 @@ mod tests {
         assert_eq!(FrontendMode::parse("rust").unwrap(), FrontendMode::Rust);
         assert_eq!(FrontendMode::parse("dart").unwrap(), FrontendMode::Dart);
         assert!(FrontendMode::parse("native").is_err());
+    }
+
+    #[test]
+    fn cgroup_dir_maps_paths_relative_to_the_mount_root() {
+        // Standard case: the full hierarchy is mounted at /sys/fs/cgroup.
+        assert_eq!(
+            cgroup_dir_for("/", "/sys/fs/cgroup", "/docker/abc"),
+            Some(std::path::PathBuf::from("/sys/fs/cgroup/docker/abc"))
+        );
+        // Subtree-mounted container view: the reported path is the mount root.
+        assert_eq!(
+            cgroup_dir_for("/docker/abc", "/sys/fs/cgroup", "/docker/abc"),
+            Some(std::path::PathBuf::from("/sys/fs/cgroup"))
+        );
+        // Nested under the mount root maps relative to it.
+        assert_eq!(
+            cgroup_dir_for("/docker", "/sys/fs/cgroup", "/docker/abc/x"),
+            Some(std::path::PathBuf::from("/sys/fs/cgroup/abc/x"))
+        );
+        // A path outside the mount root cannot be resolved.
+        assert_eq!(
+            cgroup_dir_for("/kubepods", "/sys/fs/cgroup", "/docker/abc"),
+            None
+        );
+        // A shared prefix without a path boundary is not a match.
+        assert_eq!(
+            cgroup_dir_for("/docker/ab", "/sys/fs/cgroup", "/docker/abc"),
+            None
+        );
+    }
+
+    #[test]
+    fn cgroup_mount_selects_v1_memory_and_v2_entries() {
+        let mountinfo = "\
+35 27 0:31 / /sys/fs/cgroup ro,nosuid,nodev,noexec shared:9 - cgroup2 cgroup2 rw,nsdelegate
+29 27 0:25 /docker/x /sys/fs/cgroup/memory rw,nosuid,nodev,noexec shared:7 - cgroup cgroup rw,memory
+";
+        assert_eq!(
+            cgroup_mount(mountinfo, "cgroup2", None),
+            Some(("/", "/sys/fs/cgroup"))
+        );
+        assert_eq!(
+            cgroup_mount(mountinfo, "cgroup", Some("memory")),
+            Some(("/docker/x", "/sys/fs/cgroup/memory"))
+        );
+        assert_eq!(cgroup_mount(mountinfo, "cgroup", Some("cpu")), None);
     }
 
     #[test]
