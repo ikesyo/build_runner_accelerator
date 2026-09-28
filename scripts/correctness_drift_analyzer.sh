@@ -21,6 +21,15 @@ if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
   pub_get_args+=(--offline)
 fi
 
+case_filter=${CASE_FILTER:-all}
+case "$case_filter" in
+  all | core | rename-delete | failure) ;;
+  *)
+    printf 'drift-analyzer-compatibility: unknown CASE_FILTER: %s\n' "$case_filter" >&2
+    exit 2
+    ;;
+esac
+
 remove_tree() {
   local path=$1
   [[ -e "$path" || -L "$path" ]] || return 0
@@ -236,6 +245,7 @@ run_rust() {
     --root "$directory" --dart "$dart_bin" --jobs "$jobs"
 }
 
+run_clean_baseline() {
 run_stock "$stock_dir" "$temporary_dir/clean.stock.log" || fail 'stock clean build failed'
 run_rust "$rust_dir" "$temporary_dir/clean.rust.log" 1 || fail 'Rust clean build failed'
 compare_outputs clean
@@ -247,7 +257,9 @@ grep -Fq 'drift_dev:analyzer#factory0' \
 grep -Fq 'drift_dev:analyzer#factory1' \
   "$rust_dir/.dart_tool/build_runner_accelerator/builder-manifest.json" || \
   fail 'manifest did not expand the analyzer factory'
+}
 
+run_core_cases() {
 run_rust "$rust_dir" "$temporary_dir/no-op.rust.log" 1 || fail 'Rust no-op failed'
 grep -Fq 'No work to do (Rust frontend)' "$temporary_dir/no-op.rust.log" || \
   fail 'Rust analyzer no-op was not reported'
@@ -269,7 +281,9 @@ run_stock "$stock_dir" "$temporary_dir/drift-change.stock.log" || \
 run_rust "$rust_dir" "$temporary_dir/drift-change.rust.log" 1 || \
   fail 'Rust Drift change build failed'
 compare_outputs drift-change
+}
 
+run_rename_delete_cases() {
 # A rename must remove the old inventory and publish the new mapping.
 for directory in "$stock_dir" "$rust_dir"; do
   mv "$directory/lib/schema.drift" "$directory/lib/schema_renamed.drift"
@@ -306,7 +320,9 @@ run_rust "$rust_dir" "$temporary_dir/delete-no-op.rust.log" 2 || \
   fail 'Rust deletion no-op failed'
 grep -Fq 'No work to do (Rust frontend)' "$temporary_dir/delete-no-op.rust.log" || \
   fail 'Rust deletion no-op was not reported'
+}
 
+run_failure_cases() {
 # Restore a valid analyzer input before exercising failure and recovery. The
 # deletion case above intentionally leaves no type helper to compare.
 for directory in "$stock_dir" "$rust_dir"; do
@@ -318,7 +334,9 @@ for directory in "$stock_dir" "$rust_dir"; do
     '  IntColumn get id => integer()();' \
     '}' \
     > "$directory/lib/extra.dart"
-  sed -i "s/@DriftDatabase()/@DriftDatabase(include: {'schema.drift', 'extra.dart'})/" \
+  sed -i \
+    -e "s/@DriftDatabase()/@DriftDatabase(include: {'schema.drift', 'extra.dart'})/" \
+    -e "s/@DriftDatabase(include: {'schema.drift'})/@DriftDatabase(include: {'schema.drift', 'extra.dart'})/" \
     "$directory/lib/database.dart"
 done
 run_stock "$stock_dir" "$temporary_dir/failure-baseline.stock.log" || \
@@ -384,5 +402,31 @@ run_stock "$stock_dir" "$temporary_dir/recovery.stock.log" || \
 run_rust "$rust_dir" "$temporary_dir/recovery.rust.log" 1 || \
   fail 'Rust recovery build failed'
 compare_outputs recovery
+}
 
-printf 'drift-analyzer-compatibility: chain=preparing-analyzer-modular factories=2 input-mappings=2 required-input=cache-artifact cache-read=yes resolver-api=yes type-helper=yes source-output=yes source-cache=yes stale-cleanup=yes failure-atomic=yes jobs=1,2\n'
+case "$case_filter" in
+  all)
+    run_clean_baseline
+    run_core_cases
+    run_rename_delete_cases
+    run_failure_cases
+    ;;
+  core)
+    run_clean_baseline
+    run_core_cases
+    ;;
+  rename-delete)
+    run_clean_baseline
+    run_rename_delete_cases
+    ;;
+  failure)
+    run_clean_baseline
+    run_failure_cases
+    ;;
+esac
+
+if [[ "$case_filter" == all ]]; then
+  printf 'drift-analyzer-compatibility: chain=preparing-analyzer-modular factories=2 input-mappings=2 required-input=cache-artifact cache-read=yes resolver-api=yes type-helper=yes source-output=yes source-cache=yes stale-cleanup=yes failure-atomic=yes jobs=1,2\n'
+else
+  printf 'drift-analyzer-compatibility: case=%s chain=preparing-analyzer-modular factories=2 input-mappings=2 required-input=cache-artifact cache-read=yes resolver-api=yes type-helper=yes source-output=yes source-cache=yes\n' "$case_filter"
+fi

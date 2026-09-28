@@ -473,11 +473,54 @@ jobs:
           - name: "Compatibility: Drift"
             shell: bash
             run: bash scripts/correctness_drift.sh
-          - name: "Compatibility: Drift analyzer"
+
+  compatibility-drift-analyzer:
+    name: Compatibility suite (Drift analyzer)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: compatibility-drift-analyzer
+          cache-inputs: |
+            fixtures/drift_analyzer_app/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_drift_analyzer.sh
+            scripts/watch_smoke_drift_analyzer.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
+      - name: Prime Drift analyzer dependencies
+        shell: bash
+        run: |
+          (cd fixtures/drift_analyzer_app && dart --suppress-analytics pub get)
+      - parallel:
+          - name: "Drift analyzer: core"
             shell: bash
-            run: |
-              bash scripts/correctness_drift_analyzer.sh
-              bash scripts/watch_smoke_drift_analyzer.sh
+            env:
+              PUB_GET_OFFLINE: '1'
+              CASE_FILTER: core
+            run: bash scripts/correctness_drift_analyzer.sh
+          - name: "Drift analyzer: rename and delete"
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              CASE_FILTER: rename-delete
+            run: bash scripts/correctness_drift_analyzer.sh
+          - name: "Drift analyzer: failure and recovery"
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+              CASE_FILTER: failure
+            run: bash scripts/correctness_drift_analyzer.sh
+          - name: "Drift analyzer: watch"
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: bash scripts/watch_smoke_drift_analyzer.sh
 
   native-build:
     name: Native build (${{ matrix.target_id }})
