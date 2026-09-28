@@ -41,12 +41,16 @@ Two facts make most of it redundant:
 - `probeFactoryMappings` persists the raw probe response under the
   machine-wide cache root from ADR 0012 at
   `<cache>/probe/<builder-manifest-fingerprint>-<impl>.json`, where
-  `<impl>` digests the identity of every probed package's implementation:
-  pub-cache packages contribute `name@<versioned dir>` (immutable for a
-  version), and mutable locations (path dependencies) contribute a sha256
-  of their `lib/` sources. If that identity cannot be established the
-  cache is skipped entirely, so a factory edit that changes probe results
-  can never be masked by a fingerprint-identical cache hit. A hit replays
+  `<impl>` digests the identity of every package in the probed packages'
+  transitive dependency closure — a factory's observable behavior is set
+  by all the code it can reach, not only its own package. Pub-cache
+  packages contribute `name@<versioned dir>` (immutable for a version),
+  and mutable locations (path dependencies, SDK or local checkouts)
+  contribute a sha256 of their `lib/` sources; the closure is walked via
+  each package's pubspec dependencies. If any reachable identity cannot
+  be established the cache is skipped entirely, so an edit under a path
+  dependency of a probed package can never be masked by a
+  fingerprint-identical cache hit. A hit replays
   the response through the same `decodeFactoryProbeResult` validation as a
   live probe, and both read and write require a mapping for every
   probeable request — a partial response (e.g. a factory that threw under

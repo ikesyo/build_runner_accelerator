@@ -172,10 +172,10 @@ machine — skip the expensive cold paths:
 - `<cache>/probe/<builder-manifest-fingerprint>-<impl>.json` — the
   builder-factory probe results from manifest generation. The fingerprint
   covers the lockfile and every package's `build.yaml`, and `<impl>` digests
-  the probed packages' implementation identity (versioned pub-cache
-  directories, or source digests for path dependencies), so a factory edit
-  invalidates the entry. Only complete responses are cached, so a cache hit
-  skips the probe subprocess entirely.
+  the implementation identity of the probed packages' transitive dependency
+  closure (versioned pub-cache directories, or source digests for path
+  dependencies), so a factory edit invalidates the entry. Only complete
+  responses are cached, so a cache hit skips the probe subprocess entirely.
 
 The cache root resolves `BUILD_RUNNER_ACCELERATOR_CACHE` first — a relative
 path is anchored at the workspace root — then the platform cache directory

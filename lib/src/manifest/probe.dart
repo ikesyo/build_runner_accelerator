@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
+import 'package:yaml/yaml.dart';
 
 import 'mapping.dart';
 import '../cache_directory.dart';
@@ -21,9 +22,10 @@ const _probeCacheVersion = 1;
 /// When [cacheKey] is provided the probe response is persisted under the
 /// machine-wide cache directory (`<cache>/probe/<key>.json`) and reused
 /// verbatim on a hit. The caller keys it by the workspace's builder-manifest
-/// fingerprint. The probed packages' implementation identity is mixed into the
-/// effective key, so editing a mutable (path) dependency invalidates the entry;
-/// the cache is skipped entirely when that identity cannot be established.
+/// fingerprint. The identity of every mutable package in the probed packages'
+/// dependency closure is mixed into the effective key, so editing a path
+/// dependency invalidates the entry; the cache is skipped entirely when that
+/// identity cannot be established.
 Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
   String root,
   Iterable<FactoryProbeRequest> requests, {
@@ -277,13 +279,16 @@ Map<String, List<FactoryMapping>> decodeFactoryProbeResult(
 }
 
 /// Derives the effective probe-cache key by mixing [cacheKey] with an
-/// identity for each probed package's implementation. Entries under the pub
-/// cache (hosted/git) are addressed by name plus their versioned directory —
-/// they are immutable for a given version. Everywhere else (path
-/// dependencies, local checkouts) the sources under `lib/` are digested, so
-/// editing a factory implementation invalidates the cached mapping. Returns
-/// null when any probed package's identity cannot be established; the caller
-/// then skips the cache entirely.
+/// identity for every package in the probed packages' transitive dependency
+/// closure. A probed factory's observable behavior is set by all the code it
+/// can reach, so the identity must cover mutable (path/local) transitive
+/// dependencies — not only the directly probed packages. Entries under the
+/// pub cache (hosted/git) are addressed by name plus their versioned
+/// directory — they are immutable for a given version. Everywhere else the
+/// sources under `lib/` are digested, so editing a factory implementation or
+/// any code it depends on invalidates the cached mapping. Returns null when
+/// any reachable package's identity cannot be established; the caller then
+/// skips the cache entirely.
 Future<String?> _implementationScopedCacheKey(
   String packageConfigPath,
   String cacheKey,
@@ -312,7 +317,11 @@ Future<String?> _implementationScopedCacheKey(
   final configDir = p.dirname(packageConfigPath);
   final pubCache = _pubCacheDirectory();
   final identities = <String>[];
-  for (final name in packageNames.nonNulls.toList()..sort()) {
+  final visited = <String>{};
+  final queue = packageNames.nonNulls.toList();
+  while (queue.isNotEmpty) {
+    final name = queue.removeLast();
+    if (!visited.add(name)) continue;
     final rootUri = packageRoots[name];
     if (rootUri == null) return null;
     final rootDir = _resolveRootUri(rootUri, configDir);
@@ -321,13 +330,41 @@ Future<String?> _implementationScopedCacheKey(
       // Hosted and git pub-cache entries carry the version/commit in the
       // directory name, and their contents are immutable for that identity.
       identities.add('$name@${p.basename(rootDir)}');
-      continue;
+    } else {
+      final digest = await _libSourcesDigest(rootDir);
+      if (digest == null) return null;
+      identities.add('$name@$digest');
     }
-    final digest = await _libSourcesDigest(rootDir);
-    if (digest == null) return null;
-    identities.add('$name@$digest');
+    final dependencies = await _dependencyNames(rootDir);
+    if (dependencies == null) return null;
+    queue.addAll(dependencies);
   }
+  identities.sort();
   return '$cacheKey-${sha256.convert(utf8.encode(identities.join('\n')))}';
+}
+
+/// Runtime dependency names declared in [packageRoot]'s pubspec — the
+/// packages whose code a factory in this package can reach. Only
+/// `dependencies` qualifies: `dev_dependencies` are neither resolvable from
+/// a dependency's pubspec nor importable from its `lib/`, and
+/// `dependency_overrides` in a non-root pubspec is ignored by pub. Null when
+/// the pubspec cannot be read or parsed, since the closure is then
+/// unknowable.
+Future<Set<String>?> _dependencyNames(String packageRoot) async {
+  try {
+    final file = File(p.join(packageRoot, 'pubspec.yaml'));
+    if (!file.existsSync()) return null;
+    final doc = loadYaml(await file.readAsString());
+    if (doc is! Map) return null;
+    final dependencies = doc['dependencies'];
+    if (dependencies is! Map) return const {};
+    return {
+      for (final name in dependencies.keys)
+        if (name is String) name,
+    };
+  } on Object {
+    return null;
+  }
 }
 
 /// The package name a `package:` import URI resolves to, or null for other
@@ -342,14 +379,19 @@ String? _importPackage(FactoryProbeRequest request) {
 }
 
 /// Resolves a package_config `rootUri` — absolute or relative to the config
-/// file — into a filesystem path.
+/// file — into a filesystem path, or null when the URI cannot be resolved.
 String? _resolveRootUri(String rootUri, String configDir) {
-  // rootUri is a URI (percent-encoded, '/'-separated, possibly relative);
-  // p.fromUri turns it into a native path before resolving.
-  final decoded = Uri.decodeFull(p.fromUri(rootUri));
-  return p.normalize(
-    p.isAbsolute(decoded) ? decoded : p.join(configDir, decoded),
-  );
+  try {
+    // p.fromUri already decodes percent escapes (file: URIs through
+    // toFilePath, other URIs through Uri.path); decoding again would throw
+    // on paths that literally contain '%'.
+    final decoded = p.fromUri(rootUri);
+    return p.normalize(
+      p.isAbsolute(decoded) ? decoded : p.join(configDir, decoded),
+    );
+  } on Object {
+    return null;
+  }
 }
 
 /// Digest of every Dart source under the package's `lib/` — the identity of
