@@ -40,10 +40,18 @@ Two facts make most of it redundant:
   remains valid.
 - `probeFactoryMappings` persists the raw probe response under the
   machine-wide cache root from ADR 0012 at
-  `<cache>/probe/<builder-manifest-fingerprint>.json`. A hit replays the
-  response through the same `decodeFactoryProbeResult` validation as a live
-  probe, so a stale or malformed entry degrades to a miss. Writes are
-  best-effort (temp file + rename) and never fail manifest generation.
+  `<cache>/probe/<builder-manifest-fingerprint>-<impl>.json`, where
+  `<impl>` digests the identity of every probed package's implementation:
+  pub-cache packages contribute `name@<versioned dir>` (immutable for a
+  version), and mutable locations (path dependencies) contribute a sha256
+  of their `lib/` sources. If that identity cannot be established the
+  cache is skipped entirely, so a factory edit that changes probe results
+  can never be masked by a fingerprint-identical cache hit. A hit replays
+  the response through the same `decodeFactoryProbeResult` validation as a
+  live probe, and both read and write require a mapping for every
+  probeable request — a partial response (e.g. a factory that threw under
+  load) is treated as a miss and is never persisted. Writes are best-effort
+  (temp file + rename) and never fail manifest generation.
 - The probe request set is narrowed: normal builders are probed only when
   `requiresRuntimeProbe` holds or a declared output could carry a `part`
   file (any output ending in `.dart`/`.part`). A builder whose runtime type

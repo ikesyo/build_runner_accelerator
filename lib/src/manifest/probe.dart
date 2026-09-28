@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import 'mapping.dart';
@@ -19,8 +21,9 @@ const _probeCacheVersion = 1;
 /// When [cacheKey] is provided the probe response is persisted under the
 /// machine-wide cache directory (`<cache>/probe/<key>.json`) and reused
 /// verbatim on a hit. The caller keys it by the workspace's builder-manifest
-/// fingerprint, which covers the lockfile and every package's build.yaml —
-/// the entire input to factory instantiation.
+/// fingerprint. The probed packages' implementation identity is mixed into the
+/// effective key, so editing a mutable (path) dependency invalidates the entry;
+/// the cache is skipped entirely when that identity cannot be established.
 Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
   String root,
   Iterable<FactoryProbeRequest> requests, {
@@ -28,21 +31,30 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
 }) async {
   final probeRequests = requests.toList(growable: false);
   if (probeRequests.isEmpty) return const {};
-  final cacheFile = cacheKey == null
-      ? null
-      : File(
-          p.join(
-            acceleratorCacheDirectory(workspaceRoot: root),
-            'probe',
-            '$cacheKey.json',
-          ),
-        );
+  final packageConfig = _findPackageConfigPath(root);
+  if (packageConfig == null) return const {};
+
+  File? cacheFile;
+  if (cacheKey != null) {
+    final scopedKey = await _implementationScopedCacheKey(
+      packageConfig,
+      cacheKey,
+      probeRequests,
+    );
+    if (scopedKey != null) {
+      cacheFile = File(
+        p.join(
+          acceleratorCacheDirectory(workspaceRoot: root),
+          'probe',
+          '$scopedKey.json',
+        ),
+      );
+    }
+  }
   if (cacheFile != null) {
     final cached = _readProbeCache(cacheFile, probeRequests);
     if (cached != null) return cached;
   }
-  final packageConfig = _findPackageConfigPath(root);
-  if (packageConfig == null) return const {};
 
   Directory? temporary;
   try {
@@ -70,8 +82,14 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
     );
     if (exitCode != 0 || !resultFile.existsSync()) return const {};
     final responseText = await resultFile.readAsString();
-    _writeProbeCache(cacheFile, responseText);
-    return decodeFactoryProbeResponse(responseText, probeRequests);
+    final decoded = decodeFactoryProbeResponse(responseText, probeRequests);
+    // Only persist a response that produced a valid mapping for every
+    // probeable request — a response missing entries (a factory threw)
+    // must not be replayed as a hit and permanently skip the retry.
+    if (_coversAllProbeableRequests(decoded, probeRequests)) {
+      _writeProbeCache(cacheFile, responseText);
+    }
+    return decoded;
   } catch (_) {
     // A probe is an optimization boundary, not a reason to fail the build.
     // The caller treats a missing selected request as an unsupported manifest
@@ -110,6 +128,9 @@ Future<int?> waitForProbeExit({
   }
 }
 
+/// Reads a cached probe response, returning null on a miss. A cached
+/// entry is a hit only when it decodes into a valid mapping for every
+/// probeable request — a partial response must be reprobed.
 Map<String, List<FactoryMapping>>? _readProbeCache(
   File cacheFile,
   List<FactoryProbeRequest> requests,
@@ -121,7 +142,8 @@ Map<String, List<FactoryMapping>>? _readProbeCache(
     }
     // Reuse the live response validation path so a stale or malformed entry
     // degrades to a miss instead of trusting cached strings.
-    return decodeFactoryProbeResult(decoded['response'], requests);
+    final result = decodeFactoryProbeResult(decoded['response'], requests);
+    return _coversAllProbeableRequests(result, requests) ? result : null;
   } on FormatException {
     return null;
   } on FileSystemException {
@@ -129,6 +151,32 @@ Map<String, List<FactoryMapping>>? _readProbeCache(
   }
 }
 
+/// Whether [decoded] carries a mapping for every request that can be probed
+/// at all (the same shape check the probe emitter applies).
+bool _coversAllProbeableRequests(
+  Map<String, List<FactoryMapping>> decoded,
+  List<FactoryProbeRequest> requests,
+) {
+  final ids = decoded.keys.toSet();
+  return requests.every(
+    (request) => !isProbeableRequest(request) || ids.contains(request.id),
+  );
+}
+
+/// Whether the probe emitter can turn [request] into executable source —
+/// a `package:` import and identifier-shaped factory names.
+bool isProbeableRequest(FactoryProbeRequest request) {
+  if (request.definition.isPostProcess) {
+    final postProcess = request.definition.postProcess!;
+    return postProcess.import.startsWith('package:') &&
+        manifestIdentifierPattern.hasMatch(postProcess.builderFactory);
+  }
+  final normal = request.definition.normal!;
+  return normal.import.startsWith('package:') &&
+      normal.builderFactories.every(manifestIdentifierPattern.hasMatch);
+}
+
+/// Writes [responseText] under [cacheFile] atomically, best-effort.
 void _writeProbeCache(File? cacheFile, String responseText) {
   if (cacheFile == null) return;
   try {
@@ -228,23 +276,135 @@ Map<String, List<FactoryMapping>> decodeFactoryProbeResult(
   return probed;
 }
 
+
+/// Derives the effective probe-cache key by mixing [cacheKey] with an
+/// identity for each probed package's implementation. Entries under the pub
+/// cache (hosted/git) are addressed by name plus their versioned directory —
+/// they are immutable for a given version. Everywhere else (path
+/// dependencies, local checkouts) the sources under `lib/` are digested, so
+/// editing a factory implementation invalidates the cached mapping. Returns
+/// null when any probed package's identity cannot be established; the caller
+/// then skips the cache entirely.
+Future<String?> _implementationScopedCacheKey(
+  String packageConfigPath,
+  String cacheKey,
+  List<FactoryProbeRequest> requests,
+) async {
+  final packageNames = <String?>{
+    for (final request in requests) _importPackage(request),
+  }..remove(null);
+  if (packageNames.isEmpty) return cacheKey;
+
+  Map<String, String> packageRoots;
+  try {
+    final decoded = jsonDecode(await File(packageConfigPath).readAsString());
+    if (decoded is! Map || decoded['packages'] is! List) return null;
+    packageRoots = {
+      for (final entry in decoded['packages'] as List)
+        if (entry is Map &&
+            entry['name'] is String &&
+            entry['rootUri'] is String)
+          entry['name'] as String: entry['rootUri'] as String,
+    };
+  } on Object {
+    return null;
+  }
+
+  final configDir = p.dirname(packageConfigPath);
+  final pubCache = _pubCacheDirectory();
+  final identities = <String>[];
+  for (final name in packageNames.nonNulls.toList()..sort()) {
+    final rootUri = packageRoots[name];
+    if (rootUri == null) return null;
+    final rootDir = _resolveRootUri(rootUri, configDir);
+    if (rootDir == null) return null;
+    if (pubCache != null && p.isWithin(pubCache, rootDir)) {
+      // Hosted and git pub-cache entries carry the version/commit in the
+      // directory name, and their contents are immutable for that identity.
+      identities.add('$name@${p.basename(rootDir)}');
+      continue;
+    }
+    final digest = await _libSourcesDigest(rootDir);
+    if (digest == null) return null;
+    identities.add('$name@$digest');
+  }
+  return '$cacheKey-${sha256.convert(utf8.encode(identities.join('\n')))}';
+}
+
+/// The package name a `package:` import URI resolves to, or null for other
+/// schemes (non-package imports can never be emitted into the probe).
+String? _importPackage(FactoryProbeRequest request) {
+  final import = request.definition.isPostProcess
+      ? request.definition.postProcess!.import
+      : request.definition.normal!.import;
+  if (!import.startsWith('package:')) return null;
+  final slash = import.indexOf('/', 'package:'.length);
+  return slash < 0 ? null : import.substring('package:'.length, slash);
+}
+
+/// Resolves a package_config `rootUri` — absolute or relative to the config
+/// file — into a filesystem path.
+String? _resolveRootUri(String rootUri, String configDir) {
+  // rootUri is a URI (percent-encoded, '/'-separated, possibly relative);
+  // p.fromUri turns it into a native path before resolving.
+  final decoded = Uri.decodeFull(p.fromUri(rootUri));
+  return p.normalize(
+    p.isAbsolute(decoded) ? decoded : p.join(configDir, decoded),
+  );
+}
+
+/// Digest of every Dart source under the package's `lib/` — the identity of
+/// a mutable (path/local) package for cache purposes.
+Future<String?> _libSourcesDigest(String packageRoot) async {
+  try {
+    final lib = Directory(p.join(packageRoot, 'lib'));
+    if (!lib.existsSync()) return null;
+    final files = await lib
+        .list(recursive: true)
+        .where((entity) => entity is File && entity.path.endsWith('.dart'))
+        .cast<File>()
+        .toList();
+    files.sort(
+      (a, b) => p
+          .relative(a.path, from: lib.path)
+          .compareTo(p.relative(b.path, from: lib.path)),
+    );
+    final buffer = BytesBuilder(copy: false);
+    for (final file in files) {
+      buffer.add(utf8.encode('${p.relative(file.path, from: lib.path)}\x00'));
+      buffer.add(await file.readAsBytes());
+      buffer.addByte(0);
+    }
+    return sha256.convert(buffer.toBytes()).toString();
+  } on Object {
+    return null;
+  }
+}
+
+/// The pub cache root, using the same precedence as the Dart tools.
+String? _pubCacheDirectory() {
+  final override = Platform.environment['PUB_CACHE'];
+  if (override != null && override.isNotEmpty) {
+    return p.normalize(p.absolute(override));
+  }
+  if (Platform.isWindows) {
+    final localAppData = Platform.environment['LOCALAPPDATA'];
+    return localAppData == null
+        ? null
+        : p.normalize(p.join(localAppData, 'Pub', 'Cache'));
+  }
+  final home = Platform.environment['HOME'];
+  return home == null ? null : p.normalize(p.join(home, '.pub-cache'));
+}
+
 String _factoryProbeSource(Iterable<FactoryProbeRequest> requests) {
   // These values are later emitted into executable Dart source. Keep the
   // probe boundary as strict as the manifest converter: only package imports
   // and identifier-shaped factory names may cross it. In particular, a raw
   // factory value must never reach the importPrefix.factory expression below.
-  final safeRequests = requests
-      .where((request) {
-        if (request.definition.isPostProcess) {
-          final postProcess = request.definition.postProcess!;
-          return postProcess.import.startsWith('package:') &&
-              manifestIdentifierPattern.hasMatch(postProcess.builderFactory);
-        }
-        final normal = request.definition.normal!;
-        return normal.import.startsWith('package:') &&
-            normal.builderFactories.every(manifestIdentifierPattern.hasMatch);
-      })
-      .toList(growable: false);
+  final safeRequests = requests.where(isProbeableRequest).toList(
+    growable: false,
+  );
   final sorted = safeRequests.toList()
     ..sort((left, right) => left.id.compareTo(right.id));
   final imports = <String, String>{};
