@@ -37,12 +37,11 @@ impl Options {
         let mut dart_binary = None;
         let mut worker = None;
         let mut interval_ms = 200;
-        // Worker processes each carry a full analyzer instance, so the
-        // default follows the machine's parallelism rather than a fixed
-        // count. --jobs overrides it (including down to 1 on small runners).
-        let mut jobs = std::thread::available_parallelism()
-            .map(|count| count.get())
-            .unwrap_or(1);
+        // Worker processes each carry a full analyzer instance (~1 GiB on
+        // large workspaces), so the default follows the machine's parallelism
+        // capped by the memory that is actually available. --jobs overrides
+        // it (including down to 1 on small runners).
+        let mut jobs = default_worker_count();
         let mut mode = FrontendMode::Auto;
         while let Some(argument) = args.next() {
             match argument.as_str() {
@@ -111,9 +110,81 @@ impl Options {
     }
 }
 
+fn default_worker_count() -> usize {
+    let cpus = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1);
+    match available_memory_gib() {
+        Some(gib) => {
+            let capped = cpus.min((gib as usize).max(1));
+            if capped < cpus {
+                eprintln!(
+                    "Rust defaulting --jobs to {capped} ({gib:.1} GiB available; pass --jobs to override)"
+                );
+            }
+            capped
+        }
+        // No availability probe on this platform: keep the parallelism default.
+        None => cpus,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn available_memory_gib() -> Option<f64> {
+    let contents = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let line = contents
+        .lines()
+        .find(|line| line.starts_with("MemAvailable:"))?;
+    let kb: f64 = line
+        .strip_prefix("MemAvailable:")?
+        .trim()
+        .strip_suffix("kB")?
+        .trim()
+        .parse()
+        .ok()?;
+    Some(kb / 1_048_576.0)
+}
+
+/// macOS has no MemAvailable-style counter; estimate it from `vm_stat`
+/// (present on every macOS install) as free + inactive + speculative pages —
+/// the pages that can back new allocations without swapping.
+#[cfg(target_os = "macos")]
+fn available_memory_gib() -> Option<f64> {
+    let output = std::process::Command::new("vm_stat").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_vm_stat_available_gib(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_vm_stat_available_gib(text: &str) -> Option<f64> {
+    let page_size = text
+        .lines()
+        .next()
+        .and_then(|line| line.rsplit("page size of ").next())
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(16384.0);
+    let mut pages = 0.0;
+    for stat in ["Pages free:", "Pages inactive:", "Pages speculative:"] {
+        let value: f64 = text
+            .lines()
+            .find(|line| line.starts_with(stat))
+            .and_then(|line| line[stat.len()..].trim().trim_end_matches('.').parse().ok())?;
+        pages += value;
+    }
+    Some(pages * page_size / 1_073_741_824.0)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn available_memory_gib() -> Option<f64> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
-    use super::FrontendMode;
+    use super::{FrontendMode, parse_vm_stat_available_gib};
 
     #[test]
     fn frontend_mode_accepts_only_explicit_values() {
@@ -121,5 +192,24 @@ mod tests {
         assert_eq!(FrontendMode::parse("rust").unwrap(), FrontendMode::Rust);
         assert_eq!(FrontendMode::parse("dart").unwrap(), FrontendMode::Dart);
         assert!(FrontendMode::parse("native").is_err());
+    }
+
+    #[test]
+    fn vm_stat_parse_counts_reusable_pages() {
+        // `vm_stat` output shape (Apple Silicon page size = 16384).
+        let text = "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n\
+                    Pages free:                              100000.\n\
+                    Pages active:                           400000.\n\
+                    Pages inactive:                         200000.\n\
+                    Pages speculative:                       50000.\n\
+                    Pages occupied by compressor:                 0.\n";
+        let gib = parse_vm_stat_available_gib(text).unwrap();
+        // (100000 + 200000 + 50000) * 16384 bytes = 5.35 GiB
+        assert!((gib - 5.35).abs() < 0.01, "unexpected estimate: {gib}");
+    }
+
+    #[test]
+    fn vm_stat_parse_rejects_missing_stats() {
+        assert!(parse_vm_stat_available_gib("no stats").is_none());
     }
 }
