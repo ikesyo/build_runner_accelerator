@@ -222,7 +222,7 @@ jobs:
             run: bash scripts/package_smoke.sh
 
   current-codegen-compatibility:
-    name: Freezed compatibility
+    name: Freezed compatibility (lifecycle)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     env:
@@ -231,7 +231,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
         with:
-          cache-scope: current-codegen-freezed
+          cache-scope: current-codegen-freezed-lifecycle
           cache-inputs: |
             fixtures/freezed_app/pubspec.lock
             rust/Cargo.lock
@@ -253,7 +253,6 @@ jobs:
               for case_name in generated-output-delete no-op; do
                 CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
               done
-
           - name: Freezed correctness (rename path)
             shell: bash
             env:
@@ -262,7 +261,6 @@ jobs:
               for case_name in input-delete rename; do
                 CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
               done
-
           - name: Freezed correctness (lifecycle)
             shell: bash
             env:
@@ -271,7 +269,35 @@ jobs:
               for case_name in failure affected-actions; do
                 CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
               done
+          - name: Freezed watch smoke
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: bash scripts/watch_smoke_freezed.sh
 
+  current-codegen-freezed-config:
+    name: Freezed compatibility (config)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: current-codegen-freezed-config
+          cache-inputs: |
+            fixtures/freezed_app/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_freezed.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
+      - name: Prime current generator dependencies
+        shell: bash
+        run: |
+          (cd fixtures/freezed_app && dart --suppress-analytics pub get)
+      - parallel:
           - name: Freezed correctness (dependencies)
             shell: bash
             env:
@@ -280,7 +306,6 @@ jobs:
               for case_name in dependency annotation-removal; do
                 CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
               done
-
           - name: Freezed correctness (combined and options)
             shell: bash
             env:
@@ -289,7 +314,6 @@ jobs:
               for case_name in combined-output-removal builder-options; do
                 CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
               done
-
           - name: Freezed correctness (globs and empty options)
             shell: bash
             env:
@@ -298,12 +322,6 @@ jobs:
               for case_name in glob-membership empty-options; do
                 CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
               done
-
-          - name: Freezed watch smoke
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: bash scripts/watch_smoke_freezed.sh
 
   current-codegen-riverpod:
     name: Riverpod compatibility
@@ -353,7 +371,7 @@ jobs:
             run: bash scripts/watch_smoke_riverpod.sh
 
   compatibility:
-    name: Compatibility suite (lifecycle, graph)
+    name: Compatibility suite (lifecycle)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     env:
@@ -362,7 +380,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
         with:
-          cache-scope: compatibility
+          cache-scope: compatibility-lifecycle
           cache-inputs: |
             fixtures/**/pubspec.lock
             rust/Cargo.lock
@@ -387,17 +405,38 @@ jobs:
               for case_name in failure delete rename; do
                 CASE_FILTER="$case_name" bash scripts/correctness_optional_builder.sh
               done
+          - name: "Compatibility: optional and trigger watch"
+            shell: bash
+            run: |
+              bash scripts/watch_smoke_optional_builder.sh
+              bash scripts/watch_smoke_trigger_builder.sh
+
+  compatibility-graph:
+    name: Compatibility suite (post-process, graph)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: compatibility-graph
+          cache-inputs: |
+            fixtures/**/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_*.sh
+            scripts/watch_smoke_*.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
+      - parallel:
           - name: "Compatibility: post-process Builder"
             shell: bash
             run: bash scripts/correctness_post_process_builder.sh
           - name: "Compatibility: post-process watch"
             shell: bash
             run: bash scripts/watch_smoke_post_process_builder.sh
-          - name: "Compatibility: optional and trigger watch"
-            shell: bash
-            run: |
-              bash scripts/watch_smoke_optional_builder.sh
-              bash scripts/watch_smoke_trigger_builder.sh
           - name: "Compatibility: graph"
             shell: bash
             run: |
