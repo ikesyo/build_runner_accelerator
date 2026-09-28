@@ -242,6 +242,26 @@ pub(crate) fn run_with_config(
         print_graph_action_metrics(&state);
     }
     if plan_only_enabled() {
+        if part_directive_filter_disabled() {
+            eprintln!(
+                "Rust plan only: {} actions expected (part-directive filter disabled)",
+                specs.len()
+            );
+        } else {
+            // Plan-only has no overlay yet; the filter falls back to reading
+            // each input from disk, which matches a clean build's first pass.
+            let overlay = BTreeMap::new();
+            let filtered = specs
+                .iter()
+                .filter(|spec| part_directive_skips(&workspace, &overlay, spec))
+                .count();
+            eprintln!(
+                "Rust plan only: {} actions expected, {} filtered by part directives, {} would dispatch",
+                specs.len(),
+                filtered,
+                specs.len() - filtered
+            );
+        }
         eprintln!("Rust plan only: worker startup and output commit skipped");
         return Ok(());
     }
