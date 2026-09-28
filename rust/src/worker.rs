@@ -1627,7 +1627,10 @@ impl WorkerPool {
                 .map(|key| self.resolver_usage.get(&key).copied().unwrap_or(true))
                 .unwrap_or(false)
         {
-            self.max_jobs.div_ceil(2).max(2.min(self.max_jobs))
+            match resolver_worker_cap() {
+                Some(cap) => cap.clamp(1, self.max_jobs),
+                None => self.max_jobs.div_ceil(2).max(2.min(self.max_jobs)),
+            }
         } else {
             usize::MAX
         };
@@ -1888,6 +1891,25 @@ pub(crate) fn shared_analysis_cache_enabled() -> bool {
     match std::env::var("BUILD_RUNNER_ACCELERATOR_BYTE_STORE") {
         Ok(value) => !matches!(value.to_lowercase().as_str(), "0" | "false" | "off"),
         Err(_) => true,
+    }
+}
+
+/// `BUILD_RUNNER_ACCELERATOR_RESOLVER_CAP` overrides how many workers may
+/// join a resolver-backed batch: `1..=n` clamps the participants, `0` lifts
+/// the cap entirely (every worker joins). Unset keeps the `max(jobs/2, 2)`
+/// default. This exists to measure how per-worker analysis warm-up trades
+/// against intra-builder parallelism on machines of different sizes.
+fn resolver_worker_cap() -> Option<usize> {
+    let value = env::var("BUILD_RUNNER_ACCELERATOR_RESOLVER_CAP").ok()?;
+    match value.parse::<usize>() {
+        Ok(0) => Some(usize::MAX),
+        Ok(cap) => Some(cap),
+        Err(_) => {
+            eprintln!(
+                "BUILD_RUNNER_ACCELERATOR_RESOLVER_CAP must be an integer; ignoring {value}"
+            );
+            None
+        }
     }
 }
 
