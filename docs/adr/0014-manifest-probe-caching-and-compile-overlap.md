@@ -47,7 +47,10 @@ Two facts make most of it redundant:
   packages contribute `name@<versioned dir>` (immutable for a version),
   and mutable locations (path dependencies, SDK or local checkouts)
   contribute a sha256 of their `lib/` sources; the closure is walked via
-  each package's pubspec dependencies. If any reachable identity cannot
+  each package's pubspec dependencies — `dev_dependencies` only for the
+  workspace's own packages and `dependency_overrides` only for the
+  workspace root, matching what pub resolves into the package config. If
+  any reachable identity cannot
   be established the cache is skipped entirely, so an edit under a path
   dependency of a probed package can never be masked by a
   fingerprint-identical cache hit. A hit replays

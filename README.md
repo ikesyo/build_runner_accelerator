@@ -174,7 +174,9 @@ machine — skip the expensive cold paths:
   covers the lockfile and every package's `build.yaml`, and `<impl>` digests
   the implementation identity of the probed packages' transitive dependency
   closure (versioned pub-cache directories, or source digests for path
-  dependencies), so a factory edit invalidates the entry. Only complete
+  dependencies; the workspace's own packages also contribute their
+  dev_dependencies and overrides), so a factory edit invalidates the entry.
+  Only complete
   responses are cached, so a cache hit skips the probe subprocess entirely.
 
 The cache root resolves `BUILD_RUNNER_ACCELERATOR_CACHE` first — a relative

@@ -39,6 +39,7 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
   File? cacheFile;
   if (cacheKey != null) {
     final scopedKey = await _implementationScopedCacheKey(
+      root,
       packageConfig,
       cacheKey,
       probeRequests,
@@ -286,10 +287,13 @@ Map<String, List<FactoryMapping>> decodeFactoryProbeResult(
 /// pub cache (hosted/git) are addressed by name plus their versioned
 /// directory — they are immutable for a given version. Everywhere else the
 /// sources under `lib/` are digested, so editing a factory implementation or
-/// any code it depends on invalidates the cached mapping. Returns null when
-/// any reachable package's identity cannot be established; the caller then
-/// skips the cache entirely.
+/// any code it depends on invalidates the cached mapping. The traversal
+/// follows `dev_dependencies` and `dependency_overrides` for the workspace's
+/// own packages — pub resolves those for the workspace, unlike in
+/// dependency pubspecs. Returns null when any reachable package's identity
+/// cannot be established; the caller then skips the cache entirely.
 Future<String?> _implementationScopedCacheKey(
+  String workspaceRoot,
   String packageConfigPath,
   String cacheKey,
   List<FactoryProbeRequest> requests,
@@ -314,6 +318,9 @@ Future<String?> _implementationScopedCacheKey(
     return null;
   }
 
+  final workspacePackages = await _workspacePackageDirs(workspaceRoot);
+  if (workspacePackages == null) return null;
+  final normalizedRoot = p.normalize(workspaceRoot);
   final configDir = p.dirname(packageConfigPath);
   final pubCache = _pubCacheDirectory();
   final identities = <String>[];
@@ -335,7 +342,11 @@ Future<String?> _implementationScopedCacheKey(
       if (digest == null) return null;
       identities.add('$name@$digest');
     }
-    final dependencies = await _dependencyNames(rootDir);
+    final dependencies = await _dependencyNames(
+      rootDir,
+      isWorkspacePackage: workspacePackages.contains(rootDir),
+      isWorkspaceRoot: rootDir == normalizedRoot,
+    );
     if (dependencies == null) return null;
     queue.addAll(dependencies);
   }
@@ -343,25 +354,62 @@ Future<String?> _implementationScopedCacheKey(
   return '$cacheKey-${sha256.convert(utf8.encode(identities.join('\n')))}';
 }
 
-/// Runtime dependency names declared in [packageRoot]'s pubspec — the
-/// packages whose code a factory in this package can reach. Only
-/// `dependencies` qualifies: `dev_dependencies` are neither resolvable from
-/// a dependency's pubspec nor importable from its `lib/`, and
-/// `dependency_overrides` in a non-root pubspec is ignored by pub. Null when
-/// the pubspec cannot be read or parsed, since the closure is then
+/// The workspace's package directories — [root] itself plus every member
+/// listed in the root pubspec's `workspace:` section — normalized to
+/// absolute paths. Pub resolves `dev_dependencies` only for these packages,
+/// so they are the only ones whose dev dependencies can contribute to the
+/// closure. Null when the root pubspec cannot be read, since membership is
+/// then unknowable.
+Future<Set<String>?> _workspacePackageDirs(String root) async {
+  try {
+    final file = File(p.join(root, 'pubspec.yaml'));
+    if (!file.existsSync()) return null;
+    final doc = loadYaml(await file.readAsString());
+    if (doc is! Map) return null;
+    final dirs = <String>{p.normalize(root)};
+    final workspace = doc['workspace'];
+    if (workspace is List) {
+      for (final member in workspace) {
+        if (member is String) dirs.add(p.normalize(p.join(root, member)));
+      }
+    }
+    return dirs;
+  } on Object {
+    return null;
+  }
+}
+
+/// Dependency names declared in [packageRoot]'s pubspec — the packages whose
+/// code a factory in this package can reach. `dev_dependencies` qualify only
+/// for workspace packages ([isWorkspacePackage]): a non-root pubspec's dev
+/// dependencies are neither resolved into the package config nor importable
+/// from `lib/`. `dependency_overrides` qualify only for the workspace root
+/// ([isWorkspaceRoot]) — the only pubspec whose overrides pub honors. Null
+/// when the pubspec cannot be read or parsed, since the closure is then
 /// unknowable.
-Future<Set<String>?> _dependencyNames(String packageRoot) async {
+Future<Set<String>?> _dependencyNames(
+  String packageRoot, {
+  required bool isWorkspacePackage,
+  required bool isWorkspaceRoot,
+}) async {
   try {
     final file = File(p.join(packageRoot, 'pubspec.yaml'));
     if (!file.existsSync()) return null;
     final doc = loadYaml(await file.readAsString());
     if (doc is! Map) return null;
-    final dependencies = doc['dependencies'];
-    if (dependencies is! Map) return const {};
-    return {
-      for (final name in dependencies.keys)
-        if (name is String) name,
-    };
+    final names = <String>{};
+    for (final section in [
+      'dependencies',
+      if (isWorkspacePackage) 'dev_dependencies',
+      if (isWorkspaceRoot) 'dependency_overrides',
+    ]) {
+      final dependencies = doc[section];
+      if (dependencies is! Map) continue;
+      for (final name in dependencies.keys) {
+        if (name is String) names.add(name);
+      }
+    }
+    return names;
   } on Object {
     return null;
   }
