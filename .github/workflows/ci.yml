@@ -250,7 +250,16 @@ jobs:
             env:
               PUB_GET_OFFLINE: '1'
             run: |
-              for case_name in generated-output-delete no-op input-delete; do
+              for case_name in generated-output-delete no-op; do
+                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
+              done
+
+          - name: Freezed correctness (rename path)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              for case_name in input-delete rename; do
                 CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
               done
 
@@ -259,7 +268,7 @@ jobs:
             env:
               PUB_GET_OFFLINE: '1'
             run: |
-              for case_name in rename failure affected-actions; do
+              for case_name in failure affected-actions; do
                 CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
               done
 
@@ -268,16 +277,25 @@ jobs:
             env:
               PUB_GET_OFFLINE: '1'
             run: |
-              for case_name in dependency annotation-removal combined-output-removal; do
+              for case_name in dependency annotation-removal; do
                 CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
               done
 
-          - name: Freezed correctness (configuration)
+          - name: Freezed correctness (combined and options)
             shell: bash
             env:
               PUB_GET_OFFLINE: '1'
             run: |
-              for case_name in builder-options glob-membership empty-options; do
+              for case_name in combined-output-removal builder-options; do
+                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
+              done
+
+          - name: Freezed correctness (globs and empty options)
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              for case_name in glob-membership empty-options; do
                 CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
               done
 
@@ -357,14 +375,24 @@ jobs:
           - name: "Compatibility: lifetime"
             shell: bash
             run: bash scripts/correctness_lifetime_compatibility.sh
-          - name: "Compatibility: optional Builder"
-            shell: bash
-            run: bash scripts/correctness_optional_builder.sh
-          - name: "Compatibility: post-process Builder"
+          - name: "Compatibility: optional Builder (demand)"
             shell: bash
             run: |
-              bash scripts/correctness_post_process_builder.sh
-              bash scripts/watch_smoke_post_process_builder.sh
+              for case_name in demand no-demand incremental; do
+                CASE_FILTER="$case_name" bash scripts/correctness_optional_builder.sh
+              done
+          - name: "Compatibility: optional Builder (lifecycle)"
+            shell: bash
+            run: |
+              for case_name in failure delete rename; do
+                CASE_FILTER="$case_name" bash scripts/correctness_optional_builder.sh
+              done
+          - name: "Compatibility: post-process Builder"
+            shell: bash
+            run: bash scripts/correctness_post_process_builder.sh
+          - name: "Compatibility: post-process watch"
+            shell: bash
+            run: bash scripts/watch_smoke_post_process_builder.sh
           - name: "Compatibility: optional and trigger watch"
             shell: bash
             run: |
