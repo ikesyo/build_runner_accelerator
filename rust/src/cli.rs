@@ -110,6 +110,9 @@ impl Options {
     }
 }
 
+/// The default worker count: logical CPUs capped by available memory at
+/// roughly one worker per GiB, since each Dart worker carries a full
+/// analyzer instance (~1 GiB while a cold byte store is first filled).
 fn default_worker_count() -> usize {
     let cpus = std::thread::available_parallelism()
         .map(|count| count.get())
@@ -129,6 +132,10 @@ fn default_worker_count() -> usize {
     }
 }
 
+/// Available memory in GiB: Linux `MemAvailable` bounded by the process's
+/// cgroup memory limit (a container can see the host's MemAvailable while
+/// being limited to much less). Unlimited/unreadable cgroups fall back to
+/// `MemAvailable` alone.
 #[cfg(target_os = "linux")]
 fn available_memory_gib() -> Option<f64> {
     let contents = std::fs::read_to_string("/proc/meminfo").ok()?;
@@ -142,7 +149,68 @@ fn available_memory_gib() -> Option<f64> {
         .trim()
         .parse()
         .ok()?;
-    Some(kb / 1_048_576.0)
+    let mut gib = kb / 1_048_576.0;
+    if let Some(cgroup_gib) = cgroup_available_memory_gib() {
+        gib = gib.min(cgroup_gib);
+    }
+    Some(gib)
+}
+
+/// Remaining memory under the process's cgroup limit (v2 or v1), or None
+/// when the cgroup is unlimited/unreadable.
+#[cfg(target_os = "linux")]
+fn cgroup_available_memory_gib() -> Option<f64> {
+    let (limit_file, current_file) = cgroup_memory_files()?;
+    let limit = std::fs::read_to_string(limit_file).ok()?;
+    let current = std::fs::read_to_string(current_file).ok()?;
+    cgroup_available_bytes(&limit, &current).map(|bytes| bytes as f64 / 1_073_741_824.0)
+}
+
+/// Locates this process's cgroup memory limit/usage files, for both the
+/// v2 unified hierarchy (`memory.max`/`memory.current`) and v1
+/// (`memory.limit_in_bytes`/`memory.usage_in_bytes`).
+#[cfg(target_os = "linux")]
+fn cgroup_memory_files() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let mounts = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    for line in mounts.lines() {
+        let mut fields = line.splitn(3, ':');
+        let _hierarchy = fields.next();
+        let Some(controllers) = fields.next() else {
+            continue;
+        };
+        let path = fields.next().unwrap_or("");
+        if controllers.is_empty() {
+            // v2 unified hierarchy ("0::/path").
+            return Some((
+                format!("/sys/fs/cgroup{path}/memory.max").into(),
+                format!("/sys/fs/cgroup{path}/memory.current").into(),
+            ));
+        }
+        if controllers.split(',').any(|c| c == "memory") {
+            return Some((
+                format!("/sys/fs/cgroup/memory{path}/memory.limit_in_bytes").into(),
+                format!("/sys/fs/cgroup/memory{path}/memory.usage_in_bytes").into(),
+            ));
+        }
+    }
+    None
+}
+
+/// Effective headroom from a cgroup limit/usage pair. `max` and the v1
+/// PAGE_COUNTER_MAX sentinel mean "unlimited" → None (caller falls back to
+/// the host's MemAvailable).
+#[cfg(any(target_os = "linux", test))]
+fn cgroup_available_bytes(limit: &str, current: &str) -> Option<u64> {
+    let limit = limit.trim();
+    if limit == "max" {
+        return None;
+    }
+    let limit: u64 = limit.parse().ok()?;
+    if limit >= 1 << 60 {
+        return None;
+    }
+    let current: u64 = current.trim().parse().ok()?;
+    Some(limit.saturating_sub(current))
 }
 
 /// macOS has no MemAvailable-style counter; estimate it from `vm_stat`
@@ -150,13 +218,15 @@ fn available_memory_gib() -> Option<f64> {
 /// the pages that can back new allocations without swapping.
 #[cfg(target_os = "macos")]
 fn available_memory_gib() -> Option<f64> {
-    let output = std::process::Command::new("vm_stat").output().ok()?;
+    // Invoked by absolute path so a compromised PATH cannot substitute the binary.
+    let output = std::process::Command::new("/usr/bin/vm_stat").output().ok()?;
     if !output.status.success() {
         return None;
     }
     parse_vm_stat_available_gib(&String::from_utf8_lossy(&output.stdout))
 }
 
+/// Parses `vm_stat` output into an available-memory estimate in GiB.
 #[cfg(any(target_os = "macos", test))]
 fn parse_vm_stat_available_gib(text: &str) -> Option<f64> {
     let page_size = text
@@ -184,7 +254,7 @@ fn available_memory_gib() -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrontendMode, parse_vm_stat_available_gib};
+    use super::{FrontendMode, cgroup_available_bytes, parse_vm_stat_available_gib};
 
     #[test]
     fn frontend_mode_accepts_only_explicit_values() {
@@ -192,6 +262,25 @@ mod tests {
         assert_eq!(FrontendMode::parse("rust").unwrap(), FrontendMode::Rust);
         assert_eq!(FrontendMode::parse("dart").unwrap(), FrontendMode::Dart);
         assert!(FrontendMode::parse("native").is_err());
+    }
+
+    #[test]
+    fn cgroup_available_bytes_bounds_remaining_headroom() {
+        // cgroup v2 "max" and the v1 PAGE_COUNTER_MAX sentinel are unlimited.
+        assert_eq!(cgroup_available_bytes("max", "0"), None);
+        assert_eq!(
+            cgroup_available_bytes("9223372036854771712", "0"),
+            None
+        );
+        // 4 GiB limit with 1.5 GiB used -> 2.5 GiB headroom.
+        let gib = 1u64 << 30;
+        assert_eq!(
+            cgroup_available_bytes("4294967296", &(gib + gib / 2).to_string()),
+            Some(2 * gib + gib / 2)
+        );
+        // Usage above the limit clamps to zero, never wraps.
+        assert_eq!(cgroup_available_bytes("1024", "4096"), Some(0));
+        assert_eq!(cgroup_available_bytes("not-a-number", "0"), None);
     }
 
     #[test]
