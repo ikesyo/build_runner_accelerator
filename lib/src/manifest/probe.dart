@@ -320,7 +320,7 @@ Future<String?> _implementationScopedCacheKey(
 
   final workspacePackages = await _workspacePackageDirs(workspaceRoot);
   if (workspacePackages == null) return null;
-  final normalizedRoot = p.normalize(workspaceRoot);
+  final canonicalRoot = p.canonicalize(workspaceRoot);
   final configDir = p.dirname(packageConfigPath);
   final pubCache = _pubCacheDirectory();
   final identities = <String>[];
@@ -345,7 +345,7 @@ Future<String?> _implementationScopedCacheKey(
     final dependencies = await _dependencyNames(
       rootDir,
       isWorkspacePackage: workspacePackages.contains(rootDir),
-      isWorkspaceRoot: rootDir == normalizedRoot,
+      isWorkspaceRoot: rootDir == canonicalRoot,
     );
     if (dependencies == null) return null;
     queue.addAll(dependencies);
@@ -355,22 +355,25 @@ Future<String?> _implementationScopedCacheKey(
 }
 
 /// The workspace's package directories — [root] itself plus every member
-/// listed in the root pubspec's `workspace:` section — normalized to
-/// absolute paths. Pub resolves `dev_dependencies` only for these packages,
-/// so they are the only ones whose dev dependencies can contribute to the
-/// closure. Null when the root pubspec cannot be read, since membership is
-/// then unknowable.
+/// listed in the root pubspec's `workspace:` section — as canonical paths,
+/// matching the spelling `_findPackageConfigPath` and `_resolveRootUri`
+/// produce so membership checks compare like for like. Pub resolves
+/// `dev_dependencies` only for these packages, so they are the only ones
+/// whose dev dependencies can contribute to the closure. Null when the root
+/// pubspec cannot be read, since membership is then unknowable.
 Future<Set<String>?> _workspacePackageDirs(String root) async {
   try {
     final file = File(p.join(root, 'pubspec.yaml'));
     if (!file.existsSync()) return null;
     final doc = loadYaml(await file.readAsString());
     if (doc is! Map) return null;
-    final dirs = <String>{p.normalize(root)};
+    final dirs = <String>{p.canonicalize(root)};
     final workspace = doc['workspace'];
     if (workspace is List) {
       for (final member in workspace) {
-        if (member is String) dirs.add(p.normalize(p.join(root, member)));
+        if (member is String) {
+          dirs.add(p.canonicalize(p.join(root, member)));
+        }
       }
     }
     return dirs;
@@ -434,7 +437,7 @@ String? _resolveRootUri(String rootUri, String configDir) {
     // toFilePath, other URIs through Uri.path); decoding again would throw
     // on paths that literally contain '%'.
     final decoded = p.fromUri(rootUri);
-    return p.normalize(
+    return p.canonicalize(
       p.isAbsolute(decoded) ? decoded : p.join(configDir, decoded),
     );
   } on Object {
