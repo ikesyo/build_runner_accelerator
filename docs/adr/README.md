@@ -29,6 +29,7 @@ boundary rather than restoring commit-level history.
 | [0011](0011-analysis-prewarm-in-aot-prewarm.md) | Analysis prewarm in `aot-prewarm` |
 | [0012](0012-machine-wide-cache.md) | Machine-wide cache for the worker AOT and analyzer byte store |
 | [0013](0013-part-directive-prefilter.md) | `part` directive pre-filter for part-family builders |
+| [0014](0014-manifest-probe-caching-and-compile-overlap.md) | Factory-probe caching and compile overlap in manifest generation |
 
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for

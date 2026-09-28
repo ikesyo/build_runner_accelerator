@@ -174,6 +174,39 @@ pub(crate) fn prewarm_worker_aot(
     prepare_worker_aot(root, dart_binary, worker_executable)
 }
 
+/// Starts the synchronous worker AOT compile on a background thread while the
+/// manifest generator is still running (the generator emits the worker
+/// entrypoint early, before its factory probe). `None` means the AOT policy
+/// would not compile synchronously anyway — the build path then stays on the
+/// kernel/script or background branches exactly as before.
+///
+/// The caller MUST join the returned handle before any other
+/// `prepare_worker_aot` invocation: temp files are named after the process id
+/// and two concurrent compiles in one process would clobber each other.
+pub(crate) fn early_worker_aot_compile(
+    root: &Path,
+    dart_binary: &str,
+    worker_executable: &str,
+) -> Option<thread::JoinHandle<io::Result<PathBuf>>> {
+    if !is_dart_source(worker_executable) {
+        return None;
+    }
+    if !matches!(aot_request(), AotRequest::Force | AotRequest::Synchronous) {
+        return None;
+    }
+    if configured_worker_aot().ok().flatten().is_some()
+        || configured_worker_kernel().ok().flatten().is_some()
+    {
+        return None;
+    }
+    let root = root.to_path_buf();
+    let dart_binary = dart_binary.to_string();
+    let worker_executable = worker_executable.to_string();
+    Some(thread::spawn(move || {
+        prepare_worker_aot(&root, &dart_binary, &worker_executable)
+    }))
+}
+
 /// Spawn JIT `AnalysisDriver` processes that resolve the workspace package's
 /// sources into the shared byte store, priming both cold-start caches in one
 /// `aot-prewarm` step. The caller joins with [`AnalysisPrewarm::wait_for_children`];

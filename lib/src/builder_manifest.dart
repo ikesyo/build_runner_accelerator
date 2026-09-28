@@ -28,10 +28,22 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       definitions: resolved.definitions,
     ),
   );
+  // Emit the worker entrypoint before probing: the Rust frontend overlaps
+  // the synchronous worker AOT compile with the probe window. The catalog is
+  // a superset of the final one (a builder that later fails conversion keeps
+  // its unused factory in the script); when the manifest succeeds the early
+  // and final contents are identical.
+  if (selection.selected.isNotEmpty) {
+    await emitWorkerEntrypoint(
+      options.workerEntrypoint,
+      _earlyCatalogEntries(selection),
+    );
+  }
   final runtimeMappings = await _probeRuntimeMappings(
     root,
     resolved,
     selection,
+    options.fingerprint,
   );
   final normalized = _normalizeManifest(resolved, selection, runtimeMappings);
   await _emitArtifacts(options, inputs.triggerDigest, normalized);
@@ -196,6 +208,7 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
   String root,
   _ResolvedInputs resolved,
   _ApplicationSelection selection,
+  String probeCacheKey,
 ) async {
   if (selection.selected.isEmpty) {
     return const _RuntimeMappings(
@@ -209,7 +222,10 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
   // option-dependent applications so target-local mapping overrides remain
   // lossless and package-specific Rust branches are unnecessary. Normal
   // builders are also probed for their runtime type — the manifest flags
-  // part-family builders for the frontend's part-directive pre-filter.
+  // part-family builders for the frontend's part-directive pre-filter — but
+  // only when their declared outputs could carry a `part` file at all: a
+  // builder that emits no `.dart`/`.part` output can never be gated by a
+  // `part` directive, so leaving its type unknown is strictly conservative.
   final probeRequiredKeys = <String>{
     for (final entry in selection.selected.entries)
       if (requiresRuntimeProbe(entry.value)) entry.key,
@@ -218,7 +234,8 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
       .where(
         (entry) =>
             probeRequiredKeys.contains(entry.key) ||
-            !entry.value.definition.isPostProcess,
+            (!entry.value.definition.isPostProcess &&
+                _declaresPartFamilyOutputs(entry.value.definition)),
       )
       .map(
         (entry) => FactoryProbeRequest(
@@ -229,7 +246,11 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
         ),
       )
       .toList(growable: false);
-  final probedMappings = await probeFactoryMappings(root, probeRequests);
+  final probedMappings = await probeFactoryMappings(
+    root,
+    probeRequests,
+    cacheKey: probeCacheKey,
+  );
   final canonicalMappings = <String, List<FactoryMapping>>{};
   final builderTypes = <String, List<String?>>{};
   for (final request in probeRequests) {
@@ -285,6 +306,64 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
     probedMappings: probedMappings,
     compatibleDefinitions: compatibleDefinitions,
   );
+}
+
+/// Whether a normal builder's declared build.yaml outputs could be a `part`
+/// file at all — i.e. any output ending in `.dart` or `.part`. Builders
+/// outside this shape never produce a `part`-gated output, so skipping their
+/// runtime-type probe only loses the pre-filter eligibility, never
+/// correctness.
+bool _declaresPartFamilyOutputs(DefinitionInfo info) =>
+    info.normal!.buildExtensions.values.any(
+      (outputs) => outputs.any(
+        (output) => output.endsWith('.dart') || output.endsWith('.part'),
+      ),
+    );
+
+/// The worker catalog used for the early entrypoint emission: every selected
+/// definition and every declared factory, without consulting conversion or
+/// the probe. Entries that later fail conversion stay as unused factories in
+/// the compiled worker — harmless when the manifest succeeds (identical
+/// output), wasted compile time when it fails (the build falls back anyway).
+List<CatalogEntry> _earlyCatalogEntries(_ApplicationSelection selection) {
+  final seen = <String>{};
+  final entries = <CatalogEntry>[];
+  for (final selected in selection.selected.values) {
+    final definition = selected.definition;
+    if (definition.isPostProcess) {
+      final postProcess = definition.postProcess!;
+      if (seen.add(definition.key)) {
+        entries.add(
+          CatalogEntry(
+            id: definition.key,
+            importUri: postProcess.import,
+            factory: postProcess.builderFactory,
+            isPostProcess: true,
+          ),
+        );
+      }
+    } else {
+      final normal = definition.normal!;
+      for (var index = 0; index < normal.builderFactories.length; index++) {
+        final id = manifestFactoryId(
+          normal.key,
+          index,
+          normal.builderFactories.length,
+        );
+        if (seen.add(id)) {
+          entries.add(
+            CatalogEntry(
+              id: id,
+              importUri: normal.import,
+              factory: normal.builderFactories[index],
+              isPostProcess: false,
+            ),
+          );
+        }
+      }
+    }
+  }
+  return entries;
 }
 
 _NormalizedManifest _normalizeManifest(

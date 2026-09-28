@@ -5,20 +5,42 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'mapping.dart';
+import '../cache_directory.dart';
 import 'model.dart';
 import 'source.dart';
 
 const _factoryProbeTimeout = Duration(seconds: 30);
 const _factoryProbeKillGracePeriod = Duration(seconds: 1);
+const _probeCacheVersion = 1;
 
 /// Probes selected builder factories for mappings that are only available
 /// after the configured factory has been instantiated.
+///
+/// When [cacheKey] is provided the probe response is persisted under the
+/// machine-wide cache directory (`<cache>/probe/<key>.json`) and reused
+/// verbatim on a hit. The caller keys it by the workspace's builder-manifest
+/// fingerprint, which covers the lockfile and every package's build.yaml —
+/// the entire input to factory instantiation.
 Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
   String root,
-  Iterable<FactoryProbeRequest> requests,
-) async {
+  Iterable<FactoryProbeRequest> requests, {
+  String? cacheKey,
+}) async {
   final probeRequests = requests.toList(growable: false);
   if (probeRequests.isEmpty) return const {};
+  final cacheFile = cacheKey == null
+      ? null
+      : File(
+          p.join(
+            acceleratorCacheDirectory(workspaceRoot: root),
+            'probe',
+            '$cacheKey.json',
+          ),
+        );
+  if (cacheFile != null) {
+    final cached = _readProbeCache(cacheFile, probeRequests);
+    if (cached != null) return cached;
+  }
   final packageConfig = _findPackageConfigPath(root);
   if (packageConfig == null) return const {};
 
@@ -47,10 +69,9 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
       kill: process.kill,
     );
     if (exitCode != 0 || !resultFile.existsSync()) return const {};
-    return decodeFactoryProbeResponse(
-      await resultFile.readAsString(),
-      probeRequests,
-    );
+    final responseText = await resultFile.readAsString();
+    _writeProbeCache(cacheFile, responseText);
+    return decodeFactoryProbeResponse(responseText, probeRequests);
   } catch (_) {
     // A probe is an optimization boundary, not a reason to fail the build.
     // The caller treats a missing selected request as an unsupported manifest
@@ -86,6 +107,41 @@ Future<int?> waitForProbeExit({
       // keep manifest generation blocked.
     }
     return null;
+  }
+}
+
+Map<String, List<FactoryMapping>>? _readProbeCache(
+  File cacheFile,
+  List<FactoryProbeRequest> requests,
+) {
+  try {
+    final decoded = jsonDecode(cacheFile.readAsStringSync());
+    if (decoded is! Map || decoded['version'] != _probeCacheVersion) {
+      return null;
+    }
+    // Reuse the live response validation path so a stale or malformed entry
+    // degrades to a miss instead of trusting cached strings.
+    return decodeFactoryProbeResult(decoded['response'], requests);
+  } on FormatException {
+    return null;
+  } on FileSystemException {
+    return null;
+  }
+}
+
+void _writeProbeCache(File? cacheFile, String responseText) {
+  if (cacheFile == null) return;
+  try {
+    final wrapped = jsonEncode(<String, dynamic>{
+      'version': _probeCacheVersion,
+      'response': jsonDecode(responseText),
+    });
+    cacheFile.parent.createSync(recursive: true);
+    final temporary = File('${cacheFile.path}.tmp.${pid}');
+    temporary.writeAsStringSync(wrapped);
+    temporary.renameSync(cacheFile.path);
+  } on Object {
+    // The probe cache is an optimization; never fail manifest generation.
   }
 }
 

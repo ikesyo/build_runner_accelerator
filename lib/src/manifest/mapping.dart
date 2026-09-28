@@ -155,7 +155,7 @@ List<ManifestDefinition>? tryConvertDefinition(
     if (extensions == null) return null;
     converted.add(
       ManifestDefinition(
-        id: _manifestFactoryId(
+        id: manifestFactoryId(
           definition.key,
           factoryIndex,
           definition.builderFactories.length,
@@ -308,7 +308,7 @@ List<String>? _knownPostProcessInputExtensions(
   return null;
 }
 
-String _manifestFactoryId(String definitionKey, int factoryIndex, int count) =>
+String manifestFactoryId(String definitionKey, int factoryIndex, int count) =>
     count == 1 ? definitionKey : '$definitionKey#factory$factoryIndex';
 
 bool _simpleExtension(String value) =>

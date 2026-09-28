@@ -6,6 +6,20 @@ import 'source.dart';
 
 const _manifestVersion = 8;
 
+/// Writes just the worker entrypoint. `generate_builder_manifest` emits it
+/// early — before the factory probe — so the frontend can overlap the
+/// synchronous worker AOT compile with the probe window. The catalog must be
+/// a superset of the final manifest's entries: an entry that later drops out
+/// (a builder that fails conversion) only wastes the overlapping compile.
+Future<void> emitWorkerEntrypoint(
+  String workerEntrypoint,
+  Iterable<CatalogEntry> catalogEntries,
+) async {
+  final workerFile = File(workerEntrypoint);
+  await workerFile.parent.create(recursive: true);
+  await _writeAtomically(workerFile, workerSource(catalogEntries));
+}
+
 /// Emits the normalized manifest and the worker entrypoint atomically.
 Future<void> emitManifestArtifacts({
   required String manifestPath,

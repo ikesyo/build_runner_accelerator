@@ -1,14 +1,15 @@
 use crate::builder::{BuilderManifestFile, RustBuildConfig, rust_build_config_from_manifest};
 use crate::cli::{FrontendMode, Options};
 use crate::worker_kernel::{
-    prewarm_worker_aot, start_analysis_prewarm, take_background_aot_lock,
-    worker_aot_cache_key,
+    early_worker_aot_compile, prewarm_worker_aot, start_analysis_prewarm,
+    take_background_aot_lock, worker_aot_cache_key,
 };
 use crate::workspace::Workspace;
 use std::fs;
 use std::io;
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 const MANIFEST_PATH: &str = ".dart_tool/build_runner_accelerator/builder-manifest.json";
 const WORKER_ENTRYPOINT_PATH: &str = ".dart_tool/build_runner_accelerator/dynamic_worker.dart";
@@ -140,7 +141,14 @@ fn generate_manifest(
                 .display()
         ))
         .arg(generator);
-    let status = command
+    // The generator writes the worker entrypoint early (before its factory
+    // probe). Remove any stale copy first so its appearance marks the moment
+    // the synchronous worker AOT compile can start; the compile then overlaps
+    // the probe instead of serializing after it on a cold build.
+    if worker_entrypoint.exists() {
+        let _ = fs::remove_file(worker_entrypoint);
+    }
+    let mut child = command
         .arg("--root")
         .arg(&workspace.root)
         .arg("--manifest")
@@ -150,7 +158,34 @@ fn generate_manifest(
         .arg("--fingerprint")
         .arg(fingerprint)
         .current_dir(&workspace.root)
-        .status()?;
+        .spawn()?;
+    let mut early_compile = None;
+    let status = loop {
+        match child.try_wait()? {
+            Some(status) => break status,
+            None => {
+                if early_compile.is_none() && worker_entrypoint.is_file() {
+                    early_compile = early_worker_aot_compile(
+                        &workspace.root,
+                        dart_binary,
+                        &worker_entrypoint.to_string_lossy(),
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    };
+    // Always join before returning: `prepare_worker_aot` uses pid-named temp
+    // files, so it must not overlap a later invocation in this process.
+    if let Some(handle) = early_compile {
+        match handle.join() {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                eprintln!("Rust worker early AOT compile failed; will retry ({error})")
+            }
+            Err(_) => eprintln!("Rust worker early AOT compile panicked; will retry"),
+        }
+    }
     if status.success() {
         Ok(())
     } else {
