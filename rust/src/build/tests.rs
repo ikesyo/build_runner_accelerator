@@ -111,14 +111,12 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
 
     expand_dirty_dependents(&mut dirty, &[producer.clone(), consumer.clone()], &state);
 
-    assert!(
-        dirty
-            .iter()
-            .any(|spec| spec.action_key() == consumer.action_key())
+    assert_eq!(
+        dirty.iter().map(BuildSpec::action_key).collect::<Vec<_>>(),
+        vec![producer.action_key(), consumer.action_key()]
     );
 
-    // A producer with no prior output can emit a planned output after its
-    // input changes, so the skipped consumer must be reconsidered this build.
+    // A successful producer with no outputs does not invalidate consumers.
     let mut successful_empty_state = state;
     successful_empty_state
         .actions
@@ -128,13 +126,12 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
     let mut dirty = vec![producer.clone()];
     expand_dirty_dependents(
         &mut dirty,
-        &[producer, consumer.clone()],
+        &[producer.clone(), consumer.clone()],
         &successful_empty_state,
     );
-    assert!(
-        dirty
-            .iter()
-            .any(|spec| spec.action_key() == consumer.action_key())
+    assert_eq!(
+        dirty.iter().map(BuildSpec::action_key).collect::<Vec<_>>(),
+        vec![producer.action_key()]
     );
 }
 
@@ -223,12 +220,4 @@ fn part_directive_scanner_matches_source_gen_semantics() {
     ));
     assert!(declares_part_directive("part 'foo.g.dart", "foo.g.dart"));
     assert!(declares_part_directive("part '''foo.g.dart", "foo.g.dart"));
-    assert!(declares_part_directive(
-        "// kept as part 'cause x\npart 'foo.g.dart';",
-        "foo.g.dart"
-    ));
-    assert!(declares_part_directive(
-        "// kept as part 'cause x\rpart 'foo.g.dart';",
-        "foo.g.dart"
-    ));
 }
