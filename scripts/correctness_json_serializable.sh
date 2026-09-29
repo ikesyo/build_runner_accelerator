@@ -29,6 +29,7 @@ known_case_names=(
   conditional-dependency
   empty-options
   part-comment
+  empty-producer
 )
 selected_case_names=()
 cleanup_paths=()
@@ -486,6 +487,26 @@ PY
   done
 }
 
+run_case_empty_producer() {
+  local name=empty-producer
+  setup_case "$name"
+  sed -i '/^@JsonSerializable()/d' "$stock_dir/lib/model.dart" "$rust_dir/lib/model.dart"
+  run_stock "$stock_dir" "$results_dir/$name.stock.empty.log"
+  run_rust "$rust_dir" "$results_dir/$name.rust.empty.log"
+  assert_no_file "$stock_dir/lib/model.g.dart"
+  assert_no_file "$rust_dir/lib/model.g.dart"
+
+  # The producer succeeded with no output, and the combining action was
+  # skipped because its primary input did not exist. Restore the annotation
+  # so this build must wake that consumer when the producer emits a part.
+  cp "$fixture_dir/lib/model.dart" "$stock_dir/lib/model.dart"
+  cp "$fixture_dir/lib/model.dart" "$rust_dir/lib/model.dart"
+  run_stock "$stock_dir" "$results_dir/$name.stock.restore.log"
+  run_rust "$rust_dir" "$results_dir/$name.rust.restore.log"
+  assert_same_file "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart"
+  printf 'correctness: empty-producer: pass\n'
+}
+
 run_selected() {
   local name=$1
   shift
@@ -505,5 +526,6 @@ run_selected glob-membership run_case_glob_membership
 run_selected conditional-dependency run_case_conditional_dependency
 run_selected empty-options run_case_empty_options
 run_selected part-comment run_case_part_comment
+run_selected empty-producer run_case_empty_producer
 
 printf 'correctness: cases=%s pass\n' "$case_filter"
