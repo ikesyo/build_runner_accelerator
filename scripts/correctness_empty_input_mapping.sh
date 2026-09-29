@@ -14,6 +14,9 @@ lockfile_source="$repo_root/pubspec.lock"
 temporary_dir=$(mktemp -d)
 workspace_root="$temporary_dir/workspace"
 fixture_root="$workspace_root/fixtures"
+baseline_root="$temporary_dir/baselines"
+stock_baseline_dir="$baseline_root/stock"
+rust_baseline_dir="$baseline_root/rust"
 stock_dir=
 rust_dir=
 mapping_jobs=${EMPTY_INPUT_MAPPING_JOBS:-2}
@@ -136,6 +139,22 @@ prepare_pair() {
   write_package "$rust_dir" "$config"
 }
 
+snapshot_source_pair() {
+  mkdir -p "$baseline_root"
+  cp -Rp "$stock_dir" "$stock_baseline_dir"
+  cp -Rp "$rust_dir" "$rust_baseline_dir"
+}
+
+restore_source_pair() {
+  # Restore into the same paths so package config and graph paths stay valid.
+  stock_dir="$fixture_root/source-stock"
+  rust_dir="$fixture_root/source-rust"
+  remove_tree "$stock_dir"
+  remove_tree "$rust_dir"
+  cp -Rp "$stock_baseline_dir" "$stock_dir"
+  cp -Rp "$rust_baseline_dir" "$rust_dir"
+}
+
 run_stock() {
   local directory=$1
   local log=$2
@@ -179,6 +198,7 @@ assert_same_source_outputs
 assert_source_inventory_matches
 assert_filtered_inputs_absent
 assert_contains "$temporary_dir/source.initial.rust.log" 'Rust frontend: 8 build action(s)'
+snapshot_source_pair
 
 run_rust "$rust_dir" "$temporary_dir/source.no-op.rust.log" || fail 'Rust no-op build failed'
 assert_contains "$temporary_dir/source.no-op.rust.log" 'No work to do (Rust frontend)'
@@ -228,10 +248,15 @@ for directory in "$stock_dir" "$rust_dir"; do
 done
 assert_contains "$temporary_dir/source.delete.rust.log" 'Rust frontend: 0 build action(s)'
 
-prepare_pair jobs1 build.yaml
+restore_source_pair
+printf 'changed dart\n' >"$stock_dir/lib/input.dart"
+printf 'changed dart\n' >"$rust_dir/lib/input.dart"
+printf 'changed plain\n' >"$stock_dir/lib/plain"
+printf 'changed plain\n' >"$rust_dir/lib/plain"
 run_stock "$stock_dir" "$temporary_dir/jobs1.stock.log" || fail 'stock jobs=1 comparison failed'
 run_rust "$rust_dir" "$temporary_dir/jobs1.rust.log" 1 || fail 'Rust jobs=1 comparison failed'
 assert_same_source_outputs
+assert_contains "$temporary_dir/jobs1.rust.log" 'Rust frontend: 4 build action(s)'
 
 prepare_pair cache build.cache.yaml
 run_stock "$stock_dir" "$temporary_dir/cache.stock.log" || fail 'stock cache build failed'

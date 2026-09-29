@@ -145,6 +145,18 @@ run_cases() {
   done
 }
 
+run_all_json_cases() {
+  local log="$results_dir/json-cases.log"
+  local timeout_seconds
+  timeout_seconds=$(verification_timeout_seconds VERIFY_CASE_TIMEOUT_SECONDS 1200) || return 2
+  verification_run_command_in_dir "$repo_root" "case/json/all" "$log" "$timeout_seconds" \
+    env CASE_FILTER=all bash "$script_dir/correctness_json_serializable.sh" || {
+    printf '%s\n' '--- all JSON serializable cases ---' >&2
+    tail -n 200 "$log" >&2 || true
+    return 1
+  }
+}
+
 run_freezed_correctness() {
   local log="$results_dir/freezed.log"
   local timeout_seconds
@@ -237,10 +249,9 @@ run_targeted() {
 }
 
 run_core_suite() {
-  local -a cases=("${all_cases[@]}")
   VERIFY_WATCH=0 run_quick
   run_script_probe watch watch_smoke.sh 'watch-smoke:'
-  run_cases "${cases[@]}"
+  run_all_json_cases
   run_built_value_correctness
 }
 

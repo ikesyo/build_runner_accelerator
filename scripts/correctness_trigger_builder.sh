@@ -13,6 +13,9 @@ fixture_dir="$repo_root/fixtures/trigger_builder_app"
 temporary_dir=$(mktemp -d)
 test_root="$temporary_dir/workspace"
 test_fixtures_dir="$test_root/fixtures"
+test_baselines_dir="$temporary_dir/baselines"
+stock_baseline_dir="$test_baselines_dir/stock"
+rust_baseline_dir="$test_baselines_dir/rust"
 stock_dir=
 rust_dir=
 case_group=${TRIGGER_CASE_GROUP:-all}
@@ -135,6 +138,41 @@ setup_pair() {
   prepare_package "$rust_dir" "$variant"
 }
 
+restore_baseline() {
+  local baseline_dir=$1
+  local active_dir=$2
+  # Preserve cache mtimes and absolute paths embedded in workspace state.
+  remove_tree "$active_dir"
+  cp -Rp "$baseline_dir" "$active_dir"
+}
+
+restore_default_pair() {
+  stock_dir="$test_fixtures_dir/default-stock"
+  rust_dir="$test_fixtures_dir/default-rust"
+  restore_baseline "$stock_baseline_dir" "$stock_dir"
+  restore_baseline "$rust_baseline_dir" "$rust_dir"
+}
+
+setup_default_pair() {
+  stock_dir="$test_fixtures_dir/default-stock"
+  rust_dir="$test_fixtures_dir/default-rust"
+  if [[ -d "$stock_baseline_dir" && -d "$rust_baseline_dir" ]]; then
+    restore_default_pair
+  elif [[ -e "$stock_baseline_dir" || -L "$stock_baseline_dir" || \
+    -e "$rust_baseline_dir" || -L "$rust_baseline_dir" ]]; then
+    fail 'default baseline is incomplete'
+  else
+    prepare_package "$stock_dir"
+    prepare_package "$rust_dir"
+  fi
+}
+
+snapshot_default_pair() {
+  mkdir -p "$test_baselines_dir"
+  cp -Rp "$stock_dir" "$stock_baseline_dir"
+  cp -Rp "$rust_dir" "$rust_baseline_dir"
+}
+
 run_pair() {
   local name=$1
   run_stock "$stock_dir" "$temporary_dir/$name.stock.log"
@@ -146,6 +184,33 @@ assert_pair_outputs() {
   for relative in "$@"; do
     assert_same_file "$stock_dir/$relative" "$rust_dir/$relative"
   done
+}
+
+assert_default_pair_outputs() {
+  local rust_log=$1
+  assert_pair_outputs \
+    lib/import_input.triggered.dart \
+    lib/annotation_input.triggered.dart \
+    lib/both_input.triggered.dart \
+    lib/part_host.triggered.dart \
+    lib/generated_input.trigger.dart \
+    lib/generated_input.consumer.dart \
+    lib/optional_input.optional.triggered.dart \
+    lib/optional_input.consumer.txt
+  assert_no_file "$stock_dir/lib/plain_input.triggered.dart"
+  assert_no_file "$rust_dir/lib/plain_input.triggered.dart"
+  assert_native_not_triggered plain_input.dart "$rust_log"
+  assert_contains "$rust_log" '"status":"not_triggered"'
+}
+
+ensure_default_baseline() {
+  local initial_case=$1
+  setup_default_pair
+  if [[ ! -d "$stock_baseline_dir" ]]; then
+    run_pair "$initial_case-initial"
+    assert_default_pair_outputs "$temporary_dir/$initial_case-initial.rust.log"
+    snapshot_default_pair
+  fi
 }
 
 assert_native_not_triggered() {
@@ -166,21 +231,10 @@ mkdir -p "$test_fixtures_dir"
 worker_attach "$test_root"
 
 if [[ "$case_group" == all || "$case_group" == core ]]; then
-  setup_pair initial
+  setup_default_pair
   run_pair initial
-  assert_pair_outputs \
-    lib/import_input.triggered.dart \
-    lib/annotation_input.triggered.dart \
-    lib/both_input.triggered.dart \
-    lib/part_host.triggered.dart \
-    lib/generated_input.trigger.dart \
-    lib/generated_input.consumer.dart \
-    lib/optional_input.optional.triggered.dart \
-    lib/optional_input.consumer.txt
-  assert_no_file "$stock_dir/lib/plain_input.triggered.dart"
-  assert_no_file "$rust_dir/lib/plain_input.triggered.dart"
-  assert_native_not_triggered plain_input.dart "$temporary_dir/initial.rust.log"
-  assert_contains "$temporary_dir/initial.rust.log" '"status":"not_triggered"'
+  assert_default_pair_outputs "$temporary_dir/initial.rust.log"
+  snapshot_default_pair
   printf 'trigger-builder: initial: import=yes annotation=yes both=yes part=yes generated-chain=yes optional=yes plain-skip=yes jobs=2\n'
 
 for directory in "$stock_dir" "$rust_dir"; do
@@ -268,8 +322,7 @@ if [[ "$case_group" == all || "$case_group" == lifecycle ]]; then
   assert_no_file "$rust_dir/lib/optional_input.consumer.txt"
   printf 'trigger-builder: optional-undemanded: skipped=yes\n'
 
-setup_pair delete
-run_pair delete-initial
+ensure_default_baseline delete
 for directory in "$stock_dir" "$rust_dir"; do
   rm -f -- "$directory/lib/seed.dart"
 done
@@ -280,8 +333,7 @@ assert_no_file "$rust_dir/lib/generated_input.trigger.dart"
 assert_no_file "$rust_dir/lib/generated_input.consumer.dart"
 printf 'trigger-builder: deletion: generated-chain-removed=yes\n'
 
-setup_pair rename
-run_pair rename-initial
+ensure_default_baseline rename
 for directory in "$stock_dir" "$rust_dir"; do
   mv "$directory/lib/import_input.dart" "$directory/lib/renamed_input.dart"
   sed -i 's/lib\/import_input.dart/lib\/renamed_input.dart/g' \
@@ -295,8 +347,7 @@ assert_no_file "$rust_dir/lib/import_input.triggered.dart"
 fi
 
 if [[ "$case_group" == all || "$case_group" == recovery ]]; then
-  setup_pair trigger-config
-  run_pair trigger-config-initial
+  ensure_default_baseline trigger-config
   for directory in "$stock_dir" "$rust_dir"; do
     sed -i 's/annotation Deprecated$/annotation TriggerMarker/' \
       "$directory/build.yaml"
