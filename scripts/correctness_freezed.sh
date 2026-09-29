@@ -13,25 +13,25 @@ fixture_dir="$repo_root/fixtures/freezed_app"
 results_dir=$(mktemp -d)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-freezed-root.XXXXXX")
 test_fixtures_dir="$test_root/fixtures"
-mkdir -p "$test_fixtures_dir"
+test_baselines_dir="$test_root/baselines"
+mkdir -p "$test_fixtures_dir" "$test_baselines_dir"
 worker_attach "$test_root"
 case_filter=${CASE_FILTER:-all}
 pub_get_args=()
 if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
   pub_get_args+=(--offline)
 fi
-cleanup_paths=()
-stock_dir=
-rust_dir=
-new_directory=
-stock_package_name=
-case_package_name=
+stock_package_name=fast_build_freezed_stock
+case_package_name=fast_build_freezed_rust
+stock_dir="$test_fixtures_dir/stock"
+rust_dir="$test_fixtures_dir/rust"
+stock_baseline_dir="$test_baselines_dir/stock"
+rust_baseline_dir="$test_baselines_dir/rust"
 
 remove_tree() {
   local path=$1
-  [[ -e "$path" ]] || return 0
-  find "$path" -depth -type f -delete
-  find "$path" -depth -type d -empty -delete
+  [[ -e "$path" || -L "$path" ]] || return 0
+  rm -rf "$path"
 }
 
 cleanup() {
@@ -44,9 +44,6 @@ cleanup() {
     printf 'freezed-correctness: keeping temp workspace %s\n' "$test_root" >&2
     return 0
   fi
-  for path in "${cleanup_paths[@]}"; do
-    remove_tree "$path"
-  done
   remove_tree "$test_root"
   remove_tree "$results_dir"
 }
@@ -61,12 +58,6 @@ if [[ ! -x "$dart_bin" ]]; then
   fail "Dart executable not found: $dart_bin"
 fi
 worker_ensure_frontend || fail 'Rust frontend build failed'
-
-new_package_dir() {
-  local role=$1
-  new_directory=$(mktemp -d "$test_fixtures_dir/build-runner-accelerator-freezed-${role}.XXXXXX")
-  cleanup_paths+=("$new_directory")
-}
 
 prepare_package() {
   local directory=$1
@@ -145,23 +136,93 @@ assert_rust_actions() {
   assert_contains "$log" "Rust frontend: $count build action(s)"
 }
 
-setup_case() {
-  local name=$1
-  local package_prefix="fast_build_freezed_${name//-/_}"
-  stock_package_name="${package_prefix}_stock"
-  case_package_name="${package_prefix}_rust"
-  new_package_dir "${name}-stock"
-  stock_dir=$new_directory
-  new_package_dir "${name}-rust"
-  rust_dir=$new_directory
+sed_in_place() {
+  local file=$1
+  shift
+  local temporary_file="${file}.tmp.$$"
+  if ! sed "$@" "$file" >"$temporary_file"; then
+    rm -f "$temporary_file"
+    return 1
+  fi
+  if ! cat "$temporary_file" >"$file"; then
+    rm -f "$temporary_file"
+    return 1
+  fi
+  rm -f "$temporary_file"
+}
+
+prepend_line() {
+  local file=$1
+  local line=$2
+  local temporary_file="$file.tmp.$$"
+  if ! {
+    printf '%s\n' "$line"
+    cat "$file"
+  } >"$temporary_file"; then
+    rm -f "$temporary_file"
+    return 1
+  fi
+  if ! cat "$temporary_file" >"$file"; then
+    rm -f "$temporary_file"
+    return 1
+  fi
+  rm -f "$temporary_file"
+}
+
+insert_after_first_match() {
+  local file=$1
+  local needle=$2
+  local lines=$3
+  local temporary_file="$file.tmp.$$"
+  if ! awk -v needle="$needle" -v lines="$lines" '
+    !inserted && index($0, needle) {
+      print
+      printf "%s\n", lines
+      inserted = 1
+      next
+    }
+    { print }
+    END { if (!inserted) exit 1 }
+  ' "$file" >"$temporary_file"; then
+    rm -f "$temporary_file"
+    return 1
+  fi
+  if ! cat "$temporary_file" >"$file"; then
+    rm -f "$temporary_file"
+    return 1
+  fi
+  rm -f "$temporary_file"
+}
+
+restore_baseline() {
+  local baseline_dir=$1
+  local active_dir=$2
+  # Keep the active path, mtimes, and Dart SDK symlinks from the snapshot.
+  rm -rf "$active_dir"
+  cp -Rp "$baseline_dir" "$active_dir"
+}
+
+prepare_baseline() {
+  mkdir -p "$stock_dir" "$rust_dir"
   prepare_package "$stock_dir" "$stock_package_name"
   prepare_package "$rust_dir" "$case_package_name"
 
-  run_stock "$stock_dir" "$results_dir/$name.stock.initial.log"
-  run_rust "$rust_dir" "$results_dir/$name.rust.initial.log"
+  # Verify and save one pristine stock/Rust workspace pair for all cases.
+  run_stock "$stock_dir" "$results_dir/baseline.stock.initial.log"
+  run_rust "$rust_dir" "$results_dir/baseline.rust.initial.log"
   assert_source_outputs "$stock_dir" "$rust_dir"
   assert_combining_part "$stock_dir" "$rust_dir"
-  assert_rust_actions "$results_dir/$name.rust.initial.log" 4
+  assert_rust_actions "$results_dir/baseline.rust.initial.log" 4
+
+  cp -Rp "$stock_dir" "$stock_baseline_dir"
+  cp -Rp "$rust_dir" "$rust_baseline_dir"
+}
+
+setup_case() {
+  local name=$1
+  restore_baseline "$stock_baseline_dir" "$stock_dir"
+  restore_baseline "$rust_baseline_dir" "$rust_dir"
+
   cp "$rust_dir/.dart_tool/build_runner_accelerator/graph-v3.bin" \
     "$results_dir/$name.graph.before.bin"
   cp "$rust_dir/lib/model.freezed.dart" \
@@ -213,8 +274,8 @@ run_case_input_delete() {
 
 rename_model() {
   local directory=$1
-  sed -i "s/part 'model.freezed.dart'/part 'renamed.freezed.dart'/" \
-    "$directory/lib/model.dart"
+  sed_in_place "$directory/lib/model.dart" \
+    -e "s/part 'model.freezed.dart'/part 'renamed.freezed.dart'/"
   mv "$directory/lib/model.dart" "$directory/lib/renamed.dart"
 }
 
@@ -236,7 +297,8 @@ run_case_rename() {
 
 break_model_syntax() {
   local directory=$1
-  sed -i 's/required int id,/required int id/' "$directory/lib/model.dart"
+  sed_in_place "$directory/lib/model.dart" \
+    -e 's/required int id,/required int id/'
 }
 
 run_case_failure() {
@@ -262,10 +324,9 @@ run_case_failure() {
 add_second_model() {
   local directory=$1
   cp "$directory/lib/model.dart" "$directory/lib/other.dart"
-  sed -i \
+  sed_in_place "$directory/lib/other.dart" \
     -e 's/model.freezed.dart/other.freezed.dart/g' \
-    -e 's/User/OtherUser/g' \
-    "$directory/lib/other.dart"
+    -e 's/User/OtherUser/g'
 }
 
 run_case_affected_actions() {
@@ -280,8 +341,10 @@ run_case_affected_actions() {
   cp "$rust_dir/lib/other.freezed.dart" \
     "$results_dir/$name.other.before.freezed.dart"
 
-  sed -i 's/displayName/displayNameChanged/g' "$stock_dir/lib/model.dart"
-  sed -i 's/displayName/displayNameChanged/g' "$rust_dir/lib/model.dart"
+  sed_in_place "$stock_dir/lib/model.dart" \
+    -e 's/displayName/displayNameChanged/g'
+  sed_in_place "$rust_dir/lib/model.dart" \
+    -e 's/displayName/displayNameChanged/g'
   run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_source_outputs "$stock_dir" "$rust_dir"
@@ -298,9 +361,9 @@ run_case_dependency() {
   for directory in "$stock_dir" "$rust_dir"; do
     printf '%s\n' 'class Dependency { const Dependency({this.value = 0}); final int value; }' \
       >"$directory/lib/dependency.dart"
-    sed -i "1i import 'dependency.dart';" "$directory/lib/model.dart"
-    sed -i 's/required int id,/required int id,\n    required Dependency dependency,/' \
-      "$directory/lib/model.dart"
+    prepend_line "$directory/lib/model.dart" "import 'dependency.dart';"
+    insert_after_first_match "$directory/lib/model.dart" \
+      'required int id,' '    required Dependency dependency,'
   done
   run_stock "$stock_dir" "$results_dir/$name.stock.add.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.add.log"
@@ -308,7 +371,8 @@ run_case_dependency() {
     "$rust_dir/lib/model.freezed.dart"
 
   for directory in "$stock_dir" "$rust_dir"; do
-    sed -i 's/value = 0/value = 1/' "$directory/lib/dependency.dart"
+    sed_in_place "$directory/lib/dependency.dart" \
+      -e 's/value = 0/value = 1/'
   done
   run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
@@ -324,7 +388,8 @@ run_case_annotation_removal() {
   local name=annotation-removal
   setup_case "$name"
   for directory in "$stock_dir" "$rust_dir"; do
-    sed -i 's/^@freezed$/@Deprecated("not-freezed")/' "$directory/lib/model.dart"
+    sed_in_place "$directory/lib/model.dart" \
+      -e 's/^@freezed$/@Deprecated("not-freezed")/'
   done
   run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
@@ -380,8 +445,8 @@ run_case_builder_options() {
   local name=builder-options
   setup_case "$name"
   for directory in "$stock_dir" "$rust_dir"; do
-    sed -i '/          - lib\/\*\*\.dart/a\        options:\n          format: true' \
-      "$directory/build.yaml"
+    insert_after_first_match "$directory/build.yaml" \
+      '          - lib/**.dart' $'        options:\n          format: true'
   done
   run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
@@ -408,7 +473,8 @@ run_case_empty_options() {
   local name=empty-options
   setup_case "$name"
   for directory in "$stock_dir" "$rust_dir"; do
-    sed -i '/      freezed:/a\        options: {}' "$directory/build.yaml"
+    insert_after_first_match "$directory/build.yaml" \
+      '      freezed:' '        options: {}'
   done
   run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
@@ -417,6 +483,8 @@ run_case_empty_options() {
   assert_rust_actions "$results_dir/$name.rust.change.log" 4
   printf 'freezed-correctness: empty-options-native-path: pass\n'
 }
+
+prepare_baseline
 
 run_selected() {
   local name=$1
