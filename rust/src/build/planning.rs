@@ -5,13 +5,16 @@ use crate::metrics::{
     plan_metrics_enabled, plan_only_enabled, print_graph_action_metrics, print_plan_spec_metrics,
     print_plan_stage,
 };
-
+use crate::plan::{
+    BuildSpec, build_specs_for_kind_with_primary_inputs, build_specs_for_phase_with_primary_inputs,
+    validate_unique_outputs,
+};
 use crate::visibility::AssetVisibility;
 use crate::workspace::Workspace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
-
+use super::part_directive::{part_directive_filter_disabled, part_directive_skips};
 
 pub(super) struct PlannedActions {
     pub(super) specs: Vec<BuildSpec>,
@@ -185,7 +188,7 @@ pub(super) fn report_metrics(
             "visibility",
             format_args!(
                 "visible_output_locations={} normal_phase_outputs={} post_process_outputs={}",
-
+                visible_outputs, normal_phase_outputs, post_process_outputs,
             ),
         );
         print_plan_spec_metrics("expected", specs, build_config);

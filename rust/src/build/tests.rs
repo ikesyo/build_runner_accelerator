@@ -7,7 +7,7 @@ use crate::plan::BuildSpec;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-
+fn configured_builder(id: &str, target: &str, target_order: u32, phase: u32) -> ConfiguredBuilder {
     ConfiguredBuilder {
         definition: Arc::new(BuilderDefinition {
             id: id.to_owned(),
@@ -40,7 +40,7 @@ use std::sync::Arc;
     }
 }
 
-
+fn build_spec(builder: &ConfiguredBuilder, input: &str, outputs: &[&str]) -> BuildSpec {
     BuildSpec {
         builder: builder.definition.clone(),
         target: builder.target.clone(),
@@ -131,7 +131,11 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
         &[producer, consumer.clone()],
         &successful_empty_state,
     );
-    
+    assert!(
+        dirty
+            .iter()
+            .any(|spec| spec.action_key() == consumer.action_key())
+    );
 }
 
 #[test]

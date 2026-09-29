@@ -63,9 +63,13 @@ pub(super) fn run(
     let lazy_specs_by_output = specs
         .iter()
         .filter(|spec| spec.builder.is_optional && spec.builder.kind == BuilderKind::Normal)
-        
+        .flat_map(|spec| {
+            spec.outputs
+                .iter()
+                .map(|output| (output.clone(), spec.clone()))
+        })
         .collect::<BTreeMap<_, _>>();
-    
+    let lazy_demand_possible = !lazy_force_keys.is_empty() && !lazy_specs_by_output.is_empty();
     // The optional-builder capability flag is part of the pool signature, so
     // derive it from the plan rather than the dirty set: an optional spec
     // leaving the dirty set must not restart the resident workers.
@@ -162,7 +166,9 @@ pub(super) fn run(
                 if part_directive_filter_disabled() {
                     (Vec::new(), runnable_phase_specs)
                 } else {
-                    
+                    runnable_phase_specs.into_iter().partition(|spec| {
+                        part_directive_skips(workspace, &transaction.overlay, spec)
+                    })
                 };
             part_filtered_actions += skipped_specs.len();
             for spec in skipped_specs {
@@ -262,7 +268,7 @@ pub(super) fn run(
                 record_build_result(workspace, state, &spec, result, &mut transaction)?;
             }
 
-            
+            if transaction.resolver.has_source_changes() || transaction.resolver.has_cache_changes() {
                 resolver_needs_reset = true;
             }
 

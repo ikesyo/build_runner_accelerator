@@ -38,7 +38,10 @@ pub(super) fn record_missing_primary_input(
             pending.resolver.resolver_deleted.insert(output.clone());
             pending.resolver.resolver_updated.remove(&output);
         } else {
-            
+            pending
+                .resolver
+                .resolver_cache_deleted
+                .insert(output.clone());
             pending.resolver.resolver_cache_updated.remove(&output);
         }
         if workspace.asset_exists_at(&output, spec.builder.build_to)? {
@@ -106,10 +109,15 @@ pub(super) fn record_build_result(
                 pending.resolver.resolver_deleted.insert(deleted.clone());
                 pending.resolver.resolver_updated.remove(deleted);
             } else {
-                
+                pending
+                    .resolver
+                    .resolver_cache_deleted
+                    .insert(deleted.clone());
                 pending.resolver.resolver_cache_updated.remove(deleted);
             }
-            
+            pending
+                .pending_deletions
+                .push((spec.builder.clone(), deleted.clone()));
         }
     }
 
@@ -139,7 +147,10 @@ pub(super) fn record_build_result(
                     spec.builder.id, generated.asset
                 )));
             }
-            
+            let previous_outputs = state
+                .actions
+                .get(&spec.action_key())
+                .map(|action| action.outputs.contains(&generated.asset))
                 .unwrap_or(false);
             if !previous_outputs
                 && !pending.deleted_overlay.contains(&generated.asset)
@@ -152,14 +163,25 @@ pub(super) fn record_build_result(
                 )));
             }
         }
-        
+        pending
+            .overlay
+            .insert(generated.asset.clone(), generated.bytes.clone());
         pending.deleted_overlay.remove(&generated.asset);
         if builder.build_to == BuildTo::Source {
-            
+            pending
+                .resolver
+                .resolver_updated
+                .insert(generated.asset.clone());
             pending.resolver.resolver_deleted.remove(&generated.asset);
         } else {
-            
-            
+            pending
+                .resolver
+                .resolver_cache_updated
+                .insert(generated.asset.clone());
+            pending
+                .resolver
+                .resolver_cache_deleted
+                .remove(&generated.asset);
         }
         pending.pending_outputs.push((
             spec.builder.clone(),
@@ -182,13 +204,24 @@ pub(super) fn record_build_result(
                 if !actual_outputs.contains(previous_output.as_str()) {
                     pending.deleted_overlay.insert(previous_output.clone());
                     if builder.build_to == BuildTo::Source {
-                        
+                        pending
+                            .resolver
+                            .resolver_deleted
+                            .insert(previous_output.clone());
                         pending.resolver.resolver_updated.remove(previous_output);
                     } else {
-                        
-                        
+                        pending
+                            .resolver
+                            .resolver_cache_deleted
+                            .insert(previous_output.clone());
+                        pending
+                            .resolver
+                            .resolver_cache_updated
+                            .remove(previous_output);
                     }
-                    
+                    pending
+                        .pending_deletions
+                        .push((spec.builder.clone(), previous_output.clone()));
                 }
             }
         }
@@ -206,11 +239,16 @@ pub(super) fn record_build_result(
                 pending.resolver.resolver_deleted.insert(expected.clone());
                 pending.resolver.resolver_updated.remove(expected);
             } else {
-                
+                pending
+                    .resolver
+                    .resolver_cache_deleted
+                    .insert(expected.clone());
                 pending.resolver.resolver_cache_updated.remove(expected);
             }
             if workspace.asset_exists_at(expected, builder.build_to)? {
-                
+                pending
+                    .pending_deletions
+                    .push((spec.builder.clone(), expected.clone()));
             }
         }
     }
