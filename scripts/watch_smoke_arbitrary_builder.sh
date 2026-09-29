@@ -153,6 +153,9 @@ wait_for_initial_outputs() {
 
 wait_for_initial_outputs
 
+# Initial outputs can appear before the Rust filesystem watcher is registered.
+wait_for_text "$rust_log" "Watching $rust_dir (native filesystem events)" "$rust_pid"
+
 rm -f -- \
   "$stock_dir/lib/input.gen.txt" "$stock_dir/lib/input.meta.txt" \
   "$rust_dir/lib/input.gen.txt" "$rust_dir/lib/input.meta.txt"

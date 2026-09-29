@@ -221,6 +221,66 @@ jobs:
             shell: bash
             run: bash scripts/package_smoke.sh
 
+  integration-json-serializable:
+    name: 'Integration: JSON Serializable correctness'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: compatibility-mapping
+          cache-inputs: |
+            fixtures/**/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_*.sh
+            scripts/watch_smoke_*.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
+      - name: Prime JSON Serializable dependencies
+        shell: bash
+        run: |
+          (cd fixtures/json_serializable_app && dart --suppress-analytics pub get)
+      - name: Run JSON Serializable cases (shared baseline)
+        shell: bash
+        env:
+          PUB_GET_OFFLINE: '1'
+          CASE_FILTER: generated-output-delete,input-delete,rename,failure,affected-actions,generate-for,builder-options,glob-membership,empty-options
+        run: bash scripts/correctness_json_serializable.sh
+
+  integration-json-conditional-dependency:
+    name: 'Integration: JSON Serializable conditional dependency'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: compatibility-mapping
+          cache-inputs: |
+            fixtures/**/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_*.sh
+            scripts/watch_smoke_*.sh
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
+      - name: Prime JSON Serializable dependencies
+        shell: bash
+        run: |
+          (cd fixtures/json_serializable_app && dart --suppress-analytics pub get)
+      - name: Run JSON Serializable conditional dependency case
+        shell: bash
+        env:
+          PUB_GET_OFFLINE: '1'
+          CASE_FILTER: conditional-dependency
+        run: bash scripts/correctness_json_serializable.sh
+
   current-codegen-compatibility:
     name: Freezed compatibility (lifecycle)
     runs-on: ubuntu-24.04-arm
@@ -445,7 +505,7 @@ jobs:
               bash scripts/correctness_applies_builder.sh
 
   compatibility-mapping:
-    name: Compatibility suite (mapping)
+    name: Compatibility suite (mapping and empty-input)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     env:
@@ -463,6 +523,10 @@ jobs:
             scripts/worker.sh
           setup-rust: 'true'
           build-frontend: 'true'
+      - name: Prime empty-input mapping dependencies
+        shell: bash
+        run: |
+          (cd fixtures/empty_input_mapping_app && dart --suppress-analytics pub get)
       - parallel:
           - name: "Compatibility: capture mapping"
             shell: bash
@@ -473,6 +537,13 @@ jobs:
           - name: "Compatibility: Drift"
             shell: bash
             run: bash scripts/correctness_drift.sh
+          - name: "Compatibility: empty-input mapping correctness and watch"
+            shell: bash
+            env:
+              PUB_GET_OFFLINE: '1'
+            run: |
+              bash scripts/correctness_empty_input_mapping.sh
+              bash scripts/watch_smoke_empty_input_mapping.sh
 
   compatibility-drift-analyzer:
     name: Compatibility suite (Drift analyzer)
