@@ -491,7 +491,8 @@ pub(super) fn protocol_error(prefix: &str, value: &Value) -> io::Error {
     let detail = value
         .get("error")
         .and_then(Value::as_str)
-        .unwrap_or_else(|| value.to_string().leak());
+        .map(str::to_owned)
+        .unwrap_or_else(|| value.to_string());
     let stack = value.get("stack").and_then(Value::as_str);
     match stack {
         Some(stack) if !stack.is_empty() => io::Error::other(format!(
