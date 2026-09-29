@@ -80,6 +80,7 @@ if [[ "$case_filter" == all ]]; then
   selected_case_names=("${known_case_names[@]}")
 else
   requested_case_names=()
+  [[ "$case_filter" != *, ]] || fail 'CASE_FILTER contains an empty case'
   IFS=',' read -r -a requested_case_names <<<"$case_filter"
   for requested_case in "${requested_case_names[@]}"; do
     requested_case=${requested_case//[[:space:]]/}
