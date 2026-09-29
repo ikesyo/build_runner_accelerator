@@ -8,20 +8,9 @@ mod request;
 mod tests;
 
 pub(crate) use client::WorkerClient;
-pub(crate) use lazy::{LazyBuildResult, LazyBuildState};
+#[allow(unused_imports)] // Preserve the existing crate::worker::LazyBuildResult path.
+pub(crate) use lazy::LazyBuildResult;
+pub(crate) use lazy::LazyBuildState;
 pub(crate) use pool::{PoolMetrics, WorkerPool, shared_analysis_cache_enabled};
 pub(crate) use request::BuildRequest;
 
-#[cfg(test)]
-pub(super) use asset_rpc::{
-    batch_asset_request_context, missing_asset_response, validate_asset_request_context,
-};
-#[cfg(test)]
-pub(super) use client::{has_capability, is_worker_script};
-#[cfg(test)]
-pub(super) use pool::{
-    balanced_request_ranges, homogeneous_resolver_usage_key, remember_resolver_usage,
-    target_worker_count,
-};
-#[cfg(test)]
-pub(super) use request::batch_blocked_assets;

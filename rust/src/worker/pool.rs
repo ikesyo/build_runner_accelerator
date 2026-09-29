@@ -1,6 +1,6 @@
 use super::client::{WorkerClient, WorkerClientMetrics};
 use super::lazy::LazyBuildState;
-use super::request::{build_request_kind, BuildRequest};
+use super::request::BuildRequest;
 use crate::plan::BuildSpec;
 use crate::protocol::BuildResult;
 use crate::worker_kernel::{

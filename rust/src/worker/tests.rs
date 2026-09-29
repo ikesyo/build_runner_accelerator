@@ -1,9 +1,12 @@
-    use super::{
-        balanced_request_ranges, batch_asset_request_context, batch_blocked_assets,
-        has_capability, homogeneous_resolver_usage_key, is_worker_script,
-        missing_asset_response, remember_resolver_usage, target_worker_count,
-        validate_asset_request_context, BuildRequest,
+    use super::asset_rpc::{
+        batch_asset_request_context, missing_asset_response, validate_asset_request_context,
     };
+    use super::client::{has_capability, is_worker_script};
+    use super::pool::{
+        balanced_request_ranges, homogeneous_resolver_usage_key, remember_resolver_usage,
+        target_worker_count,
+    };
+    use super::request::{batch_blocked_assets, BuildRequest};
     use crate::visibility::AssetVisibility;
     use serde_json::json;
     use std::collections::{BTreeMap, BTreeSet};
