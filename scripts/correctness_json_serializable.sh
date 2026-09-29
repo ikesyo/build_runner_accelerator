@@ -28,6 +28,7 @@ known_case_names=(
   glob-membership
   conditional-dependency
   empty-options
+  part-comment
 )
 selected_case_names=()
 cleanup_paths=()
@@ -461,6 +462,30 @@ run_case_empty_options() {
   printf 'correctness: empty-options-native-path: pass\n'
 }
 
+
+run_case_part_comment() {
+  local variant name
+  for variant in lf crlf cr; do
+    name="part-comment-$variant"
+    setup_case "$name"
+    python3 - "$stock_dir/lib/model.dart" "$rust_dir/lib/model.dart" "$variant" <<'PY'
+import pathlib
+import sys
+
+for filename in sys.argv[1:3]:
+    path = pathlib.Path(filename)
+    source = "// kept as part 'cause x\n" + path.read_text()
+    ending = {"lf": "\n", "crlf": "\r\n", "cr": "\r"}[sys.argv[3]]
+    path.write_bytes(source.replace("\n", ending).encode())
+PY
+    rm -f -- "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart"
+    run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
+    run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
+    assert_same_file "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart"
+    printf 'correctness: %s: pass\n' "$name"
+  done
+}
+
 run_selected() {
   local name=$1
   shift
@@ -479,5 +504,6 @@ run_selected builder-options run_case_builder_options
 run_selected glob-membership run_case_glob_membership
 run_selected conditional-dependency run_case_conditional_dependency
 run_selected empty-options run_case_empty_options
+run_selected part-comment run_case_part_comment
 
 printf 'correctness: cases=%s pass\n' "$case_filter"

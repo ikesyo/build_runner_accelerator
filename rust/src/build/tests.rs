@@ -1,11 +1,16 @@
 use super::dirty::expand_dirty_dependents;
 use super::execution::execution_order;
 use super::part_directive::declares_part_directive;
-use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder};
+use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder, RustBuildConfig};
 use crate::graph::{ActionState, GraphState};
 use crate::plan::BuildSpec;
-use std::collections::BTreeMap;
+use crate::workspace::Workspace;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::io;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn configured_builder(id: &str, target: &str, target_order: u32, phase: u32) -> ConfiguredBuilder {
     ConfiguredBuilder {
@@ -116,7 +121,8 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
         vec![producer.action_key(), consumer.action_key()]
     );
 
-    // A successful producer with no outputs does not invalidate consumers.
+    // A producer with no prior output can emit a planned output after its
+    // input changes, so the skipped consumer must be reconsidered this build.
     let mut successful_empty_state = state;
     successful_empty_state
         .actions
@@ -131,7 +137,7 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
     );
     assert_eq!(
         dirty.iter().map(BuildSpec::action_key).collect::<Vec<_>>(),
-        vec![producer.action_key()]
+        vec![producer.action_key(), consumer.action_key()]
     );
 }
 
@@ -220,4 +226,125 @@ fn part_directive_scanner_matches_source_gen_semantics() {
     ));
     assert!(declares_part_directive("part 'foo.g.dart", "foo.g.dart"));
     assert!(declares_part_directive("part '''foo.g.dart", "foo.g.dart"));
+    assert!(declares_part_directive(
+        "// kept as part 'cause x\npart 'foo.g.dart';",
+        "foo.g.dart"
+    ));
+    assert!(declares_part_directive(
+        "// kept as part 'cause x\rpart 'foo.g.dart';",
+        "foo.g.dart"
+    ));
+}
+
+struct TemporaryWorkspace(PathBuf);
+
+impl TemporaryWorkspace {
+    fn new() -> io::Result<Self> {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(io::Error::other)?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "build-stage-output-reuse-{}-{nonce}",
+            std::process::id()
+        ));
+        let temporary = Self(root);
+        fs::create_dir_all(temporary.0.join(".dart_tool"))?;
+        fs::create_dir_all(temporary.0.join("lib"))?;
+        fs::write(temporary.0.join("pubspec.yaml"), "name: app\n")?;
+        fs::write(
+            temporary.0.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[{"name":"app","rootUri":"../"}]}"#,
+        )?;
+        Ok(temporary)
+    }
+}
+
+impl Drop for TemporaryWorkspace {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()> {
+    use super::commit::{CommitInputs, commit};
+    use super::transaction::PendingTransaction;
+
+    let temporary = TemporaryWorkspace::new()?;
+    let workspace = Workspace::load(temporary.0.clone())?;
+    let mut builder = configured_builder("post_process", "app:default", 0, 0);
+    Arc::make_mut(&mut builder.definition).kind = BuilderKind::PostProcess;
+    let old_spec = build_spec(&builder, "app|lib/old.txt", &[]);
+    let new_spec = build_spec(&builder, "app|lib/new.txt", &[]);
+    let output = "app|lib/shared.out".to_owned();
+    let new_bytes = b"replacement output".to_vec();
+    fs::write(temporary.0.join("lib/shared.out"), b"obsolete output")?;
+    fs::write(temporary.0.join("lib/new.txt"), b"new input")?;
+    let old_action = ActionState {
+        builder: builder.definition.id.clone(),
+        input: old_spec.input.clone(),
+        outputs: vec![output.clone()],
+        status: "success".to_owned(),
+        ..ActionState::default()
+    };
+    let new_action = ActionState {
+        builder: builder.definition.id.clone(),
+        input: new_spec.input.clone(),
+        outputs: vec![output.clone()],
+        output_digests: BTreeMap::from([(
+            output.clone(),
+            crate::digest::digest_bytes(&new_bytes),
+        )]),
+        status: "success".to_owned(),
+        ..ActionState::default()
+    };
+    let mut state = GraphState {
+        actions: BTreeMap::from([(old_spec.action_key(), old_action.clone())]),
+        ..GraphState::default()
+    };
+    let build_config = RustBuildConfig {
+        builders: vec![builder.clone()],
+        worker_entrypoint: None,
+        manifest_signature: None,
+        trigger_digest: None,
+        definitions: BTreeMap::from([(
+            builder.definition.id.clone(),
+            builder.definition.clone(),
+        )]),
+    };
+    let mut transaction = PendingTransaction::new(
+        &[],
+        &state,
+        vec![(old_spec.action_key(), old_action)],
+    );
+    transaction
+        .pending_outputs
+        .push((builder.definition.clone(), output.clone(), new_bytes.clone()));
+    transaction
+        .pending_actions
+        .push((new_spec.action_key(), new_action.clone()));
+    let state_path = temporary.0.join(".dart_tool/graph-v3.bin");
+    let scanned_packages = BTreeSet::from(["app".to_owned()]);
+
+    commit(
+        &mut state,
+        CommitInputs {
+            workspace: &workspace,
+            state_path: &state_path,
+            build_config: &build_config,
+            config_digest: "test-config".to_owned(),
+            scanned_packages: &scanned_packages,
+            // Post-process outputs are dynamic, so the plan cannot protect
+            // the reused asset through expected_outputs.
+            expected_outputs: BTreeSet::new(),
+            transaction,
+        },
+    )?;
+
+    assert_eq!(fs::read(temporary.0.join("lib/shared.out"))?, new_bytes);
+    assert!(!state.actions.contains_key(&old_spec.action_key()));
+    assert_eq!(state.actions.get(&new_spec.action_key()), Some(&new_action));
+    assert_eq!(GraphState::load(&state_path)?, state);
+    Ok(())
 }
