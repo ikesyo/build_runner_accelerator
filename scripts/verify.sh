@@ -148,7 +148,7 @@ run_cases() {
 run_all_json_cases() {
   local log="$results_dir/json-cases.log"
   local timeout_seconds
-  timeout_seconds=$(verification_timeout_seconds VERIFY_CASE_TIMEOUT_SECONDS 1200) || return 2
+  timeout_seconds=$(verification_timeout_seconds VERIFY_JSON_SUITE_TIMEOUT_SECONDS 3600) || return 2
   verification_run_command_in_dir "$repo_root" "case/json/all" "$log" "$timeout_seconds" \
     env CASE_FILTER=all bash "$script_dir/correctness_json_serializable.sh" || {
     printf '%s\n' '--- all JSON serializable cases ---' >&2
