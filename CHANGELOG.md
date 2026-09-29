@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.7.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.6.0...v0.7.0) - 2026-09-29
+
+- ci: split long PR groups and jobs to recover ~5m wall clock by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/60
+- perf: reuse pristine Freezed correctness workspaces by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/63
+- Reuse correctness suite baselines to reduce local verification time by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/64
+- perf: follow up on v0.6.0 cold-path performance by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/61
+- Reuse baselines across full correctness verification by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/65
+
 ## [v0.6.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.5.0...v0.6.0) - 2026-09-27
 
 - perf: add v0.5.0 follow-up optimizations by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/58
