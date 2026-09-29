@@ -161,9 +161,9 @@ fn generate_manifest(
         .spawn()?;
     let mut early_compile = None;
     let status = loop {
-        match child.try_wait()? {
-            Some(status) => break status,
-            None => {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => {
                 if early_compile.is_none() && worker_entrypoint.is_file() {
                     early_compile = early_worker_aot_compile(
                         &workspace.root,
@@ -173,10 +173,12 @@ fn generate_manifest(
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
+            Err(error) => break Err(error),
         }
     };
     // Always join before returning: `prepare_worker_aot` uses pid-named temp
-    // files, so it must not overlap a later invocation in this process.
+    // files, so it must not overlap a later invocation in this process — even
+    // when polling the generator itself failed.
     if let Some(handle) = early_compile {
         match handle.join() {
             Ok(Ok(_)) => {}
@@ -186,6 +188,7 @@ fn generate_manifest(
             Err(_) => eprintln!("Rust worker early AOT compile panicked; will retry"),
         }
     }
+    let status = status?;
     if status.success() {
         Ok(())
     } else {
