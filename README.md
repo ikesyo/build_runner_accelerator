@@ -156,7 +156,7 @@ repaired.
 
 ## Performance and caching
 
-The accelerator keeps two shared caches under a machine-wide cache root
+The accelerator keeps three shared caches under a machine-wide cache root
 so repeated builds — including builds in fresh checkouts on the same
 machine — skip the expensive cold paths:
 
@@ -169,6 +169,15 @@ machine — skip the expensive cold paths:
   and package-config identity); a shared artifact is validated against the
   current workspace's dependency digests before it is restored into the
   workspace-local `aot-sdk` directory.
+- `<cache>/probe/<builder-manifest-fingerprint>-<impl>.json` — the
+  builder-factory probe results from manifest generation. The fingerprint
+  covers the lockfile and every package's `build.yaml`, and `<impl>` digests
+  the Dart SDK version plus the probed packages' transitive dependency
+  closure (versioned pub-cache directories, or source digests for path
+  dependencies; the workspace's own packages also contribute their
+  dev_dependencies and overrides), so a factory edit invalidates the entry.
+  Only complete
+  responses are cached, so a cache hit skips the probe subprocess entirely.
 
 The cache root resolves `BUILD_RUNNER_ACCELERATOR_CACHE` first — a relative
 path is anchored at the workspace root — then the platform cache directory
@@ -178,13 +187,16 @@ path is anchored at the workspace root — then the platform cache directory
 warm-start behavior. Where the caches are cold, the first build still pays the
 synchronous worker AOT compile and the first-touch analysis once per toolchain;
 running `aot-prewarm` ahead of the next build performs the compile and
-concurrently warms the byte store with JIT analysis shards.
+concurrently warms the byte store with JIT analysis shards. When the
+builder manifest has to be (re)generated, the worker AOT compile overlaps
+the manifest's factory probe rather than serializing after it.
 
-`--jobs` defaults to the machine's logical CPU count. Each worker process
-carries a full analyzer instance, so memory scales with the worker count —
-peaking when the byte store is first filled (roughly 1 GB per worker on a
-large workspace). Pass an explicit `--jobs` on memory-constrained CI
-runners.
+`--jobs` defaults to the machine's logical CPU count, capped by the
+available memory on Linux and macOS (`MemAvailable`, or `vm_stat`'s
+free/inactive/speculative pages — ~1 GB per worker: each worker process
+carries a full analyzer instance, and memory peaks when the byte store is
+first filled). Pass an explicit `--jobs` to override the default in either
+direction.
 
 Byte-store entries are content-addressed and safe to share across workers,
 but stale fingerprint directories are not garbage-collected yet — reclaim
