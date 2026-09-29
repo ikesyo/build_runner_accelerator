@@ -144,10 +144,17 @@ fn generate_manifest(
     // The generator writes the worker entrypoint early (before its factory
     // probe). Remove any stale copy first so its appearance marks the moment
     // the synchronous worker AOT compile can start; the compile then overlaps
-    // the probe instead of serializing after it on a cold build.
-    if worker_entrypoint.exists() {
-        let _ = fs::remove_file(worker_entrypoint);
-    }
+    // the probe instead of serializing after it on a cold build. When the
+    // removal fails, a lingering stale entrypoint could trigger a compile of
+    // the old script, so the early path is disabled entirely.
+    let early_compile_ready = match fs::remove_file(worker_entrypoint) {
+        Ok(()) => true,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => true,
+        Err(error) => {
+            eprintln!("Rust worker entrypoint cleanup failed; disabling early AOT ({error})");
+            false
+        }
+    };
     let mut child = command
         .arg("--root")
         .arg(&workspace.root)
@@ -164,7 +171,7 @@ fn generate_manifest(
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
             Ok(None) => {
-                if early_compile.is_none() && worker_entrypoint.is_file() {
+                if early_compile_ready && early_compile.is_none() && worker_entrypoint.is_file() {
                     early_compile = early_worker_aot_compile(
                         &workspace.root,
                         dart_binary,
