@@ -292,10 +292,7 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
         builder: builder.definition.id.clone(),
         input: new_spec.input.clone(),
         outputs: vec![output.clone()],
-        output_digests: BTreeMap::from([(
-            output.clone(),
-            crate::digest::digest_bytes(&new_bytes),
-        )]),
+        output_digests: BTreeMap::from([(output.clone(), crate::digest::digest_bytes(&new_bytes))]),
         status: "success".to_owned(),
         ..ActionState::default()
     };
@@ -308,19 +305,15 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
         worker_entrypoint: None,
         manifest_signature: None,
         trigger_digest: None,
-        definitions: BTreeMap::from([(
-            builder.definition.id.clone(),
-            builder.definition.clone(),
-        )]),
+        definitions: BTreeMap::from([(builder.definition.id.clone(), builder.definition.clone())]),
     };
-    let mut transaction = PendingTransaction::new(
-        &[],
-        &state,
-        vec![(old_spec.action_key(), old_action)],
-    );
-    transaction
-        .pending_outputs
-        .push((builder.definition.clone(), output.clone(), new_bytes.clone()));
+    let mut transaction =
+        PendingTransaction::new(&[], &state, vec![(old_spec.action_key(), old_action)]);
+    transaction.pending_outputs.push((
+        builder.definition.clone(),
+        output.clone(),
+        new_bytes.clone(),
+    ));
     transaction
         .pending_actions
         .push((new_spec.action_key(), new_action.clone()));
