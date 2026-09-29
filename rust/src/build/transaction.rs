@@ -4,12 +4,32 @@ use crate::plan::BuildSpec;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+/// Overlay mutations since the last resolver reset. A single-worker reset can
+/// forward these deltas so the worker refreshes only those assets in its
+/// Analyzer filesystem instead of re-walking every source.
 #[derive(Default)]
 pub(super) struct ResolverChanges {
     pub(super) resolver_updated: BTreeSet<String>,
     pub(super) resolver_deleted: BTreeSet<String>,
     pub(super) resolver_cache_updated: BTreeSet<String>,
     pub(super) resolver_cache_deleted: BTreeSet<String>,
+}
+
+impl ResolverChanges {
+    pub(super) fn has_source_changes(&self) -> bool {
+        !self.resolver_updated.is_empty() || !self.resolver_deleted.is_empty()
+    }
+
+    pub(super) fn has_cache_changes(&self) -> bool {
+        !self.resolver_cache_updated.is_empty() || !self.resolver_cache_deleted.is_empty()
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.resolver_updated.clear();
+        self.resolver_deleted.clear();
+        self.resolver_cache_updated.clear();
+        self.resolver_cache_deleted.clear();
+    }
 }
 
 pub(super) struct PendingTransaction {

@@ -124,6 +124,8 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
         .iter()
         .any(|spec| spec.action_key() == consumer.action_key()));
 
+    // A producer with no prior output can emit a planned output after its
+    // input changes, so the skipped consumer must be reconsidered this build.
     let mut successful_empty_state = state;
     successful_empty_state
         .actions
@@ -136,7 +138,9 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
         &[producer, consumer.clone()],
         &successful_empty_state,
     );
-    assert_eq!(dirty.len(), 1);
+    assert!(dirty
+        .iter()
+        .any(|spec| spec.action_key() == consumer.action_key()));
 }
 
 #[test]
@@ -224,4 +228,12 @@ fn part_directive_scanner_matches_source_gen_semantics() {
     ));
     assert!(declares_part_directive("part 'foo.g.dart", "foo.g.dart"));
     assert!(declares_part_directive("part '''foo.g.dart", "foo.g.dart"));
+    assert!(declares_part_directive(
+        "// kept as part 'cause x\npart 'foo.g.dart';",
+        "foo.g.dart"
+    ));
+    assert!(declares_part_directive(
+        "// kept as part 'cause x\rpart 'foo.g.dart';",
+        "foo.g.dart"
+    ));
 }

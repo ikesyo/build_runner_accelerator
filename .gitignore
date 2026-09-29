@@ -5,8 +5,7 @@ rust/target/
 
 .dart_tool/
 build/
-!rust/src/build/
-!rust/src/build/*.rs
+!/rust/src/build/
 fixtures/*/.dart_tool/
 fixtures/*/build/
 fixtures/*/lib/*.g.dart

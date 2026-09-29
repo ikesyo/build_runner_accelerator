@@ -9,6 +9,11 @@ use std::io;
 
 use super::transaction::PendingTransaction;
 
+/// Record the build_runner equivalent of a generated primary input that was
+/// planned but not emitted by its producer. Keeping the empty action in the
+/// graph makes the missing-output state stable across no-op builds and removes
+/// stale outputs from a previous successful run at the same commit boundary as
+/// ordinary Builder results.
 pub(super) fn record_missing_primary_input(
     workspace: &Workspace,
     state: &GraphState,

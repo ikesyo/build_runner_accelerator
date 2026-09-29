@@ -79,6 +79,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
         with:
           toolchain: 1.98.1
+          components: rustfmt
+      - name: Rust formatting
+        run: cargo fmt --manifest-path rust/Cargo.toml -- --check
       - name: Rust unit tests
         run: cargo test --locked --manifest-path rust/Cargo.toml
 

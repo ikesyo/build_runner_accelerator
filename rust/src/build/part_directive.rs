@@ -112,7 +112,12 @@ pub(super) fn declares_part_directive(source: &str, expected: &str) -> bool {
                     .windows(3)
                     .position(|w| w == [quote; 3])
             } else {
-                rest.find(quote as char)
+                match rest.find(|character: char| {
+                    character == quote as char || character == '\n' || character == '\r'
+                }) {
+                    Some(end) if rest.as_bytes()[end] == quote => Some(end),
+                    _ => None,
+                }
             };
             match end {
                 Some(end) => {

@@ -2,9 +2,8 @@ use crate::builder::{BuildTo, BuilderKind, ConfiguredBuilder, RustBuildConfig};
 use crate::cli::Options;
 use crate::frontend::worker_executable;
 use crate::graph::GraphState;
-use crate::worker::PoolMetrics;
 use crate::plan::BuildSpec;
-use crate::worker::{BuildRequest, LazyBuildState, WorkerPool};
+use crate::worker::{BuildRequest, LazyBuildState, PoolMetrics, WorkerPool};
 use crate::workspace::Workspace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -20,6 +19,8 @@ use super::transaction::PendingTransaction;
 pub(super) struct ExecutionInputs<'a> {
     pub(super) options: &'a Options,
     pub(super) workspace: &'a Workspace,
+    /// Workers add resolver dependency edges here. Action and asset state
+    /// stays staged until commit.
     pub(super) state: &'a mut GraphState,
     pub(super) build_config: &'a RustBuildConfig,
     pub(super) config_digest: &'a str,
@@ -112,10 +113,7 @@ pub(super) fn run(
         // asset whose directive set changed is detected by the worker itself,
         // which clears the cached graph only then.
         let mut initialized_package = first_package;
-        // Overlay mutations since the last resolver reset. A single-worker
-        // reset can forward them so the worker refreshes only those assets
-        // in its Analyzer filesystem instead of re-walking every source.
-                                
+
         for configured_builder_index in execution_order(&build_config.builders) {
             let configured_builder = &build_config.builders[configured_builder_index];
             let builder = configured_builder.definition.as_ref();
@@ -128,7 +126,8 @@ pub(super) fn run(
                 .collect::<Vec<_>>();
             let mut runnable_phase_specs = Vec::with_capacity(phase_specs.len());
             for spec in phase_specs {
-                if let Some((build_to, is_optional)) = plan.generated_output_locations.get(&spec.input)
+                if let Some((build_to, is_optional)) =
+                    plan.generated_output_locations.get(&spec.input)
                 {
                     // An optional producer may be invoked lazily by this
                     // consumer's BuildStep.readAsString. Keep the consumer
@@ -140,17 +139,21 @@ pub(super) fn run(
                             && (transaction.overlay.contains_key(&spec.input)
                                 || workspace.asset_exists_at(&spec.input, *build_to)?);
                         if !output_is_visible {
-                            record_missing_primary_input(workspace, state, &spec, &mut transaction)?;
+                            record_missing_primary_input(
+                                workspace,
+                                state,
+                                &spec,
+                                &mut transaction,
+                            )?;
                             continue;
                         }
                     }
                 }
                 runnable_phase_specs.push(spec);
             }
-            if !transaction.resolver.resolver_updated.is_empty() || !transaction.resolver.resolver_deleted.is_empty() {
-                resolver_needs_reset = true;
-            }
-            if !transaction.resolver.resolver_cache_updated.is_empty() || !transaction.resolver.resolver_cache_deleted.is_empty() {
+            if transaction.resolver.has_source_changes()
+                || transaction.resolver.has_cache_changes()
+            {
                 resolver_needs_reset = true;
             }
             // A part-family builder provably emits nothing when its input
@@ -164,11 +167,19 @@ pub(super) fn run(
                 } else {
                     runnable_phase_specs
                         .into_iter()
-                        .partition(|spec| part_directive_skips(workspace, &transaction.overlay, spec))
+                        .partition(|spec| {
+                            part_directive_skips(workspace, &transaction.overlay, spec)
+                        })
                 };
             part_filtered_actions += skipped_specs.len();
             for spec in skipped_specs {
-                record_build_result(workspace, state, &spec, empty_build_result(&spec), &mut transaction)?;
+                record_build_result(
+                    workspace,
+                    state,
+                    &spec,
+                    empty_build_result(&spec),
+                    &mut transaction,
+                )?;
             }
             let requests = runnable_phase_specs
                 .iter()
@@ -197,10 +208,7 @@ pub(super) fn run(
                 )?;
                 initialized_package = configured_builder.package.clone();
                 resolver_needs_reset = false;
-                transaction.resolver.resolver_updated.clear();
-                transaction.resolver.resolver_deleted.clear();
-                transaction.resolver.resolver_cache_updated.clear();
-                transaction.resolver.resolver_cache_deleted.clear();
+                transaction.resolver.clear();
             } else if resolver_needs_reset {
                 active_pool.reset_resolver(
                     &workspace.root,
@@ -245,7 +253,13 @@ pub(super) fn run(
                 .iter()
                 .any(|lazy_result| lazy_result.spec.builder.build_to == BuildTo::Source);
             for lazy_result in lazy_results {
-                record_build_result(workspace, state, &lazy_result.spec, lazy_result.result, &mut transaction)?;
+                record_build_result(
+                    workspace,
+                    state,
+                    &lazy_result.spec,
+                    lazy_result.result,
+                    &mut transaction,
+                )?;
             }
             if lazy_source_output {
                 resolver_needs_reset = true;
@@ -255,10 +269,9 @@ pub(super) fn run(
                 record_build_result(workspace, state, &spec, result, &mut transaction)?;
             }
 
-            if !transaction.resolver.resolver_updated.is_empty() || !transaction.resolver.resolver_deleted.is_empty() {
-                resolver_needs_reset = true;
-            }
-            if !transaction.resolver.resolver_cache_updated.is_empty() || !transaction.resolver.resolver_cache_deleted.is_empty() {
+            if transaction.resolver.has_source_changes()
+                || transaction.resolver.has_cache_changes()
+            {
                 resolver_needs_reset = true;
             }
 
@@ -277,6 +290,10 @@ pub(super) fn run(
     })
 }
 
+/// Return the order in which configured builders may observe each other's
+/// outputs. Manifest entries retain target-first ordering for stable planning,
+/// but execution completes each normal phase before moving to the next target
+/// so cross-target phase dependencies see fresh overlay outputs.
 pub(super) fn execution_order(builders: &[ConfiguredBuilder]) -> Vec<usize> {
     let mut order = (0..builders.len()).collect::<Vec<_>>();
     order.sort_by(|left_index, right_index| {

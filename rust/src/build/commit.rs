@@ -83,9 +83,8 @@ pub(super) fn commit(
             fs::remove_file(path)?;
         }
     }
-    for (builder, asset, bytes) in transaction.pending_outputs {
-        write_atomic(&output_path(workspace, builder.as_ref(), &asset)?, &bytes)?;
-    }
+    // Remove obsolete action outputs before publishing new results: a new
+    // post-process action may reuse a dynamic output from a deleted action.
     for (action_key, action) in transaction.deleted_actions {
         let builder = build_config
             .definition(&action.builder)
@@ -100,6 +99,9 @@ pub(super) fn commit(
             }
         }
         state.actions.remove(&action_key);
+    }
+    for (builder, asset, bytes) in transaction.pending_outputs {
+        write_atomic(&output_path(workspace, builder.as_ref(), &asset)?, &bytes)?;
     }
     for (key, action) in transaction.pending_actions {
         state.actions.insert(key, action);
