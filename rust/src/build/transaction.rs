@@ -16,12 +16,11 @@ pub(super) struct ResolverChanges {
 }
 
 impl ResolverChanges {
-    pub(super) fn has_source_changes(&self) -> bool {
-        !self.resolver_updated.is_empty() || !self.resolver_deleted.is_empty()
-    }
-
-    pub(super) fn has_cache_changes(&self) -> bool {
-        !self.resolver_cache_updated.is_empty() || !self.resolver_cache_deleted.is_empty()
+    pub(super) fn has_changes(&self) -> bool {
+        !self.resolver_updated.is_empty()
+            || !self.resolver_deleted.is_empty()
+            || !self.resolver_cache_updated.is_empty()
+            || !self.resolver_cache_deleted.is_empty()
     }
 
     pub(super) fn clear(&mut self) {

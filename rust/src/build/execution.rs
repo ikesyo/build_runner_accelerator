@@ -154,7 +154,7 @@ pub(super) fn run(
                 }
                 runnable_phase_specs.push(spec);
             }
-            if transaction.resolver.has_source_changes() || transaction.resolver.has_cache_changes() {
+            if transaction.resolver.has_changes() {
                 resolver_needs_reset = true;
             }
             // A part-family builder provably emits nothing when its input
@@ -268,7 +268,7 @@ pub(super) fn run(
                 record_build_result(workspace, state, &spec, result, &mut transaction)?;
             }
 
-            if transaction.resolver.has_source_changes() || transaction.resolver.has_cache_changes() {
+            if transaction.resolver.has_changes() {
                 resolver_needs_reset = true;
             }
 
