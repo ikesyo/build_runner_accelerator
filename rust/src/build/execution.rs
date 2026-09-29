@@ -2,7 +2,7 @@ use crate::builder::{BuildTo, BuilderKind, ConfiguredBuilder, RustBuildConfig};
 use crate::cli::Options;
 use crate::frontend::worker_executable;
 use crate::graph::GraphState;
-use crate::metrics::PoolMetrics;
+use crate::worker::PoolMetrics;
 use crate::plan::BuildSpec;
 use crate::worker::{BuildRequest, LazyBuildState, WorkerPool};
 use crate::workspace::Workspace;
