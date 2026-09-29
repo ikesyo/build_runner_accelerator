@@ -14,8 +14,12 @@ lockfile_source="$fixture_dir/pubspec.lock"
 temporary_dir=$(mktemp -d)
 test_root="$temporary_dir/workspace"
 test_fixtures_dir="$test_root/fixtures"
+test_baselines_dir="$test_root/baselines"
 stock_dir=
 rust_dir=
+stock_baseline_dir="$test_baselines_dir/stock"
+rust_baseline_dir="$test_baselines_dir/rust"
+baseline_ready=0
 case_filter=${CASE_FILTER:-all}
 
 remove_tree() {
@@ -87,10 +91,47 @@ prepare_package() {
 setup_pair() {
   local name=$1
   local config=$2
-  stock_dir="$test_fixtures_dir/${name}-stock"
-  rust_dir="$test_fixtures_dir/${name}-rust"
-  prepare_package "$stock_dir" "$config"
-  prepare_package "$rust_dir" "$config"
+  if [[ "$config" == build.yaml ]]; then
+    stock_dir="$test_fixtures_dir/standard-stock"
+    rust_dir="$test_fixtures_dir/standard-rust"
+    if ((baseline_ready == 0)); then
+      mkdir -p "$test_baselines_dir" "$stock_dir" "$rust_dir"
+      prepare_package "$stock_dir" "$config"
+      prepare_package "$rust_dir" "$config"
+      run_stock "$stock_dir" "$temporary_dir/baseline.stock.initial.log" || \
+        fail 'stock optional baseline build failed'
+      run_rust "$rust_dir" "$temporary_dir/baseline.rust.initial.log" || \
+        fail 'Rust optional baseline build failed'
+      assert_same_outputs \
+        lib/input.optional.txt lib/input.final.txt lib/input.primary.txt \
+        lib/input.glob.txt
+      assert_contains "$temporary_dir/baseline.rust.initial.log" \
+        'Rust frontend: 3 build action(s)'
+      cp -Rp "$stock_dir" "$stock_baseline_dir"
+      cp -Rp "$rust_dir" "$rust_baseline_dir"
+      baseline_ready=1
+    else
+      restore_baseline "$stock_baseline_dir" "$stock_dir"
+      restore_baseline "$rust_baseline_dir" "$rust_dir"
+    fi
+    cp "$temporary_dir/baseline.stock.initial.log" \
+      "$temporary_dir/$name.stock.initial.log"
+    cp "$temporary_dir/baseline.rust.initial.log" \
+      "$temporary_dir/$name.rust.initial.log"
+  else
+    stock_dir="$test_fixtures_dir/${name}-stock"
+    rust_dir="$test_fixtures_dir/${name}-rust"
+    prepare_package "$stock_dir" "$config"
+    prepare_package "$rust_dir" "$config"
+  fi
+}
+
+restore_baseline() {
+  local baseline_dir=$1
+  local active_dir=$2
+  # Keep the active path stable and preserve cache mtimes and symlinks.
+  rm -rf "$active_dir"
+  cp -Rp "$baseline_dir" "$active_dir"
 }
 
 assert_same_file() {
@@ -134,10 +175,6 @@ should_run() {
 
 if should_run demand; then
   setup_pair demand build.yaml
-  run_stock "$stock_dir" "$temporary_dir/demand.stock.initial.log" || \
-    fail 'stock demand-driven build failed'
-  run_rust "$rust_dir" "$temporary_dir/demand.rust.initial.log" || \
-    fail 'Rust demand-driven build failed'
   assert_same_outputs \
     lib/input.optional.txt lib/input.final.txt lib/input.primary.txt \
     lib/input.glob.txt
@@ -166,10 +203,6 @@ fi
 
 if should_run incremental; then
   setup_pair incremental build.yaml
-  run_stock "$stock_dir" "$temporary_dir/incremental.stock.initial.log" || \
-    fail 'stock incremental setup failed'
-  run_rust "$rust_dir" "$temporary_dir/incremental.rust.initial.log" || \
-    fail 'Rust incremental setup failed'
   printf 'changed optional\n' >"$stock_dir/lib/input.txt"
   printf 'changed optional\n' >"$rust_dir/lib/input.txt"
   run_stock "$stock_dir" "$temporary_dir/incremental.stock.change.log" || \
@@ -213,10 +246,6 @@ fi
 
 if should_run delete; then
   setup_pair delete build.yaml
-  run_stock "$stock_dir" "$temporary_dir/delete.stock.initial.log" || \
-    fail 'stock delete setup failed'
-  run_rust "$rust_dir" "$temporary_dir/delete.rust.initial.log" || \
-    fail 'Rust delete setup failed'
   rm -f -- "$stock_dir/lib/input.txt" "$rust_dir/lib/input.txt"
   run_stock "$stock_dir" "$temporary_dir/delete.stock.change.log" || \
     fail 'stock optional input deletion failed'
@@ -233,10 +262,6 @@ fi
 
 if should_run rename; then
   setup_pair rename build.yaml
-  run_stock "$stock_dir" "$temporary_dir/rename.stock.initial.log" || \
-    fail 'stock rename setup failed'
-  run_rust "$rust_dir" "$temporary_dir/rename.rust.initial.log" || \
-    fail 'Rust rename setup failed'
   mv "$stock_dir/lib/input.txt" "$stock_dir/lib/renamed.txt"
   mv "$rust_dir/lib/input.txt" "$rust_dir/lib/renamed.txt"
   run_stock "$stock_dir" "$temporary_dir/rename.stock.change.log" || \

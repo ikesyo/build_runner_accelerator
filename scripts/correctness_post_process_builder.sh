@@ -13,6 +13,12 @@ fixture_dir="$repo_root/fixtures/post_process_builder_app"
 temporary_dir=$(mktemp -d)
 test_root="$temporary_dir/workspace"
 test_fixtures_dir="$test_root/fixtures"
+test_baselines_dir="$test_root/baselines"
+stock_dir="$test_fixtures_dir/stock"
+rust_dir="$test_fixtures_dir/rust"
+stock_baseline_dir="$test_baselines_dir/stock"
+rust_baseline_dir="$test_baselines_dir/rust"
+baseline_ready=0
 no_op_checked=0
 pub_get_args=()
 if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
@@ -113,15 +119,33 @@ prepare_package() {
     fail "pub get failed for $directory"
 }
 
+restore_baseline() {
+  local baseline_dir=$1
+  local active_dir=$2
+  # Keep the active path stable and preserve cache mtimes and symlinks.
+  rm -rf "$active_dir"
+  cp -Rp "$baseline_dir" "$active_dir"
+}
+
 setup_case() {
   local name=$1
-  stock_dir="$test_fixtures_dir/${name}-stock"
-  rust_dir="$test_fixtures_dir/${name}-rust"
-  prepare_package "$stock_dir"
-  prepare_package "$rust_dir"
-
-  run_stock "$stock_dir" "$temporary_dir/$name.stock.initial.log"
-  run_rust "$rust_dir" "$temporary_dir/$name.rust.initial.log"
+  if ((baseline_ready == 0)); then
+    mkdir -p "$test_fixtures_dir" "$test_baselines_dir" "$stock_dir" "$rust_dir"
+    prepare_package "$stock_dir"
+    prepare_package "$rust_dir"
+    run_stock "$stock_dir" "$temporary_dir/baseline.stock.initial.log"
+    run_rust "$rust_dir" "$temporary_dir/baseline.rust.initial.log"
+    cp -Rp "$stock_dir" "$stock_baseline_dir"
+    cp -Rp "$rust_dir" "$rust_baseline_dir"
+    baseline_ready=1
+  else
+    restore_baseline "$stock_baseline_dir" "$stock_dir"
+    restore_baseline "$rust_baseline_dir" "$rust_dir"
+  fi
+  cp "$temporary_dir/baseline.stock.initial.log" \
+    "$temporary_dir/$name.stock.initial.log"
+  cp "$temporary_dir/baseline.rust.initial.log" \
+    "$temporary_dir/$name.rust.initial.log"
   assert_same_file "$stock_dir/lib/input.gen.txt" "$rust_dir/lib/input.gen.txt"
   assert_same_file "$(stock_post_output "$stock_dir")" "$(post_output "$rust_dir")"
   grep -Fq 'Rust frontend: 2 build action(s)' \

@@ -13,24 +13,25 @@ fixture_dir="$repo_root/fixtures/riverpod_app"
 results_dir=$(mktemp -d)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-riverpod-root.XXXXXX")
 test_fixtures_dir="$test_root/fixtures"
-mkdir -p "$test_fixtures_dir"
+test_baselines_dir="$test_root/baselines"
+mkdir -p "$test_fixtures_dir" "$test_baselines_dir"
 worker_attach "$test_root"
 case_filter=${CASE_FILTER:-all}
 pub_get_args=()
 if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
   pub_get_args+=(--offline)
 fi
-cleanup_paths=()
-stock_dir=
-rust_dir=
-stock_package_name=
-rust_package_name=
+stock_package_name=fast_build_riverpod_stock
+rust_package_name=fast_build_riverpod_rust
+stock_dir="$test_fixtures_dir/stock"
+rust_dir="$test_fixtures_dir/rust"
+stock_baseline_dir="$test_baselines_dir/stock"
+rust_baseline_dir="$test_baselines_dir/rust"
 
 remove_tree() {
   local path=$1
-  [[ -e "$path" ]] || return 0
-  find "$path" -depth -type f -delete
-  find "$path" -depth -type d -empty -delete
+  [[ -e "$path" || -L "$path" ]] || return 0
+  rm -rf "$path"
 }
 
 cleanup() {
@@ -43,9 +44,6 @@ cleanup() {
     printf 'riverpod-correctness: keeping temp workspace %s\n' "$test_root" >&2
     return 0
   fi
-  for path in "${cleanup_paths[@]}"; do
-    remove_tree "$path"
-  done
   remove_tree "$test_root"
   remove_tree "$results_dir"
 }
@@ -58,14 +56,6 @@ fail() {
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 worker_ensure_frontend || fail 'Rust frontend build failed'
-
-new_package_dir() {
-  local role=$1
-  local directory
-  directory=$(mktemp -d "$test_fixtures_dir/build-runner-accelerator-riverpod-${role}.XXXXXX")
-  cleanup_paths+=("$directory")
-  printf '%s\n' "$directory"
-}
 
 prepare_package() {
   local directory=$1
@@ -133,17 +123,33 @@ assert_actions() {
   fail "${file##*/} does not contain: Rust frontend: $expected build action(s); observed: ${actual:-<none>}"
 }
 
+restore_baseline() {
+  local baseline_dir=$1
+  local active_dir=$2
+  # Keep the active path stable and preserve cache mtimes and symlinks.
+  rm -rf "$active_dir"
+  cp -Rp "$baseline_dir" "$active_dir"
+}
+
 setup_case() {
   local name=$1
-  local prefix="fast_build_riverpod_${name//-/_}"
-  stock_package_name="${prefix}_stock"
-  rust_package_name="${prefix}_rust"
-  stock_dir=$(new_package_dir "${name}-stock")
-  rust_dir=$(new_package_dir "${name}-rust")
-  prepare_package "$stock_dir" "$stock_package_name"
-  prepare_package "$rust_dir" "$rust_package_name"
-  run_stock "$stock_dir" "$results_dir/$name.stock.initial.log"
-  run_rust "$rust_dir" "$results_dir/$name.rust.initial.log"
+  if [[ ! -d "$stock_baseline_dir" ]]; then
+    mkdir -p "$stock_dir" "$rust_dir"
+    prepare_package "$stock_dir" "$stock_package_name"
+    prepare_package "$rust_dir" "$rust_package_name"
+    run_stock "$stock_dir" "$results_dir/baseline.stock.initial.log"
+    run_rust "$rust_dir" "$results_dir/baseline.rust.initial.log"
+    assert_outputs "$stock_dir" "$rust_dir"
+    cp -Rp "$stock_dir" "$stock_baseline_dir"
+    cp -Rp "$rust_dir" "$rust_baseline_dir"
+  else
+    restore_baseline "$stock_baseline_dir" "$stock_dir"
+    restore_baseline "$rust_baseline_dir" "$rust_dir"
+  fi
+  cp "$results_dir/baseline.stock.initial.log" \
+    "$results_dir/$name.stock.initial.log"
+  cp "$results_dir/baseline.rust.initial.log" \
+    "$results_dir/$name.rust.initial.log"
   assert_outputs "$stock_dir" "$rust_dir"
   # Follow build_runner's findBuilderOrder: applies_builders selects a
   # consumer but does not add a synthetic phase edge. Generated-input

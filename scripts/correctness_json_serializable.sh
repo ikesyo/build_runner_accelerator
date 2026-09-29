@@ -13,7 +13,8 @@ fixture_dir="$repo_root/fixtures/json_serializable_app"
 results_dir=$(mktemp -d)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-correctness-root.XXXXXX")
 test_fixtures_dir="$test_root/fixtures"
-mkdir -p "$test_fixtures_dir"
+test_baselines_dir="$test_root/baselines"
+mkdir -p "$test_fixtures_dir" "$test_baselines_dir"
 worker_attach "$test_root"
 case_filter=${CASE_FILTER:-all}
 cleanup_paths=()
@@ -21,12 +22,17 @@ stock_dir=
 rust_dir=
 new_directory=
 case_package_name=
+stock_package_name=fast_build_correctness_stock
+case_package_name=fast_build_correctness_rust
+stock_dir="$test_fixtures_dir/stock"
+rust_dir="$test_fixtures_dir/rust"
+stock_baseline_dir="$test_baselines_dir/stock"
+rust_baseline_dir="$test_baselines_dir/rust"
 
 remove_tree() {
   local path=$1
-  [[ -e "$path" ]] || return 0
-  find "$path" -depth -type f -delete
-  find "$path" -depth -type d -empty -delete
+  [[ -e "$path" || -L "$path" ]] || return 0
+  rm -rf "$path"
 }
 
 cleanup() {
@@ -118,20 +124,37 @@ assert_no_file() {
   [[ ! -e "$file" ]] || fail "unexpected file remains: $file"
 }
 
+restore_baseline() {
+  local baseline_dir=$1
+  local active_dir=$2
+  # Keep the active path stable and preserve cache mtimes and symlinks.
+  rm -rf "$active_dir"
+  cp -Rp "$baseline_dir" "$active_dir"
+}
+
 setup_case() {
   local name=$1
-  local package_prefix="fast_build_correctness_${name//-/_}"
-  local stock_package_name="${package_prefix}_stock"
-  case_package_name="${package_prefix}_rust"
-  new_package_dir "${name}-stock"
-  stock_dir=$new_directory
-  new_package_dir "${name}-rust"
-  rust_dir=$new_directory
-  prepare_package "$stock_dir" "$stock_package_name"
-  prepare_package "$rust_dir" "$case_package_name"
+  stock_package_name=fast_build_correctness_stock
+  case_package_name=fast_build_correctness_rust
+  stock_dir="$test_fixtures_dir/stock"
+  rust_dir="$test_fixtures_dir/rust"
+  if [[ ! -d "$stock_baseline_dir" ]]; then
+    mkdir -p "$stock_dir" "$rust_dir"
+    prepare_package "$stock_dir" "$stock_package_name"
+    prepare_package "$rust_dir" "$case_package_name"
+    run_stock "$stock_dir" "$results_dir/baseline.stock.initial.log"
+    run_rust "$rust_dir" "$results_dir/baseline.rust.initial.log"
+    cp -Rp "$stock_dir" "$stock_baseline_dir"
+    cp -Rp "$rust_dir" "$rust_baseline_dir"
+  else
+    restore_baseline "$stock_baseline_dir" "$stock_dir"
+    restore_baseline "$rust_baseline_dir" "$rust_dir"
+  fi
+  cp "$results_dir/baseline.stock.initial.log" \
+    "$results_dir/$name.stock.initial.log"
+  cp "$results_dir/baseline.rust.initial.log" \
+    "$results_dir/$name.rust.initial.log"
 
-  run_stock "$stock_dir" "$results_dir/$name.stock.initial.log"
-  run_rust "$rust_dir" "$results_dir/$name.rust.initial.log"
   assert_same_file \
     "$stock_dir/lib/model.g.dart" \
     "$rust_dir/lib/model.g.dart"
