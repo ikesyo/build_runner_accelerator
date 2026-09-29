@@ -13,6 +13,7 @@ fixture_dir="$repo_root/fixtures/arbitrary_builder_app"
 temporary_dir=$(mktemp -d)
 test_root="$temporary_dir/workspace"
 test_fixtures_dir="$test_root/fixtures"
+test_baselines_dir="$test_root/baselines"
 case_filter=${CASE_FILTER:-all}
 pub_get_args=()
 if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
@@ -20,6 +21,11 @@ if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
 fi
 stock_dir=
 rust_dir=
+stock_dir="$test_fixtures_dir/stock"
+rust_dir="$test_fixtures_dir/rust"
+stock_baseline_dir="$test_baselines_dir/stock"
+rust_baseline_dir="$test_baselines_dir/rust"
+baseline_ready=0
 no_op_checked=0
 
 remove_tree() {
@@ -164,15 +170,16 @@ prepare_package() {
     "$dart_bin" "$pub_cache" "${pub_get_args[@]}"
 }
 
-setup_case() {
-  local name=$1
-  stock_dir="$test_fixtures_dir/${name}-stock"
-  rust_dir="$test_fixtures_dir/${name}-rust"
-  prepare_package "$stock_dir"
-  prepare_package "$rust_dir"
+restore_baseline() {
+  local baseline_dir=$1
+  local active_dir=$2
+  # Keep the active path stable and preserve cache mtimes and symlinks.
+  rm -rf "$active_dir"
+  cp -Rp "$baseline_dir" "$active_dir"
+}
 
-  run_stock "$stock_dir" "$temporary_dir/$name.stock.initial.log"
-  run_rust "$rust_dir" "$temporary_dir/$name.rust.initial.log"
+assert_baseline() {
+  local name=$1
   assert_same_file "$stock_dir/lib/input.gen.txt" "$rust_dir/lib/input.gen.txt"
   assert_same_file "$stock_dir/lib/input.meta.txt" "$rust_dir/lib/input.meta.txt"
   assert_same_file "$stock_dir/lib/special.generated.txt" \
@@ -185,10 +192,32 @@ setup_case() {
   assert_no_file "$stock_dir/lib/target-ignored.meta.txt"
   assert_no_file "$rust_dir/lib/target-ignored.gen.txt"
   assert_no_file "$rust_dir/lib/target-ignored.meta.txt"
-  # The exact builder's source output is a .txt input to echo_builder, so the
-  # official generated-input dependency adds a fourth native action.
   assert_contains "$temporary_dir/$name.rust.initial.log" \
     'Rust frontend: 4 build action(s)'
+}
+
+setup_case() {
+  local name=$1
+  if ((baseline_ready == 0)); then
+    mkdir -p "$test_fixtures_dir" "$test_baselines_dir" "$stock_dir" "$rust_dir"
+    prepare_package "$stock_dir"
+    prepare_package "$rust_dir"
+    run_stock "$stock_dir" "$temporary_dir/baseline.stock.initial.log"
+    run_rust "$rust_dir" "$temporary_dir/baseline.rust.initial.log"
+    cp -Rp "$stock_dir" "$stock_baseline_dir"
+    cp -Rp "$rust_dir" "$rust_baseline_dir"
+    baseline_ready=1
+  else
+    restore_baseline "$stock_baseline_dir" "$stock_dir"
+    restore_baseline "$rust_baseline_dir" "$rust_dir"
+  fi
+  cp "$temporary_dir/baseline.stock.initial.log" \
+    "$temporary_dir/$name.stock.initial.log"
+  cp "$temporary_dir/baseline.rust.initial.log" \
+    "$temporary_dir/$name.rust.initial.log"
+  # The exact builder's source output is a .txt input to echo_builder, so the
+  # official generated-input dependency adds a fourth native action.
+  assert_baseline "$name"
   if (( no_op_checked == 0 )); then
     run_rust "$rust_dir" "$temporary_dir/$name.rust.no-op.log"
     assert_contains "$temporary_dir/$name.rust.no-op.log" \
