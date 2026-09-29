@@ -81,7 +81,8 @@ wait_for_outputs() {
     if [[ -f "$stock_dir/lib/input.dart.empty_mapping.out" && \
       -f "$rust_dir/lib/input.dart.empty_mapping.out" && \
       -f "$stock_dir/lib/input.dart.consumed.out" && \
-      -f "$rust_dir/lib/input.dart.consumed.out" ]]; then
+      -f "$rust_dir/lib/input.dart.consumed.out" ]] && \
+      grep -Fq "Watching $rust_dir (native filesystem events)" "$rust_log"; then
       return 0
     fi
     kill -0 "$stock_pid" 2>/dev/null || fail 'stock watch process exited during startup'

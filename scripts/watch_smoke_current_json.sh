@@ -144,6 +144,9 @@ wait_for_path "$stock_dir/lib/model_01.g.dart" "$stock_pid"
 wait_for_path "$rust_dir/lib/model_01.g.dart" "$rust_pid"
 assert_same_outputs initial
 
+# Initial outputs can appear before the Rust filesystem watcher is registered.
+wait_for_text "$rust_log" "Watching $rust_dir (native filesystem events)" "$rust_pid"
+
 sed -i 's/displayName/title/g' \
   "$stock_dir/lib/model_01.dart" "$rust_dir/lib/model_01.dart"
 wait_for_text "$stock_dir/lib/model_01.g.dart" title "$stock_pid"

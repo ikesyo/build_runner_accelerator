@@ -138,6 +138,9 @@ assert_same_file \
   "$stock_dir/lib/generated_input.consumer.dart" \
   "$rust_dir/lib/generated_input.consumer.dart"
 
+# Initial outputs can appear before the Rust filesystem watcher is registered.
+wait_for_text "$rust_log" "Watching $rust_dir (native filesystem events)" "$rust_pid"
+
 for directory in "$stock_dir" "$rust_dir"; do
   printf "import 'package:trigger_builder_app/trigger_marker.dart';\nclass PlainInput {}\n" \
     >"$directory/lib/plain_input.dart.tmp"

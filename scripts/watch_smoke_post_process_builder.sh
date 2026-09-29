@@ -157,6 +157,9 @@ wait_for_path "$(rust_post_output "$rust_dir")" "$rust_pid"
 assert_same_file "$stock_dir/lib/input.gen.txt" "$rust_dir/lib/input.gen.txt"
 assert_same_file "$(stock_post_output "$stock_dir")" "$(rust_post_output "$rust_dir")"
 
+# Initial outputs can appear before the Rust filesystem watcher is registered.
+wait_for_text "$rust_log" "Watching $rust_dir (native filesystem events)" "$rust_pid"
+
 atomic_write "$stock_dir/lib/input.txt"
 atomic_write "$rust_dir/lib/input.txt"
 wait_for_text "$stock_dir/lib/input.gen.txt" 'changed generated' "$stock_pid"
