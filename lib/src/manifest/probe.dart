@@ -279,19 +279,20 @@ Map<String, List<FactoryMapping>> decodeFactoryProbeResult(
   return probed;
 }
 
-/// Derives the effective probe-cache key by mixing [cacheKey] with an
-/// identity for every package in the probed packages' transitive dependency
-/// closure. A probed factory's observable behavior is set by all the code it
-/// can reach, so the identity must cover mutable (path/local) transitive
-/// dependencies — not only the directly probed packages. Entries under the
-/// pub cache (hosted/git) are addressed by name plus their versioned
-/// directory — they are immutable for a given version. Everywhere else the
-/// sources under `lib/` are digested, so editing a factory implementation or
-/// any code it depends on invalidates the cached mapping. The traversal
-/// follows `dev_dependencies` and `dependency_overrides` for the workspace's
-/// own packages — pub resolves those for the workspace, unlike in
-/// dependency pubspecs. Returns null when any reachable package's identity
-/// cannot be established; the caller then skips the cache entirely.
+/// Derives the effective probe-cache key by mixing [cacheKey] with the Dart
+/// SDK version and an identity for every package in the probed packages'
+/// transitive dependency closure. A probed factory's observable behavior
+/// is set by all the code it can reach, so the identity must cover mutable
+/// (path/local) transitive dependencies — not only the directly probed
+/// packages. Entries under the pub cache (hosted/git) are addressed by
+/// name plus their versioned directory — they are immutable for a given
+/// version. Everywhere else the sources under `lib/` are digested, so
+/// editing a factory implementation or any code it depends on invalidates
+/// the cached mapping. The traversal follows `dev_dependencies` and
+/// `dependency_overrides` for the workspace's own packages — pub resolves
+/// those for the workspace, unlike in dependency pubspecs. Returns null
+/// when any reachable package's identity cannot be established; the caller
+/// then skips the cache entirely.
 Future<String?> _implementationScopedCacheKey(
   String workspaceRoot,
   String packageConfigPath,
@@ -351,7 +352,10 @@ Future<String?> _implementationScopedCacheKey(
     queue.addAll(dependencies);
   }
   identities.sort();
-  return '$cacheKey-${sha256.convert(utf8.encode(identities.join('\n')))}';
+  // The probe compiles and runs factories under the resolved Dart SDK, so
+  // the recorded runtime types and mappings can change with it.
+  final keyMaterial = 'dart-sdk:${Platform.version}\n${identities.join('\n')}';
+  return '$cacheKey-${sha256.convert(utf8.encode(keyMaterial))}';
 }
 
 /// The workspace's package directories — [root] itself plus every member

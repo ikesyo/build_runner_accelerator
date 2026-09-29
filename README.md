@@ -172,7 +172,7 @@ machine — skip the expensive cold paths:
 - `<cache>/probe/<builder-manifest-fingerprint>-<impl>.json` — the
   builder-factory probe results from manifest generation. The fingerprint
   covers the lockfile and every package's `build.yaml`, and `<impl>` digests
-  the implementation identity of the probed packages' transitive dependency
+  the Dart SDK version plus the probed packages' transitive dependency
   closure (versioned pub-cache directories, or source digests for path
   dependencies; the workspace's own packages also contribute their
   dev_dependencies and overrides), so a factory edit invalidates the entry.

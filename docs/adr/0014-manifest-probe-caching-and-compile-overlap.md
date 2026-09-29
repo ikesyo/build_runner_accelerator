@@ -41,9 +41,10 @@ Two facts make most of it redundant:
 - `probeFactoryMappings` persists the raw probe response under the
   machine-wide cache root from ADR 0012 at
   `<cache>/probe/<builder-manifest-fingerprint>-<impl>.json`, where
-  `<impl>` digests the identity of every package in the probed packages'
-  transitive dependency closure — a factory's observable behavior is set
-  by all the code it can reach, not only its own package. Pub-cache
+  `<impl>` digests the Dart SDK version plus the identity of every package
+  in the probed packages' transitive dependency closure — a factory's
+  observable behavior is set by the SDK it runs under and all the code it
+  can reach, not only its own package. Pub-cache
   packages contribute `name@<versioned dir>` (immutable for a version),
   and mutable locations (path dependencies, SDK or local checkouts)
   contribute a sha256 of their `lib/` sources; the closure is walked via
