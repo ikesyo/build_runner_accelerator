@@ -17,6 +17,19 @@ test_baselines_dir="$test_root/baselines"
 mkdir -p "$test_fixtures_dir" "$test_baselines_dir"
 worker_attach "$test_root"
 case_filter=${CASE_FILTER:-all}
+known_case_names=(
+  generated-output-delete
+  input-delete
+  rename
+  failure
+  affected-actions
+  generate-for
+  builder-options
+  glob-membership
+  conditional-dependency
+  empty-options
+)
+selected_case_names=()
 cleanup_paths=()
 stock_dir=
 rust_dir=
@@ -52,6 +65,37 @@ trap cleanup EXIT
 fail() {
   printf 'correctness: FAIL: %s\n' "$*" >&2
   exit 1
+}
+
+is_known_case() {
+  local wanted=$1
+  local known
+  for known in "${known_case_names[@]}"; do
+    [[ "$wanted" == "$known" ]] && return 0
+  done
+  return 1
+}
+
+if [[ "$case_filter" == all ]]; then
+  selected_case_names=("${known_case_names[@]}")
+else
+  requested_case_names=()
+  IFS=',' read -r -a requested_case_names <<<"$case_filter"
+  for requested_case in "${requested_case_names[@]}"; do
+    requested_case=${requested_case//[[:space:]]/}
+    [[ -n "$requested_case" ]] || fail 'CASE_FILTER contains an empty case'
+    is_known_case "$requested_case" || fail "unknown correctness case: $requested_case"
+    selected_case_names+=("$requested_case")
+  done
+fi
+
+case_is_selected() {
+  local wanted=$1
+  local selected
+  for selected in "${selected_case_names[@]}"; do
+    [[ "$selected" == "$wanted" ]] && return 0
+  done
+  return 1
 }
 
 if [[ ! -x "$dart_bin" ]]; then
@@ -419,7 +463,7 @@ run_case_empty_options() {
 run_selected() {
   local name=$1
   shift
-  if [[ "$case_filter" == all || "$case_filter" == "$name" ]]; then
+  if case_is_selected "$name"; then
     verification_run_case "json/$name" "$@"
   fi
 }
