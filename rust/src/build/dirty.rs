@@ -58,14 +58,7 @@ pub(super) fn analyze(
 
         let key = spec.action_key();
         let needs_build = match state.actions.get(&key) {
-            Some(action) if state.is_compatible(&config_digest) => {
-                state.changed_since_previous_with(
-                    action,
-                    &dirty_context,
-                    &current_snapshot,
-                    &current_output_digests,
-                )
-            }
+            
             _ => true,
         };
         if needs_build {
@@ -91,10 +84,7 @@ pub(super) fn analyze(
     }
     filesystem_metrics.dirty_check_us = dirty_check_started.elapsed().as_micros();
 
-    let expected_keys: BTreeSet<String> = specs
-        .iter()
-        .map(|spec| spec.action_key())
-        .collect();
+    
     let deleted_actions: Vec<(String, ActionState)> = state
         .actions
         .iter()
@@ -141,7 +131,7 @@ fn collect_output_digests(
             .iter()
             .map(|chunk| {
                 scope.spawn(move || {
-                    chunk.iter().map(digests_for).collect::<io::Result<Vec<_>>>()
+                    
                 })
             })
             .collect::<Vec<_>>();
@@ -164,12 +154,7 @@ pub(super) fn expand_dirty_dependents(
 ) {
     let specs_by_key = specs
         .iter()
-        .map(|spec| {
-            (
-                spec.action_key(),
-                spec.clone(),
-            )
-        })
+        
         .collect::<BTreeMap<_, _>>();
     let mut dependents_by_asset = BTreeMap::<&str, Vec<&str>>::new();
     let mut actions_by_entrypoint = BTreeMap::<&str, Vec<&str>>::new();
@@ -224,9 +209,7 @@ pub(super) fn expand_dirty_dependents(
             // Use planned outputs when the prior action did not record any:
             // a dirty producer may emit them now, so skipped consumers need a
             // chance to check whether their primary input became available.
-            Some(action)
-                if action.status == "not_triggered" || action.status == "success" =>
-            {
+            
                 specs_by_key
                     .get(&source_key)
                     .map(|spec| spec.outputs.clone())

@@ -7,12 +7,7 @@ use crate::plan::BuildSpec;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-fn configured_builder(
-    id: &str,
-    target: &str,
-    target_order: u32,
-    phase: u32,
-) -> ConfiguredBuilder {
+
     ConfiguredBuilder {
         definition: Arc::new(BuilderDefinition {
             id: id.to_owned(),
@@ -45,11 +40,7 @@ fn configured_builder(
     }
 }
 
-fn build_spec(
-    builder: &ConfiguredBuilder,
-    input: &str,
-    outputs: &[&str],
-) -> BuildSpec {
+
     BuildSpec {
         builder: builder.definition.clone(),
         target: builder.target.clone(),
@@ -120,9 +111,11 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
 
     expand_dirty_dependents(&mut dirty, &[producer.clone(), consumer.clone()], &state);
 
-    assert!(dirty
-        .iter()
-        .any(|spec| spec.action_key() == consumer.action_key()));
+    assert!(
+        dirty
+            .iter()
+            .any(|spec| spec.action_key() == consumer.action_key())
+    );
 
     // A producer with no prior output can emit a planned output after its
     // input changes, so the skipped consumer must be reconsidered this build.
@@ -138,9 +131,7 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
         &[producer, consumer.clone()],
         &successful_empty_state,
     );
-    assert!(dirty
-        .iter()
-        .any(|spec| spec.action_key() == consumer.action_key()));
+    
 }
 
 #[test]

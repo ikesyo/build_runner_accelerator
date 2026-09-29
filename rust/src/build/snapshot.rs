@@ -4,9 +4,7 @@ use crate::assets::{
 };
 use crate::builder::RustBuildConfig;
 use crate::graph::GraphState;
-use crate::metrics::{
-    FilesystemMetrics, plan_metrics_enabled, print_plan_stage, snapshot_summary,
-};
+
 use crate::workspace::Workspace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
