@@ -9,10 +9,11 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 const MANIFEST_PATH: &str = ".dart_tool/build_runner_accelerator/builder-manifest.json";
 const WORKER_ENTRYPOINT_PATH: &str = ".dart_tool/build_runner_accelerator/dynamic_worker.dart";
+const EARLY_WORKER_MARKER_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 pub(crate) fn select_frontend(
     options: &Options,
@@ -128,6 +129,7 @@ fn generate_manifest(
             "manifest generator not found in build_runner_accelerator package",
         )
     })?;
+    cleanup_stale_worker_readiness_markers(worker_entrypoint);
     // The generator writes the worker entrypoint early (before its factory
     // probe). Remove any stale copy first so its appearance marks the moment
     // the synchronous worker AOT compile can start; the compile then overlaps
@@ -306,6 +308,37 @@ fn generate_manifest(
     }
 }
 
+fn cleanup_stale_worker_readiness_markers(worker_entrypoint: &Path) {
+    let Some(directory) = worker_entrypoint.parent() else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with(".early-worker-")
+            || !(name.ends_with(".json") || name.ends_with(".tmp"))
+            || !entry.file_type().is_ok_and(|kind| kind.is_file())
+        {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= EARLY_WORKER_MARKER_MAX_AGE);
+        if stale {
+            // Keep recent markers: another build process may still be waiting
+            // on its AOT compile. Treat week-old markers as abandoned.
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
 pub(crate) fn worker_executable(options: &Options, config: &RustBuildConfig) -> io::Result<String> {
     options
         .worker
@@ -378,4 +411,53 @@ pub(crate) fn run_dart_fallback(options: &Options, workspace: &Workspace) -> io:
     }
     println!("Build completed (Dart fallback)");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cleanup_stale_worker_readiness_markers, EARLY_WORKER_MARKER_MAX_AGE};
+    use std::fs::{self, File, FileTimes};
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn cleanup_removes_only_old_readiness_files() {
+        let root = std::env::temp_dir().join(format!(
+            "early-worker-readiness-cleanup-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let directory = root.join(".dart_tool/build_runner_accelerator");
+        fs::create_dir_all(&directory).unwrap();
+        let worker = directory.join("dynamic_worker.dart");
+        let stale_json = directory.join(".early-worker-old.json");
+        let stale_temp = directory.join(".early-worker-old.tmp");
+        let recent = directory.join(".early-worker-active.json");
+        let unrelated = directory.join(".early-worker-not-a-marker.txt");
+        let marker_directory = directory.join(".early-worker-directory.json");
+        for path in [&stale_json, &stale_temp, &recent, &unrelated] {
+            File::create(path).unwrap();
+        }
+        fs::create_dir(&marker_directory).unwrap();
+        let old_time = SystemTime::now() - EARLY_WORKER_MARKER_MAX_AGE - Duration::from_secs(1);
+        for path in [&stale_json, &stale_temp] {
+            File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_times(FileTimes::new().set_modified(old_time))
+                .unwrap();
+        }
+
+        cleanup_stale_worker_readiness_markers(&worker);
+
+        assert!(!stale_json.exists());
+        assert!(!stale_temp.exists());
+        assert!(recent.exists());
+        assert!(unrelated.exists());
+        assert!(marker_directory.is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
 }

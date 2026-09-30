@@ -47,7 +47,10 @@ The generator independently compares the published source with its current
 entrypoint before launching the executable. Readiness waiting is bounded to
 90 seconds; actual factory execution retains the existing 30-second timeout
 and termination handling. Missing/invalid/mismatched readiness, failed execution,
-or invalid JSON uses the source probe. Separate result files prevent a
+or invalid JSON uses the source probe. A panic in the AOT thread is caught and
+publishes an unavailable state immediately. Later manifest regeneration removes
+readiness files older than seven days while leaving recent markers for concurrent
+builds untouched. Separate result files prevent a
 timed-out child from writing into the source retry's result. Complete responses
 use the existing validated probe cache; partial factory failures retain the
 existing unsupported-manifest behavior.

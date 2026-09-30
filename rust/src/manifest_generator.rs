@@ -128,12 +128,7 @@ fn prepare<F: FnOnce()>(
     // publish the same slot; readers reject mismatched artifact/metadata
     // pairs, and an unavailable cache always falls back to source execution.
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let staging = directory.join(format!(
-        ".{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir(&staging)?;
+    let staging = create_staging_directory(&directory, std::process::id(), &NEXT)?;
     let result = (|| {
         let temporary_kernel = staging.join("generator.dill");
         let depfile = staging.join("generator.d");
@@ -197,6 +192,25 @@ fn prepare<F: FnOnce()>(
     result
 }
 
+fn create_staging_directory(
+    directory: &Path,
+    process_id: u32,
+    next: &AtomicU64,
+) -> io::Result<PathBuf> {
+    loop {
+        let nonce = next.fetch_add(1, Ordering::Relaxed);
+        let staging = directory.join(format!(".{process_id}-{nonce}"));
+        match fs::create_dir(&staging) {
+            Ok(()) => return Ok(staging),
+            // A previous process with a reused PID may have left this
+            // invocation's first staging directory behind. Skip it rather
+            // than turning this cache miss into a source-only run.
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn replace(source: &Path, destination: &Path) -> io::Result<()> {
     #[cfg(windows)]
     if destination.exists() {
@@ -208,6 +222,31 @@ fn replace(source: &Path, destination: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_staging_directory_does_not_block_snapshot_preparation() {
+        let root = std::env::temp_dir().join(format!(
+            "manifest-snapshot-staging-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let process_id = std::process::id();
+        fs::create_dir(root.join(format!(".{process_id}-0"))).unwrap();
+        let next = AtomicU64::new(0);
+
+        let staging = create_staging_directory(&root, process_id, &next).unwrap();
+
+        assert_eq!(
+            staging.file_name().unwrap().to_string_lossy().to_string(),
+            format!(".{process_id}-1")
+        );
+        assert!(staging.is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn snapshot_key_tracks_sdk_config_and_generator_but_not_runtime_yaml() {

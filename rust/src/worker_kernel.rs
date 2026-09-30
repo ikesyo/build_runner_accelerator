@@ -201,7 +201,12 @@ pub(crate) fn early_worker_aot_compile(
     let readiness = readiness.map(Path::to_path_buf);
     let source = fs::read_to_string(&worker_executable).ok();
     Some(thread::spawn(move || {
-        let result = prepare_worker_aot(&root, &dart_binary, &worker_executable);
+        // A panic must also settle the invocation-local readiness marker.
+        // Otherwise the Dart generator can wait the full readiness timeout
+        // before it falls back to the source probe.
+        let result = catch_worker_aot_panic(|| {
+            prepare_worker_aot(&root, &dart_binary, &worker_executable)
+        });
         if let Some(readiness) = readiness {
             let message = match (&result, &source) {
                 (Ok(path), Some(source))
@@ -219,6 +224,14 @@ pub(crate) fn early_worker_aot_compile(
         }
         result
     }))
+}
+
+fn catch_worker_aot_panic<F>(compile: F) -> io::Result<PathBuf>
+where
+    F: FnOnce() -> io::Result<PathBuf>,
+{
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(compile))
+        .unwrap_or_else(|_| Err(io::Error::other("worker AOT compilation panicked")))
 }
 
 pub(crate) fn early_worker_aot_enabled() -> bool {
@@ -1399,13 +1412,21 @@ fn spawn_analysis_prewarm(root: &Path, dart_binary: &str) -> Option<AnalysisPrew
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_background_aot_lock, background_aot_lock_is_stale,
+        acquire_background_aot_lock, background_aot_lock_is_stale, catch_worker_aot_panic,
         parse_depfile_dependencies, pinned_worker_artifact_is_current, WorkerArtifact,
     };
     use std::fs::{self, OpenOptions};
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn early_worker_aot_panics_are_caught() {
+        let result = catch_worker_aot_panic(|| -> std::io::Result<PathBuf> {
+            panic!("injected AOT panic");
+        });
+        assert!(result.is_err());
+    }
 
     #[test]
     fn depfile_parser_handles_continuations_and_escaped_spaces() {

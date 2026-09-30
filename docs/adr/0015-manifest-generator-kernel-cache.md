@@ -40,7 +40,9 @@ a content mismatch, or an outdated key is a miss.
 Source mtimes alone are insufficient, including after branch switches.
 
 Compilation uses an invocation-specific staging directory and publishes files
-by rename. Artifact and metadata digests reject a partially published pair.
+by rename. If a previous process left a directory behind and the PID is reused,
+the next nonce is tried instead of abandoning the cache miss. Artifact and
+metadata digests reject a partially published pair.
 Concurrent misses may duplicate work; this iteration does not introduce locks.
 Cache preparation failures preserve source execution and the existing
 auto/rust/dart mode contract. `BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT=0`
