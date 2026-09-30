@@ -251,7 +251,7 @@ jobs:
         shell: bash
         env:
           PUB_GET_OFFLINE: '1'
-          CASE_FILTER: generated-output-delete,input-delete,rename,failure,affected-actions,generate-for,builder-options,glob-membership,empty-options
+          CASE_FILTER: generated-output-delete,input-delete,rename,failure,affected-actions,generate-for,builder-options,glob-membership,empty-options,part-comment,empty-producer
         run: bash scripts/correctness_json_serializable.sh
 
   integration-json-conditional-dependency:

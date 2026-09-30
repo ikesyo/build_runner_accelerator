@@ -215,14 +215,17 @@ pub(super) fn expand_dirty_dependents(
         let source_key = dirty[cursor].action_key();
         let source_outputs = match state.actions.get(&source_key) {
             Some(action) if !action.outputs.is_empty() => action.outputs.clone(),
-            // Use the current plan when the prior action did not run or was
-            // skipped before it could discover an output. This preserves an
-            // edge for a producer that may emit an output in this build while
-            // treating a successful no-output action as having no outputs.
-            Some(action) if action.status == "not_triggered" => specs_by_key
-                .get(&source_key)
-                .map(|spec| spec.outputs.clone())
-                .unwrap_or_default(),
+            // Use planned outputs when the prior action did not record any:
+            // a dirty producer may emit them now, so skipped consumers need a
+            // chance to check whether their primary input became available.
+            Some(action) if action.status == "not_triggered" || action.status == "success" => {
+                specs_by_key
+                    .get(&source_key)
+                    .map(|spec| spec.outputs.clone())
+                    .unwrap_or_default()
+            }
+            // Missing-primary-input actions are also committed after an
+            // otherwise successful build, so this arm remains reachable.
             Some(_) => Vec::new(),
             None => specs_by_key
                 .get(&source_key)
