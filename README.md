@@ -156,7 +156,7 @@ repaired.
 
 ## Performance and caching
 
-The accelerator keeps three shared caches under a machine-wide cache root
+The accelerator keeps four shared caches under a machine-wide cache root
 so repeated builds — including builds in fresh checkouts on the same
 machine — skip the expensive cold paths:
 
@@ -178,6 +178,12 @@ machine — skip the expensive cold paths:
   dev_dependencies and overrides), so a factory edit invalidates the entry.
   Only complete
   responses are cached, so a cache hit skips the probe subprocess entirely.
+- `<cache>/manifest-kernel/<key>` — the manifest generator's compiled kernel.
+  The key includes SDK and package configuration identities; each hit checks
+  the compiled source dependencies and artifact contents. Workspace build.yaml
+  inputs are read again on every manifest regeneration. Reuse requires the
+  same absolute package roots; the first compile still costs source startup
+  plus snapshot serialization. See [ADR 0015](docs/adr/0015-manifest-generator-kernel-cache.md).
 
 The cache root resolves `BUILD_RUNNER_ACCELERATOR_CACHE` first — a relative
 path is anchored at the workspace root — then the platform cache directory
@@ -207,6 +213,7 @@ adjust the root for your platform or `BUILD_RUNNER_ACCELERATOR_CACHE`).
 | Variable | Effect |
 | --- | --- |
 | `BUILD_RUNNER_ACCELERATOR_CACHE` | Relocate or isolate all machine-wide caches. |
+| `BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT=0` | Run the manifest generator from source instead of its cached kernel. |
 | `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0` | Disable the shared analyzer byte store. |
 | `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` | Disable the analysis shards spawned by `aot-prewarm`. |
 | `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS=<n>` | Override the prewarm shard count (default: half of available CPUs). |

@@ -229,6 +229,7 @@ run_quick() {
     PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics analyze \
       lib bin test tool)
   bash "$script_dir/smoke.sh"
+  bash "$script_dir/correctness_manifest_snapshot.sh"
   run_trigger_correctness
   if [[ "${VERIFY_ARBITRARY_BUILDER:-0}" == 1 ]]; then
     bash "$script_dir/correctness_arbitrary_builder.sh"

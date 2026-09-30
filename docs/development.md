@@ -96,6 +96,13 @@ the public summary in [`benchmarks.md`](benchmarks.md) only from a
 reproducible launcher-inclusive run; detailed experiments belong in
 [`benchmarks/experiments-2026-09.md`](benchmarks/experiments-2026-09.md).
 
+To isolate manifest-generator startup, resolve the selected fixture first and
+run `bash scripts/benchmark_manifest_generator.sh`. This native phase benchmark
+alternates source and cached-kernel routes and checks manifest/worker equality;
+it is separate from launcher-inclusive build measurements. Details and the
+Rust early-selection investigation are in
+[`benchmarks/manifest-startup-2026-09.md`](benchmarks/manifest-startup-2026-09.md).
+
 For unexpectedly large native action plans, use the pre-worker diagnostics:
 
 ```bash

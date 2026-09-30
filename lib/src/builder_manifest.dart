@@ -16,9 +16,24 @@ import 'manifest/probe.dart';
 import 'manifest/selection.dart';
 
 Future<void> generateBuilderManifest(List<String> arguments) async {
+  final metrics =
+      Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1';
+  final timer = Stopwatch()..start();
+  var previousMicros = 0;
+  void reportStage(String stage) {
+    if (!metrics) return;
+    final elapsed = timer.elapsedMicroseconds;
+    stderr.writeln(
+      'Dart manifest metrics: stage=$stage '
+      'elapsed_us=${elapsed - previousMicros} total_us=$elapsed',
+    );
+    previousMicros = elapsed;
+  }
+
   final options = _Arguments.parse(arguments);
   final root = Directory(options.root).absolute.path;
   final inputs = await _loadInputs(root);
+  reportStage('load-inputs');
   final resolved = _resolveTargetsAndDefinitions(inputs);
   final selection = _ApplicationSelection(
     selectApplications(
@@ -28,6 +43,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       definitions: resolved.definitions,
     ),
   );
+  reportStage('select-builders');
   // Emit the worker entrypoint before probing: the Rust frontend overlaps
   // the synchronous worker AOT compile with the probe window. The catalog is
   // a superset of the final one (a builder that later fails conversion keeps
@@ -39,14 +55,17 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       _earlyCatalogEntries(selection),
     );
   }
+  reportStage('entrypoint');
   final runtimeMappings = await _probeRuntimeMappings(
     root,
     resolved,
     selection,
     options.fingerprint,
   );
+  reportStage('probe');
   final normalized = _normalizeManifest(resolved, selection, runtimeMappings);
   await _emitArtifacts(options, inputs.triggerDigest, normalized);
+  reportStage('emit');
 }
 
 class _LoadedInputs {

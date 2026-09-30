@@ -140,7 +140,11 @@ fn generate_manifest(
                 .join(".dart_tool/package_config.json")
                 .display()
         ))
-        .arg(generator);
+        .arg(crate::manifest_generator::resolve(
+            &workspace.root,
+            dart_binary,
+            &generator,
+        ));
     // The generator writes the worker entrypoint early (before its factory
     // probe). Remove any stale copy first so its appearance marks the moment
     // the synchronous worker AOT compile can start; the compile then overlaps

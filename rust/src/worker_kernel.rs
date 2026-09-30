@@ -311,7 +311,7 @@ impl Drop for BackgroundAotLock {
 /// `BUILD_RUNNER_ACCELERATOR_CACHE` wins, then the platform cache directory.
 /// A relative override resolves against the workspace root so the Rust
 /// frontend and its workers agree even when the launcher runs elsewhere.
-fn shared_cache_root(workspace_root: &Path) -> Option<PathBuf> {
+pub(crate) fn shared_cache_root(workspace_root: &Path) -> Option<PathBuf> {
     if let Ok(configured) = env::var("BUILD_RUNNER_ACCELERATOR_CACHE") {
         if !configured.is_empty() {
             let path = PathBuf::from(configured);
@@ -756,7 +756,7 @@ fn aot_cache_key(
     ))
 }
 
-fn aot_sdk_identity(sdk_root: &Path) -> io::Result<(String, String)> {
+pub(crate) fn aot_sdk_identity(sdk_root: &Path) -> io::Result<(String, String)> {
     let sdk_root = fs::canonicalize(sdk_root)?;
     let version = fs::read(sdk_root.join("version"))?;
     let allowed_experiments = fs::read(
@@ -907,6 +907,12 @@ fn dart_sdk_root(dart_binary: &str) -> io::Result<PathBuf> {
         }
     }
 
+    dart_sdk_root_for_binary(dart_binary)
+}
+
+// Generator kernels must match the VM that will execute them, even when an
+// independent DART_SDK override is used for worker AOT preparation.
+pub(crate) fn dart_sdk_root_for_binary(dart_binary: &str) -> io::Result<PathBuf> {
     let dart_path = if Path::new(dart_binary).is_absolute()
         || Path::new(dart_binary).parent().is_some_and(|parent| !parent.as_os_str().is_empty())
     {
@@ -1082,7 +1088,7 @@ fn worker_artifact_is_current(artifact: &Path, depfile: &Path, worker: &Path) ->
         })
 }
 
-fn parse_depfile_dependencies(contents: &str) -> Option<Vec<PathBuf>> {
+pub(crate) fn parse_depfile_dependencies(contents: &str) -> Option<Vec<PathBuf>> {
     let mut logical = String::with_capacity(contents.len());
     let mut characters = contents.chars().peekable();
     while let Some(character) = characters.next() {

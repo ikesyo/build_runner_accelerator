@@ -261,3 +261,11 @@ not a release-wide guarantee. The clean runs were used to create the persisted
 graph; their wall times are not compared because first-build worker setup and
 page-cache state differ. The paired no-op comparison is the performance claim
 for this change.
+
+## 2026-09-30: Manifest generator startup
+
+The [manifest startup investigation](manifest-startup-2026-09.md) records the
+v0.7.0 report/timeline analysis, generator kernel cache A/B, compatibility
+checks, and the scope of a future Rust early factory-catalog selector. This
+is a generator-phase experiment; it does not update launcher-inclusive public
+benchmark claims or establish a cold-machine speedup.
