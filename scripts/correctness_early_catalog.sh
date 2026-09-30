@@ -55,7 +55,9 @@ no_early_catalog() {
 generate cold
 grep -Fq 'aot_started=true' "$temporary_dir/cold.log"
 grep -Fq 'Dart manifest probe: executor=worker-aot' "$temporary_dir/cold.log"
-! grep -Fq 'discarding early AOT' "$temporary_dir/cold.log"
+if grep -Fq 'discarding early AOT' "$temporary_dir/cold.log"; then
+  exit 1
+fi
 cp "$manifest" "$temporary_dir/expected.json"
 cp "$entrypoint" "$temporary_dir/expected.dart"
 cp -R "$fixture/lib" "$temporary_dir/expected-lib"
