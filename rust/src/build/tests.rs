@@ -278,13 +278,15 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
     let old_spec = build_spec(&builder, "app|lib/old.txt", &[]);
     let new_spec = build_spec(&builder, "app|lib/new.txt", &[]);
     let output = "app|lib/shared.out".to_owned();
+    let obsolete_output = "app|lib/obsolete.out".to_owned();
     let new_bytes = b"replacement output".to_vec();
     fs::write(temporary.0.join("lib/shared.out"), b"obsolete output")?;
+    fs::write(temporary.0.join("lib/obsolete.out"), b"no longer needed")?;
     fs::write(temporary.0.join("lib/new.txt"), b"new input")?;
     let old_action = ActionState {
         builder: builder.definition.id.clone(),
         input: old_spec.input.clone(),
-        outputs: vec![output.clone()],
+        outputs: vec![output.clone(), obsolete_output.clone()],
         status: "success".to_owned(),
         ..ActionState::default()
     };
@@ -336,6 +338,8 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
     )?;
 
     assert_eq!(fs::read(temporary.0.join("lib/shared.out"))?, new_bytes);
+    assert!(!temporary.0.join("lib/obsolete.out").exists());
+    assert!(!state.assets.contains_key(&obsolete_output));
     assert!(!state.actions.contains_key(&old_spec.action_key()));
     assert_eq!(state.actions.get(&new_spec.action_key()), Some(&new_action));
     assert_eq!(GraphState::load(&state_path)?, state);

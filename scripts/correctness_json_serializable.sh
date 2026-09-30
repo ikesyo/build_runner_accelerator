@@ -463,7 +463,6 @@ run_case_empty_options() {
   printf 'correctness: empty-options-native-path: pass\n'
 }
 
-
 run_case_part_comment() {
   local variant name
   for variant in lf crlf cr; do

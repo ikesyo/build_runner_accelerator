@@ -224,6 +224,8 @@ pub(super) fn expand_dirty_dependents(
                     .map(|spec| spec.outputs.clone())
                     .unwrap_or_default()
             }
+            // Missing-primary-input actions are also committed after an
+            // otherwise successful build, so this arm remains reachable.
             Some(_) => Vec::new(),
             None => specs_by_key
                 .get(&source_key)

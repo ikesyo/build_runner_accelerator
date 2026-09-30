@@ -34,6 +34,8 @@ all_cases=(
   glob-membership
   conditional-dependency
   empty-options
+  part-comment
+  empty-producer
 )
 
 cleanup() {
