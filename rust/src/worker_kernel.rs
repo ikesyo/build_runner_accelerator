@@ -187,24 +187,44 @@ pub(crate) fn early_worker_aot_compile(
     root: &Path,
     dart_binary: &str,
     worker_executable: &str,
+    readiness: Option<&Path>,
 ) -> Option<thread::JoinHandle<io::Result<PathBuf>>> {
     if !is_dart_source(worker_executable) {
         return None;
     }
-    if !matches!(aot_request(), AotRequest::Force | AotRequest::Synchronous) {
-        return None;
-    }
-    if configured_worker_aot().ok().flatten().is_some()
-        || configured_worker_kernel().ok().flatten().is_some()
-    {
+    if !early_worker_aot_enabled() {
         return None;
     }
     let root = root.to_path_buf();
     let dart_binary = dart_binary.to_string();
     let worker_executable = worker_executable.to_string();
+    let readiness = readiness.map(Path::to_path_buf);
+    let source = fs::read_to_string(&worker_executable).ok();
     Some(thread::spawn(move || {
-        prepare_worker_aot(&root, &dart_binary, &worker_executable)
+        let result = prepare_worker_aot(&root, &dart_binary, &worker_executable);
+        if let Some(readiness) = readiness {
+            let message = match (&result, &source) {
+                (Ok(path), Some(source))
+                    if fs::read_to_string(&worker_executable).ok().as_ref() == Some(source) =>
+                {
+                    serde_json::json!({"state": "ready", "path": path, "source": source})
+                }
+                _ => serde_json::json!({"state": "unavailable"}),
+            };
+            // Invocation-local handoff: the generator also checks exact source.
+            let temporary = readiness.with_extension("tmp");
+            if fs::write(&temporary, message.to_string()).is_ok() {
+                let _ = replace_file(&temporary, &readiness);
+            }
+        }
+        result
     }))
+}
+
+pub(crate) fn early_worker_aot_enabled() -> bool {
+    matches!(aot_request(), AotRequest::Force | AotRequest::Synchronous)
+        && configured_worker_aot().ok().flatten().is_none()
+        && configured_worker_kernel().ok().flatten().is_none()
 }
 
 /// Spawn JIT `AnalysisDriver` processes that resolve the workspace package's

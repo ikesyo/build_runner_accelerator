@@ -111,7 +111,7 @@ normal installation or benchmark path.
 | --- | --- |
 | Rust frontend | Workspace snapshot, dependency and glob tracking, action graph, dirty propagation, phase scheduling, overlay, atomic commit, and native watch. |
 | Dart worker | Builder factories, `BuildStep`, `AssetReader`, Analyzer-backed resolver work, and builder-owned resource lifetimes. |
-| Manifest generator | Resolves official `PackageGraph` and `BuildConfig` data into a workspace-specific worker manifest and generated worker entrypoint. |
+| Manifest generator | Resolves the package graph and official `BuildConfig` data into a workspace-specific worker manifest and generated worker entrypoint. |
 | Launcher | Selects the frontend, manages the native artifact cache, verifies releases, and preserves a conservative Dart fallback. |
 
 The main builder path is manifest-first. Builder names are not hard-coded into
@@ -184,6 +184,17 @@ machine — skip the expensive cold paths:
   inputs are read again on every manifest regeneration. Reuse requires the
   same absolute package roots; the first compile still costs source startup
   plus snapshot serialization. See [ADR 0015](docs/adr/0015-manifest-generator-kernel-cache.md).
+
+On a generator snapshot miss, synchronous worker AOT starts from a lightweight
+catalog helper before the full generator compiles. Both generators share the
+existing Dart configuration loader and builder selector. The full generator
+validates the manifest; a different final worker discards the early AOT.
+Snapshot hits skip the helper. Set `BUILD_RUNNER_ACCELERATOR_EARLY_CATALOG=0`
+to disable this earlier selection pass and compiled-worker probing. On a probe
+cache miss, the generator can reuse the compiled worker in a separate factory
+probe process, avoiding a second compilation of the builder imports. A source
+mismatch, unavailable artifact or failed probe uses the source probe.
+See [ADR 0016](docs/adr/0016-early-worker-catalog.md).
 
 The cache root resolves `BUILD_RUNNER_ACCELERATOR_CACHE` first — a relative
 path is anchored at the workspace root — then the platform cache directory

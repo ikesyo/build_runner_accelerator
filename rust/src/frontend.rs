@@ -1,7 +1,7 @@
 use crate::builder::{BuilderManifestFile, RustBuildConfig, rust_build_config_from_manifest};
 use crate::cli::{FrontendMode, Options};
 use crate::worker_kernel::{
-    early_worker_aot_compile, prewarm_worker_aot, start_analysis_prewarm,
+    early_worker_aot_compile, early_worker_aot_enabled, prewarm_worker_aot, start_analysis_prewarm,
     take_background_aot_lock, worker_aot_cache_key,
 };
 use crate::workspace::Workspace;
@@ -128,10 +128,101 @@ fn generate_manifest(
             "manifest generator not found in build_runner_accelerator package",
         )
     })?;
-    // Running the package's internal tool directly avoids an implicit
-    // pub resolution step. The workspace has already been resolved, so
-    // reuse its package config for deterministic/offline manifest
-    // generation in CI and installed packages.
+    // The generator writes the worker entrypoint early (before its factory
+    // probe). Remove any stale copy first so its appearance marks the moment
+    // the synchronous worker AOT compile can start; the compile then overlaps
+    // the probe instead of serializing after it on a cold build. When the
+    // removal fails, a lingering stale entrypoint could trigger a compile of
+    // the old script, so the early path is disabled entirely.
+    let mut early_compile_ready = match fs::remove_file(worker_entrypoint) {
+        Ok(()) => true,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => true,
+        Err(error) => {
+            eprintln!("Rust worker entrypoint cleanup failed; disabling early AOT ({error})");
+            false
+        }
+    };
+    let mut early_compile = None;
+    let mut early_source = None;
+    // Readiness belongs to this generator invocation, never a restored cache.
+    static NEXT_PROBE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let readiness = if early_compile_ready
+        && options.worker.is_none()
+        && early_worker_aot_enabled()
+        && std::env::var("BUILD_RUNNER_ACCELERATOR_EARLY_CATALOG").as_deref() != Ok("0")
+    {
+        let path = worker_entrypoint.with_file_name(format!(
+            ".early-worker-{}-{}.json",
+            std::process::id(),
+            NEXT_PROBE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        fs::create_dir_all(path.parent().unwrap()).ok();
+        fs::write(&path, r#"{"state":"pending"}"#)
+            .ok()
+            .map(|_| path)
+    } else {
+        None
+    };
+    let generation_start = std::time::Instant::now();
+    let artifact =
+        crate::manifest_generator::resolve(&workspace.root, dart_binary, &generator, || {
+            if !early_compile_ready
+                || options.worker.is_some()
+                || !early_worker_aot_enabled()
+                || std::env::var("BUILD_RUNNER_ACCELERATOR_EARLY_CATALOG").as_deref() == Ok("0")
+            {
+                return;
+            }
+            let helper = package_root.join("tool/generate_worker_catalog.dart");
+            if !helper.is_file() {
+                return;
+            }
+            let result = Command::new(dart_binary)
+                .arg(format!(
+                    "--packages={}",
+                    workspace
+                        .root
+                        .join(".dart_tool/package_config.json")
+                        .display()
+                ))
+                .arg(&helper)
+                .arg(&workspace.root)
+                .arg(worker_entrypoint)
+                .current_dir(&workspace.root)
+                .status();
+            match result {
+                Ok(status) if status.success() && worker_entrypoint.is_file() => {
+                    if let Ok(source) = fs::read(worker_entrypoint) {
+                        early_source = Some(source);
+                        early_compile = early_worker_aot_compile(
+                            &workspace.root,
+                            dart_binary,
+                            &worker_entrypoint.to_string_lossy(),
+                            readiness.as_deref(),
+                        );
+                    }
+                    if std::env::var("BUILD_RUNNER_ACCELERATOR_METRICS").as_deref() == Ok("1") {
+                        eprintln!(
+                            "Rust manifest early catalog: elapsed_us={} aot_started={}",
+                            generation_start.elapsed().as_micros(),
+                            early_compile.is_some()
+                        );
+                    }
+                }
+                _ => {
+                    eprintln!("Rust early catalog unavailable; using full generator");
+                    // A helper may have emitted a partial or outdated entrypoint.
+                    if let Err(error) = fs::remove_file(worker_entrypoint) {
+                        if error.kind() != io::ErrorKind::NotFound {
+                            early_compile_ready = false;
+                            eprintln!(
+                                "Rust early catalog cleanup failed; disabling early AOT ({error})"
+                            );
+                        }
+                    }
+                }
+            }
+        });
     command
         .arg(format!(
             "--packages={}",
@@ -140,26 +231,14 @@ fn generate_manifest(
                 .join(".dart_tool/package_config.json")
                 .display()
         ))
-        .arg(crate::manifest_generator::resolve(
-            &workspace.root,
-            dart_binary,
-            &generator,
-        ));
-    // The generator writes the worker entrypoint early (before its factory
-    // probe). Remove any stale copy first so its appearance marks the moment
-    // the synchronous worker AOT compile can start; the compile then overlaps
-    // the probe instead of serializing after it on a cold build. When the
-    // removal fails, a lingering stale entrypoint could trigger a compile of
-    // the old script, so the early path is disabled entirely.
-    let early_compile_ready = match fs::remove_file(worker_entrypoint) {
-        Ok(()) => true,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => true,
-        Err(error) => {
-            eprintln!("Rust worker entrypoint cleanup failed; disabling early AOT ({error})");
-            false
+        .arg(artifact);
+    command.env_remove("BUILD_RUNNER_ACCELERATOR_MANIFEST_WORKER_AOT");
+    if let Some(path) = &readiness {
+        if early_compile_ready {
+            command.env("BUILD_RUNNER_ACCELERATOR_MANIFEST_WORKER_AOT", path);
         }
-    };
-    let mut child = command
+    }
+    let child_result = command
         .arg("--root")
         .arg(&workspace.root)
         .arg("--manifest")
@@ -169,35 +248,53 @@ fn generate_manifest(
         .arg("--fingerprint")
         .arg(fingerprint)
         .current_dir(&workspace.root)
-        .spawn()?;
-    let mut early_compile = None;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) => {
-                if early_compile_ready && early_compile.is_none() && worker_entrypoint.is_file() {
-                    early_compile = early_worker_aot_compile(
-                        &workspace.root,
-                        dart_binary,
-                        &worker_entrypoint.to_string_lossy(),
-                    );
+        .spawn();
+    let status = match child_result {
+        Err(error) => Err(error),
+        Ok(mut child) => loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) => {
+                    if early_compile_ready && early_compile.is_none() && worker_entrypoint.is_file()
+                    {
+                        early_source = fs::read(worker_entrypoint).ok();
+                        early_compile = early_worker_aot_compile(
+                            &workspace.root,
+                            dart_binary,
+                            &worker_entrypoint.to_string_lossy(),
+                            readiness.as_deref(),
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
                 }
-                std::thread::sleep(Duration::from_millis(50));
+                Err(error) => break Err(error),
             }
-            Err(error) => break Err(error),
-        }
+        },
     };
     // Always join before returning: `prepare_worker_aot` uses pid-named temp
     // files, so it must not overlap a later invocation in this process — even
     // when polling the generator itself failed.
     if let Some(handle) = early_compile {
         match handle.join() {
-            Ok(Ok(_)) => {}
+            Ok(Ok(artifact)) => {
+                if early_source
+                    .as_ref()
+                    .is_some_and(|source| fs::read(worker_entrypoint).ok().as_ref() != Some(source))
+                {
+                    let _ = fs::remove_file(artifact);
+                    eprintln!(
+                        "Rust early catalog differed from final worker; discarding early AOT"
+                    );
+                }
+            }
             Ok(Err(error)) => {
                 eprintln!("Rust worker early AOT compile failed; will retry ({error})")
             }
             Err(_) => eprintln!("Rust worker early AOT compile panicked; will retry"),
         }
+    }
+    if let Some(path) = readiness {
+        let _ = fs::remove_file(path);
     }
     let status = status?;
     if status.success() {

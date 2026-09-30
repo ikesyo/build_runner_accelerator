@@ -30,6 +30,7 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
   String root,
   Iterable<FactoryProbeRequest> requests, {
   String? cacheKey,
+  String? workerEntrypoint,
 }) async {
   final probeRequests = requests.toList(growable: false);
   if (probeRequests.isEmpty) return const {};
@@ -66,25 +67,47 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
     );
     final probeFile = File(p.join(temporary.path, 'probe.dart'));
     final resultFile = File(p.join(temporary.path, 'result.json'));
-    await probeFile.writeAsString(_factoryProbeSource(probeRequests));
-    // Process.start is required here so a misbehaving factory probe can be
-    // terminated instead of blocking manifest generation indefinitely.
-    final process = await Process.start(Platform.resolvedExecutable, [
-      '--packages=$packageConfig',
-      probeFile.path,
-      resultFile.path,
-    ], workingDirectory: root);
-    // Consume both pipes while the probe runs; otherwise a verbose probe can
-    // block on a full child-process pipe before the timeout is reached.
-    unawaited(process.stdout.drain<void>());
-    unawaited(process.stderr.drain<void>());
+    String? responseText;
+    final readiness =
+        Platform.environment['BUILD_RUNNER_ACCELERATOR_MANIFEST_WORKER_AOT'];
+    if (readiness != null && workerEntrypoint != null) {
+      final executable = await waitForEarlyWorkerAot(
+        readiness,
+        workerEntrypoint,
+      );
+      if (executable != null) {
+        responseText = await _probeWithWorkerAot(
+          root,
+          executable,
+          probeRequests,
+          temporary,
+        );
+      }
+    }
+    if (responseText == null) {
+      await probeFile.writeAsString(_factoryProbeSource(probeRequests));
+      // Process.start is required here so a misbehaving factory probe can be
+      // terminated instead of blocking manifest generation indefinitely.
+      final process = await Process.start(Platform.resolvedExecutable, [
+        '--packages=$packageConfig',
+        probeFile.path,
+        resultFile.path,
+      ], workingDirectory: root);
+      // Consume both pipes while the probe runs; otherwise a verbose probe can
+      // block on a full child-process pipe before the timeout is reached.
+      unawaited(process.stdout.drain<void>());
+      unawaited(process.stderr.drain<void>());
 
-    final exitCode = await waitForProbeExit(
-      exitCode: process.exitCode,
-      kill: process.kill,
-    );
-    if (exitCode != 0 || !resultFile.existsSync()) return const {};
-    final responseText = await resultFile.readAsString();
+      final exitCode = await waitForProbeExit(
+        exitCode: process.exitCode,
+        kill: process.kill,
+      );
+      if (exitCode != 0 || !resultFile.existsSync()) return const {};
+      responseText = await resultFile.readAsString();
+      if (Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1') {
+        stderr.writeln('Dart manifest probe: executor=source');
+      }
+    }
     final decoded = decodeFactoryProbeResponse(responseText, probeRequests);
     // Only persist a response that produced a valid mapping for every
     // probeable request — a response missing entries (a factory threw)
@@ -105,6 +128,108 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
       } catch (_) {
         // Cleanup is best effort; the probe must not fail the build.
       }
+    }
+  }
+}
+
+/// An invocation-local readiness marker is useful only for identical source.
+/// Waiting for compilation is bounded separately from factory execution.
+Future<String?> waitForEarlyWorkerAot(
+  String readinessPath,
+  String workerEntrypoint, {
+  Duration timeout = const Duration(seconds: 90),
+}) async {
+  final timer = Stopwatch()..start();
+  while (true) {
+    try {
+      final ready = jsonDecode(await File(readinessPath).readAsString());
+      if (ready is! Map) return null;
+      if (ready['state'] == 'ready') {
+        final executable = ready['path'];
+        return executable is String &&
+                File(executable).existsSync() &&
+                ready['source'] == await File(workerEntrypoint).readAsString()
+            ? executable
+            : null;
+      }
+      if (ready['state'] != 'pending') return null;
+    } on Object {
+      return null;
+    }
+    if (timer.elapsed >= timeout) return null;
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
+}
+
+Future<String?> _probeWithWorkerAot(
+  String root,
+  String executable,
+  List<FactoryProbeRequest> requests,
+  Directory temporary,
+) async {
+  // Keep attempts separate if a timed-out child ignores termination.
+  final resultFile = File(p.join(temporary.path, 'worker-result.json'));
+  try {
+    final input = File(p.join(temporary.path, 'requests.json'));
+    await input.writeAsString(
+      jsonEncode([
+        for (final request in requests.where(isProbeableRequest))
+          <String, dynamic>{
+            'id': request.id,
+            'options': request.options,
+            'is_root': request.isRoot,
+            'post_process': request.definition.isPostProcess,
+            'factories': request.definition.isPostProcess
+                ? [
+                    {
+                      'id': request.definition.key,
+                      'name': request.definition.postProcess!.builderFactory,
+                    },
+                  ]
+                : [
+                    for (
+                      var i = 0;
+                      i < request.definition.normal!.builderFactories.length;
+                      i++
+                    )
+                      {
+                        'id': manifestFactoryId(
+                          request.definition.key,
+                          i,
+                          request.definition.normal!.builderFactories.length,
+                        ),
+                        'name': request.definition.normal!.builderFactories[i],
+                      },
+                  ],
+          },
+      ]),
+    );
+    final process = await Process.start(executable, [
+      '--factory-probe',
+      input.path,
+      resultFile.path,
+    ], workingDirectory: root);
+    unawaited(process.stdout.drain<void>());
+    unawaited(process.stderr.drain<void>());
+    final code = await waitForProbeExit(
+      exitCode: process.exitCode,
+      kill: process.kill,
+    );
+    if (code != 0 || !resultFile.existsSync()) return null;
+    final text = await resultFile.readAsString();
+    if (jsonDecode(text) is! Map) return null;
+    if (Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1') {
+      stderr.writeln('Dart manifest probe: executor=worker-aot');
+    }
+    return text;
+  } on Object {
+    return null;
+  } finally {
+    // A failed executable must not leave a result for the source retry to read.
+    try {
+      if (resultFile.existsSync()) await resultFile.delete();
+    } on Object {
+      // Cleanup must not prevent the source retry.
     }
   }
 }

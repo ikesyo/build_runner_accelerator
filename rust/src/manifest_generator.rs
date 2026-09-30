@@ -19,12 +19,21 @@ struct Metadata {
     dependencies: BTreeMap<PathBuf, String>,
 }
 
-pub(crate) fn resolve(root: &Path, dart: &str, generator: &Path) -> PathBuf {
+pub(crate) fn resolve<F: FnOnce()>(
+    root: &Path,
+    dart: &str,
+    generator: &Path,
+    before_compile: F,
+) -> PathBuf {
+    let mut before_compile = Some(before_compile);
     if std::env::var("BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT").as_deref() == Ok("0") {
+        if let Some(callback) = before_compile.take() {
+            callback();
+        }
         return generator.to_path_buf();
     }
     let start = std::time::Instant::now();
-    match prepare(root, dart, generator) {
+    match prepare(root, dart, generator, &mut before_compile) {
         Ok((path, hit)) => {
             if std::env::var("BUILD_RUNNER_ACCELERATOR_METRICS").as_deref() == Ok("1") {
                 eprintln!(
@@ -36,6 +45,9 @@ pub(crate) fn resolve(root: &Path, dart: &str, generator: &Path) -> PathBuf {
             path
         }
         Err(error) => {
+            if let Some(callback) = before_compile.take() {
+                callback();
+            }
             eprintln!("Rust manifest snapshot unavailable; using Dart source ({error})");
             generator.to_path_buf()
         }
@@ -87,7 +99,12 @@ fn is_current(kernel: &Path, metadata: &Path, key: &str, generator: &Path) -> bo
             .all(|(path, expected)| digest_file(path).is_ok_and(|actual| actual == *expected))
 }
 
-fn prepare(root: &Path, dart: &str, generator: &Path) -> io::Result<(PathBuf, bool)> {
+fn prepare<F: FnOnce()>(
+    root: &Path,
+    dart: &str,
+    generator: &Path,
+    before_compile: &mut Option<F>,
+) -> io::Result<(PathBuf, bool)> {
     let generator = fs::canonicalize(generator)?;
     let key = cache_key(root, dart, &generator)?;
     let directory = shared_cache_root(root)
@@ -99,6 +116,12 @@ fn prepare(root: &Path, dart: &str, generator: &Path) -> io::Result<(PathBuf, bo
     let metadata = directory.join("metadata.json");
     if is_current(&kernel, &metadata, &key, &generator) {
         return Ok((kernel, true));
+    }
+
+    // Start worker compilation before paying the generator's cold compile.
+    // Warm snapshot hits skip this extra selection pass entirely.
+    if let Some(callback) = before_compile.take() {
+        callback();
     }
 
     // Each invocation owns a staging directory. Competing processes may

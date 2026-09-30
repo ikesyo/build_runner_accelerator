@@ -69,7 +69,8 @@ String workerSource(Iterable<CatalogEntry> entries) {
   }
   output
     ..writeln()
-    ..writeln('Future<void> main() => runWorker(')
+    ..writeln('Future<void> main(List<String> args) => runWorker(')
+    ..writeln('  arguments: args,')
     ..writeln('  catalog: <String, BuilderFactory>{');
   for (final entry in sorted.where((entry) => !entry.isPostProcess)) {
     output.writeln(

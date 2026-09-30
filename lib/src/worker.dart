@@ -23,15 +23,31 @@ import 'remote_build_step.dart';
 import 'resolver_host.dart';
 import 'resolver_reads.dart';
 import 'trigger_evaluator.dart';
+import 'worker_factory_probe.dart';
 
 final _metricsEnabled =
     Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1';
 
 Future<void> runWorker({
   required Map<String, BuilderFactory> catalog,
+  List<String> arguments = const [],
   Map<String, PostProcessBuilderFactory> postProcessCatalog =
       const <String, PostProcessBuilderFactory>{},
 }) async {
+  if (arguments.isNotEmpty) {
+    if (arguments.length != 3 || arguments.first != '--factory-probe') {
+      stderr.writeln('usage: worker [--factory-probe <requests> <result>]');
+      exitCode = 64;
+      return;
+    }
+    runWorkerFactoryProbe(
+      requestsPath: arguments[1],
+      resultPath: arguments[2],
+      catalog: catalog,
+      postProcessCatalog: postProcessCatalog,
+    );
+    return;
+  }
   // stdout is the binary IPC channel. Capture build_runner diagnostics so
   // package logging can never corrupt a frame.
   buildLog.configuration = buildLog.configuration.rebuild((config) {
