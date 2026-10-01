@@ -9,6 +9,9 @@ void main() {
   final config = File('.dart_tool/package_config.json').absolute.path;
   late Directory root;
   final children = <Process>[];
+  final killSkip = Platform.isWindows
+      ? 'uses POSIX process termination'
+      : false;
 
   setUpAll(() async {
     artifacts = await Directory.systemTemp.createTemp(
@@ -115,7 +118,7 @@ void main() {
     holder.kill(ProcessSignal.sigkill);
     await holder.exitCode;
     await succeeds(waiter);
-  }, skip: Platform.isWindows ? 'uses POSIX process termination' : false);
+  }, skip: killSkip);
 
   test('bounded lock wait falls back to stock generation', () async {
     await start('hold', 'holder');
