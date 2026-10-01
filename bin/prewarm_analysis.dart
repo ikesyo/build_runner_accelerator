@@ -45,7 +45,8 @@ import 'package:path/path.dart' as p;
 import 'package:pub_semver/pub_semver.dart';
 
 /// Directories of the workspace package whose Dart sources are worth warming.
-const _warmDirs = ['lib', 'test', 'integration_test'];
+/// `--dirs` overrides the set; the sentinel `none` warms only the SDK summary.
+const _defaultWarmDirs = ['lib', 'test', 'integration_test'];
 
 /// Minimal `package:` URI resolver backed by the workspace package config.
 ///
@@ -86,12 +87,19 @@ class _PackageUriResolver extends UriResolver {
 Future<void> main(List<String> args) async {
   var shard = 0;
   var shards = 1;
+  var warmDirs = _defaultWarmDirs;
   for (var i = 0; i < args.length; i++) {
     switch (args[i]) {
       case '--shard':
         shard = int.parse(args[++i]);
       case '--shards':
         shards = int.parse(args[++i]);
+      case '--dirs':
+        warmDirs = args[++i]
+            .split(',')
+            .map((d) => d.trim())
+            .where((d) => d.isNotEmpty && d != 'none')
+            .toList();
     }
   }
 
@@ -106,7 +114,7 @@ Future<void> main(List<String> args) async {
     Uri.parse(buildProcessState.packageConfigUri),
   );
   final sdkSummaryBytes = await File(
-    await defaultSdkSummaryGenerator(),
+    await _sharedSdkSummaryPath(),
   ).readAsBytes();
   final provider = PhysicalResourceProvider.INSTANCE;
 
@@ -149,7 +157,7 @@ Future<void> main(List<String> args) async {
   final session = driver.currentSession;
 
   final files = <String>[];
-  for (final dir in _warmDirs) {
+  for (final dir in warmDirs) {
     final directory = Directory(p.join(root, dir));
     if (!directory.existsSync()) continue;
     files.addAll(
@@ -183,3 +191,75 @@ Future<void> main(List<String> args) async {
     'prewarm[$shard]: done, $warmed files in ${stopwatch.elapsed.inSeconds}s',
   );
 }
+
+/// Resolve the SDK summary path while concurrent prewarm shards build it at
+/// most once.
+///
+/// On a cold workspace every shard would otherwise run
+/// [defaultSdkSummaryGenerator]'s multi-second `buildSdkSummary` call itself:
+/// the cached `.dart_tool/build_resolvers/sdk.sum` does not exist yet, so all
+/// N shards duplicate the work and then race the same rename. The first shard
+/// to notice the missing summary takes a lock file and builds it; losers wait
+/// for the lock release and then take the generator's own cache-hit path.
+/// Waiting is bounded; a crashed builder's stale lock is deleted after
+/// [_summaryLockMaxAge] so a later run never waits on it.
+Future<String> _sharedSdkSummaryPath() async {
+  final summaryFile = File(p.join('.dart_tool', 'build_resolvers', 'sdk.sum'));
+  final lockFile = File(
+    p.join('.dart_tool', 'build_resolvers', '.sdk-summary.lock'),
+  );
+
+  var ownsLock = false;
+  if (!summaryFile.existsSync()) {
+    try {
+      await lockFile.parent.create(recursive: true);
+      lockFile.createSync(exclusive: true);
+      ownsLock = true;
+    } on FileSystemException {
+      // Another shard is already building it; wait below.
+    }
+  }
+  if (!ownsLock && lockFile.existsSync()) {
+    const step = Duration(milliseconds: 250);
+    const maxWait = Duration(minutes: 3);
+    var waited = Duration.zero;
+    while (lockFile.existsSync()) {
+      if (waited >= maxWait) break;
+      final age = DateTime.now().difference(lockFile.lastModifiedSync());
+      if (age > _summaryLockMaxAge) {
+        // The builder was killed without releasing; reclaim it.
+        try {
+          lockFile.deleteSync();
+        } on FileSystemException {
+          // Still present or already gone — either way, retry owning below.
+        }
+        if (!summaryFile.existsSync()) {
+          try {
+            lockFile.createSync(exclusive: true);
+            ownsLock = true;
+            break;
+          } on FileSystemException {
+            // Another shard reclaimed it first.
+          }
+        }
+      }
+      await Future<void>.delayed(step);
+      waited += step;
+    }
+  }
+  try {
+    return await defaultSdkSummaryGenerator();
+  } finally {
+    if (ownsLock) {
+      try {
+        lockFile.deleteSync();
+      } on FileSystemException {
+        // Best effort; a leftover lock is reclaimed by the age check above.
+      }
+    }
+  }
+}
+
+/// How old a `.sdk-summary.lock` may be before a shard treats it as abandoned
+/// by a killed builder.
+const _summaryLockMaxAge = Duration(minutes: 2);
