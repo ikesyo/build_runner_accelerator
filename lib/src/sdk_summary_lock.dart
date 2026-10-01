@@ -66,7 +66,13 @@ Future<SdkSummaryResult> _resolve(
           handle = null;
           break;
         }
-        await Future<void>.delayed(const Duration(milliseconds: 25));
+        // Warm cache validation typically releases the lock in a few ms.
+        // Retry promptly at first, then back off during cold generation.
+        await Future<void>.delayed(
+          stopwatch.elapsed < const Duration(milliseconds: 100)
+              ? const Duration(milliseconds: 5)
+              : const Duration(milliseconds: 25),
+        );
       }
     }
   } on FileSystemException {

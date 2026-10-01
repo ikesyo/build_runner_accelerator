@@ -42,7 +42,8 @@ prewarm shards a `.sdk-summary.lock`; workers still raced.
   `manifest-kernel-v2-*`; stale v1 entries age out in place.
 - Worker resolver initialization resolves the SDK summary through the same
   `.sdk-summary.lock` protocol the prewarm shards use (persistent file,
-  OS exclusive lock, 25 ms poll, three-minute bound). The lock covers both
+  OS exclusive lock, 5 ms poll for the first 100 ms then 25 ms, three-minute
+  bound). The lock covers both
   cache validation and generation, including rebuilding an existing summary
   after an SDK/dependency change. A killed process releases its OS lock
   immediately, and isolate-local calls share one in-flight future. Lock errors
