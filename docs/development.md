@@ -112,6 +112,13 @@ The resolved SDK/pub cache and OS page cache are warm. `COLD_BENCHMARK_ROOT`,
 `COLD_BENCHMARK_RESULTS`, `COLD_BENCHMARK_REPEATS` and `JOBS` select the inputs.
 This measures the native frontend directly, excluding the Dart launcher.
 
+For fresh-checkout reuse on a warm machine, use
+`bash scripts/benchmark_cross_workspace_startup.sh` with a separately built
+main binary and package source root. The script compares clean, no-op,
+one-file and broad incremental builds against stock output bytes; commands
+and cache conditions are recorded in
+[`cross-workspace-startup-2026-10.md`](benchmarks/cross-workspace-startup-2026-10.md).
+
 For unexpectedly large native action plans, use the pre-worker diagnostics:
 
 ```bash
