@@ -187,24 +187,57 @@ pub(crate) fn early_worker_aot_compile(
     root: &Path,
     dart_binary: &str,
     worker_executable: &str,
+    readiness: Option<&Path>,
 ) -> Option<thread::JoinHandle<io::Result<PathBuf>>> {
     if !is_dart_source(worker_executable) {
         return None;
     }
-    if !matches!(aot_request(), AotRequest::Force | AotRequest::Synchronous) {
-        return None;
-    }
-    if configured_worker_aot().ok().flatten().is_some()
-        || configured_worker_kernel().ok().flatten().is_some()
-    {
+    if !early_worker_aot_enabled() {
         return None;
     }
     let root = root.to_path_buf();
     let dart_binary = dart_binary.to_string();
     let worker_executable = worker_executable.to_string();
+    let readiness = readiness.map(Path::to_path_buf);
+    let source = fs::read_to_string(&worker_executable).ok();
     Some(thread::spawn(move || {
-        prepare_worker_aot(&root, &dart_binary, &worker_executable)
+        // A panic must also settle the invocation-local readiness marker.
+        // Otherwise the Dart generator can wait the full readiness timeout
+        // before it falls back to the source probe.
+        let result = catch_worker_aot_panic(|| {
+            prepare_worker_aot(&root, &dart_binary, &worker_executable)
+        });
+        if let Some(readiness) = readiness {
+            let message = match (&result, &source) {
+                (Ok(path), Some(source))
+                    if fs::read_to_string(&worker_executable).ok().as_ref() == Some(source) =>
+                {
+                    serde_json::json!({"state": "ready", "path": path, "source": source})
+                }
+                _ => serde_json::json!({"state": "unavailable"}),
+            };
+            // Invocation-local handoff: the generator also checks exact source.
+            let temporary = readiness.with_extension("tmp");
+            if fs::write(&temporary, message.to_string()).is_ok() {
+                let _ = replace_file(&temporary, &readiness);
+            }
+        }
+        result
     }))
+}
+
+fn catch_worker_aot_panic<F>(compile: F) -> io::Result<PathBuf>
+where
+    F: FnOnce() -> io::Result<PathBuf>,
+{
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(compile))
+        .unwrap_or_else(|_| Err(io::Error::other("worker AOT compilation panicked")))
+}
+
+pub(crate) fn early_worker_aot_enabled() -> bool {
+    matches!(aot_request(), AotRequest::Force | AotRequest::Synchronous)
+        && configured_worker_aot().ok().flatten().is_none()
+        && configured_worker_kernel().ok().flatten().is_none()
 }
 
 /// Spawn JIT `AnalysisDriver` processes that resolve the workspace package's
@@ -311,7 +344,7 @@ impl Drop for BackgroundAotLock {
 /// `BUILD_RUNNER_ACCELERATOR_CACHE` wins, then the platform cache directory.
 /// A relative override resolves against the workspace root so the Rust
 /// frontend and its workers agree even when the launcher runs elsewhere.
-fn shared_cache_root(workspace_root: &Path) -> Option<PathBuf> {
+pub(crate) fn shared_cache_root(workspace_root: &Path) -> Option<PathBuf> {
     if let Ok(configured) = env::var("BUILD_RUNNER_ACCELERATOR_CACHE") {
         if !configured.is_empty() {
             let path = PathBuf::from(configured);
@@ -756,7 +789,7 @@ fn aot_cache_key(
     ))
 }
 
-fn aot_sdk_identity(sdk_root: &Path) -> io::Result<(String, String)> {
+pub(crate) fn aot_sdk_identity(sdk_root: &Path) -> io::Result<(String, String)> {
     let sdk_root = fs::canonicalize(sdk_root)?;
     let version = fs::read(sdk_root.join("version"))?;
     let allowed_experiments = fs::read(
@@ -907,6 +940,12 @@ fn dart_sdk_root(dart_binary: &str) -> io::Result<PathBuf> {
         }
     }
 
+    dart_sdk_root_for_binary(dart_binary)
+}
+
+// Generator kernels must match the VM that will execute them, even when an
+// independent DART_SDK override is used for worker AOT preparation.
+pub(crate) fn dart_sdk_root_for_binary(dart_binary: &str) -> io::Result<PathBuf> {
     let dart_path = if Path::new(dart_binary).is_absolute()
         || Path::new(dart_binary).parent().is_some_and(|parent| !parent.as_os_str().is_empty())
     {
@@ -1082,7 +1121,7 @@ fn worker_artifact_is_current(artifact: &Path, depfile: &Path, worker: &Path) ->
         })
 }
 
-fn parse_depfile_dependencies(contents: &str) -> Option<Vec<PathBuf>> {
+pub(crate) fn parse_depfile_dependencies(contents: &str) -> Option<Vec<PathBuf>> {
     let mut logical = String::with_capacity(contents.len());
     let mut characters = contents.chars().peekable();
     while let Some(character) = characters.next() {
@@ -1373,13 +1412,21 @@ fn spawn_analysis_prewarm(root: &Path, dart_binary: &str) -> Option<AnalysisPrew
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_background_aot_lock, background_aot_lock_is_stale,
+        acquire_background_aot_lock, background_aot_lock_is_stale, catch_worker_aot_panic,
         parse_depfile_dependencies, pinned_worker_artifact_is_current, WorkerArtifact,
     };
     use std::fs::{self, OpenOptions};
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn early_worker_aot_panics_are_caught() {
+        let result = catch_worker_aot_panic(|| -> std::io::Result<PathBuf> {
+            panic!("injected AOT panic");
+        });
+        assert!(result.is_err());
+    }
 
     #[test]
     fn depfile_parser_handles_continuations_and_escaped_spaces() {

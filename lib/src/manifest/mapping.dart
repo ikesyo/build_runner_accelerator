@@ -3,6 +3,9 @@ import 'package:build_runner/src/build_plan/build_triggers.dart'
     show AnnotationBuildTrigger, BuildTriggers, ImportBuildTrigger;
 
 import 'model.dart';
+import 'catalog.dart' show manifestFactoryId;
+export 'catalog.dart' show manifestFactoryId;
+export 'patterns.dart';
 
 final manifestIdentifierPattern = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$');
 final _captureGroupRegexp = RegExp(r'\{\{(\w*)\}\}');
@@ -308,9 +311,6 @@ List<String>? _knownPostProcessInputExtensions(
   return null;
 }
 
-String manifestFactoryId(String definitionKey, int factoryIndex, int count) =>
-    count == 1 ? definitionKey : '$definitionKey#factory$factoryIndex';
-
 bool _simpleExtension(String value) =>
     value.startsWith('.') &&
     value.length > 1 &&
@@ -358,51 +358,3 @@ String _normalizeOutputSuffix(String configured) {
 }
 
 String _normalizePathOutput(String configured) => configured;
-
-PatternSet targetPatterns(
-  BuildTarget target,
-  PackageInfo package,
-  BuildConfig config,
-) {
-  final include = target.sources.include;
-  if (include == null || include.isEmpty) {
-    final defaults = package.isRoot
-        ? const ['**']
-        : <String>[
-            'CHANGELOG*',
-            'lib/**',
-            'bin/**',
-            'LICENSE*',
-            'pubspec.yaml',
-            'README*',
-            ...config.additionalPublicAssets,
-          ];
-    return _patternSet(
-      defaults,
-      target.sources.exclude?.toList(growable: false) ?? const [],
-    );
-  }
-  return patterns(target.sources);
-}
-
-PatternSet patterns(InputSet inputSet) {
-  final include = inputSet.include;
-  final includePatterns = include == null || include.isEmpty
-      ? const ['**']
-      : include.toList(growable: false);
-  final excludePatterns = inputSet.exclude?.toList(growable: false) ?? const [];
-  return _patternSet(includePatterns, excludePatterns);
-}
-
-PatternSet _patternSet(List<String> include, List<String> exclude) {
-  if (include.any((pattern) => !_supportedPattern(pattern)) ||
-      exclude.any((pattern) => !_supportedPattern(pattern))) {
-    throw StateError('target sources contain an unsupported glob');
-  }
-  return PatternSet(include, exclude);
-}
-
-bool _supportedPattern(String pattern) =>
-    pattern.isNotEmpty &&
-    !pattern.contains('\\') &&
-    !pattern.contains(RegExp(r'[\[\]{}!]'));

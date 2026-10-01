@@ -11,14 +11,30 @@ import 'manifest/emitter.dart';
 import 'manifest/mapping.dart';
 import 'manifest/model.dart';
 import 'manifest/ordering.dart';
+import 'manifest/catalog.dart';
 import 'manifest/package_graph.dart';
 import 'manifest/probe.dart';
 import 'manifest/selection.dart';
 
 Future<void> generateBuilderManifest(List<String> arguments) async {
+  final metrics =
+      Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1';
+  final timer = Stopwatch()..start();
+  var previousMicros = 0;
+  void reportStage(String stage) {
+    if (!metrics) return;
+    final elapsed = timer.elapsedMicroseconds;
+    stderr.writeln(
+      'Dart manifest metrics: stage=$stage '
+      'elapsed_us=${elapsed - previousMicros} total_us=$elapsed',
+    );
+    previousMicros = elapsed;
+  }
+
   final options = _Arguments.parse(arguments);
   final root = Directory(options.root).absolute.path;
   final inputs = await _loadInputs(root);
+  reportStage('load-inputs');
   final resolved = _resolveTargetsAndDefinitions(inputs);
   final selection = _ApplicationSelection(
     selectApplications(
@@ -28,6 +44,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       definitions: resolved.definitions,
     ),
   );
+  reportStage('select-builders');
   // Emit the worker entrypoint before probing: the Rust frontend overlaps
   // the synchronous worker AOT compile with the probe window. The catalog is
   // a superset of the final one (a builder that later fails conversion keeps
@@ -36,17 +53,21 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   if (selection.selected.isNotEmpty) {
     await emitWorkerEntrypoint(
       options.workerEntrypoint,
-      _earlyCatalogEntries(selection),
+      earlyCatalogEntries(selection.selected),
     );
   }
+  reportStage('entrypoint');
   final runtimeMappings = await _probeRuntimeMappings(
     root,
     resolved,
     selection,
     options.fingerprint,
+    options.workerEntrypoint,
   );
+  reportStage('probe');
   final normalized = _normalizeManifest(resolved, selection, runtimeMappings);
   await _emitArtifacts(options, inputs.triggerDigest, normalized);
+  reportStage('emit');
 }
 
 class _LoadedInputs {
@@ -138,68 +159,13 @@ Future<_LoadedInputs> _loadInputs(String root) async {
 }
 
 _ResolvedInputs _resolveTargetsAndDefinitions(_LoadedInputs inputs) {
-  final packageGraph = inputs.packageGraph;
-  final rootConfig = inputs.configs[packageGraph.root.name];
-  if (rootConfig == null) {
-    throw StateError('Root package config was not loaded');
-  }
-  final targets = <TargetInfo>[];
-  for (final package in packageGraph.allPackages.values) {
-    if (package.name == r'$sdk') continue;
-    final config = inputs.configs[package.name];
-    if (config == null) {
-      throw StateError('Package config is unavailable: ' + package.name);
-    }
-    for (final target in config.buildTargets.values) {
-      targets.add(
-        TargetInfo(
-          package: package,
-          target: target,
-          sources: targetPatterns(target, package, config),
-        ),
-      );
-    }
-  }
-  final targetOrder = orderTargets(
-    targets,
-    keyOf: (target) => target.target.key,
-    dependenciesOf: (target) => target.target.dependencies,
-  );
-  final orderedTargets = targetOrder.targets;
-  final rootTargetKey = packageGraph.root.name + ':' + packageGraph.root.name;
-  final rootTarget = orderedTargets
-      .where((target) => target.target.key == rootTargetKey)
-      .firstOrNull;
-  if (rootTarget == null) {
-    throw StateError('Root target is unavailable: ' + rootTargetKey);
-  }
-  final definitions = <String, DefinitionInfo>{};
-  for (final config in inputs.configs.values) {
-    for (final definition in config.builderDefinitions.values) {
-      // Match build_runner's build-script rule: relative imports from
-      // dependency packages cannot be imported by the root worker script.
-      if (!definition.import.startsWith('package:') &&
-          definition.package != packageGraph.root.name) {
-        continue;
-      }
-      definitions[definition.key] = DefinitionInfo.normal(definition);
-    }
-    for (final definition in config.postProcessBuilderDefinitions.values) {
-      // Post-process builders use the same package:builder key namespace as
-      // normal builders, but are resolved through a different factory type.
-      if (!definition.import.startsWith('package:') &&
-          definition.package != packageGraph.root.name) {
-        continue;
-      }
-      definitions[definition.key] = DefinitionInfo.postProcess(definition);
-    }
-  }
+  final catalog = resolveBuilderCatalog(inputs.packageGraph, inputs.configs);
   return _ResolvedInputs(
-    rootPackageName: packageGraph.root.name,
-    rootConfig: rootConfig,
-    orderedTargets: orderedTargets,
-    targetOrder: targetOrder,
-    definitions: definitions,
+    rootPackageName: catalog.rootPackageName,
+    rootConfig: catalog.rootConfig,
+    orderedTargets: catalog.orderedTargets,
+    targetOrder: catalog.targetOrder,
+    definitions: catalog.definitions,
     normalizedTriggerMap: inputs.normalizedTriggerMap,
   );
 }
@@ -209,6 +175,7 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
   _ResolvedInputs resolved,
   _ApplicationSelection selection,
   String probeCacheKey,
+  String workerEntrypoint,
 ) async {
   if (selection.selected.isEmpty) {
     return const _RuntimeMappings(
@@ -250,6 +217,7 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
     root,
     probeRequests,
     cacheKey: probeCacheKey,
+    workerEntrypoint: workerEntrypoint,
   );
   final canonicalMappings = <String, List<FactoryMapping>>{};
   final builderTypes = <String, List<String?>>{};
@@ -319,52 +287,6 @@ bool _declaresPartFamilyOutputs(DefinitionInfo info) =>
         (output) => output.endsWith('.dart') || output.endsWith('.part'),
       ),
     );
-
-/// The worker catalog used for the early entrypoint emission: every selected
-/// definition and every declared factory, without consulting conversion or
-/// the probe. Entries that later fail conversion stay as unused factories in
-/// the compiled worker — harmless when the manifest succeeds (identical
-/// output), wasted compile time when it fails (the build falls back anyway).
-List<CatalogEntry> _earlyCatalogEntries(_ApplicationSelection selection) {
-  final seen = <String>{};
-  final entries = <CatalogEntry>[];
-  for (final selected in selection.selected.values) {
-    final definition = selected.definition;
-    if (definition.isPostProcess) {
-      final postProcess = definition.postProcess!;
-      if (seen.add(definition.key)) {
-        entries.add(
-          CatalogEntry(
-            id: definition.key,
-            importUri: postProcess.import,
-            factory: postProcess.builderFactory,
-            isPostProcess: true,
-          ),
-        );
-      }
-    } else {
-      final normal = definition.normal!;
-      for (var index = 0; index < normal.builderFactories.length; index++) {
-        final id = manifestFactoryId(
-          normal.key,
-          index,
-          normal.builderFactories.length,
-        );
-        if (seen.add(id)) {
-          entries.add(
-            CatalogEntry(
-              id: id,
-              importUri: normal.import,
-              factory: normal.builderFactories[index],
-              isPostProcess: false,
-            ),
-          );
-        }
-      }
-    }
-  }
-  return entries;
-}
 
 _NormalizedManifest _normalizeManifest(
   _ResolvedInputs resolved,

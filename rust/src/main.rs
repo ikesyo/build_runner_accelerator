@@ -5,6 +5,7 @@ mod cli;
 mod digest;
 mod frontend;
 mod graph;
+mod manifest_generator;
 mod metrics;
 mod pattern;
 mod plan;
