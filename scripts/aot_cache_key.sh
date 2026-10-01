@@ -15,5 +15,11 @@ workspace_root=${1:-"$PWD"}
 
 worker_require_frontend
 
-worker_run_frontend \
+# The bounded verification wrapper records command stdout in its log, so
+# explicitly recover the one machine-readable key for callers using $(...).
+key_log=$(mktemp)
+trap 'rm -f -- "$key_log"' EXIT
+VERIFY_COMMAND_LOG="$key_log" worker_run_frontend \
   aot-cache-key --root "$workspace_root" --dart "$dart_bin" --mode rust
+awk '/^build-runner-accelerator-aot-/ { key = $0; count++ }
+     END { if (count == 1) print key; else exit 1 }' "$key_log"
