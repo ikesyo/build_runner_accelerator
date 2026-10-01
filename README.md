@@ -229,6 +229,9 @@ adjust the root for your platform or `BUILD_RUNNER_ACCELERATOR_CACHE`).
 | `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` | Disable the analysis shards spawned by `aot-prewarm`. |
 | `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS=<n>` | Override the prewarm shard count (default: half of available CPUs). |
 | `BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM=1` | Opt-in: overlap the synchronous worker AOT compile with JIT analysis shards that start filling the byte store (useful on slower machines where the compile window is long). |
+| `BUILD_RUNNER_ACCELERATOR_MANIFEST_PREWARM=1` | Opt-in: also run the analysis shards across the whole manifest-generation window (kernel compile, early catalog, AOT compile, probe); killed before workers spawn. Off by default — the kernel-compile segment does not pay (ADR 0017). |
+| `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS=lib` | Restrict the directories the prewarm shards resolve (comma-separated; `none` warms only the SDK summary). |
+| `BUILD_RUNNER_ACCELERATOR_SDK_SUMMARY_PREWARM=0` | Opt out of the automatic single summary-only shard spawned while the worker AOT compiles when the workspace has no SDK summary yet (≥4 CPUs only; ADR 0017). |
 | `BUILD_RUNNER_ACCELERATOR_PART_FILTER=0` | Disable the `part` directive pre-filter that skips part-family actions whose input cannot produce output. |
 | `BUILD_RUNNER_ACCELERATOR_WORKER_AOT` | `1`/`auto` (default for `build`) compiles the worker synchronously; `background` compiles in the background and keeps kernel workers running meanwhile (default for `watch`); `force` compiles synchronously with no kernel fallback; any other value keeps script workers. |
 

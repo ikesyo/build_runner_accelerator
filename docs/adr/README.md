@@ -32,6 +32,7 @@ boundary rather than restoring commit-level history.
 | [0014](0014-manifest-probe-caching-and-compile-overlap.md) | Factory-probe caching and compile overlap in manifest generation |
 | [0015](0015-manifest-generator-kernel-cache.md) | Compiled manifest generator cache and source fallback |
 | [0016](0016-early-worker-catalog.md) | Shared builder selection before cold generator compilation |
+| [0017](0017-manifest-window-analysis-prewarm.md) | Manifest-window analysis prewarm and SDK summary auto-prewarm |
 
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for
