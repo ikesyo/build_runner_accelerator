@@ -36,8 +36,8 @@ import 'package:build_runner/src/bootstrap/build_process_state.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/analysis_driver.dart'
     show sdkLanguageVersion;
-// ignore: implementation_imports
-import 'package:build_runner/src/build/resolver/sdk_summary.dart';
+import 'package:build_runner_accelerator/src/sdk_summary_lock.dart'
+    show sharedSdkSummaryPath;
 import 'package:build_runner_accelerator/src/worker_resolvers.dart'
     show sharedAnalysisByteStore;
 import 'package:package_config/package_config.dart' as package_config;
@@ -114,7 +114,7 @@ Future<void> main(List<String> args) async {
     Uri.parse(buildProcessState.packageConfigUri),
   );
   final sdkSummaryBytes = await File(
-    await _sharedSdkSummaryPath(),
+    (await sharedSdkSummaryPath()).path,
   ).readAsBytes();
   final provider = PhysicalResourceProvider.INSTANCE;
 
@@ -191,75 +191,3 @@ Future<void> main(List<String> args) async {
     'prewarm[$shard]: done, $warmed files in ${stopwatch.elapsed.inSeconds}s',
   );
 }
-
-/// Resolve the SDK summary path while concurrent prewarm shards build it at
-/// most once.
-///
-/// On a cold workspace every shard would otherwise run
-/// [defaultSdkSummaryGenerator]'s multi-second `buildSdkSummary` call itself:
-/// the cached `.dart_tool/build_resolvers/sdk.sum` does not exist yet, so all
-/// N shards duplicate the work and then race the same rename. The first shard
-/// to notice the missing summary takes a lock file and builds it; losers wait
-/// for the lock release and then take the generator's own cache-hit path.
-/// Waiting is bounded; a crashed builder's stale lock is deleted after
-/// [_summaryLockMaxAge] so a later run never waits on it.
-Future<String> _sharedSdkSummaryPath() async {
-  final summaryFile = File(p.join('.dart_tool', 'build_resolvers', 'sdk.sum'));
-  final lockFile = File(
-    p.join('.dart_tool', 'build_resolvers', '.sdk-summary.lock'),
-  );
-
-  var ownsLock = false;
-  if (!summaryFile.existsSync()) {
-    try {
-      await lockFile.parent.create(recursive: true);
-      lockFile.createSync(exclusive: true);
-      ownsLock = true;
-    } on FileSystemException {
-      // Another shard is already building it; wait below.
-    }
-  }
-  if (!ownsLock && lockFile.existsSync()) {
-    const step = Duration(milliseconds: 250);
-    const maxWait = Duration(minutes: 3);
-    var waited = Duration.zero;
-    while (lockFile.existsSync()) {
-      if (waited >= maxWait) break;
-      final age = DateTime.now().difference(lockFile.lastModifiedSync());
-      if (age > _summaryLockMaxAge) {
-        // The builder was killed without releasing; reclaim it.
-        try {
-          lockFile.deleteSync();
-        } on FileSystemException {
-          // Still present or already gone — either way, retry owning below.
-        }
-        if (!summaryFile.existsSync()) {
-          try {
-            lockFile.createSync(exclusive: true);
-            ownsLock = true;
-            break;
-          } on FileSystemException {
-            // Another shard reclaimed it first.
-          }
-        }
-      }
-      await Future<void>.delayed(step);
-      waited += step;
-    }
-  }
-  try {
-    return await defaultSdkSummaryGenerator();
-  } finally {
-    if (ownsLock) {
-      try {
-        lockFile.deleteSync();
-      } on FileSystemException {
-        // Best effort; a leftover lock is reclaimed by the age check above.
-      }
-    }
-  }
-}
-
-/// How old a `.sdk-summary.lock` may be before a shard treats it as abandoned
-/// by a killed builder.
-const _summaryLockMaxAge = Duration(minutes: 2);

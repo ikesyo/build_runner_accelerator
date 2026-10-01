@@ -41,13 +41,16 @@ import 'package:build_runner/src/build/library_cycle_graph/phased_asset_deps.dar
 import 'package:build_runner/src/build/resolver/analysis_driver.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/analysis_driver_filesystem.dart';
+import 'resolver_host.dart' show ResolverInitializationProfile;
+import 'sdk_summary_lock.dart';
 import 'worker_analysis_driver_model.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/build_resolver.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/build_step_resolver.dart';
 // ignore: implementation_imports
-import 'package:build_runner/src/build/resolver/sdk_summary.dart';
+import 'package:build_runner/src/build/resolver/sdk_summary.dart'
+    show isFlutter;
 
 /// The [Resolvers] used in the build.
 ///
@@ -74,6 +77,9 @@ class WorkerResolversImpl implements Resolvers {
   /// Specifies the language version for each package during analysis.
   PackageConfig? _packageConfig;
 
+  /// Optional diagnostics sink for the lazy resolver initialization path.
+  final ResolverInitializationProfile? _profile;
+
   /// Creates a new resolvers instance.
   ///
   /// Specify [packageConfig] to override package language versions for
@@ -85,16 +91,20 @@ class WorkerResolversImpl implements Resolvers {
   factory WorkerResolversImpl.custom({
     PackageConfig? packageConfig,
     WorkerAnalysisDriverModel? analysisDriverModel,
+    ResolverInitializationProfile? profile,
   }) => WorkerResolversImpl(
     packageConfig: packageConfig,
     analysisDriverModel: analysisDriverModel ?? WorkerAnalysisDriverModel(),
+    profile: profile,
   );
 
   WorkerResolversImpl({
     PackageConfig? packageConfig,
     required WorkerAnalysisDriverModel analysisDriverModel,
+    ResolverInitializationProfile? profile,
   }) : _packageConfig = packageConfig,
-       _analysisDriverModel = analysisDriverModel;
+       _analysisDriverModel = analysisDriverModel,
+       _profile = profile;
 
   @override
   Future<BuildStepResolver> get(BuildStep buildStep) async {
@@ -104,9 +114,19 @@ class WorkerResolversImpl implements Resolvers {
       final loadedConfig = _packageConfig ??= await loadPackageConfigUri(
         Uri.parse(buildProcessState.packageConfigUri),
       );
-      final sdkSummaryBytes = await File(
-        await defaultSdkSummaryGenerator(),
-      ).readAsBytes();
+      // Concurrent worker processes take the same `.sdk-summary.lock` the
+      // prewarm shards hold, so a cold workspace builds `sdk.sum` once
+      // instead of once per worker.
+      final sdkSummaryStopwatch = _profile?.enabled == true
+          ? (Stopwatch()..start())
+          : null;
+      final sdkSummary = await sharedSdkSummaryPath();
+      if (sdkSummaryStopwatch != null) {
+        _profile?.sdkSummaryUs = sdkSummaryStopwatch.elapsedMicroseconds;
+        _profile?.sdkSummaryLockWaitUs = sdkSummary.lockWaitUs;
+        _profile?.sdkSummaryAfterLockUs = sdkSummary.generatorUs;
+      }
+      final sdkSummaryBytes = await File(sdkSummary.path).readAsBytes();
       final driver = _analysisDriver(
         _analysisDriverModel,
         AnalysisOptionsImpl()

@@ -15,7 +15,10 @@ WorkerResolversImpl createResolver(
   ResolverInitializationProfile profile,
 ) {
   final constructorTimer = profile.enabled ? (Stopwatch()..start()) : null;
-  final resolver = WorkerResolversImpl.custom(packageConfig: packageConfig);
+  final resolver = WorkerResolversImpl.custom(
+    packageConfig: packageConfig,
+    profile: profile,
+  );
   if (constructorTimer != null) {
     profile.resolverConstructorUs = constructorTimer.elapsedMicroseconds;
   }
