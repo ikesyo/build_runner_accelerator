@@ -21,6 +21,24 @@ class SdkSummaryResult {
 // POSIX locks are per process, so also serialize calls within this isolate.
 final _pending = <String, Future<SdkSummaryResult>>{};
 
+/// Whether a non-blocking lock failed because another process owns the range.
+///
+/// Dart uses fcntl on Linux/macOS (EAGAIN or EACCES), and LockFileEx on Windows
+/// (ERROR_LOCK_VIOLATION). Errno values differ between Linux and macOS; unknown
+/// platforms or missing OS errors conservatively use the unlocked fallback.
+bool isSdkSummaryLockContention(
+  FileSystemException error, {
+  required String operatingSystem,
+}) {
+  final code = error.osError?.errorCode;
+  return switch (operatingSystem) {
+    'linux' => code == 11 || code == 13,
+    'macos' => code == 35 || code == 13,
+    'windows' => code == 33,
+    _ => false,
+  };
+}
+
 /// Serialize SDK summary validation and generation across workers and prewarm.
 ///
 /// Always hold the lock while the generator checks its cache: an existing
@@ -60,8 +78,12 @@ Future<SdkSummaryResult> _resolve(
       try {
         await opened.lock(FileLock.exclusive);
         break;
-      } on FileSystemException {
-        if (stopwatch.elapsed >= lockTimeout) {
+      } on FileSystemException catch (error) {
+        if (!isSdkSummaryLockContention(
+              error,
+              operatingSystem: Platform.operatingSystem,
+            ) ||
+            stopwatch.elapsed >= lockTimeout) {
           await opened.close();
           handle = null;
           break;

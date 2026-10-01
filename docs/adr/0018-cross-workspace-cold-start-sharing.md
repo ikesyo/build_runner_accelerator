@@ -46,8 +46,11 @@ prewarm shards a `.sdk-summary.lock`; workers still raced.
   bound). The lock covers both
   cache validation and generation, including rebuilding an existing summary
   after an SDK/dependency change. A killed process releases its OS lock
-  immediately, and isolate-local calls share one in-flight future. Lock errors
-  and timeouts fall back to the stock generator. Waiters rerun the stock cache
+  immediately, and isolate-local calls share one in-flight future. Only known
+  OS-specific contention errors are retried (Linux/macOS `fcntl` EAGAIN or
+  EACCES; Windows `LockFileEx` ERROR_LOCK_VIOLATION). Other lock errors fall back
+  immediately; contention timeouts also fall back to the stock generator.
+  Waiters rerun the stock cache
   validation under the lock before using the published summary. The lock wait
   and post-lock work are
   recorded in the resolver profile's previously zero-valued
