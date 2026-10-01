@@ -30,9 +30,9 @@ generation returns.
   double-spawn against a manifest-window owner.
 - `bin/prewarm_analysis.dart` accepts `--dirs` (forwarded from
   `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS`, comma-separated; the
-  sentinel `none` resolves no workspace sources at all) and serializes
+  sentinel `none` exits after summary generation without creating an Analyzer driver) and serializes
   SDK-summary builds through `.dart_tool/build_resolvers/.sdk-summary.lock`
-  with a bounded wait and a 2-minute stale-lock reclaim, so concurrent
+  using an OS exclusive lock with a bounded three-minute wait, so concurrent
   shards on a cold workspace build `sdk.sum` once instead of duplicating
   the multi-second `buildSdkSummary` call.
 - Independently of the opt-in flags, `prepare_worker_aot` auto-spawns one
@@ -80,5 +80,6 @@ to stock):
 - The prewarm script's `.sdk-summary.lock` also benefits `aot-prewarm`,
   whose shards previously raced to rebuild a missing summary.
 - Correctness is unaffected: all changes are additive, diagnostics stay
-  on stderr, outputs remain byte-identical to stock, and every failure
-  path degrades to a plain cold build.
+  on stderr, outputs remain byte-identical to stock, and lock acquisition failures or timeouts
+  fall back to the stock summary generator. OS locks are released immediately
+  when a shard is killed; the persistent lock file must not be deleted.

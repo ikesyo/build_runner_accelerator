@@ -27,10 +27,8 @@ WorkerResolversImpl createResolver(
 
 /// Stage timings for the lazy Analyzer resolver initialization path.
 ///
-/// The current resolver owns SDK-summary generation internally. The legacy
-/// worker exposed separate build_resolvers SDK-summary timings, so those
-/// fields remain in the wire-level diagnostics as zero-valued compatibility
-/// fields until build_runner exposes equivalent hooks.
+/// The resolver records SDK-summary lock wait and generator work separately
+/// from the first Analyzer request.
 class ResolverInitializationProfile {
   ResolverInitializationProfile({required this.enabled});
 
@@ -52,7 +50,7 @@ class ResolverInitializationProfile {
     required String input,
   }) {
     resolverFirstGetUs = elapsedUs;
-    resolverPostSdkSummaryUs = elapsedUs;
+    resolverPostSdkSummaryUs = (elapsedUs - sdkSummaryUs).clamp(0, elapsedUs);
     firstBuilder = builder;
     firstInput = input;
   }

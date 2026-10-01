@@ -23,21 +23,30 @@ prewarm shards a `.sdk-summary.lock`; workers still raced.
 
 - The manifest-kernel key replaces the package-config path/content slot with
   a **package-resolution digest**: a digest of the config content with the
-  workspace's own package entry removed (that entry alone embeds the checkout
-  path, and the generator never imports the workspace's own libraries) plus a
-  sorted digest of the canonicalized directories every remaining `rootUri`
-  resolves to — relative `../` and `file://` forms alike. Kernel files embed
+  unused workspace package location normalized, preserving its name, language
+  version and package URI, plus a sorted mapping of package names to the
+  canonicalized directories their `rootUri` values resolve to — relative `../` and `file://` forms alike.
+  Kernel files embed
   absolute `file://` source URIs, so identical resolution is the correct
   equality: two workspaces whose deps resolve to the same directories produce
   the same kernel, and a config that merely shares text but resolves
   elsewhere still misses. A config that cannot be parsed falls back to the
-  previous path-anchored keying. The key format is bumped to
+  previous path-anchored keying. Unsupported URIs, invalid percent escapes,
+  missing directories, and malformed entries also use that conservative fallback.
+  The accelerator package itself is never normalized, because the generator
+  imports its libraries. Package config is checked through the key rather than
+  retaining the originating checkout's config path in depfile metadata, so that
+  checkout can be removed without losing reuse. The key format is bumped to
   `manifest-kernel-v2-*`; stale v1 entries age out in place.
 - Worker resolver initialization resolves the SDK summary through the same
-  `.sdk-summary.lock` protocol the prewarm shards use (exclusive-create
-  lockfile, 250 ms poll, three-minute bound, two-minute max-age reclaim). On
-  a cold `sdk.sum` the first worker generates while the rest wait; waiters
-  then read the published file directly. The lock wait and post-lock work are
+  `.sdk-summary.lock` protocol the prewarm shards use (persistent file,
+  OS exclusive lock, 25 ms poll, three-minute bound). The lock covers both
+  cache validation and generation, including rebuilding an existing summary
+  after an SDK/dependency change. A killed process releases its OS lock
+  immediately, and isolate-local calls share one in-flight future. Lock errors
+  and timeouts fall back to the stock generator. Waiters rerun the stock cache
+  validation under the lock before using the published summary. The lock wait
+  and post-lock work are
   recorded in the resolver profile's previously zero-valued
   `sdk_summary_lock_wait_us` / `sdk_summary_after_lock_us` fields.
 - The early-AOT staging directory is re-asserted immediately before the
@@ -54,7 +63,7 @@ prewarm shards a `.sdk-summary.lock`; workers still raced.
 - Pub workspaces and `path:` deps that resolve to different checkouts key
   separately, so reuse is bounded to genuinely identical resolution.
 - Worker SDK summary generation is single-flight per workspace; warm
-  workspaces pay one `File.exists` check. Concurrent prewarm shards and
+  workspaces take a short uncontended lock during summary validation. Concurrent prewarm shards and
   workers now honor one lock file.
 - Correctness is preserved: depfile digests still validate kernel sources on
   every hit, outputs remain byte-identical to stock, and every failure path

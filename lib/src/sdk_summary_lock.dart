@@ -5,8 +5,7 @@ import 'dart:io';
 import 'package:build_runner/src/build/resolver/sdk_summary.dart';
 import 'package:path/path.dart' as p;
 
-/// Outcome of one [sharedSdkSummaryPath] resolution, including the timings the
-/// worker's resolver diagnostics report.
+/// Outcome of one [sharedSdkSummaryPath] resolution.
 class SdkSummaryResult {
   const SdkSummaryResult(
     this.path, {
@@ -14,94 +13,76 @@ class SdkSummaryResult {
     required this.generatorUs,
   });
 
-  /// The resolved `.dart_tool/build_resolvers/sdk.sum` path.
   final String path;
-
-  /// Microseconds spent waiting for another process's lock.
   final int lockWaitUs;
-
-  /// Microseconds inside [defaultSdkSummaryGenerator] itself.
   final int generatorUs;
 }
 
-/// Resolve the SDK summary path while concurrent worker/prewarm processes
-/// build it at most once.
-///
-/// On a cold workspace every process would otherwise run
-/// [defaultSdkSummaryGenerator]'s multi-second `buildSdkSummary` call itself:
-/// the cached `.dart_tool/build_resolvers/sdk.sum` does not exist yet, so all
-/// of them duplicate the work and then race the same rename. The first
-/// process to notice the missing summary takes a lock file and builds it;
-/// losers wait for the lock release and then take the generator's own
-/// cache-hit path. Waiting is bounded; a crashed builder's stale lock is
-/// deleted after [_summaryLockMaxAge] so a later run never waits on it.
-///
-/// The same lock guards the `prewarm_analysis` shards, so a shard already
-/// building the summary in the compile window also satisfies worker startup.
-Future<SdkSummaryResult> sharedSdkSummaryPath() async {
-  final summaryFile = File(p.join('.dart_tool', 'build_resolvers', 'sdk.sum'));
-  final lockFile = File(
-    p.join('.dart_tool', 'build_resolvers', '.sdk-summary.lock'),
-  );
+// POSIX locks are per process, so also serialize calls within this isolate.
+final _pending = <String, Future<SdkSummaryResult>>{};
 
-  var ownsLock = false;
-  if (!summaryFile.existsSync()) {
-    try {
-      await lockFile.parent.create(recursive: true);
-      lockFile.createSync(exclusive: true);
-      ownsLock = true;
-    } on FileSystemException {
-      // Another process is already building it; wait below.
-    }
-  }
-  var lockWait = Duration.zero;
-  if (!ownsLock && lockFile.existsSync()) {
-    const step = Duration(milliseconds: 250);
-    const maxWait = Duration(minutes: 3);
-    final stopwatch = Stopwatch()..start();
-    while (lockFile.existsSync()) {
-      if (stopwatch.elapsed >= maxWait) break;
-      final age = DateTime.now().difference(lockFile.lastModifiedSync());
-      if (age > _summaryLockMaxAge) {
-        // The builder was killed without releasing; reclaim it.
-        try {
-          lockFile.deleteSync();
-        } on FileSystemException {
-          // Still present or already gone — either way, retry owning below.
+/// Serialize SDK summary validation and generation across workers and prewarm.
+///
+/// Always hold the lock while the generator checks its cache: an existing
+/// sdk.sum may still need rebuilding after an SDK or dependency change. The OS
+/// releases the lock on process exit, including when a prewarm shard is killed.
+/// The lock file stays in place so all callers lock the same filesystem object.
+/// Lock failures or a bounded timeout fall back to the stock generator.
+Future<SdkSummaryResult> sharedSdkSummaryPath({
+  Future<String> Function() generate = defaultSdkSummaryGenerator,
+  Duration lockTimeout = const Duration(minutes: 3),
+}) {
+  final lockPath = p.absolute(
+    '.dart_tool',
+    'build_resolvers',
+    '.sdk-summary.lock',
+  );
+  return _pending.putIfAbsent(lockPath, () {
+    return _resolve(lockPath, generate, lockTimeout).whenComplete(() {
+      _pending.remove(lockPath);
+    });
+  });
+}
+
+Future<SdkSummaryResult> _resolve(
+  String lockPath,
+  Future<String> Function() generate,
+  Duration lockTimeout,
+) async {
+  final stopwatch = Stopwatch()..start();
+  final lockFile = File(lockPath);
+  RandomAccessFile? handle;
+  try {
+    await lockFile.parent.create(recursive: true);
+    final opened = await lockFile.open(mode: FileMode.append);
+    handle = opened;
+    while (true) {
+      try {
+        await opened.lock(FileLock.exclusive);
+        break;
+      } on FileSystemException {
+        if (stopwatch.elapsed >= lockTimeout) {
+          await opened.close();
+          handle = null;
+          break;
         }
-        if (!summaryFile.existsSync()) {
-          try {
-            lockFile.createSync(exclusive: true);
-            ownsLock = true;
-            break;
-          } on FileSystemException {
-            // Another process reclaimed it first.
-          }
-        }
+        await Future<void>.delayed(const Duration(milliseconds: 25));
       }
-      await Future<void>.delayed(step);
     }
-    lockWait = stopwatch.elapsed;
+  } on FileSystemException {
+    await handle?.close();
+    handle = null;
   }
+  final lockWaitUs = stopwatch.elapsedMicroseconds;
   final generatorStopwatch = Stopwatch()..start();
   try {
-    final path = await defaultSdkSummaryGenerator();
     return SdkSummaryResult(
-      path,
-      lockWaitUs: lockWait.inMicroseconds,
+      await generate(),
+      lockWaitUs: lockWaitUs,
       generatorUs: generatorStopwatch.elapsedMicroseconds,
     );
   } finally {
-    if (ownsLock) {
-      try {
-        lockFile.deleteSync();
-      } on FileSystemException {
-        // Best effort; a leftover lock is reclaimed by the age check above.
-      }
-    }
+    // Closing the handle releases the lock, without a delete/recreate race.
+    await handle?.close();
   }
 }
-
-/// How old a `.sdk-summary.lock` may be before a process treats it as
-/// abandoned by a killed builder.
-const _summaryLockMaxAge = Duration(minutes: 2);

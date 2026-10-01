@@ -90,89 +90,97 @@ fn cache_key_for_sdk(root: &Path, sdk: &Path, generator: &Path) -> io::Result<St
 }
 
 struct PackageResolution {
-    /// Digest of the config content with the workspace's own package removed:
-    /// only that entry embeds the checkout path, and the generator never
-    /// imports the workspace's own libraries.
+    /// Config digest retaining package metadata but normalizing the unused
+    /// workspace root location. The accelerator package is never normalized.
     content_digest: String,
-    /// Digest of where the dependencies actually resolve, separating configs
-    /// that merely share text but point at different directories (e.g.
+    /// Digest of package names mapped to resolved dependency locations.
+    /// Separates configs with identical text but different directories (e.g.
     /// relative `path:` deps on different checkouts).
     locations_digest: String,
 }
 
 fn package_resolution(config: &Path, root: &Path) -> PackageResolution {
     (|| -> Option<PackageResolution> {
-        let mut parsed: serde_json::Value =
-            serde_json::from_slice(&fs::read(config).ok()?).ok()?;
+        let mut parsed: serde_json::Value = serde_json::from_slice(&fs::read(config).ok()?).ok()?;
         let config_dir = config.parent()?;
         let canonical_root = fs::canonicalize(root).ok()?;
         let packages = parsed.get_mut("packages")?.as_array_mut()?;
-        let locations_of = |entries: &[serde_json::Value]| {
-            entries
-                .iter()
-                .filter_map(|entry| {
-                    let root_uri = entry.get("rootUri")?.as_str()?;
-                    let path = resolve_root_uri(config_dir, root_uri);
-                    Some(fs::canonicalize(&path).unwrap_or(path))
-                })
-                .collect::<Vec<_>>()
-        };
-        let is_workspace_package = |entry: &serde_json::Value| -> bool {
-            entry
-                .get("rootUri")
-                .and_then(|uri| uri.as_str())
-                .map(|root_uri| resolve_root_uri(config_dir, root_uri))
-                .is_some_and(|path| {
-                    fs::canonicalize(&path).unwrap_or(path) == canonical_root
-                })
-        };
-        let mut locations = locations_of(packages.as_slice());
-        locations.retain(|path| *path != canonical_root);
-        packages.retain(|entry| !is_workspace_package(entry));
-        let mut location_names = locations
-            .iter()
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        location_names.sort();
+        let mut locations = BTreeMap::new();
+        for entry in packages {
+            let name = entry.get("name")?.as_str()?.to_owned();
+            let root_uri = entry.get("rootUri")?.as_str()?;
+            let path = fs::canonicalize(resolve_root_uri(config_dir, root_uri)?).ok()?;
+            if path == canonical_root && name != "build_runner_accelerator" {
+                // Keep languageVersion/packageUri: they can affect compiled code.
+                entry["rootUri"] = serde_json::Value::String("<workspace>".into());
+            } else if locations.insert(name, path).is_some() {
+                // Duplicate names and unsupported URIs use workspace-local keying.
+                return None;
+            }
+        }
         Some(PackageResolution {
-            content_digest: digest_bytes(
-                serde_json::to_vec(&parsed).ok()?.as_slice(),
-            ),
-            locations_digest: digest_bytes(location_names.join("\n").as_bytes()),
+            content_digest: digest_bytes(serde_json::to_vec(&parsed).ok()?.as_slice()),
+            locations_digest: digest_bytes(&serde_json::to_vec(&locations).ok()?),
         })
     })()
     .unwrap_or_else(|| PackageResolution {
         // Config could not be parsed: fall back to the previous per-workspace
         // keying so a malformed or surprising file cannot share a slot.
-        content_digest: digest_file(config)
-            .unwrap_or_else(|_| config.display().to_string()),
+        content_digest: digest_file(config).unwrap_or_else(|_| config.display().to_string()),
         locations_digest: config.display().to_string(),
     })
 }
 
-fn resolve_root_uri(config_dir: &Path, root_uri: &str) -> PathBuf {
-    if let Some(file_path) = root_uri.strip_prefix("file://") {
-        return PathBuf::from(percent_decode(file_path));
-    }
-    config_dir.join(root_uri)
+fn resolve_root_uri(config_dir: &Path, root_uri: &str) -> Option<PathBuf> {
+    let value = if let Some(file_path) = root_uri.strip_prefix("file://") {
+        // Remote authorities need platform-specific handling. Fall back instead
+        // of interpreting them as a relative package directory.
+        if !file_path.starts_with('/') {
+            return None;
+        }
+        let path = percent_decode(file_path)?;
+        #[cfg(windows)]
+        let path = if path.as_bytes().get(2) == Some(&b':') {
+            path.strip_prefix('/').unwrap_or(&path).to_owned()
+        } else {
+            path
+        };
+        return Some(PathBuf::from(path));
+    } else {
+        if root_uri.contains(':') || root_uri.contains('?') || root_uri.contains('#') {
+            return None;
+        }
+        percent_decode(root_uri)?
+    };
+    Some(config_dir.join(value))
 }
 
-fn percent_decode(value: &str) -> String {
+fn percent_decode(value: &str) -> Option<String> {
     let bytes = value.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            if let Ok(digit) = u8::from_str_radix(&value[index + 1..index + 3], 16) {
-                out.push(digit);
-                index += 3;
-                continue;
-            }
+        if bytes[index] == b'%' {
+            // Decode bytes, never slice UTF-8 at arbitrary byte boundaries.
+            let high = hex_digit(*bytes.get(index + 1)?)?;
+            let low = hex_digit(*bytes.get(index + 2)?)?;
+            out.push(high * 16 + low);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
         }
-        out.push(bytes[index]);
-        index += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    String::from_utf8(out).ok()
+}
+
+fn hex_digit(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn is_current(kernel: &Path, metadata: &Path, key: &str, generator: &Path) -> bool {
@@ -247,6 +255,7 @@ fn prepare<F: FnOnce()>(
         let dependencies = parse_depfile_dependencies(&fs::read_to_string(&depfile)?)
             .ok_or_else(|| io::Error::other("generator depfile has no dependencies"))?;
         let mut digests = BTreeMap::new();
+        let package_config = fs::canonicalize(root.join(".dart_tool/package_config.json"))?;
         for dependency in dependencies {
             let path = if dependency.is_absolute() {
                 dependency
@@ -254,6 +263,12 @@ fn prepare<F: FnOnce()>(
                 root.join(dependency)
             };
             let path = fs::canonicalize(path)?;
+            // Resolution and compilation-relevant config content are already
+            // in the key. Retaining the old workspace's config in the depfile
+            // metadata would reject reuse after that checkout is removed.
+            if path == package_config {
+                continue;
+            }
             digests.insert(path.clone(), digest_file(&path)?);
         }
         if !digests.contains_key(&generator) {
@@ -414,7 +429,82 @@ mod tests {
             config_for(&other_deps),
         )
         .unwrap();
-        assert_ne!(keys[0], cache_key_for_sdk(&root3, &sdk, &generator).unwrap());
+        assert_ne!(
+            keys[0],
+            cache_key_for_sdk(&root3, &sdk, &generator).unwrap()
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn package_resolution_retains_workspace_compilation_metadata() {
+        let root = std::env::temp_dir().join(format!(
+            "manifest-resolution-metadata-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        let config = root.join(".dart_tool/package_config.json");
+        let write_config = |language: &str| {
+            fs::write(&config, format!(r#"{{"packages":[{{"name":"app","rootUri":"../","languageVersion":"{language}"}}]}}"#)).unwrap();
+        };
+        write_config("3.11");
+        let before = package_resolution(&config, &root).content_digest;
+        write_config("3.13");
+        assert_ne!(before, package_resolution(&config, &root).content_digest);
+        // Unsupported entries must fall back to workspace-local identity.
+        fs::write(&config, r#"{"packages":[{"name":"dep"}]}"#).unwrap();
+        assert_eq!(
+            package_resolution(&config, &root).locations_digest,
+            config.display().to_string()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn package_root_uri_decodes_relative_paths_and_rejects_malformed_escapes() {
+        let root = Path::new("/workspace/.dart_tool");
+        assert_eq!(
+            resolve_root_uri(root, "../dep%20space/"),
+            Some(root.join("../dep space/"))
+        );
+        assert_eq!(
+            resolve_root_uri(root, "file:///dep%20space/"),
+            Some(PathBuf::from("/dep space/"))
+        );
+        for uri in [
+            "../bad%",
+            "../bad%ZZ",
+            "../bad%é",
+            "../bad%FF",
+            "https://example.test/",
+            "file://server/share/",
+        ] {
+            assert_eq!(resolve_root_uri(root, uri), None, "{uri}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_resolution_tracks_names_when_symlink_targets_are_swapped() {
+        use std::os::unix::fs::symlink;
+        let base =
+            std::env::temp_dir().join(format!("manifest-resolution-map-{}", std::process::id()));
+        let a = base.join("a");
+        let b = base.join("b");
+        for dir in [&a, &b] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        let mut digests = Vec::new();
+        for (workspace, first, second) in [("ws1", &a, &b), ("ws2", &b, &a)] {
+            let root = base.join(workspace);
+            fs::create_dir_all(root.join(".dart_tool")).unwrap();
+            symlink(first, root.join("first")).unwrap();
+            symlink(second, root.join("second")).unwrap();
+            let config = root.join(".dart_tool/package_config.json");
+            fs::write(&config, r#"{"packages":[{"name":"one","rootUri":"../first/"},{"name":"two","rootUri":"../second/"}]}"#).unwrap();
+            digests.push(package_resolution(&config, &root).locations_digest);
+        }
+        assert_ne!(digests[0], digests[1]);
         fs::remove_dir_all(base).unwrap();
     }
 

@@ -113,9 +113,13 @@ Future<void> main(List<String> args) async {
   final packageConfig = await package_config.loadPackageConfigUri(
     Uri.parse(buildProcessState.packageConfigUri),
   );
-  final sdkSummaryBytes = await File(
-    (await sharedSdkSummaryPath()).path,
-  ).readAsBytes();
+  final sdkSummary = await sharedSdkSummaryPath();
+  if (warmDirs.isEmpty) {
+    watchdog.cancel();
+    stderr.writeln('prewarm[$shard]: SDK summary ready');
+    return;
+  }
+  final sdkSummaryBytes = await File(sdkSummary.path).readAsBytes();
   final provider = PhysicalResourceProvider.INSTANCE;
 
   String packageDir(package_config.Package package) =>

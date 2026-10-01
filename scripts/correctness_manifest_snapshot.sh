@@ -51,6 +51,32 @@ generate warm 'Rust manifest snapshot: cache=hit'
 cmp "$manifest" "$temporary_dir/expected.json"
 cmp "$entrypoint" "$temporary_dir/expected.dart"
 
+# A second checkout sharing dependencies must hit the same kernel slot.
+original_fixture=$fixture
+relocated="$temporary_dir/workspace/fixtures/relocated"
+mkdir -p "$relocated"
+cp "$fixture/pubspec.yaml" "$fixture/pubspec.lock" "$relocated/"
+cp -R "$fixture/lib" "$relocated/"
+worker_pub_get "$relocated" --offline
+fixture=$relocated
+manifest="$fixture/.dart_tool/build_runner_accelerator/builder-manifest.json"
+entrypoint="$fixture/.dart_tool/build_runner_accelerator/dynamic_worker.dart"
+# Reuse must not depend on the old checkout's package-config file surviving.
+mv "$original_fixture/.dart_tool/package_config.json" "$temporary_dir/original-config.json"
+generate relocated 'Rust manifest snapshot: cache=hit'
+python3 - "$temporary_dir/expected.json" "$manifest" "$entrypoint" <<'PY_COMPARE'
+import json, sys
+expected, actual = [json.load(open(path)) for path in sys.argv[1:3]]
+assert actual['worker_entrypoint'] == sys.argv[3]
+expected['worker_entrypoint'] = actual['worker_entrypoint']
+assert expected == actual, 'Relocated manifest changed beyond the worker path'
+PY_COMPARE
+cmp "$entrypoint" "$temporary_dir/expected.dart"
+mv "$temporary_dir/original-config.json" "$original_fixture/.dart_tool/package_config.json"
+fixture=$original_fixture
+manifest="$fixture/.dart_tool/build_runner_accelerator/builder-manifest.json"
+entrypoint="$fixture/.dart_tool/build_runner_accelerator/dynamic_worker.dart"
+
 # A dependency edit must invalidate compiled code even when its mtime is
 # restored. The generated worker and manifest should remain identical.
 dependency="$temporary_dir/workspace/lib/src/manifest/source.dart"
@@ -98,4 +124,4 @@ BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT=0 \
   generate disabled 'Rust plan only:'
 cmp "$manifest" "$temporary_dir/expected.json"
 cmp "$entrypoint" "$temporary_dir/expected.dart"
-printf 'manifest-snapshot: PASS cold/hit/code-edit/sdk-override/config-edit/corruption/unavailable/disabled\n'
+printf 'manifest-snapshot: PASS cold/hit/relocated/code-edit/sdk-override/config-edit/corruption/unavailable/disabled\n'

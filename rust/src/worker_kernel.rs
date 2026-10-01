@@ -1616,8 +1616,11 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    static PREWARM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn analysis_prewarm_spawn_is_single_flight() {
+        let _guard = PREWARM_TEST_LOCK.lock().unwrap();
         ANALYSIS_PREWARM_ACTIVE.store(true, Ordering::SeqCst);
         assert!(spawn_analysis_prewarm(Path::new("/nonexistent"), "dart", "test").is_none());
         ANALYSIS_PREWARM_ACTIVE.store(false, Ordering::SeqCst);
@@ -1625,6 +1628,7 @@ mod tests {
 
     #[test]
     fn analysis_prewarm_missing_package_config_releases_flag() {
+        let _guard = PREWARM_TEST_LOCK.lock().unwrap();
         let root = std::env::temp_dir()
             .join(format!("build-runner-accelerator-prewarm-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
