@@ -66,21 +66,113 @@ fn cache_key(root: &Path, dart: &str, generator: &Path) -> io::Result<String> {
 fn cache_key_for_sdk(root: &Path, sdk: &Path, generator: &Path) -> io::Result<String> {
     let (version, experiments) = aot_sdk_identity(sdk)?;
     let platform = digest_file(&sdk.join("lib/_internal/vm_platform_strong.dill"))?;
-    // Kernel files contain absolute source URIs. Deliberately do not restore
-    // them across relocated package roots, unlike the worker AOT cache.
+    // Kernel files contain absolute source URIs. Two workspaces whose
+    // package resolution agrees (identical config content resolving to the
+    // same dependency directories) produce the same kernel, so the key uses
+    // the resolved dependency locations rather than the config's own path:
+    // the snapshot then hits across checkouts on one machine, which is what
+    // the partial-cold path needs. `package_resolution` still separates
+    // configs that merely share text but resolve differently.
     let config = fs::canonicalize(root.join(".dart_tool/package_config.json"))?;
+    let resolution = package_resolution(&config, root);
     Ok(format!(
-        "manifest-kernel-v1-{}-{}-{}-{}-{}-{}-{}-{}-{}",
+        "manifest-kernel-v2-{}-{}-{}-{}-{}-{}-{}-{}-{}",
         std::env::consts::OS,
         std::env::consts::ARCH,
         version,
         experiments,
         platform,
-        config.display(),
-        digest_file(&config)?,
+        resolution.content_digest,
+        resolution.locations_digest,
         fs::canonicalize(generator)?.display(),
         digest_file(generator)?,
     ))
+}
+
+struct PackageResolution {
+    /// Digest of the config content with the workspace's own package removed:
+    /// only that entry embeds the checkout path, and the generator never
+    /// imports the workspace's own libraries.
+    content_digest: String,
+    /// Digest of where the dependencies actually resolve, separating configs
+    /// that merely share text but point at different directories (e.g.
+    /// relative `path:` deps on different checkouts).
+    locations_digest: String,
+}
+
+fn package_resolution(config: &Path, root: &Path) -> PackageResolution {
+    (|| -> Option<PackageResolution> {
+        let mut parsed: serde_json::Value =
+            serde_json::from_slice(&fs::read(config).ok()?).ok()?;
+        let config_dir = config.parent()?;
+        let canonical_root = fs::canonicalize(root).ok()?;
+        let packages = parsed.get_mut("packages")?.as_array_mut()?;
+        let locations_of = |entries: &[serde_json::Value]| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    let root_uri = entry.get("rootUri")?.as_str()?;
+                    let path = resolve_root_uri(config_dir, root_uri);
+                    Some(fs::canonicalize(&path).unwrap_or(path))
+                })
+                .collect::<Vec<_>>()
+        };
+        let is_workspace_package = |entry: &serde_json::Value| -> bool {
+            entry
+                .get("rootUri")
+                .and_then(|uri| uri.as_str())
+                .map(|root_uri| resolve_root_uri(config_dir, root_uri))
+                .is_some_and(|path| {
+                    fs::canonicalize(&path).unwrap_or(path) == canonical_root
+                })
+        };
+        let mut locations = locations_of(packages.as_slice());
+        locations.retain(|path| *path != canonical_root);
+        packages.retain(|entry| !is_workspace_package(entry));
+        let mut location_names = locations
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        location_names.sort();
+        Some(PackageResolution {
+            content_digest: digest_bytes(
+                serde_json::to_vec(&parsed).ok()?.as_slice(),
+            ),
+            locations_digest: digest_bytes(location_names.join("\n").as_bytes()),
+        })
+    })()
+    .unwrap_or_else(|| PackageResolution {
+        // Config could not be parsed: fall back to the previous per-workspace
+        // keying so a malformed or surprising file cannot share a slot.
+        content_digest: digest_file(config)
+            .unwrap_or_else(|_| config.display().to_string()),
+        locations_digest: config.display().to_string(),
+    })
+}
+
+fn resolve_root_uri(config_dir: &Path, root_uri: &str) -> PathBuf {
+    if let Some(file_path) = root_uri.strip_prefix("file://") {
+        return PathBuf::from(percent_decode(file_path));
+    }
+    config_dir.join(root_uri)
+}
+
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Ok(digit) = u8::from_str_radix(&value[index + 1..index + 3], 16) {
+                out.push(digit);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn is_current(kernel: &Path, metadata: &Path, key: &str, generator: &Path) -> bool {
@@ -272,6 +364,58 @@ mod tests {
             fs::write(path, "before").unwrap();
         }
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn snapshot_key_shares_across_workspaces_with_identical_resolution() {
+        let base =
+            std::env::temp_dir().join(format!("manifest-snapshot-share-{}", std::process::id()));
+        let sdk = base.join("sdk");
+        fs::create_dir_all(sdk.join("lib/_internal")).unwrap();
+        for path in [
+            sdk.join("version"),
+            sdk.join("lib/_internal/allowed_experiments.json"),
+            sdk.join("lib/_internal/vm_platform_strong.dill"),
+        ] {
+            fs::write(path, "sdk").unwrap();
+        }
+        let deps = base.join("deps");
+        fs::create_dir_all(&deps).unwrap();
+        let generator = base.join("generator.dart");
+        fs::write(&generator, "main").unwrap();
+        let config_for = |dep_path: &Path| {
+            format!(
+                "{{\"packages\":[{{\"name\":\"app\",\"rootUri\":\"../\",\"packageUri\":\"lib/\"}},{{\"name\":\"dep\",\"rootUri\":\"file://{}\",\"packageUri\":\"lib/\"}}]}}",
+                dep_path.display()
+            )
+        };
+        let mut keys = Vec::new();
+        for name in ["ws1", "ws2"] {
+            let root = base.join(name);
+            fs::create_dir_all(root.join(".dart_tool")).unwrap();
+            fs::write(
+                root.join(".dart_tool/package_config.json"),
+                config_for(&deps),
+            )
+            .unwrap();
+            keys.push(cache_key_for_sdk(&root, &sdk, &generator).unwrap());
+        }
+        // Identical config content resolving to the same dependency
+        // directories shares one slot regardless of the workspace path.
+        assert_eq!(keys[0], keys[1]);
+        // Same config text but a differently-resolved dependency must not
+        // share: the embedded file:// URIs would point at the wrong sources.
+        let root3 = base.join("ws3");
+        let other_deps = base.join("other-deps");
+        fs::create_dir_all(&other_deps).unwrap();
+        fs::create_dir_all(root3.join(".dart_tool")).unwrap();
+        fs::write(
+            root3.join(".dart_tool/package_config.json"),
+            config_for(&other_deps),
+        )
+        .unwrap();
+        assert_ne!(keys[0], cache_key_for_sdk(&root3, &sdk, &generator).unwrap());
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
