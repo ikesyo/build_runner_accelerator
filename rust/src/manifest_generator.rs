@@ -73,7 +73,10 @@ fn cache_key_for_sdk(root: &Path, sdk: &Path, generator: &Path) -> io::Result<St
     // the snapshot then hits across checkouts on one machine, which is what
     // the partial-cold path needs. `package_resolution` still separates
     // configs that merely share text but resolve differently.
-    let config = fs::canonicalize(root.join(".dart_tool/package_config.json"))?;
+    // Relative package URIs use the --packages location as their base, even
+    // when the config file itself is a symlink to a shared file elsewhere.
+    let config = root.join(".dart_tool/package_config.json");
+    fs::metadata(&config)?;
     let resolution = package_resolution(&config, root);
     Ok(format!(
         "manifest-kernel-v2-{}-{}-{}-{}-{}-{}-{}-{}-{}",
@@ -505,6 +508,46 @@ mod tests {
             digests.push(package_resolution(&config, &root).locations_digest);
         }
         assert_ne!(digests[0], digests[1]);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_key_resolves_symlinked_configs_at_the_invocation_location() {
+        use std::os::unix::fs::symlink;
+        let base =
+            std::env::temp_dir().join(format!("manifest-config-symlink-{}", std::process::id()));
+        let sdk = base.join("sdk");
+        fs::create_dir_all(sdk.join("lib/_internal")).unwrap();
+        for path in [
+            sdk.join("version"),
+            sdk.join("lib/_internal/allowed_experiments.json"),
+            sdk.join("lib/_internal/vm_platform_strong.dill"),
+        ] {
+            fs::write(path, "sdk").unwrap();
+        }
+        let generator = base.join("generator.dart");
+        fs::write(&generator, "main").unwrap();
+        fs::create_dir_all(base.join("shared-config")).unwrap();
+        fs::create_dir_all(base.join("deps")).unwrap();
+        let config = base.join("shared-config/package_config.json");
+        fs::write(
+            &config,
+            r#"{"packages":[{"name":"app","rootUri":"../"},{"name":"dep","rootUri":"../deps/"}]}"#,
+        )
+        .unwrap();
+        let mut keys = Vec::new();
+        for name in ["ws1", "ws2"] {
+            let root = base.join(name);
+            fs::create_dir_all(root.join(".dart_tool")).unwrap();
+            fs::create_dir_all(root.join("deps")).unwrap();
+            symlink(&config, root.join(".dart_tool/package_config.json")).unwrap();
+            keys.push(cache_key_for_sdk(&root, &sdk, &generator).unwrap());
+        }
+        assert_ne!(
+            keys[0], keys[1],
+            "the same config file resolves different dependencies in each checkout"
+        );
         fs::remove_dir_all(base).unwrap();
     }
 

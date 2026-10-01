@@ -33,6 +33,8 @@ prewarm shards a `.sdk-summary.lock`; workers still raced.
   elsewhere still misses. A config that cannot be parsed falls back to the
   previous path-anchored keying. Unsupported URIs, invalid percent escapes,
   missing directories, and malformed entries also use that conservative fallback.
+  Relative URIs use the config location passed to the VM, including when that
+  file is a symlink; resolving against the symlink target would change their base.
   The accelerator package itself is never normalized, because the generator
   imports its libraries. Package config is checked through the key rather than
   retaining the originating checkout's config path in depfile metadata, so that
