@@ -671,6 +671,13 @@ fn prepare_worker_aot(
     let temp_aot = temporary_sibling(&context.aot_path, process_id, "aot");
     let temp_depfile = temporary_sibling(&context.depfile_path, process_id, "d");
     let temp_sdk_metadata = temporary_sibling(&context.sdk_metadata_path, process_id, "sdk");
+    // The compiler only writes its output at the end of a long single-threaded
+    // compile, so re-assert the output directory here: anything that removed
+    // `aot-sdk` after `prepare_aot_context` would otherwise surface as a
+    // PathNotFound when the compile finally emits the binary.
+    if let Some(parent) = temp_aot.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let package_config = context.workspace.root.join(".dart_tool/package_config.json");
     let status = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "exe"])
