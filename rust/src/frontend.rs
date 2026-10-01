@@ -1,7 +1,8 @@
 use crate::builder::{BuilderManifestFile, RustBuildConfig, rust_build_config_from_manifest};
 use crate::cli::{FrontendMode, Options};
 use crate::worker_kernel::{
-    early_worker_aot_compile, early_worker_aot_enabled, prewarm_worker_aot, start_analysis_prewarm,
+    early_worker_aot_compile, early_worker_aot_enabled, manifest_prewarm_enabled,
+    prewarm_worker_aot, start_analysis_prewarm, start_manifest_analysis_prewarm,
     take_background_aot_lock, worker_aot_cache_key,
 };
 use crate::workspace::Workspace;
@@ -114,6 +115,17 @@ fn generate_manifest(
     worker_entrypoint: &Path,
 ) -> io::Result<()> {
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
+    // Fill the shared analyzer byte store while this window is otherwise
+    // CPU-idle on the Rust side: generator kernel compile/load, the early
+    // catalog helper, the overlapped worker AOT compile and the factory
+    // probe. The handle kills the shards on return — after the overlapped
+    // AOT compile and probe have finished — so they never run alongside the
+    // workers spawned by the build itself.
+    let _manifest_prewarm = if manifest_prewarm_enabled() {
+        start_manifest_analysis_prewarm(&workspace.root, dart_binary)
+    } else {
+        None
+    };
     let mut command = Command::new(dart_binary);
     let package_root = workspace.package_root("build_runner_accelerator")?;
     let generator = [
