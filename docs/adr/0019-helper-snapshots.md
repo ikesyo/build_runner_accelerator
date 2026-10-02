@@ -23,7 +23,8 @@ app-jit. Failed training leaves the kernel usable.
 `BUILD_RUNNER_ACCELERATOR_HELPER_SNAPSHOT=0` selects source and suppresses
 background compilation. The resident worker's AOT policy is unchanged.
 Catalog training writes a disposable entrypoint; analysis training warms the
-existing analyzer cache. Runtime arguments still select the actual output
+existing analyzer cache within the requested directories. Summary-only prewarm
+trains with `--dirs none` rather than scanning the entire workspace. Runtime arguments still select the actual output
 entrypoint and prewarm shards/directories.
 
 Validate source dependency digests, artifact contents, package configuration,

@@ -1484,6 +1484,22 @@ fn spawn_analysis_prewarm_options(
         ANALYSIS_PREWARM_ACTIVE.store(false, Ordering::Release);
         return None;
     }
+    let dirs = dirs.map(str::to_owned).or_else(|| {
+        env::var("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    });
+    let mut train_args = vec![
+        OsString::from("--shard"),
+        OsString::from("0"),
+        OsString::from("--shards"),
+        OsString::from("1"),
+    ];
+    // In particular, summary-only prewarm must not train by resolving every
+    // workspace source in a detached process.
+    if let Some(dirs) = &dirs {
+        train_args.extend([OsString::from("--dirs"), OsString::from(dirs)]);
+    }
     // Prefer a warm snapshot of the helper when one is already built: the
     // shards pay full CFE+JIT startup per invocation as scripts (~8s for the
     // analyzer closure), which eats most of a short prewarm window.
@@ -1495,22 +1511,12 @@ fn spawn_analysis_prewarm_options(
                 dart_binary,
                 &script,
                 "analysis-prewarm",
-                &[
-                    OsString::from("--shard"),
-                    OsString::from("0"),
-                    OsString::from("--shards"),
-                    OsString::from("1"),
-                ],
+                &train_args,
                 &[],
             )
         })
         .unwrap_or(script);
     let package_config = root.join(".dart_tool/package_config.json");
-    let dirs = dirs.map(str::to_owned).or_else(|| {
-        env::var("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-    });
     let children: Vec<Child> = (0..shards)
         .filter_map(|shard| {
             let mut command = Command::new(dart_binary);
