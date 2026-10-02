@@ -5,6 +5,7 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 source "$script_dir/toolchain.sh"
 source "$script_dir/worker.sh"
 dart_bin=$(resolve_toolchain_dart)
+export PUB_CACHE="$(resolve_toolchain_pub_cache)"
 worker_ensure_frontend
 fixture=${HELPER_BENCHMARK_ROOT:-$repo_root/fixtures/json_serializable_10_app}
 worker_pub_get "$fixture" --offline
