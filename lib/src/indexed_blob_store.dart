@@ -56,18 +56,27 @@ final class IndexedBlobStore {
     }
   }
 
-  /// Appends `value` under `key`. Best-effort: any failure is swallowed so a
+  /// Appends `value` under `key` unless the checksum-valid value is identical.
+  /// Best-effort: any failure is swallowed so a
   /// cache write can never break the build; a later read just misses.
-  void put(String key, Uint8List value) {
+  /// Returns whether the value was already present or flushed successfully.
+  bool put(String key, Uint8List value) {
     try {
       final index = _index ??= _scan();
       final keyBytes = utf8.encode(key);
-      if (keyBytes.length > _maxKeyLength) return;
+      if (keyBytes.isEmpty || keyBytes.length > _maxKeyLength) return false;
       File(_filePath).parent.createSync(recursive: true);
       final raf = _raf ??= File(_filePath).openSync(mode: FileMode.append);
       raf.lockSync(FileLock.exclusive);
       try {
         _adoptTail(raf, index);
+        // Check after adopting sibling writers' records, while holding the
+        // lock. Keys alone cannot establish equality or detect corruption.
+        final slice = index[key];
+        if (slice != null && slice.$2 == value.length) {
+          final existing = get(key);
+          if (existing != null && _equalBytes(existing, value)) return true;
+        }
         // Re-seek to the live end: reads or a truncation since the last write
         // may have moved the handle's position.
         raf.setPositionSync(raf.lengthSync());
@@ -84,11 +93,13 @@ final class IndexedBlobStore {
         raf.flushSync();
         index[key] = (offset + _headerLength + keyBytes.length, value.length);
         _indexedEnd = offset + recordBytes.length;
+        return true;
       } finally {
         raf.unlockSync();
       }
     } on Object {
       // Cache writes are best-effort.
+      return false;
     }
   }
 
@@ -169,6 +180,13 @@ final class IndexedBlobStore {
   static Uint8List _u32(int value) {
     final data = ByteData(4)..setUint32(0, value, Endian.little);
     return data.buffer.asUint8List();
+  }
+
+  static bool _equalBytes(Uint8List left, Uint8List right) {
+    for (var i = 0; i < left.length; i++) {
+      if (left[i] != right[i]) return false;
+    }
+    return true;
   }
 
   static Uint8List _u16(int value) {
