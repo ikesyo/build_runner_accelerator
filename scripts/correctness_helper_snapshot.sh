@@ -27,7 +27,7 @@ cp "$repo_root/fixtures/json_serializable_app/pubspec.lock" "$fixture/"
 cp -R "$repo_root/fixtures/json_serializable_app/lib" "$fixture/"
 worker_pub_get "$fixture" --offline
 python3 - "$fixture" "$dart_bin" "$BUILD_RUNNER_ACCELERATOR_BIN" "$temporary_dir" <<'PY'
-import os, pathlib, shutil, subprocess, sys, time
+import json, os, pathlib, shutil, subprocess, sys, time
 
 root, dart, native, temporary = sys.argv[1:]
 root, temporary = pathlib.Path(root), pathlib.Path(temporary)
@@ -102,5 +102,27 @@ failed = state / 'helper-snapshots/failed-training'
 assert (failed / 'helper.dill.sdk').is_file() and not (failed / 'helper.jit').exists()
 run('failed-training-kernel', [dart, str(failed / 'helper.dill'), str(root), str(scratch)])
 assert scratch.read_bytes() == expected
-print('helper-snapshot: PASS jit/disabled/shared/corruption/kernel/dependency/prewarm-args/training-failure')
+
+# Observe both the native prewarm invocation and its detached training pass.
+# Summary-only work must stay summary-only in both processes.
+prewarm.write_text('''import 'dart:convert';
+import 'dart:io';
+void main(List<String> args) {
+  File('training-args.jsonl').writeAsStringSync('${jsonEncode(args)}\\n', mode: FileMode.append);
+}
+''')
+run('prewarm-scope', [native, 'aot-prewarm', '--root', str(root), '--dart', dart,
+                      '--mode', 'rust', '--jobs', '1'], {
+    'BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM': '1',
+    'BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS': '1',
+    'BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS': 'none',
+})
+deadline = time.monotonic() + 120
+while (state / 'helper-snapshots/analysis-prewarm/.build.lock').exists():
+    assert time.monotonic() < deadline, 'summary-only training did not finish'
+    time.sleep(0.1)
+invocations = [json.loads(line) for line in (root / 'training-args.jsonl').read_text().splitlines()]
+assert len(invocations) >= 2, 'prewarm and training must both run'
+assert all(args[-2:] == ['--dirs', 'none'] for args in invocations), invocations
+print('helper-snapshot: PASS jit/disabled/shared/corruption/kernel/dependency/prewarm-args/training-failure/training-scope')
 PY
