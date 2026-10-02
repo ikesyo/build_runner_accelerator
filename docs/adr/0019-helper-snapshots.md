@@ -24,7 +24,8 @@ app-jit. Failed training leaves the kernel usable.
 background compilation. The resident worker's AOT policy is unchanged.
 Catalog training writes a disposable entrypoint; analysis training warms the
 existing analyzer cache within the requested directories. Summary-only prewarm
-trains with `--dirs none` rather than scanning the entire workspace. Runtime arguments still select the actual output
+trains with `--dirs none` rather than scanning the entire workspace. Runtime
+arguments still select the actual output
 entrypoint and prewarm shards/directories.
 
 Validate source dependency digests, artifact contents, package configuration,
@@ -49,5 +50,6 @@ Rust tests cover relocation/SDK revision identity and source/artifact digest
 invalidation. `correctness_helper_snapshot.sh` covers real helper training,
 JIT/kernel output equality, shared restore, disablement, corrupt snapshots,
 dependency edits with preserved mtime, prewarm arguments, and failed training.
-It runs in quick verification. Performance measurements belong in the
-benchmark report, with helper timings separated from complete builds.
+It runs in quick verification. The
+[benchmark report](../benchmarks/helper-snapshots-2026-10.md) separates helper
+timings from complete builds.

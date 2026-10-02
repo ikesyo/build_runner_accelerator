@@ -128,6 +128,8 @@ against stock output bytes. `HELPER_BENCHMARK_ROOT`, `HELPER_BENCHMARK_RESULTS`,
 The native-only comparison disables the manifest generator snapshot to keep
 catalog selection on the measured path; worker AOT and analyzer caches are warm.
 This controlled experiment is separate from default launcher-inclusive builds.
+The measured conditions and results are in
+[`helper-snapshots-2026-10.md`](benchmarks/helper-snapshots-2026-10.md).
 
 For unexpectedly large native action plans, use the pre-worker diagnostics:
 

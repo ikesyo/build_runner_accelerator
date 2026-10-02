@@ -13,7 +13,7 @@ results=${HELPER_BENCHMARK_RESULTS:-$(mktemp -d)}
 mkdir -p "$results"
 python3 - "$fixture" "$dart_bin" "$BUILD_RUNNER_ACCELERATOR_BIN" "$repo_root" \
   "$results" "${JOBS:-4}" "${HELPER_BENCHMARK_REPEATS:-3}" <<'PY'
-import json, os, pathlib, shutil, statistics, subprocess, sys, time, urllib.parse
+import json, os, pathlib, re, shutil, statistics, subprocess, sys, time, urllib.parse
 
 fixture, dart, native, repo, results, jobs, repeats = sys.argv[1:]
 fixture, repo, results = map(lambda p: pathlib.Path(p).resolve(), (fixture, repo, results))
@@ -21,6 +21,12 @@ root = results / 'fixture'
 root.mkdir()
 for name in ['pubspec.yaml', 'pubspec.lock']:
     shutil.copy2(fixture / name, root / name)
+# Tracked fixtures refer to the repository through ../.., which changes when
+# they are copied outside it. Resolve the isolated fixture with that same
+# repository package, preserving the selected SDK/pub cache and locked deps.
+pubspec = root / 'pubspec.yaml'
+pubspec.write_text(re.sub(r'(?m)^([ \t]*path:[ \t]*)\.\./\.\.[ \t]*$',
+                         lambda match: match[1] + json.dumps(str(repo)), pubspec.read_text()))
 shutil.copytree(fixture / 'lib', root / 'lib')
 config_path = fixture / '.dart_tool/package_config.json'
 config = json.loads(config_path.read_text())
@@ -54,6 +60,7 @@ def run(label, command, run_env=env):
 def outputs():
     return {str(p.relative_to(root)): p.read_bytes() for p in (root / 'lib').rglob('*.g.dart')}
 
+run('resolve', [dart, '--suppress-analytics', 'pub', 'get', '--offline'])
 run('stock', [dart, '--suppress-analytics', 'run', 'build_runner', 'build', '--delete-conflicting-outputs'])
 expected = outputs()
 assert expected
