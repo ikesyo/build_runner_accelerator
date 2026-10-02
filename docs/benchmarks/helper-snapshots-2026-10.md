@@ -97,4 +97,4 @@ because app-jit ignores runtime `--packages`; includes SDK revision and follows
 the executing `--dart` SDK; trains the already compiled kernel; preserves its
 dependency metadata across JIT training; and forwards prewarm directory scope
 so SDK-only startup does not train by resolving the whole workspace.
-See [ADR 0022](../adr/0022-helper-snapshots.md).
+See [ADR 0023](../adr/0023-helper-snapshots.md).

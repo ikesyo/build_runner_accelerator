@@ -162,7 +162,7 @@ A cache miss runs the source helper and creates snapshots in the background;
 Artifacts live in `.dart_tool/build_runner_accelerator/helper-snapshots/` and
 the shared cache's `helper-snapshots/` directory. They are bound to the Dart
 SDK and resolved package locations, so moving a workspace requires retraining.
-See [ADR 0022](docs/adr/0022-helper-snapshots.md).
+See [ADR 0023](docs/adr/0023-helper-snapshots.md).
 
 The accelerator also keeps these caches under a machine-wide cache root
 so repeated builds — including builds in fresh checkouts on the same

@@ -1,4 +1,4 @@
-# ADR 0022: Warm snapshots for catalog and analysis helpers
+# ADR 0023: Warm snapshots for catalog and analysis helpers
 
 - Status: Accepted
 - Date: 2026-10-02
