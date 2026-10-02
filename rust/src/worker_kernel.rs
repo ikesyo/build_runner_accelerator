@@ -1559,7 +1559,7 @@ fn spawn_analysis_prewarm_options(
 // the training run's optimized code: measured medians were ~1.12s -> 0.19s ->
 // 0.07s (script/dill/jit) for the catalog and ~8.4s -> 1.18s -> 0.43s for the
 // prewarm helper. Snapshot creation happens in a detached `helper-snapshot`
-// child so the first cold build keeps the script path at zero extra cost;
+// child so the first cold build does not wait for compilation;
 // later builds pick the artifact up through the workspace-local directory or
 // the machine-wide shared cache.
 // ---------------------------------------------------------------------------
@@ -1567,7 +1567,7 @@ fn spawn_analysis_prewarm_options(
 const HELPER_SNAPSHOT_ENV: &str = "BUILD_RUNNER_ACCELERATOR_HELPER_SNAPSHOT";
 const HELPER_SNAPSHOT_SPEC_ENV: &str = "BUILD_RUNNER_ACCELERATOR_HELPER_SNAPSHOT_SPEC";
 const HELPER_SNAPSHOT_LOCK_ENV: &str = "BUILD_RUNNER_ACCELERATOR_HELPER_SNAPSHOT_LOCK";
-const HELPER_CACHE_KEY_VERSION: &str = "v1";
+const HELPER_CACHE_KEY_VERSION: &str = "v2";
 
 #[derive(Clone, Copy)]
 enum HelperArtifactKind {
@@ -1628,9 +1628,11 @@ pub(crate) fn helper_snapshot_program(
     };
     for kind in [HelperArtifactKind::Jit, HelperArtifactKind::Kernel] {
         if helper_artifact_is_current(&context, workspace, kind) {
+            helper_snapshot_metric(name, kind.extension(), "local");
             return context.artifact_path(kind);
         }
         if let Ok(Some(path)) = restore_shared_helper(&context, workspace, kind) {
+            helper_snapshot_metric(name, kind.extension(), "shared");
             return path;
         }
     }
@@ -1642,7 +1644,14 @@ pub(crate) fn helper_snapshot_program(
         train_cleanup,
         &context,
     );
+    helper_snapshot_metric(name, "script", "miss");
     script.to_path_buf()
+}
+
+fn helper_snapshot_metric(name: &str, artifact: &str, cache: &str) {
+    if env::var("BUILD_RUNNER_ACCELERATOR_METRICS").as_deref() == Ok("1") {
+        eprintln!("Rust helper snapshot[{name}]: artifact={artifact} cache={cache}");
+    }
 }
 
 fn helper_snapshot_context(
@@ -1651,7 +1660,7 @@ fn helper_snapshot_context(
     script: &Path,
     name: &str,
 ) -> Option<HelperContext> {
-    let sdk_root = dart_sdk_root(dart_binary).ok()?;
+    let sdk_root = dart_sdk_root_for_binary(dart_binary).ok()?;
     let script_path = fs::canonicalize(script).ok()?;
     let cache_key = helper_cache_key(workspace, &script_path, &sdk_root, name).ok()?;
     let dir = workspace
@@ -1682,9 +1691,28 @@ fn helper_cache_key(
     let manifest = workspace.builder_manifest_fingerprint()?;
     let lock = digest_optional_file(&workspace.root.join("pubspec.lock"))?;
     let script = digest_file(script_path)?;
+    // app-jit ignores --packages at runtime and retains the training config
+    // URI. Unlike worker AOT, logical dependency identity alone cannot make
+    // these helpers relocatable. Bind both tiers to the resolved package roots
+    // and config location; a moved checkout must train its own snapshot.
+    let roots = workspace
+        .package_roots()
+        .into_iter()
+        .map(fs::canonicalize)
+        .collect::<io::Result<Vec<_>>>()?;
+    let locations = digest_bytes(&serde_json::to_vec(&roots).map_err(io::Error::other)?);
+    let config_path = workspace.root.join(".dart_tool/package_config.json");
+    let config = fs::canonicalize(&config_path)?;
+    let parsed_config: serde_json::Value = serde_json::from_slice(&fs::read(&config_path)?)
+        .map_err(io::Error::other)?;
+    // Retain the name-to-root mapping without invalidating on pub timestamps.
+    let config_contents = digest_bytes(
+        &serde_json::to_vec(&parsed_config["packages"]).map_err(io::Error::other)?,
+    );
+    let revision = digest_optional_file(&sdk_root.join("revision"))?;
     let package_config = workspace.package_config_identity();
     Ok(format!(
-        "build-runner-accelerator-helper-{HELPER_CACHE_KEY_VERSION}-{}-{}-sdk{}-allowed{}-manifest{}-lock{}-helper{}-script{}-packages{}",
+        "build-runner-accelerator-helper-{HELPER_CACHE_KEY_VERSION}-{}-{}-sdk{}-allowed{}-manifest{}-lock{}-helper{}-script{}-packages{}-locations{}-config{}-contents{}-revision{}",
         std::env::consts::OS,
         std::env::consts::ARCH,
         sdk_version,
@@ -1694,6 +1722,10 @@ fn helper_cache_key(
         name,
         script,
         package_config,
+        locations,
+        config.display(),
+        config_contents,
+        revision,
     ))
 }
 
@@ -1960,7 +1992,7 @@ pub(crate) fn run_helper_snapshot_build(root: &Path, dart_binary: &str) -> io::R
     )?;
     publish_shared_helper(&context, &workspace, HelperArtifactKind::Kernel);
 
-    // App-jit: kernel-compiles and runs `main` once with the training args,
+    // App-jit: runs the compiled kernel once with the training args,
     // then serializes the warm heap. Training failures only lose the warm
     // tier; the kernel artifact above stays usable.
     let temp_jit = temporary_sibling(
@@ -1972,7 +2004,7 @@ pub(crate) fn run_helper_snapshot_build(root: &Path, dart_binary: &str) -> io::R
         .arg(format!("--packages={}", package_config.display()))
         .arg("--snapshot-kind=app-jit")
         .arg(format!("--snapshot={}", temp_jit.display()))
-        .arg(&context.script_path)
+        .arg(context.artifact_path(HelperArtifactKind::Kernel))
         .args(&train_args)
         .current_dir(root)
         .status()?;
@@ -1980,6 +2012,12 @@ pub(crate) fn run_helper_snapshot_build(root: &Path, dart_binary: &str) -> io::R
         remove_if_present(path);
     }
     if jit_status.success() && temp_jit.is_file() {
+        // The JIT contains the kernel's code. Never label it with dependency
+        // digests observed after an edit during the training run.
+        if !helper_artifact_is_current(&context, &workspace, HelperArtifactKind::Kernel) {
+            remove_if_present(&temp_jit);
+            return Err(io::Error::other("helper dependencies changed during training"));
+        }
         replace_file(&temp_jit, &context.artifact_path(HelperArtifactKind::Jit))?;
         write_helper_metadata(
             &context,
@@ -2006,14 +2044,23 @@ fn write_helper_metadata(
     kind: HelperArtifactKind,
     depfile: &Path,
 ) -> io::Result<()> {
-    let metadata = build_aot_metadata(
-        workspace,
-        &context.sdk_root,
-        &context.script_path,
-        depfile,
-        &context.artifact_path(kind),
-        &context.cache_key,
-    )?;
+    let metadata = match kind {
+        HelperArtifactKind::Kernel => build_aot_metadata(
+            workspace,
+            &context.sdk_root,
+            &context.script_path,
+            depfile,
+            &context.artifact_path(kind),
+            &context.cache_key,
+        )?,
+        HelperArtifactKind::Jit => {
+            let mut metadata: AotMetadata = serde_json::from_slice(
+                &fs::read(context.metadata_path(HelperArtifactKind::Kernel))?,
+            ).map_err(io::Error::other)?;
+            metadata.executable = digest_file(&context.artifact_path(kind))?;
+            metadata
+        }
+    };
     let text = serde_json::to_string(&metadata).map_err(io::Error::other)?;
     let temp = temporary_sibling(&context.metadata_path(kind), std::process::id(), "sdk");
     fs::write(&temp, text)?;
@@ -2032,6 +2079,81 @@ mod tests {
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::path::{Path, PathBuf};
+
+    struct HelperFixture {
+        root: PathBuf,
+        workspace: crate::workspace::Workspace,
+        sdk: PathBuf,
+        script: PathBuf,
+    }
+
+    impl HelperFixture {
+        fn new(label: &str) -> Self {
+            let root = std::env::temp_dir().join(format!("helper-snapshot-{label}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&root);
+            fs::create_dir_all(root.join(".dart_tool")).unwrap();
+            fs::create_dir_all(root.join("sdk/lib/_internal")).unwrap();
+            fs::write(root.join("sdk/version"), "3.13.3").unwrap();
+            fs::write(root.join("sdk/revision"), "revision-one").unwrap();
+            fs::write(root.join("sdk/lib/_internal/allowed_experiments.json"), "{}").unwrap();
+            fs::write(root.join("pubspec.yaml"), "name: helper_test\n").unwrap();
+            fs::write(root.join(".dart_tool/package_config.json"),
+                r#"{"configVersion":2,"packages":[{"name":"helper_test","rootUri":"../","packageUri":"lib/","languageVersion":"3.13"}]}"#).unwrap();
+            let script = root.join("helper.dart");
+            fs::write(&script, "void main() {}\n").unwrap();
+            let workspace = crate::workspace::Workspace::load(root.clone()).unwrap();
+            let sdk = root.join("sdk");
+            Self { root, workspace, sdk, script }
+        }
+
+        fn context(&self) -> super::HelperContext {
+            let dir = self.root.join("artifacts");
+            fs::create_dir_all(&dir).unwrap();
+            super::HelperContext {
+                cache_key: super::helper_cache_key(&self.workspace, &self.script, &self.sdk, "test").unwrap(),
+                sdk_root: self.sdk.clone(),
+                depfile_path: dir.join("helper.d"),
+                dir,
+                script_path: self.script.clone(),
+            }
+        }
+    }
+
+    impl Drop for HelperFixture {
+        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.root); }
+    }
+
+    #[test]
+    fn helper_key_binds_training_config_and_sdk_revision() {
+        let first = HelperFixture::new("key-first");
+        let second = HelperFixture::new("key-second");
+        assert_eq!(first.workspace.package_config_identity(), second.workspace.package_config_identity());
+        assert_ne!(first.context().cache_key, second.context().cache_key);
+        let before = first.context().cache_key;
+        fs::write(first.sdk.join("revision"), "revision-two").unwrap();
+        assert_ne!(before, first.context().cache_key);
+    }
+
+    #[test]
+    fn helper_metadata_rejects_corruption_and_dependency_edits() {
+        let fixture = HelperFixture::new("metadata");
+        let context = fixture.context();
+        let dependency = fixture.root.join("dependency.dart");
+        fs::write(&dependency, "const value = 1;\n").unwrap();
+        fs::write(&context.depfile_path, format!("helper: {} {}\n", fixture.script.display(), dependency.display())).unwrap();
+        for kind in [super::HelperArtifactKind::Kernel, super::HelperArtifactKind::Jit] {
+            fs::write(context.artifact_path(kind), "snapshot").unwrap();
+            super::write_helper_metadata(&context, &fixture.workspace, kind, &context.depfile_path).unwrap();
+            assert!(super::helper_artifact_is_current(&context, &fixture.workspace, kind));
+            fs::write(context.artifact_path(kind), "broken").unwrap();
+            assert!(!super::helper_artifact_is_current(&context, &fixture.workspace, kind));
+            fs::write(context.artifact_path(kind), "snapshot").unwrap();
+        }
+        fs::write(dependency, "const value = 2;\n").unwrap();
+        for kind in [super::HelperArtifactKind::Kernel, super::HelperArtifactKind::Jit] {
+            assert!(!super::helper_artifact_is_current(&context, &fixture.workspace, kind));
+        }
+    }
 
     #[test]
     fn early_worker_aot_panics_are_caught() {

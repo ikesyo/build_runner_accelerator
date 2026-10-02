@@ -119,6 +119,16 @@ one-file and broad incremental builds against stock output bytes; commands
 and cache conditions are recorded in
 [`cross-workspace-startup-2026-10.md`](benchmarks/cross-workspace-startup-2026-10.md).
 
+To isolate helper snapshot startup, run
+`bash scripts/benchmark_helper_snapshot.sh` without concurrent builds. It trains
+the catalog and analysis helpers once, compares source/kernel/JIT medians,
+then compares source and snapshot clean, no-op, one-file and broad builds
+against stock output bytes. `HELPER_BENCHMARK_ROOT`, `HELPER_BENCHMARK_RESULTS`,
+`HELPER_BENCHMARK_REPEATS` and `JOBS` select the fixture and measurements.
+The native-only comparison disables the manifest generator snapshot to keep
+catalog selection on the measured path; worker AOT and analyzer caches are warm.
+This controlled experiment is separate from default launcher-inclusive builds.
+
 For unexpectedly large native action plans, use the pre-worker diagnostics:
 
 ```bash

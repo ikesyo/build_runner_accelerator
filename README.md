@@ -156,7 +156,15 @@ repaired.
 
 ## Performance and caching
 
-The accelerator keeps four shared caches under a machine-wide cache root
+Catalog and analysis-prewarm helpers can reuse warm JIT or kernel snapshots.
+A cache miss runs the source helper and creates snapshots in the background;
+`BUILD_RUNNER_ACCELERATOR_HELPER_SNAPSHOT=0` disables this optimization.
+Artifacts live in `.dart_tool/build_runner_accelerator/helper-snapshots/` and
+the shared cache's `helper-snapshots/` directory. They are bound to the Dart
+SDK and resolved package locations, so moving a workspace requires retraining.
+See [ADR 0019](docs/adr/0019-helper-snapshots.md).
+
+The accelerator also keeps these caches under a machine-wide cache root
 so repeated builds — including builds in fresh checkouts on the same
 machine — skip the expensive cold paths:
 
