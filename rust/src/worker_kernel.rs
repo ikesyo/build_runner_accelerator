@@ -1484,6 +1484,27 @@ fn spawn_analysis_prewarm_options(
         ANALYSIS_PREWARM_ACTIVE.store(false, Ordering::Release);
         return None;
     }
+    // Prefer a warm snapshot of the helper when one is already built: the
+    // shards pay full CFE+JIT startup per invocation as scripts (~8s for the
+    // analyzer closure), which eats most of a short prewarm window.
+    let script = Workspace::load(root.to_path_buf())
+        .ok()
+        .map(|workspace| {
+            helper_snapshot_program(
+                &workspace,
+                dart_binary,
+                &script,
+                "analysis-prewarm",
+                &[
+                    OsString::from("--shard"),
+                    OsString::from("0"),
+                    OsString::from("--shards"),
+                    OsString::from("1"),
+                ],
+                &[],
+            )
+        })
+        .unwrap_or(script);
     let package_config = root.join(".dart_tool/package_config.json");
     let dirs = dirs.map(str::to_owned).or_else(|| {
         env::var("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS")
@@ -1526,6 +1547,477 @@ fn spawn_analysis_prewarm_options(
         );
         Some(AnalysisPrewarm { children })
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helper snapshots: warm app-jit (or kernel) artifacts for helper entrypoints
+// such as `tool/generate_worker_catalog.dart` and `bin/prewarm_analysis.dart`.
+//
+// A plain `dart <script>` pays full CFE+JIT startup on every invocation
+// (~1s for the catalog helper, ~8-9s for the analyzer-heavy prewarm shards).
+// A kernel snapshot skips the CFE, and an app-jit snapshot additionally keeps
+// the training run's optimized code: measured medians were ~1.12s -> 0.19s ->
+// 0.07s (script/dill/jit) for the catalog and ~8.4s -> 1.18s -> 0.43s for the
+// prewarm helper. Snapshot creation happens in a detached `helper-snapshot`
+// child so the first cold build keeps the script path at zero extra cost;
+// later builds pick the artifact up through the workspace-local directory or
+// the machine-wide shared cache.
+// ---------------------------------------------------------------------------
+
+const HELPER_SNAPSHOT_ENV: &str = "BUILD_RUNNER_ACCELERATOR_HELPER_SNAPSHOT";
+const HELPER_SNAPSHOT_SPEC_ENV: &str = "BUILD_RUNNER_ACCELERATOR_HELPER_SNAPSHOT_SPEC";
+const HELPER_SNAPSHOT_LOCK_ENV: &str = "BUILD_RUNNER_ACCELERATOR_HELPER_SNAPSHOT_LOCK";
+const HELPER_CACHE_KEY_VERSION: &str = "v1";
+
+#[derive(Clone, Copy)]
+enum HelperArtifactKind {
+    Jit,
+    Kernel,
+}
+
+impl HelperArtifactKind {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Jit => "jit",
+            Self::Kernel => "dill",
+        }
+    }
+}
+
+struct HelperContext {
+    cache_key: String,
+    sdk_root: PathBuf,
+    dir: PathBuf,
+    depfile_path: PathBuf,
+    script_path: PathBuf,
+}
+
+impl HelperContext {
+    fn artifact_path(&self, kind: HelperArtifactKind) -> PathBuf {
+        self.dir.join(format!("helper.{}", kind.extension()))
+    }
+
+    fn metadata_path(&self, kind: HelperArtifactKind) -> PathBuf {
+        self.dir.join(format!("helper.{}.sdk", kind.extension()))
+    }
+}
+
+/// Program the caller should pass to `dart --packages=<cfg>` in place of a
+/// helper `.dart` script: a valid warm app-jit snapshot when one exists, else
+/// a kernel snapshot, else the script itself. When no valid artifact exists a
+/// detached build is triggered (deduplicated by a lock) and the script is
+/// returned, so resolution never adds synchronous compile time to the cold
+/// path. Both artifact kinds run with the same argv convention as the script.
+///
+/// `train_args` are the program arguments used for the app-jit training run;
+/// they must be side-effect free or confined to `helper_dir` scratch files
+/// listed in `train_cleanup` (deleted by the builder afterwards).
+pub(crate) fn helper_snapshot_program(
+    workspace: &Workspace,
+    dart_binary: &str,
+    script: &Path,
+    name: &str,
+    train_args: &[OsString],
+    train_cleanup: &[PathBuf],
+) -> PathBuf {
+    if env_flag_disabled(HELPER_SNAPSHOT_ENV) {
+        return script.to_path_buf();
+    }
+    let Some(context) = helper_snapshot_context(workspace, dart_binary, script, name) else {
+        return script.to_path_buf();
+    };
+    for kind in [HelperArtifactKind::Jit, HelperArtifactKind::Kernel] {
+        if helper_artifact_is_current(&context, workspace, kind) {
+            return context.artifact_path(kind);
+        }
+        if let Ok(Some(path)) = restore_shared_helper(&context, workspace, kind) {
+            return path;
+        }
+    }
+    let _ = spawn_helper_snapshot_build(
+        workspace,
+        dart_binary,
+        name,
+        train_args,
+        train_cleanup,
+        &context,
+    );
+    script.to_path_buf()
+}
+
+fn helper_snapshot_context(
+    workspace: &Workspace,
+    dart_binary: &str,
+    script: &Path,
+    name: &str,
+) -> Option<HelperContext> {
+    let sdk_root = dart_sdk_root(dart_binary).ok()?;
+    let script_path = fs::canonicalize(script).ok()?;
+    let cache_key = helper_cache_key(workspace, &script_path, &sdk_root, name).ok()?;
+    let dir = workspace
+        .root
+        .join(".dart_tool/build_runner_accelerator/helper-snapshots")
+        .join(name);
+    Some(HelperContext {
+        cache_key,
+        sdk_root,
+        depfile_path: dir.join("helper.d"),
+        dir,
+        script_path,
+    })
+}
+
+/// Cache key for helper artifacts. Follows the AOT formula: the snapshot
+/// embeds machine code (app-jit) or a kernel image bound to the VM build, so
+/// the key covers OS, arch, SDK identity, the resolved dependency closure
+/// (manifest fingerprint, pubspec.lock, package-config identity) and the
+/// helper script itself.
+fn helper_cache_key(
+    workspace: &Workspace,
+    script_path: &Path,
+    sdk_root: &Path,
+    name: &str,
+) -> io::Result<String> {
+    let (sdk_version, allowed_experiments) = aot_sdk_identity(sdk_root)?;
+    let manifest = workspace.builder_manifest_fingerprint()?;
+    let lock = digest_optional_file(&workspace.root.join("pubspec.lock"))?;
+    let script = digest_file(script_path)?;
+    let package_config = workspace.package_config_identity();
+    Ok(format!(
+        "build-runner-accelerator-helper-{HELPER_CACHE_KEY_VERSION}-{}-{}-sdk{}-allowed{}-manifest{}-lock{}-helper{}-script{}-packages{}",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        sdk_version,
+        allowed_experiments,
+        manifest,
+        lock,
+        name,
+        script,
+        package_config,
+    ))
+}
+
+fn helper_artifact_is_current(
+    context: &HelperContext,
+    workspace: &Workspace,
+    kind: HelperArtifactKind,
+) -> bool {
+    aot_metadata_is_current(
+        &context.artifact_path(kind),
+        &context.metadata_path(kind),
+        workspace,
+        &context.sdk_root,
+        &context.script_path,
+        &context.cache_key,
+    )
+}
+
+fn shared_helper_dir(workspace_root: &Path, cache_key: &str) -> Option<PathBuf> {
+    Some(
+        shared_cache_root(workspace_root)?
+            .join("helper-snapshots")
+            .join(digest_bytes(cache_key.as_bytes())),
+    )
+}
+
+/// Restore a previously published helper artifact trio (artifact, depfile,
+/// metadata) from the machine-wide cache, mirroring `restore_shared_aot`:
+/// files are staged under temporary names and validated before any rename so
+/// a concurrent publisher rotating the slot cannot restore a mixed set.
+fn restore_shared_helper(
+    context: &HelperContext,
+    workspace: &Workspace,
+    kind: HelperArtifactKind,
+) -> io::Result<Option<PathBuf>> {
+    let Some(dir) = shared_helper_dir(&workspace.root, &context.cache_key) else {
+        return Ok(None);
+    };
+    let kind_dir = dir.join(kind.extension());
+    let artifact = context.artifact_path(kind);
+    let metadata = context.metadata_path(kind);
+    let process_id = std::process::id();
+    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for (source, destination) in [
+        (kind_dir.join("helper"), artifact.clone()),
+        (kind_dir.join("helper.d"), context.depfile_path.clone()),
+        (kind_dir.join("helper.sdk"), metadata.clone()),
+    ] {
+        let temp = temporary_sibling(&destination, process_id, "shared");
+        if fs::create_dir_all(&context.dir).is_err() || fs::copy(&source, &temp).is_err() {
+            remove_if_present(&temp);
+            for (staged_temp, _) in staged.drain(..) {
+                remove_if_present(&staged_temp);
+            }
+            return Ok(None);
+        }
+        staged.push((temp, destination));
+    }
+    let valid = aot_metadata_is_current(
+        &staged[0].0,
+        &staged[2].0,
+        workspace,
+        &context.sdk_root,
+        &context.script_path,
+        &context.cache_key,
+    );
+    if !valid {
+        for (staged_temp, _) in staged.drain(..) {
+            remove_if_present(&staged_temp);
+        }
+        return Ok(None);
+    }
+    for (temp, destination) in staged {
+        replace_file(&temp, &destination)?;
+    }
+    Ok(Some(artifact))
+}
+
+/// Publish a freshly built helper artifact so other checkouts and workspaces
+/// with the same content key skip the training run. Metadata is written last,
+/// mirroring `publish_shared_aot`: a slot interrupted mid-publish stays
+/// invalid. Best-effort.
+fn publish_shared_helper(context: &HelperContext, workspace: &Workspace, kind: HelperArtifactKind) {
+    let Some(dir) = shared_helper_dir(&workspace.root, &context.cache_key) else {
+        return;
+    };
+    let kind_dir = dir.join(kind.extension());
+    let _ = (|| -> io::Result<()> {
+        fs::create_dir_all(&kind_dir)?;
+        let process_id = std::process::id();
+        for (source, name) in [
+            (context.artifact_path(kind), "helper"),
+            (context.depfile_path.clone(), "helper.d"),
+            (context.metadata_path(kind), "helper.sdk"),
+        ] {
+            let destination = kind_dir.join(name);
+            let temp = temporary_sibling(&destination, process_id, "publish");
+            fs::copy(&source, &temp)?;
+            replace_file(&temp, &destination)?;
+        }
+        Ok(())
+    })();
+}
+
+/// Spawn the detached `helper-snapshot` child that trains/compiles the
+/// artifacts. Returns immediately; the caller keeps using the script path for
+/// this run and finds the artifact on a later one.
+fn spawn_helper_snapshot_build(
+    workspace: &Workspace,
+    dart_binary: &str,
+    name: &str,
+    train_args: &[OsString],
+    train_cleanup: &[PathBuf],
+    context: &HelperContext,
+) -> io::Result<()> {
+    fs::create_dir_all(&context.dir)?;
+    let lock_path = context.dir.join(".build.lock");
+    if !acquire_background_aot_lock(&lock_path)? {
+        return Ok(());
+    }
+
+    let spec = {
+        let mut spec = OsString::from(name);
+        spec.push("\u{1f}");
+        spec.push(&context.script_path);
+        for arg in train_args {
+            spec.push("\u{1f}");
+            spec.push(arg);
+        }
+        spec.push("\u{1f}");
+        spec.push("\u{1e}");
+        for path in train_cleanup {
+            spec.push("\u{1f}");
+            spec.push(path);
+        }
+        spec
+    };
+
+    let current_exe = match env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            remove_if_present(&lock_path);
+            return Err(error);
+        }
+    };
+    let result = Command::new(current_exe)
+        .args(["helper-snapshot", "--root"])
+        .arg(&workspace.root)
+        .args(["--dart"])
+        .arg(dart_binary)
+        .args(["--mode", "rust"])
+        .current_dir(&workspace.root)
+        .env(HELPER_SNAPSHOT_SPEC_ENV, &spec)
+        .env(HELPER_SNAPSHOT_LOCK_ENV, &lock_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    match result {
+        Ok(mut child) => {
+            // Same reap pattern as the background worker AOT compile: the
+            // child is re-parented and finishes independently if the
+            // foreground process exits first.
+            thread::spawn(move || {
+                let _ = child.wait();
+            });
+            Ok(())
+        }
+        Err(error) => {
+            remove_if_present(&lock_path);
+            Err(error)
+        }
+    }
+}
+
+/// Lock released when the detached `helper-snapshot` process exits.
+pub(crate) struct HelperSnapshotLock {
+    path: PathBuf,
+}
+
+pub(crate) fn take_helper_snapshot_lock() -> Option<HelperSnapshotLock> {
+    env::var_os(HELPER_SNAPSHOT_LOCK_ENV).map(|path| HelperSnapshotLock {
+        path: PathBuf::from(path),
+    })
+}
+
+impl Drop for HelperSnapshotLock {
+    fn drop(&mut self) {
+        remove_if_present(&self.path);
+    }
+}
+
+/// Detached builder entrypoint: compile the kernel snapshot (with depfile),
+/// then run the app-jit training pass over it when requested. Each kind gets
+/// its own metadata file and is published independently, so a training
+/// failure still leaves the kernel artifact usable.
+pub(crate) fn run_helper_snapshot_build(root: &Path, dart_binary: &str) -> io::Result<()> {
+    let spec = env::var(HELPER_SNAPSHOT_SPEC_ENV)
+        .map_err(|_| io::Error::other("helper snapshot spec env not set"))?;
+    let mut parts = spec.split('\u{1f}');
+    let name = parts
+        .next()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| io::Error::other("helper snapshot spec missing name"))?;
+    let script = PathBuf::from(
+        parts
+            .next()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| io::Error::other("helper snapshot spec missing script"))?,
+    );
+    let mut train_args: Vec<OsString> = Vec::new();
+    let mut train_cleanup: Vec<PathBuf> = Vec::new();
+    let mut cleanup_section = false;
+    for part in parts {
+        if !cleanup_section && part == "\u{1e}" {
+            cleanup_section = true;
+        } else if cleanup_section {
+            train_cleanup.push(PathBuf::from(part));
+        } else {
+            train_args.push(OsString::from(part));
+        }
+    }
+
+    let workspace = Workspace::load(root.to_path_buf())?;
+    let Some(context) = helper_snapshot_context(&workspace, dart_binary, &script, name) else {
+        return Err(io::Error::other("helper snapshot context unavailable"));
+    };
+    fs::create_dir_all(&context.dir)?;
+    let package_config = root.join(".dart_tool/package_config.json");
+    let process_id = std::process::id();
+
+    // Kernel snapshot first: it is the fallback artifact and its depfile feeds
+    // staleness validation for both kinds.
+    let temp_dill = temporary_sibling(
+        &context.artifact_path(HelperArtifactKind::Kernel),
+        process_id,
+        "dill",
+    );
+    let temp_depfile = temporary_sibling(&context.depfile_path, process_id, "d");
+    let kernel_status = Command::new(dart_binary)
+        .args(["--suppress-analytics", "compile", "kernel"])
+        .arg("--no-embed-sources")
+        .arg(format!("--packages={}", package_config.display()))
+        .arg(format!("--depfile={}", temp_depfile.display()))
+        .arg(&context.script_path)
+        .arg("-o")
+        .arg(&temp_dill)
+        .current_dir(root)
+        .status()?;
+    if !kernel_status.success() {
+        remove_if_present(&temp_dill);
+        remove_if_present(&temp_depfile);
+        return Err(io::Error::other(format!(
+            "helper kernel compile failed for {name}: {kernel_status}"
+        )));
+    }
+    replace_file(&temp_depfile, &context.depfile_path)?;
+    replace_file(&temp_dill, &context.artifact_path(HelperArtifactKind::Kernel))?;
+    write_helper_metadata(
+        &context,
+        &workspace,
+        HelperArtifactKind::Kernel,
+        &context.depfile_path,
+    )?;
+    publish_shared_helper(&context, &workspace, HelperArtifactKind::Kernel);
+
+    // App-jit: kernel-compiles and runs `main` once with the training args,
+    // then serializes the warm heap. Training failures only lose the warm
+    // tier; the kernel artifact above stays usable.
+    let temp_jit = temporary_sibling(
+        &context.artifact_path(HelperArtifactKind::Jit),
+        process_id,
+        "jit",
+    );
+    let jit_status = Command::new(dart_binary)
+        .arg(format!("--packages={}", package_config.display()))
+        .arg("--snapshot-kind=app-jit")
+        .arg(format!("--snapshot={}", temp_jit.display()))
+        .arg(&context.script_path)
+        .args(&train_args)
+        .current_dir(root)
+        .status()?;
+    for path in &train_cleanup {
+        remove_if_present(path);
+    }
+    if jit_status.success() && temp_jit.is_file() {
+        replace_file(&temp_jit, &context.artifact_path(HelperArtifactKind::Jit))?;
+        write_helper_metadata(
+            &context,
+            &workspace,
+            HelperArtifactKind::Jit,
+            &context.depfile_path,
+        )?;
+        publish_shared_helper(&context, &workspace, HelperArtifactKind::Jit);
+    } else {
+        remove_if_present(&temp_jit);
+        eprintln!(
+            "helper snapshot[{name}]: app-jit training failed ({jit_status}); kernel artifact only"
+        );
+    }
+    Ok(())
+}
+
+/// Write the staleness metadata for one helper artifact kind, reusing the
+/// AOT metadata contract: dependency digests from the compiler depfile,
+/// package-config identity, SDK identity and the exact artifact digest.
+fn write_helper_metadata(
+    context: &HelperContext,
+    workspace: &Workspace,
+    kind: HelperArtifactKind,
+    depfile: &Path,
+) -> io::Result<()> {
+    let metadata = build_aot_metadata(
+        workspace,
+        &context.sdk_root,
+        &context.script_path,
+        depfile,
+        &context.artifact_path(kind),
+        &context.cache_key,
+    )?;
+    let text = serde_json::to_string(&metadata).map_err(io::Error::other)?;
+    let temp = temporary_sibling(&context.metadata_path(kind), std::process::id(), "sdk");
+    fs::write(&temp, text)?;
+    replace_file(&temp, &context.metadata_path(kind))
 }
 
 #[cfg(test)]

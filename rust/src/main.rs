@@ -41,6 +41,7 @@ fn main() -> io::Result<()> {
         }
         "aot-cache-key" => frontend::run_aot_cache_key(&options),
         "aot-prewarm" => frontend::run_aot_prewarm(&options),
+        "helper-snapshot" => frontend::run_helper_snapshot(&options),
         command => {
             print_usage();
             Err(io::Error::new(

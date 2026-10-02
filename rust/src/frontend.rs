@@ -3,7 +3,7 @@ use crate::cli::{FrontendMode, Options};
 use crate::worker_kernel::{
     early_worker_aot_compile, early_worker_aot_enabled, manifest_prewarm_enabled,
     prewarm_worker_aot, start_analysis_prewarm, start_manifest_analysis_prewarm,
-    take_background_aot_lock, worker_aot_cache_key,
+    take_background_aot_lock, take_helper_snapshot_lock, worker_aot_cache_key,
 };
 use crate::workspace::Workspace;
 use std::fs;
@@ -191,6 +191,24 @@ fn generate_manifest(
             if !helper.is_file() {
                 return;
             }
+            // A warm helper snapshot skips the helper's CFE+JIT startup
+            // (~1s -> ~0.07s on the catalog path). When none exists the
+            // script runs as before and a detached build warms the cache
+            // for the next generation.
+            let train_entrypoint = workspace
+                .root
+                .join(".dart_tool/build_runner_accelerator/helper-snapshots/worker-catalog/catalog-train-worker.dart");
+            let helper = crate::worker_kernel::helper_snapshot_program(
+                workspace,
+                dart_binary,
+                &helper,
+                "worker-catalog",
+                &[
+                    workspace.root.clone().into_os_string(),
+                    train_entrypoint.clone().into_os_string(),
+                ],
+                &[train_entrypoint],
+            );
             let result = Command::new(dart_binary)
                 .arg(format!(
                     "--packages={}",
@@ -397,6 +415,15 @@ pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
     println!("AOT prewarm ready: {}", artifact.display());
     println!("AOT cache key: {cache_key}");
     Ok(())
+}
+
+/// Detached helper-snapshot builder spawned by `helper_snapshot_program`.
+/// The spec (helper name, script, training args, cleanup paths) arrives via
+/// the environment since argv forwarding of program args is ambiguous.
+pub(crate) fn run_helper_snapshot(options: &Options) -> io::Result<()> {
+    let _lock = take_helper_snapshot_lock();
+    let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
+    crate::worker_kernel::run_helper_snapshot_build(&options.root, dart_binary)
 }
 
 fn select_dart_fallback(options: &Options, reason: &str) -> io::Result<Option<RustBuildConfig>> {
