@@ -36,8 +36,8 @@ import 'package:build_runner/src/bootstrap/build_process_state.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/analysis_driver.dart'
     show sdkLanguageVersion;
-// ignore: implementation_imports
-import 'package:build_runner/src/build/resolver/sdk_summary.dart';
+import 'package:build_runner_accelerator/src/sdk_summary_lock.dart'
+    show sharedSdkSummaryPath;
 import 'package:build_runner_accelerator/src/worker_resolvers.dart'
     show sharedAnalysisByteStore;
 import 'package:package_config/package_config.dart' as package_config;
@@ -45,7 +45,8 @@ import 'package:path/path.dart' as p;
 import 'package:pub_semver/pub_semver.dart';
 
 /// Directories of the workspace package whose Dart sources are worth warming.
-const _warmDirs = ['lib', 'test', 'integration_test'];
+/// `--dirs` overrides the set; the sentinel `none` warms only the SDK summary.
+const _defaultWarmDirs = ['lib', 'test', 'integration_test'];
 
 /// Minimal `package:` URI resolver backed by the workspace package config.
 ///
@@ -86,12 +87,19 @@ class _PackageUriResolver extends UriResolver {
 Future<void> main(List<String> args) async {
   var shard = 0;
   var shards = 1;
+  var warmDirs = _defaultWarmDirs;
   for (var i = 0; i < args.length; i++) {
     switch (args[i]) {
       case '--shard':
         shard = int.parse(args[++i]);
       case '--shards':
         shards = int.parse(args[++i]);
+      case '--dirs':
+        warmDirs = args[++i]
+            .split(',')
+            .map((d) => d.trim())
+            .where((d) => d.isNotEmpty && d != 'none')
+            .toList();
     }
   }
 
@@ -105,9 +113,13 @@ Future<void> main(List<String> args) async {
   final packageConfig = await package_config.loadPackageConfigUri(
     Uri.parse(buildProcessState.packageConfigUri),
   );
-  final sdkSummaryBytes = await File(
-    await defaultSdkSummaryGenerator(),
-  ).readAsBytes();
+  final sdkSummary = await sharedSdkSummaryPath();
+  if (warmDirs.isEmpty) {
+    watchdog.cancel();
+    stderr.writeln('prewarm[$shard]: SDK summary ready');
+    return;
+  }
+  final sdkSummaryBytes = await File(sdkSummary.path).readAsBytes();
   final provider = PhysicalResourceProvider.INSTANCE;
 
   String packageDir(package_config.Package package) =>
@@ -149,7 +161,7 @@ Future<void> main(List<String> args) async {
   final session = driver.currentSession;
 
   final files = <String>[];
-  for (final dir in _warmDirs) {
+  for (final dir in warmDirs) {
     final directory = Directory(p.join(root, dir));
     if (!directory.existsSync()) continue;
     files.addAll(

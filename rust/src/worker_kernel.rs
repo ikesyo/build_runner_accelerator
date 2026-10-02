@@ -9,6 +9,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -244,9 +245,22 @@ pub(crate) fn early_worker_aot_enabled() -> bool {
 /// sources into the shared byte store, priming both cold-start caches in one
 /// `aot-prewarm` step. The caller joins with [`AnalysisPrewarm::wait_for_children`];
 /// `None` means the shared byte store is disabled, the accelerator package
-/// cannot be located, or the workspace has no package config yet.
+/// cannot be located, the workspace has no package config yet, or another
+/// prewarm window already owns the shards.
 pub(crate) fn start_analysis_prewarm(root: &Path, dart_binary: &str) -> Option<AnalysisPrewarm> {
-    spawn_analysis_prewarm(root, dart_binary)
+    spawn_analysis_prewarm(root, dart_binary, "aot-prewarm")
+}
+
+/// Same spawner bound to the manifest-generation window: the shards fill the
+/// byte store while the generator kernel compiles, the early catalog runs,
+/// the overlapped worker AOT builds and the factory probe executes. Dropping
+/// the handle at the end of `generate_manifest` cuts them before real workers
+/// spawn; `None` follows the same conditions as [`start_analysis_prewarm`].
+pub(crate) fn start_manifest_analysis_prewarm(
+    root: &Path,
+    dart_binary: &str,
+) -> Option<AnalysisPrewarm> {
+    spawn_analysis_prewarm(root, dart_binary, "manifest")
 }
 
 fn is_dart_source(worker_executable: &str) -> bool {
@@ -634,9 +648,22 @@ fn prepare_worker_aot(
     // Opt-in overlap: the compile is mostly single-threaded, so JIT
     // analysis shards can start filling the shared byte store meanwhile.
     // The shards are killed as soon as the compile ends (see `AnalysisPrewarm`'s
-    // `Drop`) so they never compete with the workers that follow.
+    // `Drop`) so they never compete with the workers that follow. When a
+    // wider prewarm window (e.g. manifest generation) already owns the
+    // shards this spawn is skipped instead of doubling them. Without the
+    // opt-in, a single summary-only shard still runs when the workspace has
+    // no SDK summary yet — hiding the one first-touch cost that measured
+    // faster (see `sdk_summary_prewarm_enabled`).
     let analysis_prewarm = if compile_prewarm_enabled() {
-        spawn_analysis_prewarm(&context.workspace.root, dart_binary)
+        spawn_analysis_prewarm(&context.workspace.root, dart_binary, "compile")
+    } else if sdk_summary_prewarm_enabled(&context.workspace.root) {
+        spawn_analysis_prewarm_options(
+            &context.workspace.root,
+            dart_binary,
+            "sdk-summary",
+            Some(1),
+            Some("none"),
+        )
     } else {
         None
     };
@@ -644,6 +671,13 @@ fn prepare_worker_aot(
     let temp_aot = temporary_sibling(&context.aot_path, process_id, "aot");
     let temp_depfile = temporary_sibling(&context.depfile_path, process_id, "d");
     let temp_sdk_metadata = temporary_sibling(&context.sdk_metadata_path, process_id, "sdk");
+    // The compiler only writes its output at the end of a long single-threaded
+    // compile, so re-assert the output directory here: anything that removed
+    // `aot-sdk` after `prepare_aot_context` would otherwise surface as a
+    // PathNotFound when the compile finally emits the binary.
+    if let Some(parent) = temp_aot.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let package_config = context.workspace.root.join(".dart_tool/package_config.json");
     let status = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "exe"])
@@ -1257,6 +1291,7 @@ impl Drop for AnalysisPrewarm {
         for child in &mut self.children {
             let _ = child.wait();
         }
+        ANALYSIS_PREWARM_ACTIVE.store(false, Ordering::Release);
     }
 }
 
@@ -1281,6 +1316,49 @@ fn compile_prewarm_enabled() -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+/// `BUILD_RUNNER_ACCELERATOR_MANIFEST_PREWARM=1` opts into running the
+/// analysis shards across the whole manifest-generation window (generator
+/// kernel compile, early catalog, overlapped worker AOT compile and factory
+/// probe); they are killed when manifest generation returns so they never
+/// overlap real workers. Off by default: measurement showed the shards
+/// contend with the kernel compile, so only the later probe segment is ever
+/// worth covering — see `compile_prewarm_enabled` and the ADR.
+pub(crate) fn manifest_prewarm_enabled() -> bool {
+    env::var("BUILD_RUNNER_ACCELERATOR_MANIFEST_PREWARM")
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// Whether to auto-spawn one summary-only shard while the worker AOT
+/// compiles. The only first-touch cost that measured faster under prewarm
+/// was the shared SDK summary (`~1-3s` of duplicated `buildSdkSummary` work
+/// per cold workspace): it is worth hiding only when it is actually missing
+/// and the machine has enough headroom for one extra JIT process, and a
+/// shard running with `--dirs none` does no file resolution at all.
+/// `BUILD_RUNNER_ACCELERATOR_SDK_SUMMARY_PREWARM=0` opts out.
+fn sdk_summary_prewarm_enabled(root: &Path) -> bool {
+    if env_flag_disabled("BUILD_RUNNER_ACCELERATOR_SDK_SUMMARY_PREWARM") {
+        return false;
+    }
+    // On small machines the shard already contends with the kernel compile
+    // and `dart compile exe` that saturate every core.
+    if thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(0)
+        < 4
+    {
+        return false;
+    }
+    !root
+        .join(".dart_tool/build_resolvers/sdk.sum")
+        .is_file()
 }
 
 fn prewarm_jobs() -> usize {
@@ -1365,27 +1443,67 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-fn spawn_analysis_prewarm(root: &Path, dart_binary: &str) -> Option<AnalysisPrewarm> {
+/// Only one prewarm window runs per frontend process. The manifest-window
+/// spawn subsumes the narrower compile-window spawn inside
+/// `prepare_worker_aot`, which would otherwise double the shard count when
+/// both are enabled.
+static ANALYSIS_PREWARM_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+fn spawn_analysis_prewarm(
+    root: &Path,
+    dart_binary: &str,
+    window: &str,
+) -> Option<AnalysisPrewarm> {
+    spawn_analysis_prewarm_options(root, dart_binary, window, None, None)
+}
+
+fn spawn_analysis_prewarm_options(
+    root: &Path,
+    dart_binary: &str,
+    window: &str,
+    jobs: Option<usize>,
+    dirs: Option<&str>,
+) -> Option<AnalysisPrewarm> {
     if env_flag_disabled("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM")
         || !crate::worker::shared_analysis_cache_enabled()
     {
         return None;
     }
-    let script = prewarm_script_path(root)?;
-    let shards = prewarm_jobs();
+    if ANALYSIS_PREWARM_ACTIVE
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return None;
+    }
+    let Some(script) = prewarm_script_path(root) else {
+        ANALYSIS_PREWARM_ACTIVE.store(false, Ordering::Release);
+        return None;
+    };
+    let shards = jobs.unwrap_or_else(prewarm_jobs);
     if shards == 0 {
+        ANALYSIS_PREWARM_ACTIVE.store(false, Ordering::Release);
         return None;
     }
     let package_config = root.join(".dart_tool/package_config.json");
+    let dirs = dirs.map(str::to_owned).or_else(|| {
+        env::var("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    });
     let children: Vec<Child> = (0..shards)
         .filter_map(|shard| {
-            Command::new(dart_binary)
+            let mut command = Command::new(dart_binary);
+            command
                 .arg(format!("--packages={}", package_config.display()))
                 .arg(&script)
                 .arg("--shard")
                 .arg(shard.to_string())
                 .arg("--shards")
-                .arg(shards.to_string())
+                .arg(shards.to_string());
+            if let Some(dirs) = &dirs {
+                command.arg("--dirs").arg(dirs);
+            }
+            command
                 .current_dir(root)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -1399,10 +1517,11 @@ fn spawn_analysis_prewarm(root: &Path, dart_binary: &str) -> Option<AnalysisPrew
         })
         .collect();
     if children.is_empty() {
+        ANALYSIS_PREWARM_ACTIVE.store(false, Ordering::Release);
         None
     } else {
         eprintln!(
-            "analysis prewarm: {} shard(s) resolving workspace sources",
+            "analysis prewarm[{window}]: {} shard(s) resolving workspace sources",
             children.len()
         );
         Some(AnalysisPrewarm { children })
@@ -1413,9 +1532,11 @@ fn spawn_analysis_prewarm(root: &Path, dart_binary: &str) -> Option<AnalysisPrew
 mod tests {
     use super::{
         acquire_background_aot_lock, background_aot_lock_is_stale, catch_worker_aot_panic,
-        parse_depfile_dependencies, pinned_worker_artifact_is_current, WorkerArtifact,
+        parse_depfile_dependencies, pinned_worker_artifact_is_current, spawn_analysis_prewarm,
+        WorkerArtifact, ANALYSIS_PREWARM_ACTIVE,
     };
     use std::fs::{self, OpenOptions};
+    use std::sync::atomic::Ordering;
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::path::{Path, PathBuf};
@@ -1493,5 +1614,26 @@ mod tests {
         OpenOptions::new().create_new(true).write(true).open(&path).unwrap();
         assert!(!background_aot_lock_is_stale(&path));
         let _ = fs::remove_file(path);
+    }
+
+    static PREWARM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn analysis_prewarm_spawn_is_single_flight() {
+        let _guard = PREWARM_TEST_LOCK.lock().unwrap();
+        ANALYSIS_PREWARM_ACTIVE.store(true, Ordering::SeqCst);
+        assert!(spawn_analysis_prewarm(Path::new("/nonexistent"), "dart", "test").is_none());
+        ANALYSIS_PREWARM_ACTIVE.store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn analysis_prewarm_missing_package_config_releases_flag() {
+        let _guard = PREWARM_TEST_LOCK.lock().unwrap();
+        let root = std::env::temp_dir()
+            .join(format!("build-runner-accelerator-prewarm-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        assert!(spawn_analysis_prewarm(&root, "dart", "test").is_none());
+        assert!(!ANALYSIS_PREWARM_ACTIVE.load(Ordering::SeqCst));
+        let _ = fs::remove_dir_all(root);
     }
 }
