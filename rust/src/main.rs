@@ -22,6 +22,8 @@ use std::io;
 
 fn main() -> io::Result<()> {
     let options = cli::Options::parse(env::args().skip(1))?;
+    let _helper_training = (options.command != "watch")
+        .then(worker_kernel::defer_helper_snapshot_builds);
     match options.command.as_str() {
         "--help" | "-h" => {
             print_usage();

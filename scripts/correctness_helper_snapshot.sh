@@ -84,10 +84,44 @@ dependency.write_bytes(dependency.read_bytes() + b'\n// helper invalidation prob
 os.utime(dependency, ns=(stat.st_atime_ns, stat.st_mtime_ns))
 log, output = generate('dependency')
 assert 'artifact=script cache=miss' in log and output == expected
+completed = max(log.find('Build completed (Rust frontend)'),
+                log.find('No work to do (Rust frontend)'))
+assert completed >= 0 and completed < log.index('training=started'), log
 deadline = time.monotonic() + 120
 while (catalog_dir / '.build.lock').exists():
     assert time.monotonic() < deadline, 'background helper training did not finish'
     time.sleep(0.1)
+assert (catalog_dir / 'helper.jit.sdk').is_file()
+
+# Watch must release training after a build, without waiting for watch to exit.
+previous_metadata = (catalog_dir / 'helper.jit.sdk').read_bytes()
+dependency.write_bytes(dependency.read_bytes() + b'\n// watch training probe\n')
+(state / 'builder-manifest.json').unlink(missing_ok=True)
+watch_log = temporary / 'watch-training.log'
+with watch_log.open('w') as log_file:
+    process = subprocess.Popen([native, 'watch', '--root', str(root), '--dart', dart,
+                                '--mode', 'rust', '--jobs', '1'], cwd=root, env=env,
+                               stdout=log_file, stderr=log_file)
+    try:
+        deadline = time.monotonic() + 120
+        while 'Watching ' not in watch_log.read_text():
+            assert process.poll() is None, watch_log.read_text()
+            assert time.monotonic() < deadline, watch_log.read_text()
+            time.sleep(0.1)
+        text = watch_log.read_text()
+        completed = max(text.find('Build completed (Rust frontend)'),
+                        text.find('No work to do (Rust frontend)'))
+        assert completed >= 0 and completed < text.index('training=started'), text
+        while (catalog_dir / '.build.lock').exists():
+            assert process.poll() is None
+            assert time.monotonic() < deadline, 'watch training did not finish'
+            time.sleep(0.1)
+        assert (catalog_dir / 'helper.jit.sdk').is_file()
+        assert (catalog_dir / 'helper.jit.sdk').read_bytes() != previous_metadata
+        assert process.poll() is None, 'training must finish while watch is alive'
+    finally:
+        process.terminate()
+        process.wait(timeout=30)
 
 # Prewarm JIT uses invocation arguments rather than the training shard/dirs.
 prewarm = package / 'bin/prewarm_analysis.dart'
@@ -124,5 +158,5 @@ while (state / 'helper-snapshots/analysis-prewarm/.build.lock').exists():
 invocations = [json.loads(line) for line in (root / 'training-args.jsonl').read_text().splitlines()]
 assert len(invocations) >= 2, 'prewarm and training must both run'
 assert all(args[-2:] == ['--dirs', 'none'] for args in invocations), invocations
-print('helper-snapshot: PASS jit/disabled/shared/corruption/kernel/dependency/prewarm-args/training-failure/training-scope')
+print('helper-snapshot: PASS jit/disabled/shared/corruption/kernel/dependency/deferred-training/watch-training/prewarm-args/training-failure/training-scope')
 PY

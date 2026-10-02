@@ -14,9 +14,13 @@ resident worker and the existing `dart compile exe` pipeline.
 
 Resolve each helper as a validated app-jit snapshot, then a validated kernel,
 then source. Check the workspace-local tier and shared tier at each priority.
-On a complete miss, keep the source invocation and start a detached compiler
-with a per-helper lock. This avoids waiting for snapshot creation, but still
-adds CPU and memory contention on a cold run. The compiler first publishes a
+On a complete miss, keep the source invocation and queue a detached compiler
+until the foreground operation finishes, with a per-helper lock at launch.
+Watch releases queued training after each build so it can finish while the
+event loop waits. This keeps helper compilation out of the first cold build:
+immediate training measured a 5.1% regression on a two-CPU environment. A
+subsequent build started before training finishes can still contend with it.
+The compiler first publishes a
 kernel and dependency metadata, then trains that exact kernel to produce
 app-jit. Failed training leaves the kernel usable.
 
@@ -52,4 +56,4 @@ JIT/kernel output equality, shared restore, disablement, corrupt snapshots,
 dependency edits with preserved mtime, prewarm arguments, and failed training.
 It runs in quick verification. The
 [benchmark report](../benchmarks/helper-snapshots-2026-10.md) separates helper
-timings from complete builds.
+timings from complete builds and records first-build training contention.

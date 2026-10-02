@@ -8,7 +8,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
@@ -1565,7 +1565,7 @@ fn spawn_analysis_prewarm_options(
 // the training run's optimized code: measured medians were ~1.12s -> 0.19s ->
 // 0.07s (script/dill/jit) for the catalog and ~8.4s -> 1.18s -> 0.43s for the
 // prewarm helper. Snapshot creation happens in a detached `helper-snapshot`
-// child so the first cold build does not wait for compilation;
+// child after the foreground build finishes, avoiding cold-build contention;
 // later builds pick the artifact up through the workspace-local directory or
 // the machine-wide shared cache.
 // ---------------------------------------------------------------------------
@@ -1590,6 +1590,7 @@ impl HelperArtifactKind {
     }
 }
 
+#[derive(Clone)]
 struct HelperContext {
     cache_key: String,
     sdk_root: PathBuf,
@@ -1608,12 +1609,56 @@ impl HelperContext {
     }
 }
 
+struct HelperSnapshotBuild {
+    workspace: Workspace,
+    dart_binary: String,
+    name: String,
+    train_args: Vec<OsString>,
+    train_cleanup: Vec<PathBuf>,
+    context: HelperContext,
+}
+
+static DEFERRED_HELPER_BUILDS: Mutex<Option<Vec<HelperSnapshotBuild>>> = Mutex::new(None);
+
+/// Keep snapshot compilation out of the foreground build. Watch scopes this
+/// guard to each build rather than the lifetime of its event loop.
+pub(crate) struct DeferredHelperSnapshotBuilds;
+
+pub(crate) fn defer_helper_snapshot_builds() -> DeferredHelperSnapshotBuilds {
+    let mut pending = DEFERRED_HELPER_BUILDS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    assert!(pending.is_none(), "helper training scopes must not overlap");
+    *pending = Some(Vec::new());
+    DeferredHelperSnapshotBuilds
+}
+
+impl Drop for DeferredHelperSnapshotBuilds {
+    fn drop(&mut self) {
+        let builds = DEFERRED_HELPER_BUILDS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+            .unwrap_or_default();
+        for build in builds {
+            let _ = spawn_helper_snapshot_build(
+                &build.workspace,
+                &build.dart_binary,
+                &build.name,
+                &build.train_args,
+                &build.train_cleanup,
+                &build.context,
+            );
+        }
+    }
+}
+
 /// Program the caller should pass to `dart --packages=<cfg>` in place of a
 /// helper `.dart` script: a valid warm app-jit snapshot when one exists, else
 /// a kernel snapshot, else the script itself. When no valid artifact exists a
-/// detached build is triggered (deduplicated by a lock) and the script is
-/// returned, so resolution never adds synchronous compile time to the cold
-/// path. Both artifact kinds run with the same argv convention as the script.
+/// detached build is queued until the foreground operation finishes, and the
+/// script is returned. The child is deduplicated by a lock. Explicit helper
+/// training runs immediately. Both artifacts accept the script's argv.
 ///
 /// `train_args` are the program arguments used for the app-jit training run;
 /// they must be side-effect free or confined to `helper_dir` scratch files
@@ -1642,14 +1687,30 @@ pub(crate) fn helper_snapshot_program(
             return path;
         }
     }
-    let _ = spawn_helper_snapshot_build(
-        workspace,
-        dart_binary,
-        name,
-        train_args,
-        train_cleanup,
-        &context,
-    );
+    let mut pending = DEFERRED_HELPER_BUILDS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(builds) = pending.as_mut() {
+        if !builds.iter().any(|build| build.context.dir == context.dir) {
+            builds.push(HelperSnapshotBuild {
+                workspace: workspace.clone(),
+                dart_binary: dart_binary.to_owned(),
+                name: name.to_owned(),
+                train_args: train_args.to_vec(),
+                train_cleanup: train_cleanup.to_vec(),
+                context,
+            });
+        }
+    } else {
+        let _ = spawn_helper_snapshot_build(
+            workspace,
+            dart_binary,
+            name,
+            train_args,
+            train_cleanup,
+            &context,
+        );
+    }
     helper_snapshot_metric(name, "script", "miss");
     script.to_path_buf()
 }
@@ -1851,6 +1912,10 @@ fn spawn_helper_snapshot_build(
     let lock_path = context.dir.join(".build.lock");
     if !acquire_background_aot_lock(&lock_path)? {
         return Ok(());
+    }
+
+    if env::var("BUILD_RUNNER_ACCELERATOR_METRICS").as_deref() == Ok("1") {
+        eprintln!("Rust helper snapshot[{name}]: training=started");
     }
 
     let spec = {

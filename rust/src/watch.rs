@@ -72,6 +72,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
 }
 
 fn run_watch_build(options: &Options, pool: &mut Option<WorkerPool>) -> io::Result<bool> {
+    let _helper_training = crate::worker_kernel::defer_helper_snapshot_builds();
     let workspace = Workspace::load(options.root.clone())?;
     let Some(build_config) = select_frontend(options, &workspace)? else {
         pool.take();

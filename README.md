@@ -157,7 +157,8 @@ repaired.
 ## Performance and caching
 
 Catalog and analysis-prewarm helpers can reuse warm JIT or kernel snapshots.
-A cache miss runs the source helper and creates snapshots in the background;
+A cache miss runs the source helper and creates snapshots in the background
+after the foreground operation finishes (after each build in watch mode);
 `BUILD_RUNNER_ACCELERATOR_HELPER_SNAPSHOT=0` disables this optimization.
 Artifacts live in `.dart_tool/build_runner_accelerator/helper-snapshots/` and
 the shared cache's `helper-snapshots/` directory. They are bound to the Dart

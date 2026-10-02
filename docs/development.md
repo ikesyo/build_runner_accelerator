@@ -131,6 +131,15 @@ This controlled experiment is separate from default launcher-inclusive builds.
 The measured conditions and results are in
 [`helper-snapshots-2026-10.md`](benchmarks/helper-snapshots-2026-10.md).
 
+For the first-build cost, run
+`python3 scripts/benchmark_helper_cold.py /tmp/fresh-helper-cold --expect-deferred`.
+It creates a fresh workspace and empty application caches for every trial,
+alternates helper snapshots disabled/enabled, and waits for detached training
+before the next trial. It checks stock output bytes and records foreground
+time separately from the time until background training finishes. SDK/pub
+dependencies and OS caches remain warm; manifest and worker policies use their
+defaults. Use a fresh output directory and avoid concurrent builds.
+
 For unexpectedly large native action plans, use the pre-worker diagnostics:
 
 ```bash
