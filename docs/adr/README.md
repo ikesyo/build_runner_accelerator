@@ -34,10 +34,10 @@ boundary rather than restoring commit-level history.
 | [0016](0016-early-worker-catalog.md) | Shared builder selection before cold generator compilation |
 | [0017](0017-manifest-window-analysis-prewarm.md) | Manifest-window analysis prewarm and SDK summary auto-prewarm |
 | [0018](0018-cross-workspace-cold-start-sharing.md) | Cross-workspace manifest kernel reuse and shared SDK summary lock |
-| [0019](0019-helper-snapshots.md) | Warm catalog/analysis helper snapshots and workspace-bound cache identity |
 | [0019](0019-directive-deps-parse-cache.md) | Content-keyed directive-deps parse cache for the library cycle walk |
 | [0020](0020-batch-dep-read-resolve.md) | Batch dep-read resolution for the library cycle walk |
 | [0021](0021-packed-shared-cache-stores.md) | Packed shared cache stores and digest-keyed dep lookups |
+| [0022](0022-helper-snapshots.md) | Warm catalog/analysis helper snapshots and workspace-bound cache identity |
 
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for
