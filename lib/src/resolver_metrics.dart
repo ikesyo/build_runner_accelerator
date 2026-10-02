@@ -92,10 +92,6 @@ final class ResolverActionMetrics {
   /// Wall time to enumerate `Resolver.libraries` fully.
   int librariesStreamUs = 0;
 
-  /// build_runner `TimedActivity` buckets (resolve/analyze/build/read/write/
-  /// track) attributed to this action, filled from `buildLog.activities`.
-  final Map<String, int> activityUs = <String, int>{};
-
   void beginAction() {
     cycleGraphWalkUs = 0;
     cycleGraphFileLoads = 0;
@@ -137,7 +133,6 @@ final class ResolverActionMetrics {
     resolverCallUs.clear();
     librariesCount = 0;
     librariesStreamUs = 0;
-    activityUs.clear();
   }
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -181,7 +176,6 @@ final class ResolverActionMetrics {
     'resolver_call_us': resolverCallUs,
     'libraries_count': librariesCount,
     'libraries_stream_us': librariesStreamUs,
-    'activity_us': activityUs,
   };
 }
 

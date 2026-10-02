@@ -9,19 +9,24 @@ import 'package:build_runner_accelerator/src/remote_build_step.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test(
-    'declined prefetch leaves demand reads on the sequential path',
-    () async {
+  for (final error in [
+    'prefetch disabled during lazy builds',
+    'resolve_assets response exceeds frame limit',
+  ]) {
+    test('declined prefetch ($error) preserves sequential reads', () async {
       final id = AssetId('app', 'lib/generated.dart');
       final cache = <AssetId, List<int>>{};
       final readable = <AssetId>{};
+      final temporary = await Directory.systemTemp.createTemp(
+        'prefetch-fallback-',
+      );
+      addTearDown(() => temporary.delete(recursive: true));
+      final file = File('${temporary.path}/generated.dart');
+      await file.writeAsBytes([1, 2, 3]);
       final responses = [
-        {
-          'id': 1000,
-          'ok': false,
-          'error': 'prefetch disabled during lazy builds',
-        },
+        {'id': 1000, 'ok': false, 'error': error},
         {'id': 1001, 'ok': true, 'value': true},
+        {'id': 1002, 'ok': true, 'path': file.path},
       ];
       final frames = responses.map((response) {
         final payload = utf8.encode(
@@ -53,10 +58,11 @@ void main() {
       expect(readable, isEmpty);
       expect(io.observedReads, isEmpty);
       expect(await io.canRead(id), isTrue);
+      expect(await io.readAsBytes(id), [1, 2, 3]);
       expect(io.observedReads, {id});
       io.endAction();
-    },
-  );
+    });
+  }
 
   test('nested actions restore the outer asset IO context', () async {
     final outerInput = AssetId('app', 'lib/outer.dart');

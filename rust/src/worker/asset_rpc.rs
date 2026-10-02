@@ -1,6 +1,7 @@
-use super::request::{build_request_kind, BuildRequest};
 use super::WorkerClient;
+use super::request::{BuildRequest, build_request_kind};
 use crate::builder::{BuildTo, BuilderKind};
+use crate::protocol::{BINARY_ASSET_RESPONSE_MAGIC, MAX_FRAME_LENGTH};
 use crate::visibility::AssetVisibility;
 use crate::workspace::{Workspace, matches_glob};
 use serde_json::{Value, json};
@@ -55,8 +56,7 @@ impl WorkerClient {
                     if let Some(bytes) = overlay.get(asset) {
                         Ok(ReadResult::Bytes(Arc::new(bytes.clone())))
                     } else {
-                        asset_disk_path(workspace, asset, visibility)
-                            .map(ReadResult::Path)
+                        asset_disk_path(workspace, asset, visibility).map(ReadResult::Path)
                     }
                 };
                 match read_result {
@@ -137,28 +137,24 @@ impl WorkerClient {
                     }
                 }
                 self.metrics.resolve_assets_results += resolved.len() as u64;
-                if payload.is_empty() {
-                    json!({
-                        "v": 1,
-                        "type": "asset_response",
-                        "id": id,
-                        "ok": true,
-                        "assets": resolved,
-                    })
+                let mut response = json!({
+                    "v": 1,
+                    "type": "asset_response",
+                    "id": id,
+                    "ok": true,
+                    "assets": resolved,
+                });
+                if !payload.is_empty() {
+                    response["encoding"] = json!("raw");
+                    response["length"] = json!(payload.len());
+                }
+                let response =
+                    bounded_resolve_assets_response(response, payload.len(), MAX_FRAME_LENGTH)?;
+                if payload.is_empty() || response["ok"] == false {
+                    response
                 } else {
                     self.metrics.binary_read_responses += 1;
-                    let result = self.send_binary(
-                        &json!({
-                            "v": 1,
-                            "type": "asset_response",
-                            "id": id,
-                            "ok": true,
-                            "encoding": "raw",
-                            "length": payload.len(),
-                            "assets": resolved,
-                        }),
-                        &payload,
-                    );
+                    let result = self.send_binary(&response, &payload);
                     self.metrics.asset_rpc_us += started.elapsed().as_micros() as u64;
                     return result;
                 }
@@ -213,6 +209,76 @@ impl WorkerClient {
         let result = self.send(&response);
         self.metrics.asset_rpc_us += started.elapsed().as_micros() as u64;
         result
+    }
+}
+
+// Reject an oversized optional prefetch before writing any frame bytes. Dart
+// can then fall back to individual reads instead of losing its RPC session.
+// Metadata-only responses need the same guard as overlay byte responses.
+fn bounded_resolve_assets_response(
+    response: Value,
+    payload_length: usize,
+    frame_limit: usize,
+) -> io::Result<Value> {
+    let metadata_length = serde_json::to_vec(&response)
+        .map_err(io::Error::other)?
+        .len();
+    let overhead = if payload_length == 0 {
+        0
+    } else {
+        BINARY_ASSET_RESPONSE_MAGIC.len() + 4
+    };
+    let length = metadata_length
+        .checked_add(overhead)
+        .and_then(|n| n.checked_add(payload_length));
+    if length.is_none_or(|n| n > frame_limit) {
+        Ok(json!({
+            "v": 1,
+            "type": "asset_response",
+            "id": response["id"],
+            "ok": false,
+            "error": "resolve_assets response exceeds frame limit",
+        }))
+    } else {
+        Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod batch_response_tests {
+    use super::*;
+
+    #[test]
+    fn resolve_assets_checks_metadata_and_binary_overhead_at_the_limit() {
+        let response = json!({"v": 1, "type": "asset_response", "id": 7, "ok": true,
+            "assets": [{"status": "path", "path": "/app/lib/a.dart"}]});
+        let metadata_length = serde_json::to_vec(&response).unwrap().len();
+        for payload_length in [0, 32] {
+            let length = metadata_length + payload_length + if payload_length == 0 { 0 } else { 8 };
+            assert_eq!(
+                bounded_resolve_assets_response(response.clone(), payload_length, length).unwrap(),
+                response
+            );
+            let declined =
+                bounded_resolve_assets_response(response.clone(), payload_length, length - 1)
+                    .unwrap();
+            assert_eq!(declined["ok"], false);
+            assert_eq!(declined["id"], 7);
+            assert_eq!(declined["type"], "asset_response");
+            assert!(declined.get("assets").is_none());
+        }
+    }
+
+    #[test]
+    fn resolve_assets_declines_oversized_overlay_without_allocating_it() {
+        let response = json!({"id": 9, "ok": true, "encoding": "raw"});
+        for payload_length in [MAX_FRAME_LENGTH, usize::MAX] {
+            let declined =
+                bounded_resolve_assets_response(response.clone(), payload_length, MAX_FRAME_LENGTH)
+                    .unwrap();
+            assert_eq!(declined["ok"], false);
+            assert_eq!(declined["id"], 9);
+        }
     }
 }
 
