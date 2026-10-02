@@ -15,6 +15,8 @@ import 'package:analyzer/src/clients/build_resolvers/build_resolvers.dart';
 import 'package:analyzer/src/dart/analysis/byte_store.dart';
 // ignore: implementation_imports
 import 'package:analyzer/src/dart/analysis/file_byte_store.dart';
+// ignore: implementation_imports
+import 'package:analyzer/src/dart/analysis/file_content_cache.dart';
 import 'package:build/build.dart';
 import 'package:build/experiments.dart';
 import 'package:crypto/crypto.dart';
@@ -234,7 +236,9 @@ AnalysisDriverForPackageBuild _analysisDriver(
       analysisDriverModel.filesystem,
     ),
     resourceProvider: analysisDriverModel.filesystem,
-    fileContentCache: analysisDriverModel.filesystem,
+    fileContentCache: resolverActionMetrics.enabled
+        ? _MetricsFileContentCache(analysisDriverModel.filesystem)
+        : analysisDriverModel.filesystem,
     sdkSummaryBytes: sdkSummaryBytes,
     uriResolvers: [analysisDriverModel.filesystem],
     byteStore: byteStore,
@@ -336,8 +340,8 @@ ByteStore sharedAnalysisByteStore(
 }
 
 /// Counts hits, misses and time on the shared [ByteStore] for the resolver
-/// startup breakdown. Keys are content-addressed, so counters are the only
-/// behavioral difference.
+/// startup breakdown, split by key suffix. Keys are content-addressed, so
+/// counters are the only behavioral difference.
 class _MetricsByteStore implements ByteStore {
   _MetricsByteStore(this._delegate);
 
@@ -347,9 +351,23 @@ class _MetricsByteStore implements ByteStore {
   Uint8List? get(String key) {
     final timer = Stopwatch()..start();
     final bytes = _delegate.get(key);
-    resolverActionMetrics
+    final us = timer.elapsedMicroseconds;
+    final metrics = resolverActionMetrics
       ..byteStoreGets += 1
-      ..byteStoreGetUs += timer.elapsedMicroseconds;
+      ..byteStoreGetUs += us;
+    if (key.endsWith('.unlinked2')) {
+      metrics
+        ..byteStoreGetsUnlinked += 1
+        ..byteStoreGetUnlinkedUs += us;
+    } else if (key.endsWith('.linked')) {
+      metrics
+        ..byteStoreGetsLinked += 1
+        ..byteStoreGetLinkedUs += us;
+    } else {
+      metrics
+        ..byteStoreGetsOther += 1
+        ..byteStoreGetOtherUs += us;
+    }
     if (bytes != null) resolverActionMetrics.byteStoreHits++;
     return bytes;
   }
@@ -367,6 +385,32 @@ class _MetricsByteStore implements ByteStore {
 
   @override
   void release(Iterable<String> keys) => _delegate.release(keys);
+}
+
+/// Times `FileContentCache.get` — the `AnalysisDriverFilesystem._data` reads
+/// that `FileState.refresh` performs inside `libraryFor`/`updateDriver`.
+class _MetricsFileContentCache implements FileContentCache {
+  _MetricsFileContentCache(this._delegate);
+
+  final FileContentCache _delegate;
+
+  @override
+  FileContent get(String path) {
+    final timer = Stopwatch()..start();
+    try {
+      return _delegate.get(path);
+    } finally {
+      resolverActionMetrics
+        ..fileContentGets += 1
+        ..fileContentGetUs += timer.elapsedMicroseconds;
+    }
+  }
+
+  @override
+  void invalidate(String path) => _delegate.invalidate(path);
+
+  @override
+  void invalidateAll() => _delegate.invalidateAll();
 }
 
 /// Times each [ReleasableResolver] entry point for the per-action breakdown.

@@ -59,13 +59,26 @@ final class ResolverActionMetrics {
   int depPrefetchAssets = 0;
   int depPrefetchUs = 0;
 
-  /// Analyzer byte-store traffic through the shared store.
+  /// Analyzer byte-store traffic through the shared store, split by key
+  /// suffix: `.unlinked2` summaries, `.linked` element-model bundles, and
+  /// everything else.
   int byteStoreGets = 0;
   int byteStoreGetUs = 0;
   int byteStoreHits = 0;
   int byteStorePuts = 0;
   int byteStorePutUs = 0;
   int byteStorePutBytes = 0;
+  int byteStoreGetsUnlinked = 0;
+  int byteStoreGetUnlinkedUs = 0;
+  int byteStoreGetsLinked = 0;
+  int byteStoreGetLinkedUs = 0;
+  int byteStoreGetsOther = 0;
+  int byteStoreGetOtherUs = 0;
+
+  /// `FileContentCache.get` traffic feeding `FileState.refresh` (the `_data`
+  /// content reads inside `libraryFor`/`updateDriver`).
+  int fileContentGets = 0;
+  int fileContentGetUs = 0;
 
   /// First-call wall time of each `Resolver` method, keyed by method name.
   final Map<String, int> resolverFirstCallUs = <String, int>{};
@@ -112,6 +125,14 @@ final class ResolverActionMetrics {
     byteStorePuts = 0;
     byteStorePutUs = 0;
     byteStorePutBytes = 0;
+    byteStoreGetsUnlinked = 0;
+    byteStoreGetUnlinkedUs = 0;
+    byteStoreGetsLinked = 0;
+    byteStoreGetLinkedUs = 0;
+    byteStoreGetsOther = 0;
+    byteStoreGetOtherUs = 0;
+    fileContentGets = 0;
+    fileContentGetUs = 0;
     resolverFirstCallUs.clear();
     resolverCallUs.clear();
     librariesCount = 0;
@@ -148,6 +169,14 @@ final class ResolverActionMetrics {
     'byte_store_puts': byteStorePuts,
     'byte_store_put_us': byteStorePutUs,
     'byte_store_put_bytes': byteStorePutBytes,
+    'byte_store_gets_unlinked': byteStoreGetsUnlinked,
+    'byte_store_get_unlinked_us': byteStoreGetUnlinkedUs,
+    'byte_store_gets_linked': byteStoreGetsLinked,
+    'byte_store_get_linked_us': byteStoreGetLinkedUs,
+    'byte_store_gets_other': byteStoreGetsOther,
+    'byte_store_get_other_us': byteStoreGetOtherUs,
+    'file_content_gets': fileContentGets,
+    'file_content_get_us': fileContentGetUs,
     'resolver_first_call_us': resolverFirstCallUs,
     'resolver_call_us': resolverCallUs,
     'libraries_count': librariesCount,
