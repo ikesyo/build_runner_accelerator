@@ -13,6 +13,7 @@ import 'package:crypto/crypto.dart';
 import 'package:glob/glob.dart';
 
 import 'protocol.dart';
+import 'resolver_metrics.dart';
 
 /// Mutable per-action state behind the long-lived current build_runner
 /// [ReaderWriter]. The Rust side processes a worker's batch sequentially, so
@@ -139,11 +140,18 @@ class RemoteAssetReaderWriter extends ReaderWriter {
     if (_state.outputs.containsKey(id)) return true;
     if (_isBlocked(id)) return false;
     if (_state.readCache.containsKey(id) || _state.readableCache.contains(id)) {
+      resolverActionMetrics.ipcCanReadCacheHits++;
       return true;
     }
+    final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
     final response = await _state.activeRpc.call('can_read', <String, dynamic>{
       'asset': id.toString(),
     });
+    if (timer != null) {
+      resolverActionMetrics
+        ..ipcCanReadCalls += 1
+        ..ipcCanReadUs += timer.elapsedMicroseconds;
+    }
     final value = response['value'] == true;
     if (value) _state.readableCache.add(id);
     return value;
@@ -174,11 +182,22 @@ class RemoteAssetReaderWriter extends ReaderWriter {
     if (local != null) return List<int>.from(local);
     if (_isBlocked(id)) throw AssetNotFoundException(id);
     final cached = _state.readCache[id];
-    if (cached != null) return List<int>.from(cached);
+    if (cached != null) {
+      resolverActionMetrics.ipcReadCacheHits++;
+      return List<int>.from(cached);
+    }
     try {
+      final timer = resolverActionMetrics.enabled
+          ? (Stopwatch()..start())
+          : null;
       final response = await _state.activeRpc.call('read', <String, dynamic>{
         'asset': id.toString(),
       });
+      if (timer != null) {
+        resolverActionMetrics
+          ..ipcReadCalls += 1
+          ..ipcReadUs += timer.elapsedMicroseconds;
+      }
       // The frontend answers disk-backed assets with their absolute path so
       // the worker reads them directly; only in-memory overlay values arrive
       // as binary payloads.
@@ -195,6 +214,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
       final bytes = rawBytes is Uint8List
           ? rawBytes
           : Uint8List.fromList(List<int>.from(rawBytes));
+      resolverActionMetrics.ipcReadBytes += bytes.length;
       _state.readCache[id] = bytes;
       return List<int>.from(bytes);
     } on StateError catch (error) {
@@ -250,10 +270,16 @@ class _RemoteAssetFinder implements AssetFinder {
     _state.observedGlobs.add(
       ObservedGlob(package: requestedPackage, pattern: glob.pattern),
     );
+    final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
     final response = await _state.activeRpc.call(
       'find_assets',
       <String, dynamic>{'package': requestedPackage, 'pattern': glob.pattern},
     );
+    if (timer != null) {
+      resolverActionMetrics
+        ..ipcFindAssetsCalls += 1
+        ..ipcFindAssetsUs += timer.elapsedMicroseconds;
+    }
     final assets = response['assets'];
     if (assets is! List) {
       throw const FormatException('Asset find response assets must be a list');

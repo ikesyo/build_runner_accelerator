@@ -38,6 +38,9 @@ class ResolverInitializationProfile {
   int sdkSummaryUs = 0;
   int sdkSummaryLockWaitUs = 0;
   int sdkSummaryAfterLockUs = 0;
+  int sdkSummaryReadUs = 0;
+  int driverCreateUs = 0;
+  int buildResolverCtorUs = 0;
   int resolverFirstGetUs = 0;
   int resolverPostSdkSummaryUs = 0;
   String? firstBuilder;
@@ -59,7 +62,7 @@ class ResolverInitializationProfile {
     if (!enabled || _emitted) return;
     _emitted = true;
     stderr.writeln(
-      'Dart resolver metrics: ${jsonEncode(<String, dynamic>{'builder': firstBuilder, 'input': firstInput, 'package_config_load_us': packageConfigLoadUs, 'resolver_constructor_us': resolverConstructorUs, 'resolver_sdk_summary_us': sdkSummaryUs, 'resolver_sdk_summary_lock_wait_us': sdkSummaryLockWaitUs, 'resolver_sdk_summary_after_lock_us': sdkSummaryAfterLockUs, 'resolver_first_get_us': resolverFirstGetUs, 'resolver_post_sdk_summary_us': resolverPostSdkSummaryUs})}',
+      'Dart resolver metrics: ${jsonEncode(<String, dynamic>{'builder': firstBuilder, 'input': firstInput, 'package_config_load_us': packageConfigLoadUs, 'resolver_constructor_us': resolverConstructorUs, 'resolver_sdk_summary_us': sdkSummaryUs, 'resolver_sdk_summary_lock_wait_us': sdkSummaryLockWaitUs, 'resolver_sdk_summary_after_lock_us': sdkSummaryAfterLockUs, 'resolver_sdk_summary_read_us': sdkSummaryReadUs, 'driver_create_us': driverCreateUs, 'build_resolver_ctor_us': buildResolverCtorUs, 'resolver_first_get_us': resolverFirstGetUs, 'resolver_post_sdk_summary_us': resolverPostSdkSummaryUs})}',
     );
   }
 }
