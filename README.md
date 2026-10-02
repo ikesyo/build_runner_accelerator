@@ -215,8 +215,14 @@ carries a full analyzer instance, and memory peaks when the byte store is
 first filled). Pass an explicit `--jobs` to override the default in either
 direction.
 
-Byte-store entries are content-addressed and safe to share across workers,
-but stale fingerprint directories are not garbage-collected yet — reclaim
+Byte-store entries are content-addressed and safe to share across workers.
+Repeated writes of the same key and bytes do not grow the packed store.
+Legacy per-key files are migrated on read and deleted after a successful
+packed write; an existing valid packed hit also removes its legacy copy.
+Entries that have not been read remain in the old layout. With
+`BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0`, the per-key layout is retained.
+The pack has no compaction yet, and stale fingerprint directories are not
+garbage-collected — reclaim
 space by deleting directories for toolchains you no longer use, or prune
 the whole store (`rm -rf ~/.cache/build_runner_accelerator/byte_store`;
 adjust the root for your platform or `BUILD_RUNNER_ACCELERATOR_CACHE`).

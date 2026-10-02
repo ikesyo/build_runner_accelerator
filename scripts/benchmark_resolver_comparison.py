@@ -51,8 +51,15 @@ def main():
         metadata['variants'][mode] = {
             'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
             'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+            'rust_tree': subprocess.check_output(['git', 'rev-parse', 'HEAD:rust'], cwd=root, text=True).strip(),
+            'lib_tree': subprocess.check_output(['git', 'rev-parse', 'HEAD:lib'], cwd=root, text=True).strip(),
         }
-    assert metadata['variants']['baseline']['binary_sha256'] != metadata['variants']['candidate']['binary_sha256']
+    baseline = metadata['variants']['baseline']
+    candidate = metadata['variants']['candidate']
+    # Dart-only worker changes legitimately use the same native binary.
+    assert (baseline['binary_sha256'] != candidate['binary_sha256'] or
+            (baseline['rust_tree'] == candidate['rust_tree'] and
+             baseline['lib_tree'] != candidate['lib_tree'])), 'No distinct implementation to compare'
 
     def command(argv, root, log_path, run_env):
         start = time.perf_counter()
@@ -161,13 +168,19 @@ def main():
             argv = [str(variants[mode][1]), 'build', '--root', str(root),
                     '--dart', str(args.dart), '--mode', 'rust', '--jobs', str(args.jobs)]
             log_path = results / f'{fixture_name}-{mode}-{iteration}-{case}.log'
+            pack_root = Path(run_env['BUILD_RUNNER_ACCELERATOR_CACHE']) / 'byte_store'
+            def packed_bytes():
+                return sum(p.stat().st_size for p in pack_root.rglob('store.v1.bin'))
+            packed_before = packed_bytes()
             wall = command(argv, root, log_path, run_env)
+            packed_after = packed_bytes()
             assert outputs(root) == expected, f'{log_path}: outputs differ from stock'
             text = log_path.read_text()
             if case == 'noop':
                 assert 'No work to do (Rust frontend)' in text
             record = dict(fixture=fixture_name, variant=mode, case=case,
                           iteration=iteration, wall_seconds=wall, outputs_equal=True,
+                          packed_bytes_before=packed_before, packed_bytes_after=packed_after,
                           command=argv, log=str(log_path), action_metrics=[])
             for line in text.splitlines():
                 if line.startswith('Dart metrics: '):
