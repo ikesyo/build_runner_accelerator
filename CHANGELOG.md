@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.8.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.7.0...v0.8.0) - 2026-10-02
+
+- Run full verification coverage in PR CI by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/66
+- refactor(rust): split builder manifest responsibilities by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/46
+- refactor(rust): split worker responsibilities by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/68
+- refactor(rust): split build transaction stages by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/69
+- fix(rust): preserve regenerated outputs and reconsider skipped consumers by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/70
+- perf: accelerate cold manifest generation by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/71
+- perf: share manifest kernels and serialize SDK summary startup by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/72
+
 ## [v0.7.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.6.0...v0.7.0) - 2026-09-29
 
 - ci: split long PR groups and jobs to recover ~5m wall clock by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/60
