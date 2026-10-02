@@ -1,5 +1,9 @@
 # Helper snapshot validation and controlled startup measurements
 
+The [external large-application report](helper-snapshots-external-2026-10.md)
+records results on the earlier `ac43a63` head and distinguishes its first
+`aot-prewarm` regression from the subsequent deferred-training fix.
+
 Measured on 2026-10-02 against main `f7f4032`, after applying the attached
 `9cf5c38` implementation and fixing helper cache identity and training scope.
 Resident workers retain the existing AOT policy and compilation pipeline.

@@ -143,14 +143,17 @@ prewarm.write_text('''import 'dart:convert';
 import 'dart:io';
 void main(List<String> args) {
   File('training-args.jsonl').writeAsStringSync('${jsonEncode(args)}\\n', mode: FileMode.append);
+  stderr.writeln('prewarm-test completed: ${jsonEncode(args)}');
 }
 ''')
-run('prewarm-scope', [native, 'aot-prewarm', '--root', str(root), '--dart', dart,
+log = run('prewarm-scope', [native, 'aot-prewarm', '--root', str(root), '--dart', dart,
                       '--mode', 'rust', '--jobs', '1'], {
     'BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM': '1',
     'BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS': '1',
     'BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS': 'none',
 })
+assert log.index('prewarm-test completed:') < log.index('AOT prewarm ready:'), log
+assert log.index('AOT prewarm ready:') < log.index('training=started'), log
 deadline = time.monotonic() + 120
 while (state / 'helper-snapshots/analysis-prewarm/.build.lock').exists():
     assert time.monotonic() < deadline, 'summary-only training did not finish'
@@ -158,5 +161,31 @@ while (state / 'helper-snapshots/analysis-prewarm/.build.lock').exists():
 invocations = [json.loads(line) for line in (root / 'training-args.jsonl').read_text().splitlines()]
 assert len(invocations) >= 2, 'prewarm and training must both run'
 assert all(args[-2:] == ['--dirs', 'none'] for args in invocations), invocations
-print('helper-snapshot: PASS jit/disabled/shared/corruption/kernel/dependency/deferred-training/watch-training/prewarm-args/training-failure/training-scope')
+
+# The reported regression used full-workspace prewarm with two foreground
+# shards. Keep that training scope, but start compilation only after BOTH
+# foreground shards finish. Changing source invalidates the previous artifact.
+prewarm.write_text(prewarm.read_text() + '\n// two-shard scheduling probe\n')
+(root / 'training-args.jsonl').unlink()
+log = run('prewarm-full-deferred', [native, 'aot-prewarm', '--root', str(root),
+                                  '--dart', dart, '--mode', 'rust', '--jobs', '2'], {
+    'BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM': '1',
+    'BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS': '2',
+    'BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS': '',
+})
+assert 'artifact=script cache=miss' in log, log
+assert log.count('prewarm-test completed:') == 2, log
+assert log.rindex('prewarm-test completed:') < log.index('AOT prewarm ready:'), log
+assert log.index('AOT cache key:') < log.index('training=started'), log
+deadline = time.monotonic() + 120
+while (state / 'helper-snapshots/analysis-prewarm/.build.lock').exists():
+    assert time.monotonic() < deadline, 'full-scope deferred training did not finish'
+    time.sleep(0.1)
+invocations = [json.loads(line) for line in (root / 'training-args.jsonl').read_text().splitlines()]
+assert len(invocations) == 3, invocations
+assert sorted(args for args in invocations[:2]) == [
+    ['--shard', '0', '--shards', '2'], ['--shard', '1', '--shards', '2']], invocations
+assert invocations[2] == ['--shard', '0', '--shards', '1'], invocations
+assert (state / 'helper-snapshots/analysis-prewarm/helper.jit.sdk').is_file()
+print('helper-snapshot: PASS jit/disabled/shared/corruption/kernel/dependency/deferred-training/watch-training/prewarm-args/training-failure/training-scope/two-shard-prewarm-deferred')
 PY

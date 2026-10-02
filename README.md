@@ -163,6 +163,8 @@ after the foreground operation finishes (after each build in watch mode);
 Artifacts live in `.dart_tool/build_runner_accelerator/helper-snapshots/` and
 the shared cache's `helper-snapshots/` directory. They are bound to the Dart
 SDK and resolved package locations, so moving a workspace requires retraining.
+The benefit is concentrated in repeated analysis prewarm and catalog execution
+on manifest-generator kernel misses; valid manifests bypass the catalog.
 See [ADR 0023](docs/adr/0023-helper-snapshots.md).
 
 The accelerator also keeps these caches under a machine-wide cache root
