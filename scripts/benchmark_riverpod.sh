@@ -53,8 +53,11 @@ run_stock() {
 }
 run_rust() {
   local directory=$1
-  (cd "$repo_root" && worker_run_frontend \
-    build --root "$directory" --dart "$dart_bin" --jobs "${JOBS:-1}")
+  (cd "$repo_root" && \
+    VERIFY_COMMAND_LOG="$results_dir/frontend.log" VERIFY_STREAM_LOGS=0 \
+      worker_run_frontend \
+        build --root "$directory" --dart "$dart_bin" --jobs "${JOBS:-1}" &&
+      cat "$results_dir/frontend.log" >&2)
 }
 measure() {
   local label=$1
@@ -88,7 +91,7 @@ measure rust_clean run_rust "$rust_dir"
 assert_same_outputs
 measure stock_noop run_stock "$stock_dir"
 measure rust_noop run_rust "$rust_dir"
-rg -Fq 'No work to do (Rust frontend)' "$results_dir/rust_noop.stdout" || fail 'Rust no-op was not reported'
+rg -Fq 'No work to do (Rust frontend)' "$results_dir/rust_noop.stderr" || fail 'Rust no-op was not reported'
 for directory in "$stock_dir" "$rust_dir"; do
   sed -i 's/=> 42;/=> 43;/' "$directory/lib/model.dart"
 done
