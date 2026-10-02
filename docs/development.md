@@ -112,6 +112,16 @@ The resolved SDK/pub cache and OS page cache are warm. `COLD_BENCHMARK_ROOT`,
 `COLD_BENCHMARK_RESULTS`, `COLD_BENCHMARK_REPEATS` and `JOBS` select the inputs.
 This measures the native frontend directly, excluding the Dart launcher.
 
+For fully cold AOT builds against both stock and a previous Dart implementation,
+use `scripts/benchmark_cold_aot.py`. Supply a source checkout (or extracted Git
+archive) through `--baseline-root`, the real SDK executable through `--dart`,
+and a release frontend through `--native`. Each repeat stages three isolated
+workspaces and empty accelerator/analyzer caches, runs offline pub resolution
+outside timing, and measures the normal `dart run` commands. The harness checks
+AOT artifacts, normalized manifest/worker equality, and stock output bytes for
+cold, no-op, one-file, and broad cases. It alternates lane ordering between
+repeats. `--fixture` also supports the tracked Freezed and Riverpod fixtures.
+
 For fresh-checkout reuse on a warm machine, use
 `bash scripts/benchmark_cross_workspace_startup.sh` with a separately built
 main binary and package source root. The script compares clean, no-op,

@@ -1,6 +1,4 @@
 import 'package:build_config/build_config.dart';
-import 'package:build_runner/src/build_plan/build_triggers.dart'
-    show AnnotationBuildTrigger, BuildTriggers, ImportBuildTrigger;
 
 import 'model.dart';
 import 'catalog.dart' show manifestFactoryId;
@@ -19,35 +17,6 @@ bool requiresRuntimeProbe(SelectedBuilder selectedBuilder) {
   }
   return definition.normal!.builderFactories.length > 1 ||
       selectedBuilder.options.isNotEmpty;
-}
-
-Map<String, List<ManifestTrigger>> normalizedTriggers(
-  BuildTriggers buildTriggers,
-) {
-  final result = <String, List<ManifestTrigger>>{};
-  for (final entry in buildTriggers.triggers.entries) {
-    final triggers = <ManifestTrigger>[];
-    for (final trigger in entry.value) {
-      if (trigger is ImportBuildTrigger) {
-        triggers.add(ManifestTrigger(kind: 'import', value: trigger.import));
-      } else if (trigger is AnnotationBuildTrigger) {
-        triggers.add(
-          ManifestTrigger(kind: 'annotation', value: trigger.annotation),
-        );
-      } else {
-        throw StateError(
-          'Unsupported build trigger type for ${entry.key}: '
-          '${trigger.runtimeType}',
-        );
-      }
-    }
-    triggers.sort((left, right) {
-      final kind = left.kind.compareTo(right.kind);
-      return kind != 0 ? kind : left.value.compareTo(right.value);
-    });
-    result[entry.key] = triggers;
-  }
-  return result;
 }
 
 FactoryMapping? factoryMappingFor(

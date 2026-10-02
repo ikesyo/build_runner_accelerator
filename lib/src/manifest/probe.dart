@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -15,6 +16,95 @@ import 'source.dart';
 const _factoryProbeTimeout = Duration(seconds: 30);
 const _factoryProbeKillGracePeriod = Duration(seconds: 1);
 const _probeCacheVersion = 1;
+
+class ManifestTriggers {
+  ManifestTriggers(this.digest, this.triggers);
+
+  final String digest;
+  final Map<String, List<ManifestTrigger>> triggers;
+}
+
+/// Use the official parser without compiling Analyzer into the generator.
+/// The source helper preserves custom-worker and non-AOT configurations.
+Future<ManifestTriggers> loadManifestTriggers(
+  String root,
+  String workerEntrypoint,
+) async {
+  final temporary = await Directory.systemTemp.createTemp('manifest-triggers-');
+  final result = File(p.join(temporary.path, 'result.json'));
+  try {
+    final readiness =
+        Platform.environment['BUILD_RUNNER_ACCELERATOR_MANIFEST_WORKER_AOT'];
+    String? executable;
+    if (readiness != null && File(workerEntrypoint).existsSync()) {
+      executable = await waitForEarlyWorkerAot(readiness, workerEntrypoint);
+    }
+    Future<bool> run(String executable, List<String> arguments) async {
+      if (result.existsSync()) await result.delete();
+      final process = await Process.start(
+        executable,
+        arguments,
+        workingDirectory: root,
+      );
+      unawaited(process.stdout.drain<void>());
+      unawaited(process.stderr.forEach(stderr.add));
+      final code = await waitForProbeExit(
+        exitCode: process.exitCode,
+        kill: process.kill,
+      );
+      return code == 0 && result.existsSync();
+    }
+
+    var ready = false;
+    if (executable != null) {
+      try {
+        ready = await run(executable, [
+          '--manifest-triggers',
+          root,
+          result.path,
+        ]);
+      } on ProcessException {
+        // An unavailable or older worker must not change trigger semantics.
+      }
+    }
+    if (!ready) {
+      final helper = await Isolate.resolvePackageUri(
+        Uri.parse(
+          'package:build_runner_accelerator/src/manifest/trigger_worker.dart',
+        ),
+      );
+      final config = _findPackageConfigPath(root);
+      if (helper == null ||
+          config == null ||
+          !await run(Platform.resolvedExecutable, [
+            '--packages=$config',
+            helper.toFilePath(),
+            root,
+            result.path,
+          ])) {
+        throw StateError('Official build trigger parsing failed');
+      }
+    }
+    if (Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1') {
+      stderr.writeln(
+        'Dart manifest triggers: executor=${ready ? 'worker-aot' : 'source'}',
+      );
+    }
+    final decoded = jsonDecode(await result.readAsString()) as Map;
+    return ManifestTriggers(decoded['digest'] as String, {
+      for (final entry in (decoded['triggers'] as Map).entries)
+        entry.key as String: [
+          for (final trigger in entry.value as List)
+            ManifestTrigger(
+              kind: trigger['kind'] as String,
+              value: trigger['value'] as String,
+            ),
+        ],
+    });
+  } finally {
+    await temporary.delete(recursive: true);
+  }
+}
 
 /// Probes selected builder factories for mappings that are only available
 /// after the configured factory has been instantiated.

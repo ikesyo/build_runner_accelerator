@@ -3,9 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:build_config/build_config.dart';
-import 'package:build_runner/src/build_plan/build_triggers.dart'
-    show BuildTriggers;
-import 'package:built_collection/built_collection.dart';
 
 import 'manifest/emitter.dart';
 import 'manifest/mapping.dart';
@@ -57,31 +54,27 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     );
   }
   reportStage('entrypoint');
+  final triggers = await loadManifestTriggers(root, options.workerEntrypoint);
+  reportStage('triggers');
   final runtimeMappings = await _probeRuntimeMappings(
     root,
     resolved,
     selection,
     options.fingerprint,
     options.workerEntrypoint,
+    triggers.triggers,
   );
   reportStage('probe');
   final normalized = _normalizeManifest(resolved, selection, runtimeMappings);
-  await _emitArtifacts(options, inputs.triggerDigest, normalized);
+  await _emitArtifacts(options, triggers.digest, normalized);
   reportStage('emit');
 }
 
 class _LoadedInputs {
-  const _LoadedInputs({
-    required this.packageGraph,
-    required this.configs,
-    required this.normalizedTriggerMap,
-    required this.triggerDigest,
-  });
+  const _LoadedInputs({required this.packageGraph, required this.configs});
 
   final PackageGraph packageGraph;
   final Map<String, BuildConfig> configs;
-  final Map<String, List<ManifestTrigger>> normalizedTriggerMap;
-  final String triggerDigest;
 }
 
 class _ResolvedInputs {
@@ -91,7 +84,6 @@ class _ResolvedInputs {
     required this.orderedTargets,
     required this.targetOrder,
     required this.definitions,
-    required this.normalizedTriggerMap,
   });
 
   final String rootPackageName;
@@ -99,7 +91,6 @@ class _ResolvedInputs {
   final List<TargetInfo> orderedTargets;
   final TargetOrder<TargetInfo> targetOrder;
   final Map<String, DefinitionInfo> definitions;
-  final Map<String, List<ManifestTrigger>> normalizedTriggerMap;
 }
 
 class _ApplicationSelection {
@@ -139,23 +130,7 @@ Future<_LoadedInputs> _loadInputs(String root) async {
   final packageGraph = await loadPackageGraph(root);
   final configs = await loadBuildConfigs(packageGraph);
 
-  // Keep build_runner's parser and package-wide aggregation as the source of
-  // truth. The Rust side receives only this normalized, analyzer-independent
-  // representation; it never parses build.yaml trigger strings itself.
-  final buildTriggers = BuildTriggers.fromConfigs(
-    BuiltMap<String, BuildConfig>.from(configs),
-  );
-  if (buildTriggers.warningsByPackage.isNotEmpty) {
-    throw StateError(
-      'Unsupported build trigger configuration:\n${buildTriggers.renderWarnings}',
-    );
-  }
-  return _LoadedInputs(
-    packageGraph: packageGraph,
-    configs: configs,
-    normalizedTriggerMap: normalizedTriggers(buildTriggers),
-    triggerDigest: buildTriggers.digest.toString(),
-  );
+  return _LoadedInputs(packageGraph: packageGraph, configs: configs);
 }
 
 _ResolvedInputs _resolveTargetsAndDefinitions(_LoadedInputs inputs) {
@@ -166,7 +141,6 @@ _ResolvedInputs _resolveTargetsAndDefinitions(_LoadedInputs inputs) {
     orderedTargets: catalog.orderedTargets,
     targetOrder: catalog.targetOrder,
     definitions: catalog.definitions,
-    normalizedTriggerMap: inputs.normalizedTriggerMap,
   );
 }
 
@@ -176,6 +150,7 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
   _ApplicationSelection selection,
   String probeCacheKey,
   String workerEntrypoint,
+  Map<String, List<ManifestTrigger>> triggers,
 ) async {
   if (selection.selected.isEmpty) {
     return const _RuntimeMappings(
@@ -237,7 +212,7 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
     final converted = tryConvertDefinition(
       info,
       canonicalMappings[info.key],
-      triggers: resolved.normalizedTriggerMap[info.key] ?? const [],
+      triggers: triggers[info.key] ?? const [],
       builderTypes: builderTypes[info.key],
     );
     if (converted != null && converted.isNotEmpty) {
