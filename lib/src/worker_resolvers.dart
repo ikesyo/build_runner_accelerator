@@ -26,6 +26,7 @@ import 'package:pool/pool.dart';
 import 'package:pub_semver/pub_semver.dart';
 
 import 'cache_directory.dart';
+import 'indexed_blob_store.dart';
 
 // ignore: implementation_imports
 import 'package:build_runner/src/bootstrap/build_process_state.dart';
@@ -290,6 +291,10 @@ const _memoryCacheBytes = 128 * 1024 * 1024;
 /// to `0`, `false`, or `off`.
 const _byteStoreEnv = 'BUILD_RUNNER_ACCELERATOR_BYTE_STORE';
 
+/// Environment variable that restores per-key file layouts in the on-disk
+/// caches (the analyzer byte store and the dep-parse cache) when set to `0`.
+const _packedStoreEnv = 'BUILD_RUNNER_ACCELERATOR_PACKED_STORE';
+
 /// Byte-store instances per fingerprint for this process. Phase resets
 /// rebuild the analysis driver; keeping the [MemoryCachingByteStore] layer
 /// alive across those rebuilds means a later phase does not re-pay the disk
@@ -330,13 +335,52 @@ ByteStore sharedAnalysisByteStore(
       .toString()
       .substring(0, 16);
   final dir = p.join(acceleratorCacheDirectory(), 'byte_store', fingerprint);
-  // FileByteStore does not create the directory itself; without it the async
-  // temp-file writes fail silently.
+  // Neither on-disk store creates the directory itself; without it the writes
+  // fail silently.
   return _sharedByteStores.putIfAbsent(fingerprint, () {
     Directory(dir).createSync(recursive: true);
-    final store = MemoryCachingByteStore(FileByteStore(dir), _memoryCacheBytes);
+    final disk = Platform.environment[_packedStoreEnv] == '0'
+        ? FileByteStore(dir) as ByteStore
+        : _PackedFileByteStore(dir);
+    final store = MemoryCachingByteStore(disk, _memoryCacheBytes);
     return resolverActionMetrics.enabled ? _MetricsByteStore(store) : store;
   });
+}
+
+/// [ByteStore] backed by a single packed [IndexedBlobStore] file instead of
+/// one file per key under `FileByteStore`'s sharded directory.
+///
+/// The ~1250 byte-store lookups of a first `libraryFor` each paid an
+/// open/read/validate/close cycle; the packed store turns that into one file
+/// scan plus a seek+read per key. Entries written before this layout existed
+/// are migrated on read: a packed miss falls back to the legacy
+/// [FileByteStore] directory and, on a hit, appends the entry to the pack so
+/// the next process reads it there.
+class _PackedFileByteStore implements ByteStore {
+  _PackedFileByteStore(String dir)
+    : _store = IndexedBlobStore(p.join(dir, 'store.v1.bin')),
+      _legacy = FileByteStore(dir);
+
+  final IndexedBlobStore _store;
+  final FileByteStore _legacy;
+
+  @override
+  Uint8List? get(String key) {
+    final bytes = _store.get(key);
+    if (bytes != null) return bytes;
+    final legacy = _legacy.get(key);
+    if (legacy != null) _store.put(key, legacy);
+    return legacy;
+  }
+
+  @override
+  Uint8List putGet(String key, Uint8List bytes) {
+    _store.put(key, bytes);
+    return bytes;
+  }
+
+  @override
+  void release(Iterable<String> keys) {}
 }
 
 /// Counts hits, misses and time on the shared [ByteStore] for the resolver

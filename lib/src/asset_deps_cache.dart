@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import 'cache_directory.dart';
+import 'indexed_blob_store.dart';
 
 /// Content-keyed cache of parsed import/export/part dependencies.
 ///
@@ -19,32 +20,60 @@ import 'cache_directory.dart';
 /// `AssetDeps` by `sha256(assetId + content)` so later workers and later
 /// builds reuse it instead of re-parsing.
 ///
-/// Entries are stored as small JSON files under the shared accelerator cache
-/// directory, namespaced by the running SDK version because directive parsing
-/// is grammar-dependent. Because the key binds the exact content, a stale
-/// entry can never be selected: any content change produces a different key.
-/// A corrupt or unreadable entry is treated as a miss and falls back to
-/// parsing.
+/// By default entries live in one packed file per SDK under the shared
+/// accelerator cache directory (`store.v2.bin`), read through an in-memory
+/// offset index — one file scan per worker instead of ~900 individual file
+/// opens during the dep walk. With
+/// `BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0` the legacy layout is used: small
+/// JSON files, one per key. Both layouts are namespaced by the running SDK
+/// version because directive parsing is grammar-dependent. Because the key
+/// binds the exact content, a stale entry can never be selected: any content
+/// change produces a different key. A corrupt or unreadable entry is treated
+/// as a miss and falls back to parsing.
 ///
 /// Disable with `BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0`.
 final class AssetDepsCache {
-  AssetDepsCache._(this._dir);
+  AssetDepsCache._(this._dir, this._packed);
 
   static const _version = 'v1';
+  static const _packedVersion = 'v2';
 
   /// The shared process-wide cache, or `null` when disabled.
   static AssetDepsCache? shared() {
     final env = Platform.environment['BUILD_RUNNER_ACCELERATOR_DEP_CACHE'];
     if (env == '0') return null;
     final sdk = Platform.version.split(' ').first;
+    final packed =
+        Platform.environment['BUILD_RUNNER_ACCELERATOR_PACKED_STORE'] != '0';
+    if (packed) {
+      return AssetDepsCache._(
+        Directory(
+          p.join(
+            acceleratorCacheDirectory(),
+            'dep_parse',
+            '$_packedVersion-$sdk',
+          ),
+        ),
+        IndexedBlobStore(
+          p.join(
+            acceleratorCacheDirectory(),
+            'dep_parse',
+            '$_packedVersion-$sdk',
+            'store.bin',
+          ),
+        ),
+      );
+    }
     return AssetDepsCache._(
       Directory(
         p.join(acceleratorCacheDirectory(), 'dep_parse', '$_version-$sdk'),
       ),
+      null,
     );
   }
 
   final Directory _dir;
+  final IndexedBlobStore? _packed;
 
   /// Cache key binding the importing asset and its exact content. Relative
   /// directive URIs resolve against [id], so identical content in different
@@ -53,6 +82,18 @@ final class AssetDepsCache {
       sha256.convert(utf8.encode('$id\n$content')).toString();
 
   AssetDeps? lookup(String key) {
+    final packed = _packed;
+    if (packed != null) {
+      final bytes = packed.get(key);
+      if (bytes == null) return null;
+      try {
+        final text = utf8.decode(bytes);
+        if (text.isEmpty) return AssetDeps(const <AssetId>[]);
+        return AssetDeps(text.split('\n').map(AssetId.parse));
+      } on Object {
+        return null;
+      }
+    }
     try {
       final file = File(p.join(_dir.path, '$key.json'));
       if (!file.existsSync()) return null;
@@ -65,6 +106,12 @@ final class AssetDepsCache {
   }
 
   void store(String key, AssetDeps deps) {
+    final packed = _packed;
+    if (packed != null) {
+      final ids = deps.deps.map((id) => id.toString()).join('\n');
+      packed.put(key, utf8.encode(ids));
+      return;
+    }
     try {
       _dir.createSync(recursive: true);
       final payload = jsonEncode(<String, Object>{
