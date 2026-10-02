@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -58,6 +59,87 @@ void main() {
     expect(reopened.get('k'), [42]);
   });
 
+  test('identical writes do not grow the pack across builds', () {
+    final file = File('${dir.path}/store.bin');
+    for (final value in [
+      Uint8List(0),
+      Uint8List.fromList([1, 2, 3]),
+    ]) {
+      final key = 'key-${value.length}.resolved';
+      store.put(key, value);
+      final length = file.lengthSync();
+      for (var build = 0; build < 32; build++) {
+        store.put(key, Uint8List.fromList(value));
+        final reopened = IndexedBlobStore(file.path);
+        try {
+          reopened.put(key, Uint8List.fromList(value));
+          expect(reopened.get(key), value);
+        } finally {
+          reopened.close();
+        }
+        expect(file.lengthSync(), length);
+      }
+    }
+  });
+
+  test('stale writer adopts identical sibling writes before deduplicating', () {
+    store.get('prime');
+    final other = IndexedBlobStore('${dir.path}/store.bin');
+    addTearDown(other.close);
+    other.put('shared', Uint8List.fromList([8]));
+    final length = File('${dir.path}/store.bin').lengthSync();
+    store.put('shared', Uint8List.fromList([8]));
+    expect(File('${dir.path}/store.bin').lengthSync(), length);
+    expect(store.get('shared'), [8]);
+  });
+
+  test('different values under the same key remain updates', () {
+    store.put('k', Uint8List.fromList([0, 0, 0]));
+    // Same length and Fletcher-16 checksum: equality must compare bytes.
+    store.put('k', Uint8List.fromList([255, 255, 255]));
+    expect(store.get('k'), [255, 255, 255]);
+    store.put('k', Uint8List.fromList([4]));
+    expect(store.get('k'), [4]);
+    final reopened = IndexedBlobStore('${dir.path}/store.bin');
+    addTearDown(reopened.close);
+    expect(reopened.get('k'), [4]);
+  });
+
+  test('identical put repairs a corrupt indexed value', () {
+    final value = Uint8List.fromList([1, 2, 3]);
+    store.put('k', value);
+    final file = File('${dir.path}/store.bin');
+    final bytes = file.readAsBytesSync()..[9] = 99;
+    file.writeAsBytesSync(bytes, flush: true);
+    expect(store.get('k'), isNull);
+    store.put('k', value);
+    expect(store.get('k'), value);
+    // A fresh scan encounters the corrupt record first. Its next put must
+    // truncate that tail and restore a record visible to later readers.
+    final reopened = IndexedBlobStore(file.path);
+    addTearDown(reopened.close);
+    reopened.put('k', value);
+    expect(reopened.get('k'), value);
+    final third = IndexedBlobStore(file.path);
+    addTearDown(third.close);
+    expect(third.get('k'), value);
+  });
+
+  test('deduplicated put still truncates a torn tail', () {
+    final value = Uint8List.fromList([7]);
+    store.put('k', value);
+    final file = File('${dir.path}/store.bin');
+    final length = file.lengthSync();
+    file.writeAsBytesSync([255, 255, 255], mode: FileMode.append, flush: true);
+    store.put('k', value);
+    expect(file.lengthSync(), length);
+    store.put('next', Uint8List.fromList([8]));
+    final reopened = IndexedBlobStore(file.path);
+    addTearDown(reopened.close);
+    expect(reopened.get('k'), value);
+    expect(reopened.get('next'), [8]);
+  });
+
   test('torn tail is ignored', () {
     store.put('good', Uint8List.fromList([1]));
     store.close();
@@ -89,5 +171,59 @@ void main() {
     // The stale-indexed writer picks up the sibling's entry on its next put.
     store.put('mine', Uint8List.fromList([9]));
     expect(store.get('later'), [8]);
+  });
+
+  test('four concurrent processes append each shared value once', () async {
+    final path = '${dir.path}/store.bin';
+    final processes = await Future.wait([
+      for (var worker = 0; worker < 4; worker++)
+        Process.start(Platform.resolvedExecutable, [
+          '--packages=${File('.dart_tool/package_config.json').absolute.path}',
+          'test/indexed_blob_store_process.dart',
+          path,
+          '$worker',
+        ]),
+    ]);
+    addTearDown(() {
+      for (final process in processes) {
+        process.kill();
+      }
+    });
+    final errors = [
+      for (final process in processes)
+        process.stderr.transform(utf8.decoder).join(),
+    ];
+    await Future.wait([
+      for (final process in processes)
+        process.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .first
+            .then((line) => expect(line, 'ready')),
+    ]);
+    for (final process in processes) {
+      process.stdin.writeln('start');
+      await process.stdin.close();
+    }
+    var expectedLength = 0;
+    for (var round = 0; round < 32; round++) {
+      for (final key in [
+        'shared-$round.resolved',
+        for (var worker = 0; worker < 4; worker++) 'worker-$worker-$round',
+      ]) {
+        expectedLength += 8 + utf8.encode(key).length + 1 + 2;
+      }
+    }
+    for (var worker = 0; worker < 4; worker++) {
+      expect(await processes[worker].exitCode, 0, reason: await errors[worker]);
+    }
+    expect(File(path).lengthSync(), expectedLength);
+    expect(store.entryCount, 160);
+    for (var round = 0; round < 32; round++) {
+      expect(store.get('shared-$round.resolved'), [round]);
+      for (var worker = 0; worker < 4; worker++) {
+        expect(store.get('worker-$worker-$round'), [round]);
+      }
+    }
   });
 }

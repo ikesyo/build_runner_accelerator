@@ -2,6 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-10-02
+- Write deduplication and legacy cleanup amended by
+  [ADR 0022](0022-packed-cache-write-and-migration-lifecycle.md).
 
 ## Context
 

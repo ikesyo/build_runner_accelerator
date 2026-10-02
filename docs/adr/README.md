@@ -37,6 +37,7 @@ boundary rather than restoring commit-level history.
 | [0019](0019-directive-deps-parse-cache.md) | Content-keyed directive-deps parse cache for the library cycle walk |
 | [0020](0020-batch-dep-read-resolve.md) | Batch dep-read resolution for the library cycle walk |
 | [0021](0021-packed-shared-cache-stores.md) | Packed shared cache stores and digest-keyed dep lookups |
+| [0022](0022-packed-cache-write-and-migration-lifecycle.md) | Deduplicated packed writes and deletion of migrated legacy entries |
 | [0023](0023-helper-snapshots.md) | Warm catalog/analysis helper snapshots and workspace-bound cache identity |
 
 The wire-level details for ADR 0003 live in
