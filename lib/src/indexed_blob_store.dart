@@ -5,7 +5,7 @@ import 'dart:typed_data';
 /// A single-file, append-only key/value blob store.
 ///
 /// Layout: a sequence of
-/// `[u32 keyLen][u32 valueLen][key][value][u16 fletcher16(key||value)]`
+/// `[u32 keyLen][u32 valueLen][key][value][u16 fletcher16(value)]`
 /// records. The first read scans the file once and builds an in-memory index
 /// of `key -> (value offset, value length)`; reads after that are a single
 /// `RandomAccessFile` seek+read, replacing the open/read/close-per-key cost

@@ -18,7 +18,7 @@ roughly as:
   hits (ADR 0009).
 
 Two residual costs share one shape: thousands of tiny per-key file operations.
-The analyzer `FileByteStore` reads ~1250 keys per action (~62µs on this
+The analyzer `FileByteStore` reads ~1250 keys per action (~62ms on this
 machine — each get is an open/read/stat on a 6-20KB shard file), and the
 ADR 0019 dep cache pays a sha256 over the full source text per looked-up file
 (~0.1ms × ~880 ≈ ~90ms inside `dep_parse_cache_us`) plus a per-entry file
@@ -61,10 +61,10 @@ already hashed elsewhere.
 
 ## Consequences
 
-- On the fixture, warm steady state: `dep_parse_cache_us` ~170µs → ~10–17µs
-  (sha256 eliminated), `byte_store_get_us` ~62–70µs → ~41–52µs,
-  `cycle_graph_walk_us` ~530µs → ~350–390µs, `libraryFor` ~660µs →
-  ~430–480µs; the riverpod action total drops ~1.47s → ~1.30s.
+- On the fixture, warm steady state: `dep_parse_cache_us` ~170ms → ~10–17ms
+  (sha256 eliminated), `byte_store_get_us` ~62–70ms → ~41–52ms,
+  `cycle_graph_walk_us` ~530ms → ~350–390ms, `libraryFor` ~660ms →
+  ~430–480ms; the riverpod action total drops ~1.47s → ~1.30s.
 - The residual `libraryFor` cost is ~78% the dep walk (mostly required
   `readPhased` + content-hash bookkeeping) and ~0.11s of FileState refresh /
   bundle loads — analyzer-internal work with no remaining safe share.
