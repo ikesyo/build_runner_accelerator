@@ -48,6 +48,10 @@ calls and leave those structures identical to the sequential path.
   including its exceptions — replays unchanged. `observedReads` is filled
   only by the real calls during the walk, exactly as before.
 - `BUILD_RUNNER_ACCELERATOR_DEP_PREFETCH=0` disables prefetching.
+  During demand-driven optional builds, Rust declines batch prefetches so
+  speculative reads cannot cache a dirty optional output's old disk bytes.
+  The sequential `can_read`/`read` path performs any required lazy build
+  when the resolver actually requests the asset.
   Batch/prefetch traffic (`ipc_resolve_assets_calls/us`,
   `dep_prefetch_assets`, `dep_prefetch_us`) is reported in the per-action
   metrics block, and `resolve_assets_requests`/`resolve_assets_results`

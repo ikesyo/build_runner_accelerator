@@ -1,7 +1,7 @@
+use super::WorkerClient;
 use super::asset_rpc::{batch_asset_request_context, validate_asset_request_context};
 use super::client::protocol_error;
-use super::request::{batch_blocked_assets, build_request_kind, BuildRequest};
-use super::WorkerClient;
+use super::request::{BuildRequest, batch_blocked_assets, build_request_kind};
 use crate::builder::BuilderKind;
 use crate::plan::BuildSpec;
 use crate::protocol::{
@@ -64,11 +64,8 @@ impl WorkerClient {
     ) -> io::Result<BuildResult> {
         let started = Instant::now();
         let id = self.next_id();
-        let blocked_assets = visibility.blocked_assets(
-            request.phase,
-            build_request_kind(request),
-            deleted_overlay,
-        );
+        let blocked_assets =
+            visibility.blocked_assets(request.phase, build_request_kind(request), deleted_overlay);
         self.send(&json!({
             "v": 1,
             "type": "build",
@@ -234,6 +231,17 @@ impl WorkerClient {
         let phase = active_request.phase;
         let kind = build_request_kind(active_request);
         match operation {
+            "resolve_assets" => {
+                // Speculative reads must not bypass demand-driven optional
+                // builders or cache their previous on-disk outputs. Keep
+                // this path sequential: the worker treats a failed prefetch
+                // as a cache miss, and read/can_read below ensure the output
+                // is rebuilt only when the resolver actually requests it.
+                return self.send_asset_error(
+                    request,
+                    &io::Error::other("dependency prefetch disabled during lazy builds"),
+                );
+            }
             "read" | "can_read" => {
                 if let Some(asset) = request.get("asset").and_then(Value::as_str) {
                     if let Err(error) = self.ensure_optional_output(
@@ -326,8 +334,7 @@ impl WorkerClient {
         lazy_specs: &BTreeMap<String, BuildSpec>,
         lazy: &mut LazyBuildState,
     ) -> io::Result<()> {
-        if visibility.is_blocked(asset, phase, kind, deleted_overlay)
-            || overlay.contains_key(asset)
+        if visibility.is_blocked(asset, phase, kind, deleted_overlay) || overlay.contains_key(asset)
         {
             return Ok(());
         }
