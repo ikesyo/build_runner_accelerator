@@ -149,6 +149,15 @@ class RemoteBuilderFilesystem extends BuilderFilesystem {
 
   final RemoteAssetReaderWriter _remoteReaderWriter;
 
+  /// Pre-resolves dep ids the loader is about to `readPhased` so the batched
+  /// `resolve_assets` RPC can warm the reader's caches in one round-trip.
+  ///
+  /// Committed contents are served from `buildState.contentOf` ahead of the
+  /// reader's caches, so they are excluded here to keep the caches identical
+  /// to the sequential path.
+  Future<void> prefetchDepReads(Iterable<AssetId> ids) => _remoteReaderWriter
+      .prefetchAssets(ids.where((id) => buildState.contentOf(id) == null));
+
   @override
   void checkInvalidInput(AssetId id) {
     if (buildPackages[id.package] == null) {

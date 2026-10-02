@@ -15,6 +15,8 @@ import 'package:analyzer/src/clients/build_resolvers/build_resolvers.dart';
 import 'package:analyzer/src/dart/analysis/byte_store.dart';
 // ignore: implementation_imports
 import 'package:analyzer/src/dart/analysis/file_byte_store.dart';
+// ignore: implementation_imports
+import 'package:analyzer/src/dart/analysis/file_content_cache.dart';
 import 'package:build/build.dart';
 import 'package:build/experiments.dart';
 import 'package:crypto/crypto.dart';
@@ -24,6 +26,7 @@ import 'package:pool/pool.dart';
 import 'package:pub_semver/pub_semver.dart';
 
 import 'cache_directory.dart';
+import 'indexed_blob_store.dart';
 
 // ignore: implementation_imports
 import 'package:build_runner/src/bootstrap/build_process_state.dart';
@@ -41,7 +44,10 @@ import 'package:build_runner/src/build/library_cycle_graph/phased_asset_deps.dar
 import 'package:build_runner/src/build/resolver/analysis_driver.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/analysis_driver_filesystem.dart';
+import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/element/element.dart';
 import 'resolver_host.dart' show ResolverInitializationProfile;
+import 'resolver_metrics.dart';
 import 'sdk_summary_lock.dart';
 import 'worker_analysis_driver_model.dart';
 // ignore: implementation_imports
@@ -107,7 +113,7 @@ class WorkerResolversImpl implements Resolvers {
        _profile = profile;
 
   @override
-  Future<BuildStepResolver> get(BuildStep buildStep) async {
+  Future<ReleasableResolver> get(BuildStep buildStep) async {
     await _initializationPool.withResource(() async {
       if (_buildResolver != null) return;
       _warnOnLanguageVersionMismatch();
@@ -126,7 +132,16 @@ class WorkerResolversImpl implements Resolvers {
         _profile?.sdkSummaryLockWaitUs = sdkSummary.lockWaitUs;
         _profile?.sdkSummaryAfterLockUs = sdkSummary.generatorUs;
       }
+      final sdkSummaryReadTimer = _profile?.enabled == true
+          ? (Stopwatch()..start())
+          : null;
       final sdkSummaryBytes = await File(sdkSummary.path).readAsBytes();
+      if (sdkSummaryReadTimer != null) {
+        _profile?.sdkSummaryReadUs = sdkSummaryReadTimer.elapsedMicroseconds;
+      }
+      final driverCreateTimer = _profile?.enabled == true
+          ? (Stopwatch()..start())
+          : null;
       final driver = _analysisDriver(
         _analysisDriverModel,
         AnalysisOptionsImpl()
@@ -138,11 +153,27 @@ class WorkerResolversImpl implements Resolvers {
         loadedConfig,
         sharedAnalysisByteStore(sdkSummaryBytes, loadedConfig),
       );
+      if (driverCreateTimer != null) {
+        _profile?.driverCreateUs = driverCreateTimer.elapsedMicroseconds;
+      }
 
+      final buildResolverTimer = _profile?.enabled == true
+          ? (Stopwatch()..start())
+          : null;
       _buildResolver = BuildResolver(driver, _driverPool, _analysisDriverModel);
+      if (buildResolverTimer != null) {
+        _profile?.buildResolverCtorUs = buildResolverTimer.elapsedMicroseconds;
+      }
     });
 
-    return BuildStepResolver(_buildResolver!, buildStep as BuildStepImpl);
+    final stepResolver = BuildStepResolver(
+      _buildResolver!,
+      buildStep as BuildStepImpl,
+    );
+    if (_profile?.enabled == true) {
+      return _TimingResolver(stepResolver);
+    }
+    return stepResolver;
   }
 
   /// Starts a build.
@@ -206,7 +237,9 @@ AnalysisDriverForPackageBuild _analysisDriver(
       analysisDriverModel.filesystem,
     ),
     resourceProvider: analysisDriverModel.filesystem,
-    fileContentCache: analysisDriverModel.filesystem,
+    fileContentCache: resolverActionMetrics.enabled
+        ? _MetricsFileContentCache(analysisDriverModel.filesystem)
+        : analysisDriverModel.filesystem,
     sdkSummaryBytes: sdkSummaryBytes,
     uriResolvers: [analysisDriverModel.filesystem],
     byteStore: byteStore,
@@ -258,6 +291,10 @@ const _memoryCacheBytes = 128 * 1024 * 1024;
 /// to `0`, `false`, or `off`.
 const _byteStoreEnv = 'BUILD_RUNNER_ACCELERATOR_BYTE_STORE';
 
+/// Environment variable that restores per-key file layouts in the on-disk
+/// caches (the analyzer byte store and the dep-parse cache) when set to `0`.
+const _packedStoreEnv = 'BUILD_RUNNER_ACCELERATOR_PACKED_STORE';
+
 /// Byte-store instances per fingerprint for this process. Phase resets
 /// rebuild the analysis driver; keeping the [MemoryCachingByteStore] layer
 /// alive across those rebuilds means a later phase does not re-pay the disk
@@ -298,12 +335,208 @@ ByteStore sharedAnalysisByteStore(
       .toString()
       .substring(0, 16);
   final dir = p.join(acceleratorCacheDirectory(), 'byte_store', fingerprint);
-  // FileByteStore does not create the directory itself; without it the async
-  // temp-file writes fail silently.
+  // Neither on-disk store creates the directory itself; without it the writes
+  // fail silently.
   return _sharedByteStores.putIfAbsent(fingerprint, () {
     Directory(dir).createSync(recursive: true);
-    return MemoryCachingByteStore(FileByteStore(dir), _memoryCacheBytes);
+    final disk = Platform.environment[_packedStoreEnv] == '0'
+        ? FileByteStore(dir) as ByteStore
+        : _PackedFileByteStore(dir);
+    final store = MemoryCachingByteStore(disk, _memoryCacheBytes);
+    return resolverActionMetrics.enabled ? _MetricsByteStore(store) : store;
   });
+}
+
+/// [ByteStore] backed by a single packed [IndexedBlobStore] file instead of
+/// one file per key under `FileByteStore`'s sharded directory.
+///
+/// The ~1250 byte-store lookups of a first `libraryFor` each paid an
+/// open/read/validate/close cycle; the packed store turns that into one file
+/// scan plus a seek+read per key. Entries written before this layout existed
+/// are migrated on read: a packed miss falls back to the legacy
+/// [FileByteStore] directory and, on a hit, appends the entry to the pack so
+/// the next process reads it there.
+class _PackedFileByteStore implements ByteStore {
+  _PackedFileByteStore(String dir)
+    : _store = IndexedBlobStore(p.join(dir, 'store.v1.bin')),
+      _legacy = FileByteStore(dir);
+
+  final IndexedBlobStore _store;
+  final FileByteStore _legacy;
+
+  @override
+  Uint8List? get(String key) {
+    final bytes = _store.get(key);
+    if (bytes != null) return bytes;
+    final legacy = _legacy.get(key);
+    if (legacy != null) _store.put(key, legacy);
+    return legacy;
+  }
+
+  @override
+  Uint8List putGet(String key, Uint8List bytes) {
+    _store.put(key, bytes);
+    return bytes;
+  }
+
+  @override
+  void release(Iterable<String> keys) {}
+}
+
+/// Counts hits, misses and time on the shared [ByteStore] for the resolver
+/// startup breakdown, split by key suffix. Keys are content-addressed, so
+/// counters are the only behavioral difference.
+class _MetricsByteStore implements ByteStore {
+  _MetricsByteStore(this._delegate);
+
+  final ByteStore _delegate;
+
+  @override
+  Uint8List? get(String key) {
+    final timer = Stopwatch()..start();
+    final bytes = _delegate.get(key);
+    final us = timer.elapsedMicroseconds;
+    final metrics = resolverActionMetrics
+      ..byteStoreGets += 1
+      ..byteStoreGetUs += us;
+    if (key.endsWith('.unlinked2')) {
+      metrics
+        ..byteStoreGetsUnlinked += 1
+        ..byteStoreGetUnlinkedUs += us;
+    } else if (key.endsWith('.linked')) {
+      metrics
+        ..byteStoreGetsLinked += 1
+        ..byteStoreGetLinkedUs += us;
+    } else {
+      metrics
+        ..byteStoreGetsOther += 1
+        ..byteStoreGetOtherUs += us;
+    }
+    if (bytes != null) resolverActionMetrics.byteStoreHits++;
+    return bytes;
+  }
+
+  @override
+  Uint8List putGet(String key, Uint8List bytes) {
+    final timer = Stopwatch()..start();
+    final result = _delegate.putGet(key, bytes);
+    resolverActionMetrics
+      ..byteStorePuts += 1
+      ..byteStorePutUs += timer.elapsedMicroseconds
+      ..byteStorePutBytes += bytes.length;
+    return result;
+  }
+
+  @override
+  void release(Iterable<String> keys) => _delegate.release(keys);
+}
+
+/// Times `FileContentCache.get` — the `AnalysisDriverFilesystem._data` reads
+/// that `FileState.refresh` performs inside `libraryFor`/`updateDriver`.
+class _MetricsFileContentCache implements FileContentCache {
+  _MetricsFileContentCache(this._delegate);
+
+  final FileContentCache _delegate;
+
+  @override
+  FileContent get(String path) {
+    final timer = Stopwatch()..start();
+    try {
+      return _delegate.get(path);
+    } finally {
+      resolverActionMetrics
+        ..fileContentGets += 1
+        ..fileContentGetUs += timer.elapsedMicroseconds;
+    }
+  }
+
+  @override
+  void invalidate(String path) => _delegate.invalidate(path);
+
+  @override
+  void invalidateAll() => _delegate.invalidateAll();
+}
+
+/// Times each [ReleasableResolver] entry point for the per-action breakdown.
+///
+/// The first `libraryFor`/`libraries` call is where the analyzer loads the
+/// transitive library cycle: separating the call's wall time from the
+/// dep-graph walk and pending-change application measured inside
+/// `updateDriver` shows the element-model (summary link/load) share.
+class _TimingResolver implements ReleasableResolver {
+  _TimingResolver(this._delegate);
+
+  final ReleasableResolver _delegate;
+
+  Future<T> _time<T>(String name, Future<T> Function() call) async {
+    final timer = Stopwatch()..start();
+    try {
+      return await call();
+    } finally {
+      final us = timer.elapsedMicroseconds;
+      resolverActionMetrics.resolverFirstCallUs.putIfAbsent(name, () => us);
+      resolverActionMetrics.resolverCallUs.update(
+        name,
+        (total) => total + us,
+        ifAbsent: () => us,
+      );
+    }
+  }
+
+  @override
+  Stream<LibraryElement> get libraries async* {
+    final timer = Stopwatch()..start();
+    await for (final library in _delegate.libraries) {
+      resolverActionMetrics.librariesCount++;
+      yield library;
+    }
+    resolverActionMetrics.librariesStreamUs += timer.elapsedMicroseconds;
+  }
+
+  @override
+  Future<LibraryElement?> findLibraryByName(String libraryName) => _time(
+    'findLibraryByName',
+    () => _delegate.findLibraryByName(libraryName),
+  );
+
+  @override
+  Future<bool> isLibrary(AssetId assetId) =>
+      _time('isLibrary', () => _delegate.isLibrary(assetId));
+
+  @override
+  Future<AstNode?> astNodeFor(Fragment fragment, {bool resolve = false}) =>
+      _time(
+        'astNodeFor',
+        () => _delegate.astNodeFor(fragment, resolve: resolve),
+      );
+
+  @override
+  Future<CompilationUnit> compilationUnitFor(
+    AssetId assetId, {
+    bool allowSyntaxErrors = false,
+  }) => _time(
+    'compilationUnitFor',
+    () => _delegate.compilationUnitFor(
+      assetId,
+      allowSyntaxErrors: allowSyntaxErrors,
+    ),
+  );
+
+  @override
+  Future<LibraryElement> libraryFor(
+    AssetId assetId, {
+    bool allowSyntaxErrors = false,
+  }) => _time(
+    'libraryFor',
+    () => _delegate.libraryFor(assetId, allowSyntaxErrors: allowSyntaxErrors),
+  );
+
+  @override
+  Future<AssetId> assetIdForElement(Element element) =>
+      _time('assetIdForElement', () => _delegate.assetIdForElement(element));
+
+  @override
+  void release() => _delegate.release();
 }
 
 /// Checks that the current analyzer version supports the current language

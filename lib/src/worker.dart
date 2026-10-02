@@ -21,6 +21,7 @@ import 'current_build_runtime.dart';
 import 'protocol.dart';
 import 'remote_build_step.dart';
 import 'resolver_host.dart';
+import 'resolver_metrics.dart';
 import 'resolver_reads.dart';
 import 'trigger_evaluator.dart';
 import 'worker_factory_probe.dart';
@@ -481,6 +482,7 @@ class _BuildProfile {
   int readCount = 0;
   int resolverReadCount = 0;
   int globCount = 0;
+  final Map<String, int> activityUs = <String, int>{};
   final ResolverInitializationProfile resolverProfile;
 
   void recordResolverGet(int elapsedUs, {required bool first}) {
@@ -492,9 +494,21 @@ class _BuildProfile {
   void emit() {
     if (!_metricsEnabled) return;
     stderr.writeln(
-      'Dart metrics: ${jsonEncode(<String, dynamic>{'builder': builder, 'input': input, 'status': status, 'total_us': _total.elapsedMicroseconds, 'factory_us': factoryUs, 'resolver_get_us': resolverGetUs, 'resolver_get_calls': resolverGetCalls, 'resolver_first_get_us': resolverFirstGetUs, 'package_config_load_us': resolverProfile.packageConfigLoadUs, 'resolver_constructor_us': resolverProfile.resolverConstructorUs, 'resolver_sdk_summary_us': resolverProfile.sdkSummaryUs, 'resolver_sdk_summary_lock_wait_us': resolverProfile.sdkSummaryLockWaitUs, 'resolver_sdk_summary_after_lock_us': resolverProfile.sdkSummaryAfterLockUs, 'resolver_post_sdk_summary_us': resolverProfile.resolverPostSdkSummaryUs, 'run_builder_us': runBuilderUs, 'resolver_reads_us': resolverReadsUs, 'result_assembly_us': resultAssemblyUs, 'outputs': outputCount, 'reads': readCount, 'resolver_reads': resolverReadCount, 'glob_reads': globCount})}',
+      'Dart metrics: ${jsonEncode(<String, dynamic>{'builder': builder, 'input': input, 'status': status, 'total_us': _total.elapsedMicroseconds, 'factory_us': factoryUs, 'resolver_get_us': resolverGetUs, 'resolver_get_calls': resolverGetCalls, 'resolver_first_get_us': resolverFirstGetUs, 'package_config_load_us': resolverProfile.packageConfigLoadUs, 'resolver_constructor_us': resolverProfile.resolverConstructorUs, 'resolver_sdk_summary_us': resolverProfile.sdkSummaryUs, 'resolver_sdk_summary_lock_wait_us': resolverProfile.sdkSummaryLockWaitUs, 'resolver_sdk_summary_after_lock_us': resolverProfile.sdkSummaryAfterLockUs, 'resolver_sdk_summary_read_us': resolverProfile.sdkSummaryReadUs, 'driver_create_us': resolverProfile.driverCreateUs, 'build_resolver_ctor_us': resolverProfile.buildResolverCtorUs, 'resolver_post_sdk_summary_us': resolverProfile.resolverPostSdkSummaryUs, 'run_builder_us': runBuilderUs, 'resolver_reads_us': resolverReadsUs, 'result_assembly_us': resultAssemblyUs, 'outputs': outputCount, 'reads': readCount, 'resolver_reads': resolverReadCount, 'glob_reads': globCount})}',
+    );
+    stderr.writeln(
+      'Dart action metrics: ${jsonEncode(<String, dynamic>{'builder': builder, 'input': input, 'status': status, ...resolverActionMetrics.toJson(), 'activity_us': activityUs})}',
     );
   }
+}
+
+/// Snapshot of build_runner `TimedActivity` buckets in microseconds.
+Map<String, int> _activityDurations() {
+  final result = <String, int>{};
+  for (final entry in buildLog.activities.durations(phaseName: null).entries) {
+    result[entry.key.name] = entry.value.inMicroseconds;
+  }
+  return result;
 }
 
 class _TrackingResolvers extends Resolvers {
@@ -707,6 +721,10 @@ Future<JsonMap> _runBuild(
       blockedAssets: blockedAssets,
     );
     actionStarted = true;
+    resolverActionMetrics.beginAction();
+    final activitySnapshot = _metricsEnabled
+        ? _activityDurations()
+        : const <String, int>{};
     var drainReads = const <AssetId>{};
     if (request.phase > runtime._lastDepDrainPhase) {
       runtime._lastDepDrainPhase = request.phase;
@@ -866,6 +884,13 @@ Future<JsonMap> _runBuild(
             ? packageOrder
             : left.pattern.compareTo(right.pattern);
       });
+    if (_metricsEnabled) {
+      final after = _activityDurations();
+      for (final entry in after.entries) {
+        final delta = entry.value - (activitySnapshot[entry.key] ?? 0);
+        if (delta != 0) profile.activityUs[entry.key] = delta;
+      }
+    }
     profile.resultAssemblyUs = resultAssemblyTimer.elapsedMicroseconds;
     profile.outputCount = outputs.length;
     profile.readCount = reads.length;

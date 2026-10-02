@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:build/build.dart';
 import 'package:build_runner_accelerator/src/protocol.dart';
@@ -7,6 +9,61 @@ import 'package:build_runner_accelerator/src/remote_build_step.dart';
 import 'package:test/test.dart';
 
 void main() {
+  for (final error in [
+    'prefetch disabled during lazy builds',
+    'resolve_assets response exceeds frame limit',
+  ]) {
+    test('declined prefetch ($error) preserves sequential reads', () async {
+      final id = AssetId('app', 'lib/generated.dart');
+      final cache = <AssetId, List<int>>{};
+      final readable = <AssetId>{};
+      final temporary = await Directory.systemTemp.createTemp(
+        'prefetch-fallback-',
+      );
+      addTearDown(() => temporary.delete(recursive: true));
+      final file = File('${temporary.path}/generated.dart');
+      await file.writeAsBytes([1, 2, 3]);
+      final responses = [
+        {'id': 1000, 'ok': false, 'error': error},
+        {'id': 1001, 'ok': true, 'value': true},
+        {'id': 1002, 'ok': true, 'path': file.path},
+      ];
+      final frames = responses.map((response) {
+        final payload = utf8.encode(
+          jsonEncode({'v': 1, 'type': 'asset_response', ...response}),
+        );
+        final header = ByteData(4)..setUint32(0, payload.length);
+        return [...header.buffer.asUint8List(), ...payload];
+      });
+      final sink = IOSink(_DiscardingConsumer());
+      addTearDown(sink.close);
+      final io = RemoteAssetReaderWriter(
+        readCache: cache,
+        readableCache: readable,
+      );
+      io.beginAction(
+        rpc: RpcSession(
+          FrameReader(Stream.fromIterable(frames)),
+          FrameWriter(sink),
+          buildId: 1,
+          phase: 1,
+          postProcess: false,
+        ),
+        package: 'app',
+        primaryInput: null,
+        blockedAssets: {},
+      );
+      await io.prefetchAssets([id]);
+      expect(cache, isEmpty);
+      expect(readable, isEmpty);
+      expect(io.observedReads, isEmpty);
+      expect(await io.canRead(id), isTrue);
+      expect(await io.readAsBytes(id), [1, 2, 3]);
+      expect(io.observedReads, {id});
+      io.endAction();
+    });
+  }
+
   test('nested actions restore the outer asset IO context', () async {
     final outerInput = AssetId('app', 'lib/outer.dart');
     final outerOutput = AssetId('app', 'lib/outer.txt');

@@ -53,18 +53,28 @@ run_stock() {
 }
 run_rust() {
   local directory=$1
-  (cd "$repo_root" && worker_run_frontend \
-    build --root "$directory" --dart "$dart_bin" --jobs "${JOBS:-1}")
+  (cd "$repo_root" || exit 1
+    status=0
+    VERIFY_COMMAND_LOG="$results_dir/frontend.log" VERIFY_STREAM_LOGS=0 \
+      worker_run_frontend \
+        build --root "$directory" --dart "$dart_bin" --jobs "${JOBS:-1}" || status=$?
+    cat "$results_dir/frontend.log" >&2 || true
+    exit "$status")
 }
 measure() {
   local label=$1
   shift
+  local status=0
   if [[ -x /usr/bin/time ]]; then
     /usr/bin/time -f "$label real=%e user=%U sys=%S maxrss_kb=%M" \
-      "$@" >"$results_dir/$label.stdout" 2>"$results_dir/$label.stderr"
+      "$@" >"$results_dir/$label.stdout" 2>"$results_dir/$label.stderr" || status=$?
   else
     TIMEFORMAT="$label real=%3R user=%3U sys=%3S maxrss_kb=unavailable"
-    { time "$@"; } >"$results_dir/$label.stdout" 2>"$results_dir/$label.stderr"
+    { time "$@"; } >"$results_dir/$label.stdout" 2>"$results_dir/$label.stderr" || status=$?
+  fi
+  if ((status != 0)); then
+    cat "$results_dir/$label.stdout" "$results_dir/$label.stderr" >&2 || true
+    return "$status"
   fi
   rg 'real=|maxrss_kb=' "$results_dir/$label.stderr" >>"$metrics_path" || \
     fail "timing output missing for $label"
@@ -88,7 +98,7 @@ measure rust_clean run_rust "$rust_dir"
 assert_same_outputs
 measure stock_noop run_stock "$stock_dir"
 measure rust_noop run_rust "$rust_dir"
-rg -Fq 'No work to do (Rust frontend)' "$results_dir/rust_noop.stdout" || fail 'Rust no-op was not reported'
+rg -Fq 'No work to do (Rust frontend)' "$results_dir/rust_noop.stderr" || fail 'Rust no-op was not reported'
 for directory in "$stock_dir" "$rust_dir"; do
   sed -i 's/=> 42;/=> 43;/' "$directory/lib/model.dart"
 done

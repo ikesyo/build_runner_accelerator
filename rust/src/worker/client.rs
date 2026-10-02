@@ -62,6 +62,8 @@ pub(super) struct WorkerClientMetrics {
     pub(super) can_read_requests: u64,
     pub(super) find_assets_requests: u64,
     pub(super) find_assets_results: u64,
+    pub(super) resolve_assets_requests: u64,
+    pub(super) resolve_assets_results: u64,
 }
 
 impl WorkerClientMetrics {
@@ -87,6 +89,8 @@ impl WorkerClientMetrics {
         self.can_read_requests += other.can_read_requests;
         self.find_assets_requests += other.find_assets_requests;
         self.find_assets_results += other.find_assets_results;
+        self.resolve_assets_requests += other.resolve_assets_requests;
+        self.resolve_assets_results += other.resolve_assets_results;
     }
 }
 
