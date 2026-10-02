@@ -86,8 +86,12 @@ final class AssetDepsCache {
   /// per dep file. Callers must only pass a digest that provably covers the
   /// same content; the returned key binds [id] exactly like [keyFor] and
   /// shares the same key space.
-  String keyForDigest(AssetId id, String contentDigest) =>
-      '$id\n$contentDigest';
+  String keyForDigest(AssetId id, String contentDigest) {
+    final key = '$id\n$contentDigest';
+    // The legacy layout uses keys as filenames. Asset IDs contain slashes
+    // (and a Windows-invalid pipe), so encode the short digest key there.
+    return _packed == null ? sha256.convert(utf8.encode(key)).toString() : key;
+  }
 
   AssetDeps? lookup(String key) {
     final packed = _packed;
