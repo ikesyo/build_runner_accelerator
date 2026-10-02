@@ -50,6 +50,15 @@ final class ResolverActionMetrics {
   int ipcFindAssetsCalls = 0;
   int ipcFindAssetsUs = 0;
 
+  /// Batched `resolve_assets` RPCs issued by dep-read prefetching.
+  int ipcResolveAssetsCalls = 0;
+  int ipcResolveAssetsUs = 0;
+
+  /// Assets whose read/readable caches were warmed by a batch resolve, and
+  /// total prefetch time inside [RemoteAssetReaderWriter.prefetchAssets].
+  int depPrefetchAssets = 0;
+  int depPrefetchUs = 0;
+
   /// Analyzer byte-store traffic through the shared store.
   int byteStoreGets = 0;
   int byteStoreGetUs = 0;
@@ -93,6 +102,10 @@ final class ResolverActionMetrics {
     ipcCanReadCacheHits = 0;
     ipcFindAssetsCalls = 0;
     ipcFindAssetsUs = 0;
+    ipcResolveAssetsCalls = 0;
+    ipcResolveAssetsUs = 0;
+    depPrefetchAssets = 0;
+    depPrefetchUs = 0;
     byteStoreGets = 0;
     byteStoreGetUs = 0;
     byteStoreHits = 0;
@@ -125,6 +138,10 @@ final class ResolverActionMetrics {
     'ipc_can_read_cache_hits': ipcCanReadCacheHits,
     'ipc_find_assets_calls': ipcFindAssetsCalls,
     'ipc_find_assets_us': ipcFindAssetsUs,
+    'ipc_resolve_assets_calls': ipcResolveAssetsCalls,
+    'ipc_resolve_assets_us': ipcResolveAssetsUs,
+    'dep_prefetch_assets': depPrefetchAssets,
+    'dep_prefetch_us': depPrefetchUs,
     'byte_store_gets': byteStoreGets,
     'byte_store_get_us': byteStoreGetUs,
     'byte_store_hits': byteStoreHits,

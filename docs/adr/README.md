@@ -35,6 +35,7 @@ boundary rather than restoring commit-level history.
 | [0017](0017-manifest-window-analysis-prewarm.md) | Manifest-window analysis prewarm and SDK summary auto-prewarm |
 | [0018](0018-cross-workspace-cold-start-sharing.md) | Cross-workspace manifest kernel reuse and shared SDK summary lock |
 | [0019](0019-directive-deps-parse-cache.md) | Content-keyed directive-deps parse cache for the library cycle walk |
+| [0020](0020-batch-dep-read-resolve.md) | Batch dep-read resolution for the library cycle walk |
 
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for

@@ -68,6 +68,8 @@ pub struct PoolMetrics {
     pub can_read_requests: u64,
     pub find_assets_requests: u64,
     pub find_assets_results: u64,
+    pub resolve_assets_requests: u64,
+    pub resolve_assets_results: u64,
 }
 
 impl WorkerPool {
@@ -322,6 +324,8 @@ impl WorkerPool {
             can_read_requests: worker_metrics.can_read_requests,
             find_assets_requests: worker_metrics.find_assets_requests,
             find_assets_results: worker_metrics.find_assets_results,
+            resolve_assets_requests: worker_metrics.resolve_assets_requests,
+            resolve_assets_results: worker_metrics.resolve_assets_results,
         }
     }
 

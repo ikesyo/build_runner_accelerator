@@ -93,6 +93,76 @@ impl WorkerClient {
                     Err(error) => return Err(error),
                 }
             }
+            "resolve_assets" => {
+                self.metrics.resolve_assets_requests += 1;
+                let assets = request
+                    .get("assets")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| io::Error::other("resolve_assets request has no assets"))?;
+                // Batch form of `read`: each entry reports whether a single
+                // `read` would answer with a filesystem path, in-memory
+                // overlay bytes, or `not found`. `path`/`bytes` entries
+                // therefore double as `can_read == true` for the batch,
+                // letting the worker warm its read caches in one round-trip.
+                let mut resolved = Vec::with_capacity(assets.len());
+                let mut payload = Vec::new();
+                for raw in assets {
+                    let asset = raw.as_str().unwrap_or_default();
+                    if asset.is_empty()
+                        || visibility.is_blocked(asset, phase, kind, deleted_overlay)
+                    {
+                        resolved.push(json!({"status": "not_found"}));
+                        continue;
+                    }
+                    if let Some(bytes) = overlay.get(asset) {
+                        let offset = payload.len();
+                        payload.extend_from_slice(bytes);
+                        self.metrics.read_bytes += bytes.len() as u64;
+                        resolved.push(json!({
+                            "status": "bytes",
+                            "offset": offset,
+                            "length": bytes.len(),
+                        }));
+                        continue;
+                    }
+                    match asset_disk_path(workspace, asset, visibility) {
+                        Ok(path) => resolved.push(json!({
+                            "status": "path",
+                            "path": path.to_string_lossy(),
+                        })),
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                            resolved.push(json!({"status": "not_found"}));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                self.metrics.resolve_assets_results += resolved.len() as u64;
+                if payload.is_empty() {
+                    json!({
+                        "v": 1,
+                        "type": "asset_response",
+                        "id": id,
+                        "ok": true,
+                        "assets": resolved,
+                    })
+                } else {
+                    self.metrics.binary_read_responses += 1;
+                    let result = self.send_binary(
+                        &json!({
+                            "v": 1,
+                            "type": "asset_response",
+                            "id": id,
+                            "ok": true,
+                            "encoding": "raw",
+                            "length": payload.len(),
+                            "assets": resolved,
+                        }),
+                        &payload,
+                    );
+                    self.metrics.asset_rpc_us += started.elapsed().as_micros() as u64;
+                    return result;
+                }
+            }
             "can_read" => {
                 self.metrics.can_read_requests += 1;
                 let asset = request

@@ -70,6 +70,8 @@ class _RemoteIoState {
     _actions.removeLast();
   }
 
+  bool get hasActiveAction => _actions.isNotEmpty;
+
   _RemoteActionState get _active {
     if (_actions.isEmpty) throw StateError('Remote IO is idle');
     return _actions.last;
@@ -89,6 +91,11 @@ class _RemoteIoState {
   Set<ObservedGlob> get observedGlobs =>
       _actions.isEmpty ? _idleObservedGlobs : _active.observedGlobs;
 }
+
+/// Batch dep-read resolution over the `resolve_assets` RPC. Disable with
+/// `BUILD_RUNNER_ACCELERATOR_DEP_PREFETCH=0`.
+final bool _depPrefetchEnabled =
+    Platform.environment['BUILD_RUNNER_ACCELERATOR_DEP_PREFETCH'] != '0';
 
 /// A current build_runner [ReaderWriter] whose file operations are served by
 /// the Rust frontend through the existing asset RPC protocol.
@@ -131,6 +138,104 @@ class RemoteAssetReaderWriter extends ReaderWriter {
   );
 
   void endAction() => _state.endAction();
+
+  /// Batch-resolves [ids] through the `resolve_assets` RPC and warms the
+  /// shared read/readable caches with the results, so the dep-walk's
+  /// subsequent [canRead]/[readAsBytes] calls hit cache instead of paying a
+  /// `can_read` + `read` round-trip plus a sequential file read per asset.
+  ///
+  /// Only assets the frontend resolves positively are cached, and only under
+  /// the same conditions the sequential path caches them: `path` and `bytes`
+  /// entries imply `can_read == true` and hold exactly what `read` would
+  /// return. `not_found` and malformed entries stay uncached, so every
+  /// negative or failed resolution replays the sequential path — including
+  /// its exceptions — unchanged. `observedReads` is untouched: it is filled
+  /// by the real calls during the walk, exactly as without prefetching.
+  Future<void> prefetchAssets(Iterable<AssetId> ids) async {
+    if (!_depPrefetchEnabled ||
+        !_state.hasActiveAction ||
+        // Post-process actions gate every non-input read before the caches,
+        // so a prefetched entry would never be observed anyway.
+        _state.primaryInput != null) {
+      return;
+    }
+    final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
+    final requestIds = <String>[];
+    final idsByKey = <String, AssetId>{};
+    for (final id in ids) {
+      final key = id.toString();
+      if (idsByKey.containsKey(key) ||
+          _state.outputs.containsKey(id) ||
+          _isBlocked(id) ||
+          _state.readCache.containsKey(id) ||
+          _state.readableCache.contains(id)) {
+        continue;
+      }
+      idsByKey[key] = id;
+      requestIds.add(key);
+    }
+    if (requestIds.isEmpty) return;
+    JsonMap response;
+    try {
+      response = await _state.activeRpc.call(
+        'resolve_assets',
+        <String, dynamic>{'assets': requestIds},
+      );
+    } on Object {
+      // A batch failure must not break the build: every candidate stays
+      // uncached and takes the sequential `can_read`/`read` path as usual.
+      return;
+    }
+    if (timer != null) {
+      resolverActionMetrics
+        ..ipcResolveAssetsCalls += 1
+        ..ipcResolveAssetsUs += timer.elapsedMicroseconds;
+    }
+    final entries = response['assets'];
+    if (entries is! List || entries.length != requestIds.length) return;
+    final payload = response['bytes'];
+    final bytes = payload is Uint8List ? payload : null;
+    for (var index = 0; index < entries.length; index++) {
+      final entry = entries[index];
+      if (entry is! Map) continue;
+      final id = idsByKey[requestIds[index]]!;
+      final status = entry['status'];
+      if (status == 'path') {
+        final path = entry['path'];
+        if (path is! String) continue;
+        try {
+          _state.readCache[id] = File(path).readAsBytesSync();
+          _state.readableCache.add(id);
+          resolverActionMetrics.depPrefetchAssets += 1;
+        } on Object {
+          // Unreadable: leave uncached so the sequential path reproduces the
+          // same FileSystemException -> AssetNotFoundException mapping.
+        }
+      } else if (status == 'bytes') {
+        final offset = entry['offset'];
+        final length = entry['length'];
+        final payloadBytes = bytes;
+        if (payloadBytes == null ||
+            offset is! int ||
+            length is! int ||
+            offset < 0 ||
+            length < 0 ||
+            offset + length > payloadBytes.length) {
+          continue;
+        }
+        _state.readCache[id] = Uint8List.sublistView(
+          payloadBytes,
+          offset,
+          offset + length,
+        );
+        _state.readableCache.add(id);
+        resolverActionMetrics.depPrefetchAssets += 1;
+      }
+    }
+    if (timer != null) {
+      resolverActionMetrics.depPrefetchUs += timer.elapsedMicroseconds;
+    }
+  }
 
   @override
   Future<bool> canRead(AssetId id, {bool inArtifactTree = false}) async {

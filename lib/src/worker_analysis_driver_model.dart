@@ -28,6 +28,7 @@ import 'package:build_runner/src/logging/timed_activities.dart';
 import 'package:pool/pool.dart';
 
 import 'asset_deps_cache.dart';
+import 'current_build_runtime.dart';
 import 'resolver_metrics.dart';
 
 /// An [AnalysisDriverModel] whose lock and library-cycle graph are owned by
@@ -196,7 +197,7 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
     if (readTimer != null) {
       resolverActionMetrics.depReadPhasedUs += readTimer.elapsedMicroseconds;
     }
-    return PhasedValue((b) {
+    final result = PhasedValue<AssetDeps>((b) {
       for (final expiring in content.values) {
         b.values.add(
           ExpiringValue<AssetDeps>(
@@ -206,6 +207,16 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
         );
       }
     });
+    // Batch-resolve the deps this file just revealed so the walk's upcoming
+    // readPhased calls hit the shared read/readable caches warmed by a single
+    // `resolve_assets` round-trip per dep frontier instead of a
+    // `can_read` + `read` pair per asset. Unavailable values hold no deps to
+    // read yet, so only complete results are prefetched.
+    final filesystem = _filesystem;
+    if (result.isComplete && filesystem is RemoteBuilderFilesystem) {
+      await filesystem.prefetchDepReads(result.lastValue.deps);
+    }
+    return result;
   }
 
   AssetDeps _depsFor(AssetId id, String content) {
