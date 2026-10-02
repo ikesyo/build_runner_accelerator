@@ -81,6 +81,14 @@ final class AssetDepsCache {
   String keyFor(AssetId id, String content) =>
       sha256.convert(utf8.encode('$id\n$content')).toString();
 
+  /// Cache key reusing an already-computed content digest — the analyzer's
+  /// own md5 `contentHash` — so the lookup path skips hashing ~8KB of source
+  /// per dep file. Callers must only pass a digest that provably covers the
+  /// same content; the returned key binds [id] exactly like [keyFor] and
+  /// shares the same key space.
+  String keyForDigest(AssetId id, String contentDigest) =>
+      '$id\n$contentDigest';
+
   AssetDeps? lookup(String key) {
     final packed = _packed;
     if (packed != null) {

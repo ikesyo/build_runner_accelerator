@@ -20,6 +20,10 @@ import 'package:build_runner/src/build/library_cycle_graph/phased_asset_deps.dar
 // ignore: implementation_imports
 import 'package:build_runner/src/build/library_cycle_graph/phased_value.dart';
 // ignore: implementation_imports
+import 'package:analyzer/src/dart/analysis/file_content_cache.dart';
+// ignore: implementation_imports
+import 'package:build_runner/src/build/resolver/analysis_driver_filesystem.dart';
+// ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/analysis_driver_model.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build_plan/build_inputs.dart';
@@ -98,7 +102,11 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
       id ??= entry.key;
     }
     if (id == null) return;
-    final loader = _CachingAssetDepsLoader(builderFilesystem, phase);
+    final loader = _CachingAssetDepsLoader(
+      builderFilesystem,
+      phase,
+      filesystem,
+    );
     await _workerGraphLoader.libraryCycleGraphOf(loader, id);
   }
 
@@ -117,6 +125,7 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
         final nodeLoader = _CachingAssetDepsLoader(
           buildStep.buildFilesystem,
           buildStep.phase,
+          filesystem,
         );
         buildStep.inputTracker.addResolverEntrypoint(entrypoint);
         final walkTimer = resolverActionMetrics.enabled
@@ -175,13 +184,21 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
 /// deps for a given content never change; the phase semantics live in the
 /// `ExpiringValue` wrapper, not in the deps.
 class _CachingAssetDepsLoader extends AssetDepsLoader {
-  _CachingAssetDepsLoader(BuilderFilesystem filesystem, int phase)
-    : _filesystem = filesystem,
+  _CachingAssetDepsLoader(
+    BuilderFilesystem filesystem,
+    int phase,
+    this._contentCache,
+  ) : _filesystem = filesystem,
       super(filesystem, phase);
 
   static const _ignoredSchemes = ['dart', 'dart-ext'];
 
   final BuilderFilesystem _filesystem;
+
+  /// The driver's `AnalysisDriverFilesystem` as a [FileContentCache]: its
+  /// `_data` entries already carry the md5 `contentHash` paid for during
+  /// `contentOf`, letting dep lookups skip a second hash over the source.
+  final FileContentCache? _contentCache;
 
   // Lazy: the first action pays the directory stat once; disabled via
   // `BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0` stays `null`.
@@ -224,7 +241,14 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
     final cache = _cache;
     if (cache == null) return _parse(id, content);
     final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
-    final key = cache.keyFor(id, content);
+    // `readPhased` just stored this exact `content` string instance in the
+    // driver filesystem's `_data` along with its md5 `contentHash`; when the
+    // FileContent lookup provably returns that same instance, the digest key
+    // skips re-hashing ~8KB of source. Otherwise fall back to hashing.
+    final fc = _contentCache?.get(id.asPath);
+    final key = fc != null && fc.exists && identical(fc.content, content)
+        ? cache.keyForDigest(id, fc.contentHash)
+        : cache.keyFor(id, content);
     final hit = cache.lookup(key);
     if (hit != null) {
       resolverActionMetrics.depParseCacheHits++;
