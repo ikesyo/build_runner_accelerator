@@ -116,7 +116,11 @@ impl WorkerClient {
                     }
                     if let Some(bytes) = overlay.get(asset) {
                         let offset = payload.len();
-                        payload.extend_from_slice(bytes);
+                        if !append_overlay_bytes(&mut payload, bytes, MAX_FRAME_LENGTH) {
+                            let result = self.send(&oversized_resolve_assets_response(json!(id)));
+                            self.metrics.asset_rpc_us += started.elapsed().as_micros() as u64;
+                            return result;
+                        }
                         self.metrics.read_bytes += bytes.len() as u64;
                         resolved.push(json!({
                             "status": "bytes",
@@ -232,21 +236,56 @@ fn bounded_resolve_assets_response(
         .checked_add(overhead)
         .and_then(|n| n.checked_add(payload_length));
     if length.is_none_or(|n| n > frame_limit) {
-        Ok(json!({
-            "v": 1,
-            "type": "asset_response",
-            "id": response["id"],
-            "ok": false,
-            "error": "resolve_assets response exceeds frame limit",
-        }))
+        Ok(oversized_resolve_assets_response(response["id"].clone()))
     } else {
         Ok(response)
     }
 }
 
+fn oversized_resolve_assets_response(id: Value) -> Value {
+    json!({
+        "v": 1,
+        "type": "asset_response",
+        "id": id,
+        "ok": false,
+        "error": "resolve_assets response exceeds frame limit",
+    })
+}
+
+// Check before copying or growing the allocation. The final response check
+// still accounts for metadata and binary framing overhead.
+fn append_overlay_bytes(payload: &mut Vec<u8>, bytes: &[u8], limit: usize) -> bool {
+    if payload
+        .len()
+        .checked_add(bytes.len())
+        .is_none_or(|n| n > limit)
+    {
+        return false;
+    }
+    payload.extend_from_slice(bytes);
+    true
+}
+
 #[cfg(test)]
 mod batch_response_tests {
     use super::*;
+
+    #[test]
+    fn overlay_batch_stops_before_allocating_or_copying_past_the_limit() {
+        let mut payload = Vec::new();
+        assert!(append_overlay_bytes(&mut payload, &[1, 2], 4));
+        assert!(append_overlay_bytes(&mut payload, &[3, 4], 4));
+        let capacity = payload.capacity();
+        for bytes in [&[5][..], &[5, 6, 7, 8, 9][..]] {
+            assert!(!append_overlay_bytes(&mut payload, bytes, 4));
+            assert_eq!(payload, [1, 2, 3, 4]);
+            assert_eq!(payload.capacity(), capacity);
+        }
+        let mut empty = Vec::new();
+        assert!(!append_overlay_bytes(&mut empty, &[1, 2, 3, 4, 5], 4));
+        assert!(empty.is_empty());
+        assert_eq!(empty.capacity(), 0);
+    }
 
     #[test]
     fn resolve_assets_checks_metadata_and_binary_overhead_at_the_limit() {
