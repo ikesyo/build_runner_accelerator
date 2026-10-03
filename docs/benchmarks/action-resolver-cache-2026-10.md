@@ -361,3 +361,61 @@ movement or remote push.
 
 - Final candidate Dart source SHA-256: `fff9f347fdb07421574403decfc2065158b79468b9e81014ebf0c46c4263f7fd`.
 - Native binary SHA-256: `de9555e1084d5106f84c99ead8361c416757e1dfffdce9a107ef92a2d935df4d`.
+
+## Post-rebase performance (2026-10-03)
+
+Compared main `a722a77db7d8ccc92d0089112a45009871176672` with rebased
+candidate `05e9bbfcb4ceb51d52ac9a8c2ca4b4445324a33c` (including #77).
+Dart 3.13.3, Linux x64, 2-CPU quota / 8 GiB memory, one worker,
+metrics disabled, shared warm tool/analyzer cache, the same release native
+binary and dependency roots for both variants. Thirty alternating repetitions
+per variant/case; compilation and warmup excluded. All 720 measured builds
+matched stock generated source and `.g.part` bytes. This measures the native
+frontend and excludes launcher overhead and cold AOT startup.
+
+The current JSON fixture resolves analyzer 14.4.0; Freezed and Riverpod
+resolve analyzer 14.3.0. Both variants use the same versions within each
+fixture; earlier measurements must not be treated as an identical dependency
+environment. Exact dependency roots and source/binary hashes are in metadata.
+
+Wall-time medians and 25th–75th percentile ranges, milliseconds.
+
+| Fixture | Case | Main median [IQR] (ms) | PR median [IQR] (ms) | Change |
+| --- | --- | ---: | ---: | ---: |
+| JSON (10 inputs) | clean | 301.215 [299.609–307.069] | 298.657 [292.935–305.340] | -0.85% |
+| JSON (10 inputs) | noop | 4.396 [4.201–4.645] | 4.358 [4.145–4.521] | -0.85% |
+| JSON (10 inputs) | one-file | 272.287 [269.341–277.147] | 269.907 [265.688–274.483] | -0.87% |
+| JSON (10 inputs) | broad | 305.145 [299.057–312.001] | 297.758 [293.029–308.671] | -2.42% |
+| Freezed | clean | 332.141 [329.452–338.657] | 335.099 [328.836–343.646] | +0.89% |
+| Freezed | noop | 4.818 [4.600–5.045] | 4.858 [4.658–5.045] | +0.85% |
+| Freezed | one-file | 318.788 [312.024–334.892] | 319.630 [315.398–328.451] | +0.26% |
+| Freezed | broad | 335.205 [327.999–338.310] | 333.882 [330.236–337.302] | -0.39% |
+| Riverpod | clean | 525.562 [511.500–543.038] | 531.072 [520.035–542.582] | +1.05% |
+| Riverpod | noop | 10.226 [9.925–10.620] | 10.021 [9.761–10.437] | -2.00% |
+| Riverpod | one-file | 530.546 [516.925–542.132] | 527.696 [517.790–543.070] | -0.54% |
+| Riverpod | broad | 542.631 [523.174–553.735] | 540.287 [519.784–558.517] | -0.43% |
+
+Resolver-bearing median changes range from -2.42% to +1.05%; every case
+has overlapping interquartile ranges. The result is consistent with nearly
+flat total build time, rather than a demonstrated end-to-end speedup or
+absence of overhead. No-op does not execute resolver actions. Cold-cache,
+large-project and other-SDK performance remain unestablished.
+
+Reproduction:
+
+```bash
+python3 /workspace/resolver-rebase/scripts/benchmark_resolver_comparison.py \
+  --baseline-root /workspace/resolver-rebase-baseline \
+  --baseline-commit a722a77db7d8ccc92d0089112a45009871176672 \
+  --baseline-bin /workspace/build_runner_accelerator/rust/target/release/build_runner_accelerator \
+  --candidate-root /workspace/resolver-rebase \
+  --candidate-bin /workspace/build_runner_accelerator/rust/target/release/build_runner_accelerator \
+  --fixture-root /workspace/build_runner_accelerator \
+  --dart /workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/dart-task \
+  --results /workspace/resolver-rebase-benchmark-reproduction \
+  --cache-root /workspace/resolver-benchmark-final \
+  --jobs 1 --repeats 30 --shared-cache --metrics 0
+```
+
+Artifacts: `/workspace/resolver-rebase-benchmark/{metadata,measurements,summary}.json`
+and per-build logs; console log `/workspace/resolver-rebase-benchmark.log`.
