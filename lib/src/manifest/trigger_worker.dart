@@ -32,7 +32,7 @@ Future<void> writeManifestTriggers(String root, String resultPath) async {
         'message': error.message,
       },
     };
-    stderr.writeln(error);
+    // The caller decodes this error and reports it once.
     exitCode = 1;
   }
   await File(resultPath).writeAsString(jsonEncode(response));

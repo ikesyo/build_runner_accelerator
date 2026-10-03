@@ -156,7 +156,7 @@ ManifestTriggers decodeManifestTriggers(String response) {
   }
   final normalized = <String, List<ManifestTrigger>>{};
   for (final entry in triggers.entries) {
-    if (entry.key is! String || entry.value is! List) {
+    if (entry.value is! List) {
       throw const FormatException('Invalid trigger mapping');
     }
     final values = <ManifestTrigger>[];

@@ -5,6 +5,8 @@ import 'dart:isolate';
 import 'package:build_config/build_config.dart';
 import 'package:build_runner/src/build_plan/build_triggers.dart';
 import 'package:build_runner_accelerator/src/manifest/trigger_worker.dart';
+import 'package:build_runner_accelerator/src/manifest/probe.dart'
+    show decodeManifestTriggers;
 import 'package:built_collection/built_collection.dart';
 import 'package:test/test.dart';
 
@@ -107,14 +109,24 @@ void main() {
       result.path,
     ]);
     expect(process.exitCode, 1);
-    final error =
-        (jsonDecode(await result.readAsString()) as Map)['error'] as Map;
+    final response = await result.readAsString();
+    final error = (jsonDecode(response) as Map)['error'] as Map;
     expect(error['kind'], 'unsupported-trigger-configuration');
     expect(
       error['message'],
       startsWith('Unsupported build trigger configuration:'),
     );
-    expect(process.stderr, contains(error['message'] as String));
+    expect(process.stderr, isEmpty);
+    expect(
+      () => decodeManifestTriggers(response),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          error['message'],
+        ),
+      ),
+    );
   });
 
   test('non-string list entries follow the official parser behavior', () {
