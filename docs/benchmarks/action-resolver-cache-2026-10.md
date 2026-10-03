@@ -419,3 +419,115 @@ python3 /workspace/resolver-rebase/scripts/benchmark_resolver_comparison.py \
 
 Artifacts: `/workspace/resolver-rebase-benchmark/{metadata,measurements,summary}.json`
 and per-build logs; console log `/workspace/resolver-rebase-benchmark.log`.
+
+## Investigation and performance decision (2026-10-03)
+
+The goal of a significant improvement with no measured regression across all
+four cases and three fixtures was **not achieved**. Retain the PR as a draft;
+do not treat the synthetic call-count reduction as evidence of a production
+end-to-end speedup. No additional runtime optimization is justified by these
+fixture results alone. There are small positive wall/CPU medians in some
+cases, so zero overhead cannot be asserted.
+
+### Paired analysis of existing samples
+
+No new timing repetitions were added for this analysis. Pair the 30 samples
+by iteration; compare CPU user+system medians and separate baseline-first
+from candidate-first iterations. The following exploratory bootstrap uses
+2,000 resamples of the paired percent differences (seed 42). Intervals are
+descriptive, unadjusted for multiple comparisons, and assume independent
+pairs despite possible time correlation. They are not a performance guarantee.
+
+| Fixture | Case | Paired median change | Bootstrap 95% interval | CPU median change |
+| --- | --- | ---: | ---: | ---: |
+| Freezed | clean | -0.29% | [-0.82%, +0.91%] | +0.36% |
+| Freezed | noop | +0.42% | [-2.97%, +7.75%] | -0.91% |
+| Freezed | one-file | +0.11% | [-0.94%, +2.50%] | +0.71% |
+| Freezed | broad | +0.27% | [-1.37%, +1.05%] | +0.15% |
+| JSON | clean | -1.21% | [-1.86%, -0.42%] | -0.71% |
+| JSON | noop | -0.63% | [-6.00%, +3.94%] | -2.60% |
+| JSON | one-file | -1.15% | [-2.07%, -0.04%] | -1.09% |
+| JSON | broad | -1.86% | [-2.60%, -0.71%] | -2.47% |
+| Riverpod | clean | +0.11% | [-2.31%, +3.27%] | +1.38% |
+| Riverpod | noop | -1.16% | [-4.29%, +0.13%] | -1.37% |
+| Riverpod | one-file | -0.25% | [-1.68%, +2.22%] | -0.77% |
+| Riverpod | broad | +0.04% | [-1.93%, +2.68%] | -0.10% |
+
+JSON has a small favorable signal, but its workload counters below show no
+cache reuse, so that signal cannot be attributed to avoided duplicate
+resolver work. Freezed and Riverpod paired intervals cross zero. Riverpod
+clean order-group medians are +2.47% when baseline runs first and -1.00%
+when candidate runs first, illustrating sensitivity to run conditions.
+No-op dispatches no resolver actions at all. Possible contributors include
+system scheduling/OS cache effects and changed AOT code generation or
+allocation; this investigation does not isolate their individual shares.
+
+### Workload counters, not another timing campaign
+
+An isolated archive at `/workspace/resolver-cache-probe` added temporary
+per-action counters to `_memo` and the actual driver-sync branch, printing
+an aggregate to stderr on release. The production source was unchanged.
+The same comparison helper ran **one** repetition of each case with metrics
+enabled: 24 measured builds, all byte-identical to stock. Extra diagnostics
+affect timings; these runs establish call counts only, not speedups.
+
+Clean/broad counts are the same for each fixture:
+
+| Fixture | Resolver actions | isLibrary hits/misses | Unit hits/misses | Library hits/misses | Shallow sync hits/misses | Actual shallow/transitive syncs |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| JSON (10 inputs) | 20 | 0/10 | 0/10 | 0/20 | 0/20 | 10/20 |
+| Freezed | 4 | 0/3 | 2/3 | 0/4 | 2/4 | 3/4 |
+| Riverpod | 6 | 0/4 | 1/5 | 0/6 | 3/6 | 4/6 |
+
+One-file unit/shallow hit counts are JSON 0/0, Freezed 1/1, Riverpod 1/2.
+No-op has no actions or cache traffic. Shallow miss counts include calls
+after a successful transitive sync; the per-action success set skips the
+actual driver sync in that case, as upstream already does.
+
+Thus JSON performs no duplicated-key work that this cache can eliminate.
+In Freezed and Riverpod it saves a few shallow synchronizations and parsed
+unit lookups; it does not save any repeated `isLibrary` or `libraryFor` calls
+in these cases. Upstream analyzer sessions already retain parsed units and
+library elements, so repeating a wrapper lookup does not normally repeat
+the full analysis. Initial linking/element-model load, driver phase changes,
+dependency walks, worker setup, and generation remain. The required
+`canRead`/input tracking also remain on cache hits.
+
+In the single diagnostic clean run, total unit-call time was 558→455 µs
+for Freezed and 715→560 µs for Riverpod, against roughly 330/530 ms
+uninstrumented build medians. These are scope indicators rather than
+reliable savings estimates. Cache misses add maps, generation checks,
+Future wrappers and eviction callbacks; their cost is not quantified
+separately. Synthetic tests exercise six repeated API calls and prove
+6→3 API / 5→2 sync counts, which is a different workload.
+
+The diagnostic reproduction uses the existing comparison command with
+`--candidate-root /workspace/resolver-cache-probe`,
+`--results /workspace/resolver-cache-probe-results`,
+`--repeats 1 --metrics 1`, keeping the other arguments unchanged.
+Artifacts: `/workspace/resolver-cache-probe-counts.json`,
+`/workspace/resolver-cache-paired-analysis.json`,
+`/workspace/resolver-cache-probe-results/{metadata,measurements,summary}.json`
+and per-build logs. The instrumented archive is intentionally not committed.
+
+### Alternatives and stopping point
+
+- First find a representative real project/builder that repeats the same
+  resolver key within an action. Establish its hit rate before investing in
+  more timing repetitions or further API-cache variants. Keep this cache
+  as an experimental candidate until that workload shows a material gain.
+- Profile the first library/element load and worker/SDK initialization. Those
+  paths dominate more than the few redundant parsed-unit lookups here;
+  use existing warm byte-store and initialization metrics to choose one
+  concrete optimization, and compare cold startup separately from warm builds.
+- For cross-action sharing, first measure repeated lookup cost and frequency
+  across actions. Analyzer sessions already share much of the expensive
+  state. Another result cache needs phase/generation invalidation and replay
+  of each action’s dependencies, especially around optional/nested outputs.
+  These data do not justify that additional implementation scope.
+
+No additional full verification suite was run for this documentation-only
+conclusion; the rebase tests and previous full correctness run remain the
+runtime validation. The 24 diagnostic builds add relevant stock byte checks.
+Further repetitions would refine small differences without creating absent
+cache reuse, so this investigation stops rather than extending the campaign.
