@@ -25,6 +25,7 @@ import 'resolver_metrics.dart';
 import 'resolver_reads.dart';
 import 'trigger_evaluator.dart';
 import 'worker_factory_probe.dart';
+import 'manifest/trigger_worker.dart' show writeManifestTriggers;
 
 final _metricsEnabled =
     Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1';
@@ -35,9 +36,16 @@ Future<void> runWorker({
   Map<String, PostProcessBuilderFactory> postProcessCatalog =
       const <String, PostProcessBuilderFactory>{},
 }) async {
+  if (arguments.length == 3 && arguments.first == '--manifest-triggers') {
+    await writeManifestTriggers(arguments[1], arguments[2]);
+    return;
+  }
   if (arguments.isNotEmpty) {
     if (arguments.length != 3 || arguments.first != '--factory-probe') {
-      stderr.writeln('usage: worker [--factory-probe <requests> <result>]');
+      stderr.writeln(
+        'usage: worker [--factory-probe <requests> <result> | '
+        '--manifest-triggers <root> <result>]',
+      );
       exitCode = 64;
       return;
     }

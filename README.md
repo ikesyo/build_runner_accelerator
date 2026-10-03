@@ -196,6 +196,12 @@ probe process, avoiding a second compilation of the builder imports. A source
 mismatch, unavailable artifact or failed probe uses the source probe.
 See [ADR 0016](docs/adr/0016-early-worker-catalog.md).
 
+The generator also uses the compiled worker to normalize build triggers through
+the official build_runner parser. Keeping that parser's Analyzer dependency out
+of the generator avoids compiling Analyzer twice during cold startup. A source
+helper preserves configurations without an available AOT worker; see
+[ADR 0023](docs/adr/0023-manifest-trigger-parser-isolation.md).
+
 The cache root resolves `BUILD_RUNNER_ACCELERATOR_CACHE` first — a relative
 path is anchored at the workspace root — then the platform cache directory
 (`%LOCALAPPDATA%` on Windows, `~/Library/Caches` on macOS,

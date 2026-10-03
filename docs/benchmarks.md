@@ -137,3 +137,10 @@ Release artifact download, cache-miss installation, and cross-platform native
 builds are not included. Historical kernel/AOT/direct-worker experiments and
 earlier spot checks are retained in
 [`experiments-2026-09.md`](benchmarks/experiments-2026-09.md).
+
+A later local launcher-inclusive experiment keeps AOT workers and isolates
+official trigger parsing from the manifest compiler. Fully cold JSON builds
+measured 37.272 s for stock and 31.644 s for the candidate, with three repeats
+and byte-identical outputs. See the separate
+[cold AOT experiment](benchmarks/cold-aot-2026-10.md) for its environment,
+baseline comparison, warm cases, CPU measurements, and scope.
