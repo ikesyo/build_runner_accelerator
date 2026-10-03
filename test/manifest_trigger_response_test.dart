@@ -78,6 +78,41 @@ void main() {
     );
   });
 
+  test(
+    'timed-out response cannot suppress the helper with a parser error',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'trigger-timeout-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final script = File('${directory.path}/worker.dart');
+      final response = jsonEncode({
+        'error': {
+          'kind': 'unsupported-trigger-configuration',
+          'message': 'Unsupported build trigger configuration: stale attempt',
+        },
+      });
+      await script.writeAsString(
+        "import 'dart:io'; Future<void> main(List<String> args) async { "
+        "File(args[0]).writeAsStringSync(${jsonEncode(response)}); "
+        "await Future<void>.delayed(const Duration(minutes: 1)); }",
+      );
+      final file = File('${directory.path}/worker-result.json');
+      final parsed = await resolveManifestTriggerAttempts(
+        worker: () => runManifestTriggerProcess(
+          Platform.resolvedExecutable,
+          [script.path, file.path],
+          root: directory.path,
+          result: file,
+          timeout: const Duration(seconds: 3),
+        ),
+        helper: () async => decodeManifestTriggers(valid),
+      );
+      expect(file.existsSync(), isTrue);
+      expect(parsed.digest, 'digest');
+    },
+  );
+
   test('both unavailable attempts reject the manifest', () async {
     await expectLater(
       resolveManifestTriggerAttempts(

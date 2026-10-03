@@ -21,11 +21,13 @@ except ImportError:
 
 
 def require(condition, message):
+    """Reject invalid measurements even when Python optimization is enabled."""
     if not condition:
         raise RuntimeError(message)
 
 
 def main():
+    """Stage fresh workspaces, measure each lane, and validate comparable outputs."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-root', type=Path, required=True)
     parser.add_argument('--candidate-root', type=Path,
@@ -51,6 +53,7 @@ def main():
                  if not k.startswith('BUILD_RUNNER_ACCELERATOR_')}
     clean_env.update(PUB_CACHE=str(args.pub_cache.resolve()))
     def source_digest(package):
+        """Hash Dart paths and contents to identify the measured implementation."""
         digest = hashlib.sha256()
         for directory in ['lib', 'bin', 'tool']:
             for path in sorted((package / directory).rglob('*.dart')):
@@ -72,6 +75,7 @@ def main():
     records, expected, expected_manifest, expected_worker = [], None, None, None
 
     def run(command, root, env, log):
+        """Run a bounded command and collect wall and available child CPU time."""
         start = time.perf_counter()
         before = resource.getrusage(resource.RUSAGE_CHILDREN) if resource else None
         with log.open('w') as output:
@@ -102,6 +106,7 @@ def main():
                 shutil.copy2(source / 'build.yaml', root / 'build.yaml')
             shutil.copytree(source / 'lib', root / 'lib')
             def generated(path):
+                """Identify generated Dart outputs excluded from the fixture inputs."""
                 return path.name.endswith(('.g.dart', '.freezed.dart'))
             for path in (root / 'lib').rglob('*.dart'):
                 if generated(path):
@@ -127,8 +132,9 @@ def main():
                 measured = run(command, root, env, sample / f'{case}.log')
                 outputs = {str(p.relative_to(root)): p.read_bytes()
                            for p in (root / 'lib').rglob('*.dart') if generated(p)}
-                # Compare every invocation, including stock, regardless of lane order.
+                # Repeat zero establishes stock output before alternating lane order.
                 if expected is None:
+                    require(lane == 'stock', 'First sample must establish stock output')
                     expected = outputs
                 require(outputs and outputs == expected, f'{sample}/{case}: output mismatch')
                 if lane != 'stock':

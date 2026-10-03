@@ -31,7 +31,10 @@ Future<ManifestTriggers> loadManifestTriggers(
   String workerEntrypoint,
 ) async {
   final temporary = await Directory.systemTemp.createTemp('manifest-triggers-');
-  final result = File(p.join(temporary.path, 'result.json'));
+  // A timed-out worker may survive termination. Never share its output path
+  // with the source retry, or accept a response after a timeout.
+  final workerResult = File(p.join(temporary.path, 'worker-result.json'));
+  final sourceResult = File(p.join(temporary.path, 'source-result.json'));
   try {
     final readiness =
         Platform.environment['BUILD_RUNNER_ACCELERATOR_MANIFEST_WORKER_AOT'];
@@ -39,13 +42,16 @@ Future<ManifestTriggers> loadManifestTriggers(
     if (readiness != null && File(workerEntrypoint).existsSync()) {
       executable = await waitForEarlyWorkerAot(readiness, workerEntrypoint);
     }
-    Future<ManifestTriggers?> run(String command, List<String> arguments) =>
-        runManifestTriggerProcess(
-          command,
-          arguments,
-          root: root,
-          result: result,
-        );
+    Future<ManifestTriggers?> run(
+      String command,
+      List<String> arguments,
+      File result,
+    ) => runManifestTriggerProcess(
+      command,
+      arguments,
+      root: root,
+      result: result,
+    );
 
     var usedWorker = false;
     final parsed = await resolveManifestTriggerAttempts(
@@ -55,8 +61,8 @@ Future<ManifestTriggers> loadManifestTriggers(
           final parsed = await run(executable, [
             '--manifest-triggers',
             root,
-            result.path,
-          ]);
+            workerResult.path,
+          ], workerResult);
           usedWorker = parsed != null;
           return parsed;
         } on ProcessException {
@@ -75,8 +81,8 @@ Future<ManifestTriggers> loadManifestTriggers(
           '--packages=$config',
           helper.toFilePath(),
           root,
-          result.path,
-        ]);
+          sourceResult.path,
+        ], sourceResult);
       },
     );
     if (Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1') {
@@ -97,6 +103,7 @@ Future<ManifestTriggers?> runManifestTriggerProcess(
   List<String> arguments, {
   required String root,
   required File result,
+  Duration timeout = _factoryProbeTimeout,
 }) async {
   if (result.existsSync()) await result.delete();
   final process = await Process.start(
@@ -109,8 +116,9 @@ Future<ManifestTriggers?> runManifestTriggerProcess(
   final code = await waitForProbeExit(
     exitCode: process.exitCode,
     kill: process.kill,
+    timeout: timeout,
   );
-  if (!result.existsSync()) return null;
+  if (code == null || !result.existsSync()) return null;
   try {
     final parsed = decodeManifestTriggers(await result.readAsString());
     return code == 0 ? parsed : null;
