@@ -3,7 +3,6 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -19,13 +18,13 @@ import 'package:analyzer/src/dart/analysis/file_byte_store.dart';
 import 'package:analyzer/src/dart/analysis/file_content_cache.dart';
 import 'package:build/build.dart';
 import 'package:build/experiments.dart';
-import 'package:crypto/crypto.dart';
 import 'package:package_config/package_config.dart' hide Package;
 import 'package:path/path.dart' as p;
 import 'package:pool/pool.dart';
 import 'package:pub_semver/pub_semver.dart';
 
 import 'cache_directory.dart';
+import 'analysis_byte_store_fingerprint.dart';
 import 'packed_analysis_byte_store.dart';
 
 // ignore: implementation_imports
@@ -326,14 +325,11 @@ ByteStore sharedAnalysisByteStore(
   };
   if (disabled) return MemoryByteStore();
 
-  final fingerprint = sha256
-      .convert([
-        ...sdkSummaryBytes,
-        ...utf8.encode(enabledExperiments.join(' ')),
-        ...utf8.encode(packageConfig['analyzer']?.root.toString() ?? ''),
-      ])
-      .toString()
-      .substring(0, 16);
+  final fingerprint = analysisByteStoreFingerprint(
+    sdkSummaryBytes,
+    experiments: enabledExperiments,
+    analyzerRoot: packageConfig['analyzer']?.root.toString() ?? '',
+  );
   final dir = p.join(acceleratorCacheDirectory(), 'byte_store', fingerprint);
   // Neither on-disk store creates the directory itself; without it the writes
   // fail silently.
