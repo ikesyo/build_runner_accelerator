@@ -1,8 +1,8 @@
 # Helper snapshot validation and controlled startup measurements
 
 The [external large-application report](helper-snapshots-external-2026-10.md)
-records results on the earlier `ac43a63` head and distinguishes its first
-`aot-prewarm` regression from the subsequent deferred-training fix.
+records current-head `12a08db` results against main `ab079ec`, including warm
+prewarm gains and measured contention with an immediate follow-up build.
 
 Measured on 2026-10-02 against main `f7f4032`, after applying the attached
 `9cf5c38` implementation and fixing helper cache identity and training scope.
