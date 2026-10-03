@@ -40,6 +40,18 @@ final class IndexedBlobStore {
   /// Total entries in the index; exposed for tests.
   int get entryCount => (_index ??= _scan()).length;
 
+  /// Includes complete records appended by sibling processes since our scan.
+  bool containsKeySuffix(String suffix) {
+    final index = _index ??= _scan();
+    _refreshIndex(index);
+    return index.keys.any((key) => key.endsWith(suffix));
+  }
+
+  /// Refresh once at a publication boundary rather than polling on every
+  /// miss. Cold analysis creates many genuinely new keys, so miss polling
+  /// adds filesystem work even when there is no sibling value to reuse.
+  void refresh() => _refreshIndex(_index ??= _scan());
+
   Uint8List? get(String key) {
     final index = _index ??= _scan();
     final slice = index[key];
@@ -53,6 +65,30 @@ final class IndexedBlobStore {
       return Uint8List.sublistView(bytes, 0, slice.$2);
     } on Object {
       return null;
+    }
+  }
+
+  /// Read-only tail adoption. A reader must never truncate a writer's partial
+  /// record; leave it unindexed and retry it on the next miss.
+  void _refreshIndex(Map<String, (int, int)> index) {
+    try {
+      final file = File(_filePath);
+      final length = file.lengthSync();
+      if (length == _indexedEnd) return;
+      if (length < _indexedEnd) {
+        _raf?.closeSync();
+        _raf = null;
+        index
+          ..clear()
+          ..addAll(_scan());
+        return;
+      }
+      final raf = _raf ??= file.openSync(mode: FileMode.append);
+      raf.setPositionSync(_indexedEnd);
+      final tail = raf.readSync(length - _indexedEnd);
+      _indexedEnd = _parseInto(index, tail, _indexedEnd);
+    } on FileSystemException {
+      // A missing or unavailable cache remains a miss.
     }
   }
 

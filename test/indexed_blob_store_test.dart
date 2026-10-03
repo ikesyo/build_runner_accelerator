@@ -59,6 +59,43 @@ void main() {
     expect(reopened.get('k'), [42]);
   });
 
+  test('reader refresh sees sibling appends without writing or reopening', () {
+    store.put('existing', Uint8List.fromList([1]));
+    final sibling = IndexedBlobStore('${dir.path}/store.bin');
+    addTearDown(sibling.close);
+    sibling.put('later.linked', Uint8List.fromList([8]));
+    store.refresh();
+    expect(store.get('later.linked'), [8]);
+    expect(store.containsKeySuffix('.linked'), isTrue);
+  });
+
+  test('empty reader sees a newly created pack', () {
+    expect(store.get('later'), isNull);
+    final sibling = IndexedBlobStore('${dir.path}/store.bin');
+    addTearDown(sibling.close);
+    sibling.put('later', Uint8List.fromList([8]));
+    store.refresh();
+    expect(store.get('later'), [8]);
+  });
+
+  test('reader leaves a partial tail intact and retries after completion', () {
+    store.put('existing', Uint8List.fromList([1]));
+    final siblingFile = File('${dir.path}/sibling.bin');
+    final sibling = IndexedBlobStore(siblingFile.path);
+    sibling.put('later', Uint8List.fromList([8]));
+    sibling.close();
+    final record = siblingFile.readAsBytesSync();
+    final file = File('${dir.path}/store.bin');
+    final length = file.lengthSync();
+    file.writeAsBytesSync(record.sublist(0, 9), mode: FileMode.append);
+    store.refresh();
+    expect(store.get('later'), isNull);
+    expect(file.lengthSync(), length + 9);
+    file.writeAsBytesSync(record.sublist(9), mode: FileMode.append);
+    store.refresh();
+    expect(store.get('later'), [8]);
+  });
+
   test('identical writes do not grow the pack across builds', () {
     final file = File('${dir.path}/store.bin');
     for (final value in [

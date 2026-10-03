@@ -12,13 +12,26 @@ import 'indexed_blob_store.dart';
 /// Packed analyzer cache with read-time migration of legacy shard files.
 final class PackedAnalysisByteStore implements ByteStore {
   PackedAnalysisByteStore(String dir)
-    : _store = IndexedBlobStore(p.join(dir, 'store.v1.bin')),
+    : _directory = dir,
+      _store = IndexedBlobStore(p.join(dir, 'store.v1.bin')),
       _legacy = FileByteStore(dir),
       _legacyFiles = _findLegacyFiles(dir);
 
   final IndexedBlobStore _store;
   final FileByteStore _legacy;
   final Map<String, File> _legacyFiles;
+  final String _directory;
+
+  /// Unlinked syntax entries alone do not mean the expensive linking is warm.
+  bool get hasLinkedEntries =>
+      _store.containsKeySuffix('.linked') || hasLegacyLinkedEntries(_directory);
+
+  static bool hasLegacyLinkedEntries(String dir) {
+    final legacy = FileByteStore(dir);
+    return _findLegacyFiles(
+      dir,
+    ).keys.any((key) => key.endsWith('.linked') && legacy.get(key) != null);
+  }
 
   @override
   Uint8List? get(String key) {

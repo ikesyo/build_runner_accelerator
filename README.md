@@ -222,6 +222,11 @@ first filled). Pass an explicit `--jobs` to override the default in either
 direction.
 
 Byte-store entries are content-addressed and safe to share across workers.
+When the shared store has no linked analysis entries, one resolver worker
+fills it while other resolver workers wait. After its linking call completes,
+workers resume parallel analysis and read its completed cache entries.
+Warm stores retain ordinary parallelism. This uses the real build workers;
+see [ADR 0024](docs/adr/0024-cold-analysis-single-flight.md).
 Repeated writes of the same key and bytes do not grow the packed store.
 Legacy per-key files are migrated on read and deleted after a successful
 packed write; an existing valid packed hit also removes its legacy copy.
@@ -238,6 +243,7 @@ adjust the root for your platform or `BUILD_RUNNER_ACCELERATOR_CACHE`).
 | `BUILD_RUNNER_ACCELERATOR_CACHE` | Relocate or isolate all machine-wide caches. |
 | `BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT=0` | Run the manifest generator from source instead of its cached kernel. |
 | `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0` | Disable the shared analyzer byte store. |
+| `BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT=0` | Disable cold-analysis ownership while keeping the shared byte store enabled (A/B comparison). |
 | `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` | Disable the analysis shards spawned by `aot-prewarm`. |
 | `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS=<n>` | Override the prewarm shard count (default: half of available CPUs). |
 | `BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM=1` | Opt-in: overlap the synchronous worker AOT compile with JIT analysis shards that start filling the byte store (useful on slower machines where the compile window is long). |

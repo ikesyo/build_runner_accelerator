@@ -24,6 +24,28 @@ void main() {
     return file;
   }
 
+  test('linking readiness sees sibling appends but ignores syntax entries', () {
+    final reader = PackedAnalysisByteStore(dir.path);
+    final writer = PackedAnalysisByteStore(dir.path);
+    addTearDown(reader.close);
+    addTearDown(writer.close);
+    expect(reader.hasLinkedEntries, isFalse);
+    writer.putGet('ab123.unlinked2', value);
+    expect(reader.hasLinkedEntries, isFalse);
+    writer.putGet('cd456.linked', value);
+    expect(reader.hasLinkedEntries, isTrue);
+    expect(reader.get('cd456.linked'), value);
+  });
+
+  test('legacy readiness requires a checksum-valid linked entry', () {
+    seed('ab123.unlinked2');
+    final linked = seed('cd456.linked');
+    linked.writeAsStringSync('corrupt');
+    expect(PackedAnalysisByteStore.hasLegacyLinkedEntries(dir.path), isFalse);
+    seed('cd456.linked');
+    expect(PackedAnalysisByteStore.hasLegacyLinkedEntries(dir.path), isTrue);
+  });
+
   test('legacy hit is deleted after migration and survives reopening', () {
     final legacy = seed('ab123.resolved');
     final unread = seed('cd456.linked');
