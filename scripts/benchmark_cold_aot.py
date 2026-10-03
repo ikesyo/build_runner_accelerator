@@ -20,6 +20,11 @@ except ImportError:
     resource = None
 
 
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-root', type=Path, required=True)
@@ -122,18 +127,19 @@ def main():
                 measured = run(command, root, env, sample / f'{case}.log')
                 outputs = {str(p.relative_to(root)): p.read_bytes()
                            for p in (root / 'lib').rglob('*.dart') if generated(p)}
+                # Compare every invocation, including stock, regardless of lane order.
                 if expected is None:
-                    assert lane == 'stock'
                     expected = outputs
-                assert outputs and outputs == expected, f'{sample}/{case}: output mismatch'
+                require(outputs and outputs == expected, f'{sample}/{case}: output mismatch')
                 if lane != 'stock':
                     artifacts = root / '.dart_tool/build_runner_accelerator/aot-sdk/bin'
-                    assert any(p.is_file() and '.tmp.' not in p.name
-                               for p in artifacts.glob('*')), 'AOT artifact missing'
+                    require(any(p.is_file() and '.tmp.' not in p.name
+                                for p in artifacts.glob('*')), 'AOT artifact missing')
                     log = (sample / f'{case}.log').read_text()
-                    assert 'using kernel/script' not in log, 'Unexpected JIT fallback'
-                    assert ('Build completed (Rust frontend)' in log or
-                            'No work to do (Rust frontend)' in log)
+                    require('using kernel/script' not in log, 'Unexpected JIT fallback')
+                    require('Build completed (Rust frontend)' in log or
+                            'No work to do (Rust frontend)' in log,
+                            'Native build did not report success')
                     state = root / '.dart_tool/build_runner_accelerator'
                     manifest = json.loads((state / 'builder-manifest.json').read_text())
                     for field in ['fingerprint', 'worker_entrypoint']:
@@ -141,8 +147,8 @@ def main():
                     worker = (state / 'dynamic_worker.dart').read_bytes()
                     if expected_manifest is None:
                         expected_manifest, expected_worker = manifest, worker
-                    assert manifest == expected_manifest, 'Normalized manifest differs'
-                    assert worker == expected_worker, 'Generated worker catalog differs'
+                    require(manifest == expected_manifest, 'Normalized manifest differs')
+                    require(worker == expected_worker, 'Generated worker catalog differs')
                 record = dict(lane=lane, case=case, repeat=index, **measured,
                               outputs_equal=True, command=command)
                 records.append(record)

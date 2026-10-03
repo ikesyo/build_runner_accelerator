@@ -39,71 +39,135 @@ Future<ManifestTriggers> loadManifestTriggers(
     if (readiness != null && File(workerEntrypoint).existsSync()) {
       executable = await waitForEarlyWorkerAot(readiness, workerEntrypoint);
     }
-    Future<bool> run(String executable, List<String> arguments) async {
-      if (result.existsSync()) await result.delete();
-      final process = await Process.start(
-        executable,
-        arguments,
-        workingDirectory: root,
-      );
-      unawaited(process.stdout.drain<void>());
-      unawaited(process.stderr.forEach(stderr.add));
-      final code = await waitForProbeExit(
-        exitCode: process.exitCode,
-        kill: process.kill,
-      );
-      return code == 0 && result.existsSync();
-    }
+    Future<ManifestTriggers?> run(String command, List<String> arguments) =>
+        runManifestTriggerProcess(
+          command,
+          arguments,
+          root: root,
+          result: result,
+        );
 
-    var ready = false;
-    if (executable != null) {
-      try {
-        ready = await run(executable, [
-          '--manifest-triggers',
+    var usedWorker = false;
+    final parsed = await resolveManifestTriggerAttempts(
+      worker: () async {
+        if (executable == null) return null;
+        try {
+          final parsed = await run(executable, [
+            '--manifest-triggers',
+            root,
+            result.path,
+          ]);
+          usedWorker = parsed != null;
+          return parsed;
+        } on ProcessException {
+          return null;
+        }
+      },
+      helper: () async {
+        final helper = await Isolate.resolvePackageUri(
+          Uri.parse(
+            'package:build_runner_accelerator/src/manifest/trigger_worker.dart',
+          ),
+        );
+        final config = _findPackageConfigPath(root);
+        if (helper == null || config == null) return null;
+        return run(Platform.resolvedExecutable, [
+          '--packages=$config',
+          helper.toFilePath(),
           root,
           result.path,
         ]);
-      } on ProcessException {
-        // An unavailable or older worker must not change trigger semantics.
-      }
-    }
-    if (!ready) {
-      final helper = await Isolate.resolvePackageUri(
-        Uri.parse(
-          'package:build_runner_accelerator/src/manifest/trigger_worker.dart',
-        ),
-      );
-      final config = _findPackageConfigPath(root);
-      if (helper == null ||
-          config == null ||
-          !await run(Platform.resolvedExecutable, [
-            '--packages=$config',
-            helper.toFilePath(),
-            root,
-            result.path,
-          ])) {
-        throw StateError('Official build trigger parsing failed');
-      }
-    }
+      },
+    );
     if (Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1') {
       stderr.writeln(
-        'Dart manifest triggers: executor=${ready ? 'worker-aot' : 'source'}',
+        'Dart manifest triggers: executor=${usedWorker ? 'worker-aot' : 'source'}',
       );
     }
-    final decoded = jsonDecode(await result.readAsString()) as Map;
-    return ManifestTriggers(decoded['digest'] as String, {
-      for (final entry in (decoded['triggers'] as Map).entries)
-        entry.key as String: [
-          for (final trigger in entry.value as List)
-            ManifestTrigger(
-              kind: trigger['kind'] as String,
-              value: trigger['value'] as String,
-            ),
-        ],
-    });
+    return parsed;
   } finally {
     await temporary.delete(recursive: true);
   }
+}
+
+/// Accept only a complete response from a successful process, or a recognized
+/// deterministic parser error even when the process exits unsuccessfully.
+Future<ManifestTriggers?> runManifestTriggerProcess(
+  String command,
+  List<String> arguments, {
+  required String root,
+  required File result,
+}) async {
+  if (result.existsSync()) await result.delete();
+  final process = await Process.start(
+    command,
+    arguments,
+    workingDirectory: root,
+  );
+  unawaited(process.stdout.drain<void>());
+  unawaited(process.stderr.forEach(stderr.add).catchError((Object _) {}));
+  final code = await waitForProbeExit(
+    exitCode: process.exitCode,
+    kill: process.kill,
+  );
+  if (!result.existsSync()) return null;
+  try {
+    final parsed = decodeManifestTriggers(await result.readAsString());
+    return code == 0 ? parsed : null;
+  } on FormatException {
+    return null;
+  } on FileSystemException {
+    return null;
+  }
+}
+
+/// Retry transport failures, but preserve deterministic parser errors.
+Future<ManifestTriggers> resolveManifestTriggerAttempts({
+  required Future<ManifestTriggers?> Function() worker,
+  required Future<ManifestTriggers?> Function() helper,
+}) async {
+  return await worker() ??
+      await helper() ??
+      (throw StateError('Official build trigger parsing failed'));
+}
+
+/// Validate the complete response before accepting a worker attempt.
+ManifestTriggers decodeManifestTriggers(String response) {
+  final decoded = jsonDecode(response);
+  if (decoded is! Map) throw const FormatException('Invalid trigger response');
+  final error = decoded['error'];
+  if (error is Map &&
+      error['kind'] == 'unsupported-trigger-configuration' &&
+      error['message'] is String) {
+    throw StateError(error['message'] as String);
+  }
+  final digest = decoded['digest'];
+  final triggers = decoded['triggers'];
+  if (digest is! String || triggers is! Map) {
+    throw const FormatException('Invalid trigger response');
+  }
+  final normalized = <String, List<ManifestTrigger>>{};
+  for (final entry in triggers.entries) {
+    if (entry.key is! String || entry.value is! List) {
+      throw const FormatException('Invalid trigger mapping');
+    }
+    final values = <ManifestTrigger>[];
+    for (final trigger in entry.value as List) {
+      if (trigger is! Map ||
+          (trigger['kind'] != 'import' && trigger['kind'] != 'annotation') ||
+          trigger['value'] is! String) {
+        throw const FormatException('Invalid trigger entry');
+      }
+      values.add(
+        ManifestTrigger(
+          kind: trigger['kind'] as String,
+          value: trigger['value'] as String,
+        ),
+      );
+    }
+    normalized[entry.key as String] = values;
+  }
+  return ManifestTriggers(digest, normalized);
 }
 
 /// Probes selected builder factories for mappings that are only available

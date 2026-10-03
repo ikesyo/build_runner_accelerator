@@ -28,6 +28,9 @@ startup even though manifest generation needs no resolved Dart source.
   This shares the worker compile already needed for the build.
 - Missing, mismatched, unavailable, or unsuccessful worker execution uses
   the same helper from Dart source with the current package configuration.
+  Malformed responses also use the source helper. Recognized unsupported
+  trigger errors use a structured response, preserve the original diagnostic,
+  and reject immediately without repeating deterministic parsing failures.
   Execution uses the existing bounded probe termination policy. Trigger
   parsing failure still rejects the manifest and preserves conservative
   auto-mode fallback. Temporary result files are removed after every attempt.

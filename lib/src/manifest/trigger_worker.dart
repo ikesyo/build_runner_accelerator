@@ -20,10 +20,22 @@ Future<void> main(List<String> arguments) async {
 }
 
 Future<void> writeManifestTriggers(String root, String resultPath) async {
-  final configs = await loadBuildConfigs(await loadPackageGraph(root));
-  await File(
-    resultPath,
-  ).writeAsString(jsonEncode(manifestTriggerData(configs)));
+  Map<String, Object> response;
+  try {
+    final configs = await loadBuildConfigs(await loadPackageGraph(root));
+    response = manifestTriggerData(configs);
+  } on StateError catch (error) {
+    if (!error.message.startsWith('Unsupported build trigger')) rethrow;
+    response = {
+      'error': {
+        'kind': 'unsupported-trigger-configuration',
+        'message': error.message,
+      },
+    };
+    stderr.writeln(error);
+    exitCode = 1;
+  }
+  await File(resultPath).writeAsString(jsonEncode(response));
 }
 
 Map<String, Object> manifestTriggerData(Map<String, BuildConfig> configs) {

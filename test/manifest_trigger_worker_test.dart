@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:isolate';
+
 import 'package:build_config/build_config.dart';
 import 'package:build_runner/src/build_plan/build_triggers.dart';
 import 'package:build_runner_accelerator/src/manifest/trigger_worker.dart';
@@ -72,6 +76,45 @@ void main() {
         ),
       );
     }
+  });
+
+  test('helper writes structured diagnostics before nonzero exit', () async {
+    final root = await Directory.systemTemp.createTemp('trigger-error-test-');
+    addTearDown(() => root.delete(recursive: true));
+    await File('${root.path}/pubspec.yaml').writeAsString('name: sample\n');
+    await Directory('${root.path}/.dart_tool').create();
+    await File('${root.path}/.dart_tool/package_config.json').writeAsString(
+      jsonEncode({
+        'configVersion': 2,
+        'packages': [
+          {'name': 'sample', 'rootUri': root.uri.toString()},
+        ],
+      }),
+    );
+    await File(
+      '${root.path}/build.yaml',
+    ).writeAsString('triggers:\n  sample:builder:\n    - unknown trigger\n');
+    final helper = await Isolate.resolvePackageUri(
+      Uri.parse(
+        'package:build_runner_accelerator/src/manifest/trigger_worker.dart',
+      ),
+    );
+    final result = File('${root.path}/result.json');
+    final process = await Process.run(Platform.resolvedExecutable, [
+      '--packages=${File('.dart_tool/package_config.json').absolute.path}',
+      helper!.toFilePath(),
+      root.path,
+      result.path,
+    ]);
+    expect(process.exitCode, 1);
+    final error =
+        (jsonDecode(await result.readAsString()) as Map)['error'] as Map;
+    expect(error['kind'], 'unsupported-trigger-configuration');
+    expect(
+      error['message'],
+      startsWith('Unsupported build trigger configuration:'),
+    );
+    expect(process.stderr, contains(error['message'] as String));
   });
 
   test('non-string list entries follow the official parser behavior', () {

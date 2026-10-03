@@ -42,7 +42,10 @@ Future<void> runWorker({
   }
   if (arguments.isNotEmpty) {
     if (arguments.length != 3 || arguments.first != '--factory-probe') {
-      stderr.writeln('usage: worker [--factory-probe <requests> <result>]');
+      stderr.writeln(
+        'usage: worker [--factory-probe <requests> <result> | '
+        '--manifest-triggers <root> <result>]',
+      );
       exitCode = 64;
       return;
     }

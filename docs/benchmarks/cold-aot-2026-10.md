@@ -11,7 +11,7 @@ See [ADR 0023](../adr/0023-manifest-trigger-parser-isolation.md).
 - `build_runner` 2.16.1, `json_serializable` 6.14.1, `json_annotation` 4.12.0.
 - Fixture: `json_serializable_10_app`, ten independent inputs; native jobs=1.
 - Baseline Dart sources: `ab079eced1ad22d18d747290b167e65c368cb2d8`.
-- Candidate: uncommitted trigger-parser isolation changes, using the identical
+- Candidate: `2989dd283c3aaa1d14852a7d501cba89ed078f8f`, using the identical
   Rust binary as the baseline.
 - Three independent repeats, alternating stock/baseline/candidate order with
   candidate/baseline/stock. No concurrent builds ran during measurement.
