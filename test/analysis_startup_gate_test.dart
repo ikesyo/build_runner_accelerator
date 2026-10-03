@@ -160,20 +160,25 @@ void main() {
     await owner.$1.exitCode;
     expect(await waiter.$2.next.timeout(const Duration(seconds: 30)), 'owner');
     await command(waiter, 'release', 'released');
-  }, skip: Platform.isWindows ? 'uses POSIX process termination' : false);
+  }, skip: Platform.isWindows);
 
-  test('published entries survive an owner killed before close', () async {
-    final owner = await start();
-    final waiter = await start();
-    await command(owner, 'acquire', 'waiting');
-    expect(await owner.$2.next, 'owner');
-    await command(owner, 'write', 'written');
-    await command(waiter, 'acquire', 'waiting');
-    // No graceful close or explicit flush: completing the write publishes
-    // bytes, and process termination releases the startup lock.
-    owner.$1.kill(ProcessSignal.sigkill);
-    await owner.$1.exitCode;
-    expect(await waiter.$2.next.timeout(const Duration(seconds: 30)), 'warm');
-    await command(waiter, 'read', 'hit');
-  }, skip: Platform.isWindows ? 'uses POSIX process termination' : false);
+  test(
+    'published entries survive an owner killed before close',
+    () async {
+      final owner = await start();
+      final waiter = await start();
+      await command(owner, 'acquire', 'waiting');
+      expect(await owner.$2.next, 'owner');
+      await command(owner, 'write', 'written');
+      await command(waiter, 'acquire', 'waiting');
+      // No graceful close or explicit flush: completing the write publishes
+      // bytes, and process termination releases the startup lock.
+      owner.$1.kill(ProcessSignal.sigkill);
+      await owner.$1.exitCode;
+      expect(await waiter.$2.next.timeout(const Duration(seconds: 30)), 'warm');
+      await command(waiter, 'read', 'hit');
+    },
+    // Uses POSIX process termination.
+    skip: Platform.isWindows,
+  );
 }
