@@ -40,6 +40,7 @@ boundary rather than restoring commit-level history.
 | [0022](0022-packed-cache-write-and-migration-lifecycle.md) | Deduplicated packed writes and deletion of migrated legacy entries |
 | [0023](0023-manifest-trigger-parser-isolation.md) | Official trigger parsing in the compiled worker keeps Analyzer out of the manifest generator |
 | [0024](0024-cold-analysis-single-flight.md) | Single-flight cold worker analysis and packed reader visibility |
+| [0025](0025-packed-cache-publication-without-fsync.md) | Publish packed cache records without per-record disk synchronization |
 
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for

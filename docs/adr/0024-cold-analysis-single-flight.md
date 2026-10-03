@@ -142,6 +142,66 @@ A subsequent stream-only correction defers subscription until lock acquisition;
 neither JSON benchmark uses that entry point. Tests assert that stream analysis
 starts under ownership and that consumer work does not retain ownership.
 
+## Follow-up: cache write overhead
+
+[ADR 0025](0025-packed-cache-publication-without-fsync.md) removes per-record
+disk synchronization from disposable packed caches, creates parent directories
+only when opening a write handle, and reuses the append offset obtained under
+the lock. The synchronous record write still completes before publication.
+
+The follow-up compares the existing PR's precompiled worker from the comparison
+above against these additional changes, using the same workspaces and benchmark
+conditions. Both use the single-flight gate. The baseline artifact predates the
+stream-only correction; these JSON builders use `libraryFor`, whose path is
+unchanged by that correction. Values are medians of five alternating runs;
+metrics are disabled and no verification runs concurrently.
+
+| Case | Shared closure before | Shared closure after | 500-input before | 500-input after |
+| --- | ---: | ---: | ---: | ---: |
+| Empty byte store, clean | 1.140s | 1.009s | 1.541s | 1.274s |
+| Warm byte store, clean | 0.406s | 0.413s | 1.292s | 1.209s |
+| No-op | 0.0100s | 0.0096s | 0.0409s | 0.0411s |
+| One-file comment edit | 0.315s | 0.323s | 0.253s | 0.257s |
+| Broad comment edit | 0.514s | 0.474s | 1.238s | 1.136s |
+
+Cold elapsed time falls a further 11.4% on the shared closure and 17.3% on
+the ordinary 500-input fixture. The latter's warm clean and broad cases improve
+6.4% and 8.2%. No-op and one-file samples overlap, as do shared-closure warm
+samples; the small median increases do not establish a regression or an
+improvement. All 100 generated-source and native-cache output comparisons match
+the existing PR implementation. The earlier stock comparison remains valid
+for the synthetic generated sources. These measurements exclude the launcher,
+AOT compilation and AOT validation; they do not predict the unavailable
+91-second workspace's saving.
+
+A separate four-build probe with metrics enabled and no competing verification
+records total analyzer byte-store put time of 153.2ms → 14.6ms for the shared
+closure and 396.5ms → 33.1ms for the 500-input fixture. This is diagnostic data
+from one cold run per variant, separate from the timing medians.
+
+The standalone write probe appends 2,000 distinct 8KiB values in each run.
+Eight measured runs follow one warmup, with variant order alternating. On
+`/workspace`, the median falls from 1.066s to 0.041s. Removing `flushSync`
+alone gives 0.049s; avoiding repeated directory and file-length operations
+reduces the remaining overhead. On `/tmp`, disk synchronization showed no
+benefit from removal, illustrating why a temporary-filesystem result cannot
+stand in for the cache's actual filesystem.
+
+Raw scripts and data are local artifacts in `/workspace/single-flight-deeper`:
+`measure.py`, `profile.py`, `micro-workspace.dart`, `results/final-summary.json`,
+`results/final-measurements.json`, `results/final-metadata.json` (including worker
+hashes), `results/profile-measurements.json`, and `micro-workspace.jsonl`.
+Run `python3 /workspace/single-flight-deeper/measure.py` after preparing the
+original benchmark workspaces and both precompiled workers. SDK version,
+four-worker setting, two-CPU quota and release native binary are unchanged.
+
+The existing 133 Dart tests pass with these changes, including live
+cross-process publication and torn-tail recovery. A further process regression
+test verifies that a waiter reads published records when their owner is killed
+before graceful close. Static analysis, quick verification and arbitrary-builder
+verification are repeated for the follow-up; logs are under the same local
+artifact directory. The full release matrix remains required before merging.
+
 ## Local verification
 
 Linux x64, Dart 3.13.3, Cargo 1.98.1; the repository pub cache and an offline

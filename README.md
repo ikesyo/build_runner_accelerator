@@ -228,6 +228,10 @@ workers resume parallel analysis and read its completed cache entries.
 Warm stores retain ordinary parallelism. This uses the real build workers;
 see [ADR 0024](docs/adr/0024-cold-analysis-single-flight.md).
 Repeated writes of the same key and bytes do not grow the packed store.
+Packed cache writes are visible to other workers when the write completes,
+without forcing each record to disk. A machine crash may lose cache entries;
+they are validated and recomputed on the next build. See
+[ADR 0025](docs/adr/0025-packed-cache-publication-without-fsync.md).
 Legacy per-key files are migrated on read and deleted after a successful
 packed write; an existing valid packed hit also removes its legacy copy.
 Entries that have not been read remain in the old layout. With
