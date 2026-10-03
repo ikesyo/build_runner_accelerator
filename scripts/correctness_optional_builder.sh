@@ -83,6 +83,7 @@ prepare_package() {
   cp "$fixture_dir/$config" "$directory/build.yaml"
   cp "$fixture_dir/lib/optional_builder.dart" "$directory/lib/optional_builder.dart"
   cp "$fixture_dir/lib/input.txt" "$directory/lib/input.txt"
+  cp "$fixture_dir/lib/resolver_probe.dart" "$directory/lib/resolver_probe.dart"
   verification_run_pub_get "$directory" "pub-get/$(basename "$directory")" \
     "$dart_bin" "$pub_cache" || \
     fail "pub get failed for $directory"
@@ -186,6 +187,36 @@ if should_run demand; then
   assert_contains "$temporary_dir/demand.rust.no-op.log" \
     'No work to do (Rust frontend)'
   printf 'optional-builder: demand: primary=yes secondary=yes no-op=yes\n'
+fi
+
+if should_run resolver-demand; then
+  setup_pair resolver-demand build.resolver.yaml
+  run_stock "$stock_dir" "$temporary_dir/resolver-demand.stock.initial.log" || \
+    fail 'stock resolver optional initial build failed'
+  BUILD_RUNNER_ACCELERATOR_METRICS=1 run_rust "$rust_dir" "$temporary_dir/resolver-demand.rust.initial.log" || \
+    fail 'Rust resolver optional initial build failed'
+  assert_same_outputs \
+    lib/input.optional.txt lib/input.final.txt
+  assert_contains "$rust_dir/lib/input.optional.txt" 'resolver:true|1|Probe'
+  # The outer consumer must initialize analysis before demanding the optional
+  # producer, whose own resolver then uses the same resident driver.
+  grep -F 'Dart resolver metrics:' "$temporary_dir/resolver-demand.rust.initial.log" | \
+    grep -Fq '"builder":"optional_builder_app:secondary_consumer"' || \
+    fail 'optional resolver ran before the outer action initialized its resolver'
+  run_rust "$rust_dir" "$temporary_dir/resolver-demand.rust.no-op.log" || \
+    fail 'Rust resolver optional no-op failed'
+  assert_contains "$temporary_dir/resolver-demand.rust.no-op.log" 'No work to do (Rust frontend)'
+  for directory in "$stock_dir" "$rust_dir"; do
+    printf '\nclass ChangedProbe {}\n' >>"$directory/lib/resolver_probe.dart"
+  done
+  run_stock "$stock_dir" "$temporary_dir/resolver-demand.stock.change.log" || \
+    fail 'stock resolver dependency edit failed'
+  run_rust "$rust_dir" "$temporary_dir/resolver-demand.rust.change.log" || \
+    fail 'Rust resolver dependency edit failed'
+  assert_same_outputs \
+    lib/input.optional.txt lib/input.final.txt
+  assert_contains "$rust_dir/lib/input.optional.txt" 'resolver:true|2|ChangedProbe,Probe'
+  printf 'optional-builder: resolver-demand: nested-resolver=yes repeated-queries=yes dependency-change=yes byte-identical=yes\n'
 fi
 
 if should_run no-demand; then

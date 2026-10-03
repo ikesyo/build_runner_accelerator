@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Alternate native builds of two revisions with warm, isolated tool caches."""
+"""Alternate native builds of two revisions with warm tool caches."""
 
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
+import resource
 import shutil
 import statistics
 import subprocess
@@ -20,48 +21,90 @@ def main():
     parser.add_argument('--baseline-bin', type=Path, required=True)
     parser.add_argument('--candidate-root', type=Path, required=True)
     parser.add_argument('--candidate-bin', type=Path, required=True)
+    parser.add_argument('--fixture-root', type=Path,
+                        help='Fixture repository when comparing archived packages without git metadata')
     parser.add_argument('--dart', type=Path, required=True)
     parser.add_argument('--results', type=Path, required=True)
     parser.add_argument('--jobs', type=int, default=1)
     parser.add_argument('--repeats', type=int, default=5)
+    parser.add_argument('--metrics', choices=['0', '1'], default='1')
+    parser.add_argument('--fixtures', nargs='+', default=[
+        'json_serializable_10_app', 'freezed_app', 'riverpod_app'])
+    parser.add_argument('--prepared-results', type=Path,
+                        help='Reuse matching prepared workspaces and caches; write fresh sample logs')
+    parser.add_argument('--shared-cache', action='store_true',
+                        help='Use one content-addressed tool/analyzer cache for both variants')
+    parser.add_argument('--cache-root', type=Path,
+                        help='Retain warm tool/analyzer caches across independent comparisons')
+    parser.add_argument('--baseline-commit', help='Identity of an archived baseline checkout')
     parser.add_argument('--reuse-workspaces', action='store_true',
                         help='Rerun samples in previously prepared workspaces and caches')
     args = parser.parse_args()
     assert args.jobs > 0 and args.repeats > 0
     results = args.results.resolve()
     results.mkdir(parents=True, exist_ok=args.reuse_workspaces)
+    prepared = args.prepared_results.resolve() if args.prepared_results else results
     repo = args.candidate_root.resolve()
+    fixture_repo = args.fixture_root.resolve() if args.fixture_root else repo
+    cache_root = args.cache_root.resolve() if args.cache_root else prepared
     variants = {
         'baseline': (args.baseline_root.resolve(), args.baseline_bin.resolve()),
         'candidate': (repo, args.candidate_bin.resolve()),
     }
     env = {k: v for k, v in os.environ.items()
            if not k.startswith('BUILD_RUNNER_ACCELERATOR_')}
-    env.update(BUILD_RUNNER_ACCELERATOR_METRICS='1',
+    env.update(BUILD_RUNNER_ACCELERATOR_METRICS=args.metrics,
                BUILD_RUNNER_ACCELERATOR_WORKER_AOT='1')
-    env.setdefault('PUB_CACHE', str(repo / '.pub-cache'))
+    env.setdefault('PUB_CACHE', str(fixture_repo / '.pub-cache'))
     records = []
     metadata = {
-        'jobs': args.jobs, 'repeats': args.repeats,
+        'jobs': args.jobs, 'repeats': args.repeats, 'metrics': args.metrics,
+        'cache_layout': 'shared' if args.shared_cache else 'isolated',
+        'cache_root': str(cache_root),
         'dart': subprocess.check_output([str(args.dart), '--version'], text=True).strip(),
         'scope': 'native frontend; warm SDK, pub, OS and tool caches; no Dart launcher',
         'variants': {}, 'fixtures': {},
     }
+    def source_digest(root, directory):
+        digest = hashlib.sha256()
+        paths = (root / directory).rglob('*.dart' if directory == 'lib' else '*.rs')
+        for path in sorted(paths):
+            if 'target' in path.relative_to(root).parts:
+                continue
+            digest.update(str(path.relative_to(root)).encode())
+            digest.update(path.read_bytes())
+        return digest.hexdigest()
+
     for mode, (root, binary) in variants.items():
+        commit = args.baseline_commit if mode == 'baseline' else None
+        if commit is None:
+            result = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=root,
+                                    text=True, capture_output=True)
+            commit = result.stdout.strip() if result.returncode == 0 else None
         metadata['variants'][mode] = {
-            'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
+            'commit': commit,
             'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
-            'rust_tree': subprocess.check_output(['git', 'rev-parse', 'HEAD:rust'], cwd=root, text=True).strip(),
-            'lib_tree': subprocess.check_output(['git', 'rev-parse', 'HEAD:lib'], cwd=root, text=True).strip(),
+            # Hash the actual files: candidates can be uncommitted and the
+            # baseline can be a git archive without moving an existing branch.
+            'rust_source_sha256': source_digest(root, 'rust'),
+            'lib_source_sha256': source_digest(root, 'lib'),
         }
     baseline = metadata['variants']['baseline']
     candidate = metadata['variants']['candidate']
-    # Dart-only worker changes legitimately use the same native binary.
     assert (baseline['binary_sha256'] != candidate['binary_sha256'] or
-            (baseline['rust_tree'] == candidate['rust_tree'] and
-             baseline['lib_tree'] != candidate['lib_tree'])), 'No distinct implementation to compare'
+            (baseline['rust_source_sha256'] == candidate['rust_source_sha256'] and
+             baseline['lib_source_sha256'] != candidate['lib_source_sha256'])), 'No distinct implementation to compare'
+    if args.prepared_results:
+        previous = json.loads((prepared / 'metadata.json').read_text())
+        assert previous['variants'] == metadata['variants'], 'Prepared implementations differ'
+        assert previous['jobs'] == args.jobs
+        assert previous['cache_layout'] == metadata['cache_layout']
+        assert previous['dart'] == metadata['dart']
+
+    last_command_cpu = {}
 
     def command(argv, root, log_path, run_env):
+        cpu_before = resource.getrusage(resource.RUSAGE_CHILDREN)
         start = time.perf_counter()
         with log_path.open('w') as log:
             # wait(timeout=...) polls with up to 50 ms sleeps on POSIX, which
@@ -75,15 +118,19 @@ def main():
                     watchdog.cancel()
                 if returncode:
                     raise subprocess.CalledProcessError(returncode, argv)
-        return time.perf_counter() - start
+        wall = time.perf_counter() - start
+        cpu_after = resource.getrusage(resource.RUSAGE_CHILDREN)
+        last_command_cpu.update(user=cpu_after.ru_utime - cpu_before.ru_utime,
+                                system=cpu_after.ru_stime - cpu_before.ru_stime)
+        return wall
 
-    for fixture_name in ['json_serializable_10_app', 'freezed_app', 'riverpod_app']:
-        fixture = repo / 'fixtures' / fixture_name
+    for fixture_name in args.fixtures:
+        fixture = fixture_repo / 'fixtures' / fixture_name
         config_path = fixture / '.dart_tool/package_config.json'
         config = json.loads(config_path.read_text())
         tracked = subprocess.check_output(
-            ['git', 'ls-files', f'fixtures/{fixture_name}/lib'], cwd=repo, text=True).splitlines()
-        inputs = {str(Path(p).relative_to(fixture.relative_to(repo))): (repo / p).read_bytes()
+            ['git', 'ls-files', f'fixtures/{fixture_name}/lib'], cwd=fixture_repo, text=True).splitlines()
+        inputs = {str(Path(p).relative_to(fixture.relative_to(fixture_repo))): (fixture_repo / p).read_bytes()
                   for p in tracked if not p.endswith(('.g.dart', '.freezed.dart', '.g.part'))}
         metadata['fixtures'][fixture_name] = {
             'pubspec_lock_sha256': hashlib.sha256((fixture / 'pubspec.lock').read_bytes()).hexdigest(),
@@ -91,8 +138,8 @@ def main():
         }
 
         def workspace(mode, package_root):
-            root = results / fixture_name / mode
-            if args.reuse_workspaces:
+            root = prepared / fixture_name / mode
+            if args.reuse_workspaces or args.prepared_results:
                 assert root.is_dir(), f'Missing prepared workspace: {root}'
                 return root
             root.mkdir(parents=True)
@@ -130,7 +177,7 @@ def main():
             return files
 
         reference = workspace('stock', repo)
-        if not args.reuse_workspaces:
+        if not (args.reuse_workspaces or args.prepared_results):
             command([str(args.dart), '--suppress-analytics', 'run', 'build_runner',
                      'build', '--delete-conflicting-outputs'], reference,
                     results / f'{fixture_name}-stock.log', env)
@@ -162,9 +209,10 @@ def main():
 
         def measure(mode, case, iteration):
             root = roots[mode]
+            cache_prefix = 'shared' if args.shared_cache else mode
             run_env = dict(env,
-                           BUILD_RUNNER_ACCELERATOR_CACHE=str(results / f'{mode}-tool-cache'),
-                           ANALYZER_STATE_LOCATION_OVERRIDE=str(results / f'{mode}-analyzer-cache'))
+                           BUILD_RUNNER_ACCELERATOR_CACHE=str(cache_root / f'{cache_prefix}-tool-cache'),
+                           ANALYZER_STATE_LOCATION_OVERRIDE=str(cache_root / f'{cache_prefix}-analyzer-cache'))
             argv = [str(variants[mode][1]), 'build', '--root', str(root),
                     '--dart', str(args.dart), '--mode', 'rust', '--jobs', str(args.jobs)]
             log_path = results / f'{fixture_name}-{mode}-{iteration}-{case}.log'
@@ -180,17 +228,21 @@ def main():
                 assert 'No work to do (Rust frontend)' in text
             record = dict(fixture=fixture_name, variant=mode, case=case,
                           iteration=iteration, wall_seconds=wall, outputs_equal=True,
+                          cpu_seconds=dict(last_command_cpu),
                           packed_bytes_before=packed_before, packed_bytes_after=packed_after,
-                          command=argv, log=str(log_path), action_metrics=[])
+                          command=argv, log=str(log_path), action_metrics=[], resolver_metrics=[])
             for line in text.splitlines():
+                if line.startswith('Dart action metrics: '):
+                    record['resolver_metrics'].append(json.loads(line.removeprefix('Dart action metrics: ')))
                 if line.startswith('Dart metrics: '):
                     record['action_metrics'].append(json.loads(line.removeprefix('Dart metrics: ')))
             if iteration >= 0:
-                assert 'AOT cache miss' not in text, f'{log_path}: measured a cold worker'
+                assert 'AOT cache miss' not in text and 'Generated:' not in text, (
+                    f'{log_path}: measured worker compilation')
                 records.append(record)
                 (results / 'measurements.json').write_text(json.dumps(records, indent=2))
             print(json.dumps({k: v for k, v in record.items()
-                              if k not in ['action_metrics', 'command', 'log']}), flush=True)
+                              if k not in ['action_metrics', 'resolver_metrics', 'command', 'log']}), flush=True)
 
         # Compilation and cache population are outside the measured samples.
         for mode in variants:
@@ -217,7 +269,16 @@ def main():
                              if r['fixture'] == fixture and r['case'] == case and r['variant'] == mode]
                        for mode in variants}
             medians = {mode: statistics.median(values) for mode, values in samples.items()}
+            spread = {mode: {'min': min(values), 'max': max(values),
+                             'p25': statistics.quantiles(values, n=4)[0],
+                             'p75': statistics.quantiles(values, n=4)[2]}
+                      for mode, values in samples.items()} if args.repeats > 1 else {}
+            # Pair by iteration, preserving alternating order instead of
+            # inferring variation from independent medians alone.
+            paired = [100 * (c / b - 1) for b, c in
+                      zip(samples['baseline'], samples['candidate'])]
             summary.append(dict(fixture=fixture, case=case, **medians,
+                                spread=spread, paired_change_median=statistics.median(paired),
                                 change_percent=100 * (medians['candidate'] / medians['baseline'] - 1)))
     (results / 'metadata.json').write_text(json.dumps(metadata, indent=2))
     (results / 'summary.json').write_text(json.dumps(summary, indent=2))

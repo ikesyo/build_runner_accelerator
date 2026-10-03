@@ -96,6 +96,21 @@ the public summary in [`benchmarks.md`](benchmarks.md) only from a
 reproducible launcher-inclusive run; detailed experiments belong in
 [`benchmarks/experiments-2026-09.md`](benchmarks/experiments-2026-09.md).
 
+For an action-resolver change, `scripts/benchmark_resolver_comparison.py`
+alternates baseline and candidate builds with stock byte comparisons for clean,
+no-op, one-file and broad incremental cases. `--baseline-commit` supports an
+archived baseline, actual source hashes identify an uncommitted candidate, and
+`--shared-cache` uses the same tool/analyzer cache for both variants. See
+[action resolver cache](benchmarks/action-resolver-cache-2026-10.md) for the
+comparison conditions and results.
+
+Use `--metrics 0` to measure without profiling, and `--fixtures` to focus a
+regression investigation. `--prepared-results` checks implementation and SDK
+identities before reusing prepared workspaces while writing fresh sample logs.
+The summaries include interquartile ranges and paired changes; raw samples also
+record child CPU time. `--fixture-root` and `--cache-root` support comparing
+archived experimental packages with the same fixtures and warm caches.
+
 To isolate manifest-generator startup, resolve the selected fixture first and
 run `bash scripts/benchmark_manifest_generator.sh`. This native phase benchmark
 alternates source and cached-kernel routes and checks manifest/worker equality;

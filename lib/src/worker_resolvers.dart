@@ -52,8 +52,7 @@ import 'sdk_summary_lock.dart';
 import 'worker_analysis_driver_model.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/build_resolver.dart';
-// ignore: implementation_imports
-import 'package:build_runner/src/build/resolver/build_step_resolver.dart';
+import 'action_build_step_resolver.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/sdk_summary.dart'
     show isFlutter;
@@ -64,7 +63,7 @@ import 'package:build_runner/src/build/resolver/sdk_summary.dart'
 /// [WorkerAnalysisDriverModel], which can keep the library-cycle graph across
 /// an in-build resolver reset.
 ///
-/// Factory for [BuildStepResolver] instances that provide analysis for one
+/// Factory for [ActionBuildStepResolver] instances that provide analysis for one
 /// build step. These provide access to a single underlying [BuildResolver]
 /// which has one analysis driver and manages it via one [AnalysisDriverModel].
 class WorkerResolversImpl implements Resolvers {
@@ -76,6 +75,12 @@ class WorkerResolversImpl implements Resolvers {
 
   /// The main build resolver backed by an analysis driver.
   BuildResolver? _buildResolver;
+
+  int _actionCacheGeneration = 0;
+
+  /// Invalidates suspended action caches around a nested optional build.
+  /// Only an integer is shared; no action resolver or cached result is retained.
+  void invalidateActionCaches() => _actionCacheGeneration++;
 
   /// State supporting the analysis driver.
   WorkerAnalysisDriverModel _analysisDriverModel;
@@ -166,9 +171,10 @@ class WorkerResolversImpl implements Resolvers {
       }
     });
 
-    final stepResolver = BuildStepResolver(
+    final stepResolver = ActionBuildStepResolver(
       _buildResolver!,
       buildStep as BuildStepImpl,
+      cacheGeneration: () => _actionCacheGeneration,
     );
     if (_profile?.enabled == true) {
       return _TimingResolver(stepResolver);

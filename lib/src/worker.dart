@@ -605,6 +605,7 @@ Future<void> _handleNestedBuild(
   Map<String, BuilderFactory> builderCatalog,
   Map<String, PostProcessBuilderFactory> postProcessCatalog,
 ) async {
+  runtime.resolver.invalidateActionCaches();
   try {
     await writer.sendBuildResult(
       await _runBuild(
@@ -632,6 +633,8 @@ Future<void> _handleNestedBuild(
       'error': '$error',
       'stack': '$stack',
     });
+  } finally {
+    runtime.resolver.invalidateActionCaches();
   }
 }
 
