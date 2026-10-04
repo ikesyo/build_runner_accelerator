@@ -54,7 +54,10 @@ jobs:
         shell: bash
         run: |
           dart pub ${{ matrix.resolution }}
-          dart format --output=none --set-exit-if-changed lib bin test tool
+          # Use the development SDK's formatter; older SDKs can format differently.
+          if [[ '${{ matrix.resolution }}' == 'upgrade' ]]; then
+            dart format --output=none --set-exit-if-changed lib bin test tool
+          fi
           dart analyze lib bin test tool
           dart test --compiler=source
       - name: Validate publish package
