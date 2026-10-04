@@ -380,6 +380,7 @@ class _WorkerRuntime {
   }
 
   void _replaceResolver() {
+    if (resolverProfile.enabled) resolverProfile.resolverReplacements++;
     resolver.reset();
     resolver = createResolver(packageConfig, resolverProfile);
   }
@@ -505,7 +506,7 @@ class _BuildProfile {
       'Dart metrics: ${jsonEncode(<String, dynamic>{'builder': builder, 'input': input, 'status': status, 'total_us': _total.elapsedMicroseconds, 'factory_us': factoryUs, 'resolver_get_us': resolverGetUs, 'resolver_get_calls': resolverGetCalls, 'resolver_first_get_us': resolverFirstGetUs, 'package_config_load_us': resolverProfile.packageConfigLoadUs, 'resolver_constructor_us': resolverProfile.resolverConstructorUs, 'resolver_sdk_summary_us': resolverProfile.sdkSummaryUs, 'resolver_sdk_summary_lock_wait_us': resolverProfile.sdkSummaryLockWaitUs, 'resolver_sdk_summary_after_lock_us': resolverProfile.sdkSummaryAfterLockUs, 'resolver_sdk_summary_read_us': resolverProfile.sdkSummaryReadUs, 'driver_create_us': resolverProfile.driverCreateUs, 'build_resolver_ctor_us': resolverProfile.buildResolverCtorUs, 'resolver_post_sdk_summary_us': resolverProfile.resolverPostSdkSummaryUs, 'run_builder_us': runBuilderUs, 'resolver_reads_us': resolverReadsUs, 'result_assembly_us': resultAssemblyUs, 'outputs': outputCount, 'reads': readCount, 'resolver_reads': resolverReadCount, 'glob_reads': globCount})}',
     );
     stderr.writeln(
-      'Dart action metrics: ${jsonEncode(<String, dynamic>{'builder': builder, 'input': input, 'status': status, ...resolverActionMetrics.toJson(), 'activity_us': activityUs})}',
+      'Dart action metrics: ${jsonEncode(<String, dynamic>{'builder': builder, 'input': input, 'status': status, ...resolverActionMetrics.toJson(), 'driver_creations': resolverProfile.driverCreations, 'resolver_replacements': resolverProfile.resolverReplacements, 'activity_us': activityUs})}',
     );
   }
 }

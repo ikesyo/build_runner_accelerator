@@ -8,7 +8,7 @@ use crate::protocol::{
     BuildResult, IncomingFrame, decode_build_batch_result_frame, decode_build_result_frame,
 };
 use crate::visibility::AssetVisibility;
-use crate::workspace::{Workspace, matches_glob};
+use crate::workspace::{Workspace, glob_candidates, matches_glob};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -268,8 +268,7 @@ impl WorkerClient {
                     .get("pattern")
                     .and_then(Value::as_str)
                     .unwrap_or("**");
-                let candidates = lazy_specs
-                    .keys()
+                let candidates = glob_candidates(lazy_specs, package, pattern)
                     .filter_map(|asset| {
                         let (asset_package, asset_path) = asset.split_once('|')?;
                         (asset_package == package && matches_glob(pattern, asset_path))

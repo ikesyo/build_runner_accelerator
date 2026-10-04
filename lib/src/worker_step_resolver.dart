@@ -67,6 +67,11 @@ class WorkerStepResolver implements ReleasableResolver {
           (total) => total + us,
           ifAbsent: () => us,
         );
+        resolverActionMetrics.resolverCallCounts.update(
+          name,
+          (count) => count + 1,
+          ifAbsent: () => 1,
+        );
       }
     }
   }

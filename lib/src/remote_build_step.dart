@@ -249,6 +249,9 @@ class RemoteAssetReaderWriter extends ReaderWriter {
       return true;
     }
     final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
+    if (resolverActionMetrics.enabled && resolverActionMetrics.traceEnabled) {
+      resolverActionMetrics.canReadAssets.add(id.toString());
+    }
     final response = await _state.activeRpc.call('can_read', <String, dynamic>{
       'asset': id.toString(),
     });
@@ -392,6 +395,11 @@ class _RemoteAssetFinder implements AssetFinder {
     for (final rawAsset in assets) {
       final id = AssetId.parse(rawAsset as String);
       if (_isBlocked(id)) continue;
+      // Rust applies phase visibility and existence checks before returning
+      // glob results. Reuse that positive answer just like a successful
+      // can_read. The normal read path still fetches bytes and tracks reads;
+      // phase/reset deltas invalidate this cache in the worker runtime.
+      _state.readableCache.add(id);
       _state.observedGlobResults.add(id);
       yield id;
     }

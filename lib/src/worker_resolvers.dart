@@ -163,6 +163,7 @@ class WorkerResolversImpl implements Resolvers {
           ? (Stopwatch()..start())
           : null;
       _buildResolver = BuildResolver(driver, _driverPool, _analysisDriverModel);
+      if (_profile?.enabled == true) _profile!.driverCreations++;
       if (buildResolverTimer != null) {
         _profile?.buildResolverCtorUs = buildResolverTimer.elapsedMicroseconds;
       }
@@ -403,6 +404,9 @@ class _MetricsByteStore implements ByteStore {
         ..byteStoreGetOtherUs += us;
     }
     if (bytes != null) resolverActionMetrics.byteStoreHits++;
+    if (bytes == null && resolverActionMetrics.traceEnabled) {
+      resolverActionMetrics.byteStoreMissKeys.add(key);
+    }
     return bytes;
   }
 
@@ -430,6 +434,9 @@ class _MetricsFileContentCache implements FileContentCache {
 
   @override
   FileContent get(String path) {
+    if (resolverActionMetrics.traceEnabled) {
+      resolverActionMetrics.fileContentPaths.add(path);
+    }
     final timer = Stopwatch()..start();
     try {
       return _delegate.get(path);

@@ -12,6 +12,13 @@ final class ResolverActionMetrics {
 
   final bool enabled;
 
+  /// Detailed path diagnostics are kept out of ordinary timing runs.
+  final bool traceEnabled =
+      Platform.environment['BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE'] == '1';
+  final Set<String> fileContentPaths = <String>{};
+  final List<String> canReadAssets = <String>[];
+  final Set<String> byteStoreMissKeys = <String>{};
+
   /// Time acquiring/checking the cold-analysis gate before linking.
   int analysisStartupWaitUs = 0;
 
@@ -88,6 +95,7 @@ final class ResolverActionMetrics {
 
   /// Total time spent inside each `Resolver` method, keyed by method name.
   final Map<String, int> resolverCallUs = <String, int>{};
+  final Map<String, int> resolverCallCounts = <String, int>{};
 
   /// Number of libraries streamed through `Resolver.libraries`.
   int librariesCount = 0;
@@ -96,6 +104,9 @@ final class ResolverActionMetrics {
   int librariesStreamUs = 0;
 
   void beginAction() {
+    fileContentPaths.clear();
+    canReadAssets.clear();
+    byteStoreMissKeys.clear();
     analysisStartupWaitUs = 0;
     cycleGraphWalkUs = 0;
     cycleGraphFileLoads = 0;
@@ -135,11 +146,19 @@ final class ResolverActionMetrics {
     fileContentGetUs = 0;
     resolverFirstCallUs.clear();
     resolverCallUs.clear();
+    resolverCallCounts.clear();
     librariesCount = 0;
     librariesStreamUs = 0;
   }
 
   Map<String, Object?> toJson() => <String, Object?>{
+    'worker_pid': pid,
+    'worker_rss_bytes': ProcessInfo.currentRss,
+    if (traceEnabled) 'file_content_paths': fileContentPaths.toList()..sort(),
+    if (traceEnabled) 'can_read_assets': canReadAssets,
+    if (traceEnabled)
+      'byte_store_miss_keys': byteStoreMissKeys.toList()..sort(),
+    if (traceEnabled && Platform.isLinux) 'worker_cpu_ticks': _cpuTicks(),
     'analysis_startup_wait_us': analysisStartupWaitUs,
     'cycle_graph_walk_us': cycleGraphWalkUs,
     'cycle_graph_file_loads': cycleGraphFileLoads,
@@ -179,9 +198,22 @@ final class ResolverActionMetrics {
     'file_content_get_us': fileContentGetUs,
     'resolver_first_call_us': resolverFirstCallUs,
     'resolver_call_us': resolverCallUs,
+    'resolver_call_counts': resolverCallCounts,
     'libraries_count': librariesCount,
     'libraries_stream_us': librariesStreamUs,
   };
+
+  /// Linux user + system CPU ticks, cumulative since worker start. Consumers
+  /// must record `getconf CLK_TCK`; this diagnostic is not a wall-time timer.
+  int? _cpuTicks() {
+    try {
+      final stat = File('/proc/self/stat').readAsStringSync();
+      final fields = stat.substring(stat.lastIndexOf(')') + 2).split(' ');
+      return int.parse(fields[11]) + int.parse(fields[12]);
+    } on Object {
+      return null;
+    }
+  }
 }
 
 /// The process-wide sink; see [ResolverActionMetrics].

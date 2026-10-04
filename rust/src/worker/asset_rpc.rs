@@ -3,7 +3,7 @@ use super::request::{BuildRequest, build_request_kind};
 use crate::builder::{BuildTo, BuilderKind};
 use crate::protocol::{BINARY_ASSET_RESPONSE_MAGIC, MAX_FRAME_LENGTH};
 use crate::visibility::AssetVisibility;
-use crate::workspace::{Workspace, matches_glob};
+use crate::workspace::{Workspace, glob_candidates, matches_glob};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -192,7 +192,7 @@ impl WorkerClient {
                     }
                     assets.push(asset);
                 }
-                for asset in overlay.keys() {
+                for asset in glob_candidates(overlay, package, pattern) {
                     if !visibility.is_blocked(asset, phase, kind, deleted_overlay) {
                         if let Some((asset_package, asset_path)) = asset.split_once('|') {
                             if asset_package == package && matches_glob(pattern, asset_path) {
