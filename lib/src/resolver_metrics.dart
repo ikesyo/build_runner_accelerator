@@ -39,6 +39,18 @@ final class ResolverActionMetrics {
   /// `parseString` for dep files that miss the cache.
   int depParseUs = 0;
 
+  /// Conditional directive collection, separate from cycle-graph parsing.
+  int resolverReadsReadUs = 0;
+  int resolverReadsDigestUs = 0;
+  int resolverReadsCacheUs = 0;
+  int resolverReadsDecodeUs = 0;
+  int resolverReadsParseUs = 0;
+  int resolverReadsResolveUs = 0;
+  int resolverReadsMemoryHits = 0;
+  int resolverReadsPersistentHits = 0;
+  int resolverReadsPersistentMisses = 0;
+  int resolverReadsParses = 0;
+
   /// `AnalysisDriverForPackageBuild.applyPendingFileChanges`.
   int applyPendingChangesUs = 0;
 
@@ -115,6 +127,17 @@ final class ResolverActionMetrics {
     depParseCacheUs = 0;
     depReadPhasedUs = 0;
     depParseUs = 0;
+    resolverReadsReadUs = 0;
+    resolverReadsDigestUs = 0;
+    resolverReadsCacheUs = 0;
+    resolverReadsDecodeUs = 0;
+    resolverReadsParseUs = 0;
+    resolverReadsResolveUs = 0;
+    resolverReadsMemoryHits = 0;
+    resolverReadsPersistentHits = 0;
+    resolverReadsPersistentMisses = 0;
+    resolverReadsParses = 0;
+
     applyPendingChangesUs = 0;
     filesystemPhaseSyncUs = 0;
     ipcReadCalls = 0;
@@ -167,6 +190,17 @@ final class ResolverActionMetrics {
     'dep_parse_cache_us': depParseCacheUs,
     'dep_read_phased_us': depReadPhasedUs,
     'dep_parse_us': depParseUs,
+    'resolver_reads_read_us': resolverReadsReadUs,
+    'resolver_reads_digest_us': resolverReadsDigestUs,
+    'resolver_reads_cache_us': resolverReadsCacheUs,
+    'resolver_reads_decode_us': resolverReadsDecodeUs,
+    'resolver_reads_parse_us': resolverReadsParseUs,
+    'resolver_reads_resolve_us': resolverReadsResolveUs,
+    'resolver_reads_memory_hits': resolverReadsMemoryHits,
+    'resolver_reads_persistent_hits': resolverReadsPersistentHits,
+    'resolver_reads_persistent_misses': resolverReadsPersistentMisses,
+    'resolver_reads_parses': resolverReadsParses,
+
     'apply_pending_changes_us': applyPendingChangesUs,
     'filesystem_phase_sync_us': filesystemPhaseSyncUs,
     'ipc_read_calls': ipcReadCalls,

@@ -136,6 +136,11 @@ and worker compilation. It alternates lanes and checks output bytes for cold,
 warm clean, no-op and real one-file/broad edits. See
 [cold Builder lookup measurements](benchmarks/cold-builder-lookups-2026-10.md)
 for commands, distributions and cache conditions.
+The same harness supports the tracked Riverpod fixture with
+`--fixture-kind riverpod`; `--retain-dep-parse` keeps directive caches while
+clearing the analyzer byte store. See
+[conditional directive collection measurements](benchmarks/resolver-conditional-directives-2026-10.md)
+for isolated main/candidate workers, collector diagnostics and cold-cache limits.
 
 For detailed per-worker diagnostics, set both
 `BUILD_RUNNER_ACCELERATOR_METRICS=1` and
