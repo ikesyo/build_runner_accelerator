@@ -1,24 +1,121 @@
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:io';
 
-import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:build/build.dart';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:package_config/package_config.dart';
+import 'package:path/path.dart' as p;
 
+import 'cache_directory.dart';
+import 'indexed_blob_store.dart';
 import 'remote_build_step.dart';
+import 'resolver_metrics.dart';
+import 'resolver_directives.dart';
 
 /// Caches dependency candidates found while inspecting Dart assets.
 ///
 /// Call [clear] when a build starts or the resolver is reset for a new source
-/// phase. Each entry is also tied to the asset's content digest because a
-/// post-process builder can rewrite its primary input within a phase.
+/// phase. Resolved entries are also tied to the asset's content digest because
+/// a post-process builder can rewrite its primary input within a phase.
+/// Conditional URI extraction survives resets in an SDK-namespaced,
+/// content-keyed store; missing/corrupt entries are recomputed. Resolved asset
+/// lists are cleared when the package configuration changes. No existence or
+/// branch selection result is persisted.
 ///
 /// This cache does not cache action visibility. Callers must read each asset
 /// through the active [RemoteAssetReaderWriter] action before using a cached
 /// dependency list.
 class ResolverDependencyCache {
+  ResolverDependencyCache({IndexedBlobStore? directiveStore})
+    : _directiveStore = directiveStore ?? _sharedDirectiveStore();
+
+  final IndexedBlobStore? _directiveStore;
+  PackageConfig? _packageConfig;
+
+  // Store unresolved URI strings, not AssetIds: file URI mapping depends on
+  // package_config, and relative URI mapping depends on the importing asset.
+  // Content and SDK grammar identity are sufficient for the extraction itself.
+  static IndexedBlobStore? _sharedDirectiveStore() {
+    if (Platform.environment['BUILD_RUNNER_ACCELERATOR_DEP_CACHE'] == '0') {
+      return null;
+    }
+    return IndexedBlobStore(
+      p.join(
+        acceleratorCacheDirectory(),
+        'dep_parse',
+        'conditional-v1-${Platform.version.split(' ').first}',
+        'store.bin',
+      ),
+    );
+  }
+
+  void _bindPackageConfig(PackageConfig packageConfig) {
+    if (!identical(_packageConfig, packageConfig)) {
+      clear();
+      _packageConfig = packageConfig;
+    }
+  }
+
+  List<String> _conditionalUris(String digest, List<int> bytes) {
+    final metrics = resolverActionMetrics;
+    final lookupTimer = metrics.enabled ? (Stopwatch()..start()) : null;
+    final cached = _directiveStore?.get(digest);
+    List<String>? uris;
+    if (cached != null) {
+      try {
+        uris = (jsonDecode(utf8.decode(cached)) as List).cast<String>();
+        // Force validation now, so malformed cache values become misses.
+        uris = List<String>.of(uris);
+      } on Object {
+        uris = null;
+      }
+    }
+    if (lookupTimer != null) {
+      metrics.resolverReadsCacheUs += lookupTimer.elapsedMicroseconds;
+    }
+    if (uris != null) {
+      metrics.resolverReadsPersistentHits++;
+      return uris;
+    }
+    metrics.resolverReadsPersistentMisses++;
+    final decodeTimer = metrics.enabled ? (Stopwatch()..start()) : null;
+    final content = utf8.decode(bytes, allowMalformed: true);
+    final candidate =
+        _containsNamespaceDirectiveCandidate(content) &&
+        _conditionalDirectiveCandidate.hasMatch(content);
+    if (decodeTimer != null) {
+      metrics.resolverReadsDecodeUs += decodeTimer.elapsedMicroseconds;
+    }
+    uris = <String>[];
+    if (candidate) {
+      final parseTimer = metrics.enabled ? (Stopwatch()..start()) : null;
+      for (final directive in parseResolverDirectives(content)) {
+        if (directive is! NamespaceDirective ||
+            directive.configurations.isEmpty) {
+          continue;
+        }
+        final base = directive.uri.stringValue;
+        if (base != null) uris.add(base);
+        for (final configuration in directive.configurations) {
+          final uri = configuration.uri.stringValue;
+          if (uri != null) uris.add(uri);
+        }
+      }
+      metrics.resolverReadsParses++;
+      if (parseTimer != null) {
+        metrics.resolverReadsParseUs += parseTimer.elapsedMicroseconds;
+      }
+    }
+    final storeTimer = metrics.enabled ? (Stopwatch()..start()) : null;
+    _directiveStore?.put(digest, utf8.encode(jsonEncode(uris)));
+    if (storeTimer != null) {
+      metrics.resolverReadsCacheUs += storeTimer.elapsedMicroseconds;
+    }
+    return uris;
+  }
+
   final Map<AssetId, _CachedResolverDependencies> _dependencies =
       <AssetId, _CachedResolverDependencies>{};
 
@@ -26,16 +123,28 @@ class ResolverDependencyCache {
   int get scannedAssetCount => _dependencies.length;
 
   List<AssetId>? dependenciesFor(AssetId asset, List<int> bytes) {
+    return _dependenciesForDigest(asset, _contentDigest(bytes));
+  }
+
+  List<AssetId>? _dependenciesForDigest(AssetId asset, String digest) {
     final cached = _dependencies[asset];
-    if (cached == null || cached.contentDigest != _contentDigest(bytes)) {
+    if (cached == null || cached.contentDigest != digest) {
       return null;
     }
     return cached.dependencies;
   }
 
   void remember(AssetId asset, List<int> bytes, List<AssetId> dependencies) {
+    _rememberDigest(asset, _contentDigest(bytes), dependencies);
+  }
+
+  void _rememberDigest(
+    AssetId asset,
+    String digest,
+    List<AssetId> dependencies,
+  ) {
     _dependencies[asset] = _CachedResolverDependencies(
-      _contentDigest(bytes),
+      digest,
       List<AssetId>.unmodifiable(dependencies),
     );
   }
@@ -68,6 +177,8 @@ Future<void> collectResolverReads(
   ResolverDependencyCache cache, {
   Set<AssetId> excludeReads = const <AssetId>{},
 }) async {
+  cache._bindPackageConfig(packageConfig);
+  final metrics = resolverActionMetrics;
   final pending = Queue<AssetId>();
   pending.addAll(
     io.observedReads.where(
@@ -81,6 +192,7 @@ Future<void> collectResolverReads(
     if (!visited.add(asset)) continue;
 
     List<int> bytes;
+    final readTimer = metrics.enabled ? (Stopwatch()..start()) : null;
     try {
       // Validate the asset under this action's visibility before consulting
       // cached parse results. The reader also records this action's observed
@@ -90,43 +202,33 @@ Future<void> collectResolverReads(
       // A demanded optional output can appear later in this phase. Do not
       // memoize a missing asset across actions.
       continue;
+    } finally {
+      if (readTimer != null) {
+        metrics.resolverReadsReadUs += readTimer.elapsedMicroseconds;
+      }
     }
 
-    var dependencies = cache.dependenciesFor(asset, bytes);
+    final digestTimer = metrics.enabled ? (Stopwatch()..start()) : null;
+    final digest = _contentDigest(bytes);
+    if (digestTimer != null) {
+      metrics.resolverReadsDigestUs += digestTimer.elapsedMicroseconds;
+    }
+    var dependencies = cache._dependenciesForDigest(asset, digest);
     if (dependencies == null) {
-      final content = utf8.decode(bytes, allowMalformed: true);
-      if (_containsNamespaceDirectiveCandidate(content)) {
-        final unit = parseString(
-          content: content,
-          throwIfDiagnostics: false,
-        ).unit;
-        final discovered = <AssetId>{};
-        for (final directive in unit.directives) {
-          if (directive is! NamespaceDirective ||
-              directive.configurations.isEmpty) {
-            continue;
-          }
-          final uris = <String?>[directive.uri.stringValue];
-          uris.addAll(
-            directive.configurations.map(
-              (configuration) => configuration.uri.stringValue,
-            ),
-          );
-
-          for (final rawUri in uris) {
-            final dependency = _resolveDirectiveUri(
-              rawUri,
-              asset,
-              packageConfig,
-            );
-            if (dependency != null) discovered.add(dependency);
-          }
-        }
-        dependencies = discovered.toList(growable: false);
-      } else {
-        dependencies = const <AssetId>[];
+      final uris = cache._conditionalUris(digest, bytes);
+      final resolveTimer = metrics.enabled ? (Stopwatch()..start()) : null;
+      final discovered = <AssetId>{};
+      for (final rawUri in uris) {
+        final dependency = _resolveDirectiveUri(rawUri, asset, packageConfig);
+        if (dependency != null) discovered.add(dependency);
       }
-      cache.remember(asset, bytes, dependencies);
+      dependencies = discovered.toList(growable: false);
+      cache._rememberDigest(asset, digest, dependencies);
+      if (resolveTimer != null) {
+        metrics.resolverReadsResolveUs += resolveTimer.elapsedMicroseconds;
+      }
+    } else {
+      metrics.resolverReadsMemoryHits++;
     }
 
     for (final dependency in dependencies) {
@@ -142,6 +244,11 @@ Future<void> collectResolverReads(
 // pass below recognizes only real directives. Avoid punctuation-sensitive
 // checks here because valid directive URIs can contain semicolons.
 final _namespaceDirectiveCandidate = RegExp(r'\b(?:import|export)\b');
+
+// Every conditional configuration needs the literal `if` keyword. Checking
+// only the word keeps comments between `if` and `(` and unusual URI strings
+// valid; comments/strings/body conditionals can merely cause extra parsing.
+final _conditionalDirectiveCandidate = RegExp(r'\bif\b');
 
 bool _containsNamespaceDirectiveCandidate(String content) =>
     _namespaceDirectiveCandidate.hasMatch(content);

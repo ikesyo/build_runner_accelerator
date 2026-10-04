@@ -4,13 +4,214 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:build/build.dart';
+import 'package:crypto/crypto.dart';
 import 'package:build_runner_accelerator/src/protocol.dart';
+import 'package:build_runner_accelerator/src/indexed_blob_store.dart';
+import 'package:build_runner_accelerator/src/resolver_metrics.dart';
 import 'package:build_runner_accelerator/src/remote_build_step.dart';
 import 'package:build_runner_accelerator/src/resolver_reads.dart';
 import 'package:package_config/package_config.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test(
+    'persistent extraction remaps relative and file URIs after reset',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('resolver-uris-');
+      final stores = <IndexedBlobStore>[];
+      addTearDown(() async {
+        for (final store in stores) {
+          store.close();
+        }
+        await directory.delete(recursive: true);
+      });
+      ResolverDependencyCache newCache() {
+        final store = IndexedBlobStore('${directory.path}/store.bin');
+        stores.add(store);
+        return ResolverDependencyCache(directiveStore: store);
+      }
+
+      final content = utf8.encode(
+        "import 'relative.dart' if /* comment */ (dart.library.io) "
+        "'file:///workspace/package/lib/alternate.dart' "
+        "if (dart.library.html) 'package:other/web.dart'; "
+        "export 'package:other/base.dart' if (dart.library.html) 'dart:html';",
+      );
+      final configA = PackageConfig([
+        Package('old', Uri.parse('file:///workspace/package/')),
+      ]);
+      final configB = PackageConfig([
+        Package('new', Uri.parse('file:///workspace/package/')),
+      ]);
+      Future<Set<AssetId>> collect(
+        ResolverDependencyCache cache,
+        PackageConfig config,
+        String input,
+      ) async {
+        final asset = AssetId('app', input);
+        final reads = <AssetId, List<int>>{
+          asset: content,
+          AssetId('app', input.replaceFirst('main.dart', 'relative.dart')): [],
+          AssetId('old', 'lib/alternate.dart'): [],
+          AssetId('new', 'lib/alternate.dart'): [],
+          AssetId('other', 'lib/base.dart'): [],
+          AssetId('other', 'lib/web.dart'): [],
+        };
+        final io = RemoteAssetReaderWriter(readCache: reads, readableCache: {});
+        io.observedReads.add(asset);
+        await collectResolverReads(io, config, cache);
+        return io.observedReads;
+      }
+
+      resolverActionMetrics.beginAction();
+      final first = await collect(newCache(), configA, 'lib/main.dart');
+      expect(
+        first,
+        containsAll([
+          AssetId('app', 'lib/relative.dart'),
+          AssetId('old', 'lib/alternate.dart'),
+          AssetId('other', 'lib/base.dart'),
+        ]),
+      );
+      expect(resolverActionMetrics.resolverReadsParses, 1);
+      resolverActionMetrics.beginAction();
+      final cache = newCache();
+      final second = await collect(cache, configB, 'lib/nested/main.dart');
+      expect(
+        second,
+        containsAll([
+          AssetId('app', 'lib/nested/relative.dart'),
+          AssetId('new', 'lib/alternate.dart'),
+          AssetId('other', 'lib/base.dart'),
+        ]),
+      );
+      expect(second, isNot(contains(AssetId('old', 'lib/alternate.dart'))));
+      expect(resolverActionMetrics.resolverReadsParses, 0);
+      expect(resolverActionMetrics.resolverReadsPersistentHits, greaterThan(0));
+      // A package_config change also invalidates resolved in-memory AssetIds.
+      final remapped = await collect(cache, configA, 'lib/nested/main.dart');
+      expect(remapped, contains(AssetId('old', 'lib/alternate.dart')));
+      expect(remapped, isNot(contains(AssetId('new', 'lib/alternate.dart'))));
+      cache.clear();
+      resolverActionMetrics.beginAction();
+      await collect(cache, configA, 'lib/nested/main.dart');
+      expect(resolverActionMetrics.resolverReadsParses, 0);
+    },
+  );
+
+  test('invalid persistent values are reparsed and repaired', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'resolver-corrupt-',
+    );
+    final store = IndexedBlobStore('${directory.path}/store.bin');
+    addTearDown(() async {
+      store.close();
+      await directory.delete(recursive: true);
+    });
+    final main = AssetId('app', 'lib/main.dart');
+    final bytes = utf8.encode(
+      "export 'base.dart' if (dart.library.io) 'io.dart';",
+    );
+    store.put(sha256.convert(bytes).toString(), utf8.encode('[42]'));
+    final io = RemoteAssetReaderWriter(
+      readCache: {
+        main: bytes,
+        AssetId('app', 'lib/base.dart'): [],
+        AssetId('app', 'lib/io.dart'): [],
+      },
+      readableCache: {},
+    );
+    io.observedReads.add(main);
+    resolverActionMetrics.beginAction();
+    await collectResolverReads(
+      io,
+      PackageConfig([]),
+      ResolverDependencyCache(directiveStore: store),
+    );
+    expect(
+      io.observedReads,
+      containsAll([
+        AssetId('app', 'lib/base.dart'),
+        AssetId('app', 'lib/io.dart'),
+      ]),
+    );
+    expect(resolverActionMetrics.resolverReadsParses, 1);
+  });
+
+  test('a hidden generated candidate is inspected when it appears', () async {
+    final config = PackageConfig([]);
+    final main = AssetId('app', 'lib/main.dart');
+    final generated = AssetId('app', 'lib/generated.dart');
+    final leaf = AssetId('app', 'lib/leaf.dart');
+    final io = RemoteAssetReaderWriter(
+      readCache: {
+        main: utf8.encode(
+          "import 'generated.dart' if (dart.library.io) 'dart:io';",
+        ),
+        generated: utf8.encode(
+          "export 'leaf.dart' if (dart.library.io) 'dart:io';",
+        ),
+        leaf: [],
+      },
+      readableCache: {},
+    );
+    final cache = ResolverDependencyCache();
+    io.beginAction(
+      rpc: _rpc(),
+      package: 'app',
+      primaryInput: null,
+      blockedAssets: {generated},
+    );
+    io.observedReads.add(main);
+    await collectResolverReads(io, config, cache);
+    expect(io.observedReads, contains(generated));
+    expect(io.observedReads, isNot(contains(leaf)));
+    io.endAction();
+    io.beginAction(
+      rpc: _rpc(),
+      package: 'app',
+      primaryInput: null,
+      blockedAssets: {},
+    );
+    io.observedReads.add(main);
+    await collectResolverReads(io, config, cache);
+    expect(io.observedReads, containsAll([main, generated, leaf]));
+    io.endAction();
+  });
+
+  test(
+    'ordinary directives without if skip the AST parse on a cold miss',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'resolver-prefilter-',
+      );
+      final store = IndexedBlobStore('${directory.path}/store.bin');
+      addTearDown(() async {
+        store.close();
+        await directory.delete(recursive: true);
+      });
+      final main = AssetId('app', 'lib/main.dart');
+      final io = RemoteAssetReaderWriter(
+        readCache: {
+          main: utf8.encode(
+            "import 'ordinary.dart'; export 'another.dart'; class Main {}",
+          ),
+        },
+        readableCache: {},
+      );
+      io.observedReads.add(main);
+      resolverActionMetrics.beginAction();
+      await collectResolverReads(
+        io,
+        PackageConfig([]),
+        ResolverDependencyCache(directiveStore: store),
+      );
+      expect(io.observedReads, {main});
+      expect(resolverActionMetrics.resolverReadsPersistentMisses, 1);
+      expect(resolverActionMetrics.resolverReadsParses, 0);
+    },
+  );
+
   test('cached dependencies still obey the active action visibility', () async {
     final packageConfigUri = await Isolate.packageConfig;
     expect(packageConfigUri, isNotNull);

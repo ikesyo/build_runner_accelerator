@@ -63,3 +63,33 @@ what produced the observed 6–14s first-action cost on real workspaces.
 - Cold cache adds one atomic file write per parsed file (~0.1ms);
   correctness fixtures (`correctness_riverpod.sh`,
   `correctness_freezed.sh`) remain byte-identical to stock.
+
+## Conditional import/export collection (2026-10-04)
+
+Apply the same read-preserving, content-keyed parse reuse to
+`collectResolverReads`, which supplements the ordinary cycle graph with all
+conditional import/export alternatives. Existing `AssetDeps` values contain
+only ordinary directive targets, so they cannot supply these alternatives.
+Keep that format and cycle-graph behavior unchanged.
+
+Persist the extracted, unresolved URI strings in a separate
+`dep_parse/conditional-v1-<sdk>/store.bin` namespace using the shared indexed
+store (ADR 0026). Keys bind the exact source bytes by SHA-256; SDK and extractor
+version select the namespace. An extraction-semantics change bumps its version.
+Because URI resolution happens afterward, package roots and importing asset
+identity need not be part of the extraction key. Clear resolved in-memory
+AssetIds on package-config changes and retain build/source-phase resets.
+
+A hit still requires an action-visible byte read and its dependency recording.
+Do not persist existence or conditional branch selection. Missing generated
+assets remain observed dependencies and are retried on later actions;
+rewrites change the content key. Failures fall back to extraction, and
+`BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0` disables persistent reuse. Read and
+full-content digest costs remain. On a miss, skip AST parsing if the required
+`if` keyword is absent; otherwise use Analyzer's directive-only parser with
+`parseString`'s feature/language-version settings. Keep full-unit parsing as
+recovery for malformed or potentially misplaced directives. This avoids
+building unrelated declaration ASTs without changing builders' resolvers.
+Empty-cache publication still adds cost; see
+[the paired measurements](../benchmarks/resolver-conditional-directives-2026-10.md)
+for the fixture's improvements and limits.
