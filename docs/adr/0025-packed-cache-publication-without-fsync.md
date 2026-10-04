@@ -15,10 +15,8 @@ publication to another process does not require durable storage across a
 machine crash. The analyzer's ordinary `FileByteStore` similarly writes cache
 files without requesting disk synchronization.
 
-An initial microbenchmark used `/tmp` and failed to expose the flush cost of
-the actual `/workspace` cache filesystem. Repeating the measurement beside the
-real benchmark workspaces exposes a substantial cost; filesystem choice must
-be recorded when evaluating this path.
+Measurements on the cache filesystem show a substantial per-record flush
+cost. Filesystem choice must be recorded when evaluating this path.
 
 ## Decision
 
@@ -51,7 +49,5 @@ It does not introduce a buffered write queue or change the IPC contract.
 
 ## Measurements and verification
 
-See the follow-up measurements in
-[ADR 0024](0024-cold-analysis-single-flight.md) for build timings, command
-conditions, output comparisons and verification. Local raw artifacts are in
-`/workspace/single-flight-deeper`.
+See the [benchmark note](../benchmarks/cold-worker-analysis-2026-10.md) for
+build timings, conditions, output comparisons and verification.

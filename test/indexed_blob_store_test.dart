@@ -96,6 +96,30 @@ void main() {
     expect(store.get('later'), [8]);
   });
 
+  for (final tailLength in [20, 21]) {
+    test('reader follows torn-tail repair after $tailLength invalid bytes', () {
+      store.put('existing', Uint8List.fromList([1]));
+      final reader = IndexedBlobStore('${dir.path}/store.bin');
+      addTearDown(reader.close);
+      expect(reader.get('existing'), [1]);
+      final file = File('${dir.path}/store.bin');
+      file.writeAsBytesSync(
+        List.filled(tailLength, 255),
+        mode: FileMode.append,
+      );
+      final observedLength = file.lengthSync();
+      reader.refresh();
+      // Refresh never indexes the invalid tail. The writer repairs it and
+      // publishes a complete record at that same boundary, even if the file
+      // returns to its previous size or grows beyond it.
+      expect(store.put('new.linked', Uint8List.fromList([8])), isTrue);
+      expect(file.lengthSync(), greaterThanOrEqualTo(observedLength));
+      reader.refresh();
+      expect(reader.get('existing'), [1]);
+      expect(reader.get('new.linked'), [8]);
+    });
+  }
+
   test('identical writes do not grow the pack across builds', () {
     final file = File('${dir.path}/store.bin');
     for (final value in [

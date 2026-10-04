@@ -70,6 +70,8 @@ final class IndexedBlobStore {
 
   /// Read-only tail adoption. A reader must never truncate a writer's partial
   /// record; leave it unindexed and retry it on the next refresh.
+  /// Completed prefixes are immutable: writer recovery truncates only the
+  /// invalid tail, which a reader has never included in [_indexedEnd].
   void _refreshIndex(Map<String, (int, int)> index) {
     try {
       final file = File(_filePath);
