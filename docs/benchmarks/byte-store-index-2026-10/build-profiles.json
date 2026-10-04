@@ -5,24 +5,24 @@
     "first_resolvers": [
       {
         "builder": "json_serializable:json_serializable",
-        "resolver_first_get_us": 46254,
-        "driver_create_us": 40284,
-        "resolver_sdk_summary_us": 2151
+        "resolver_first_get_us": 86413,
+        "driver_create_us": 40254,
+        "resolver_sdk_summary_us": 3844
       },
       {
         "builder": "json_serializable:json_serializable",
-        "resolver_first_get_us": 54321,
-        "driver_create_us": 37377,
-        "resolver_sdk_summary_us": 9231
+        "resolver_first_get_us": 114806,
+        "driver_create_us": 41723,
+        "resolver_sdk_summary_us": 6851
       }
     ],
     "totals": {
       "analysis_startup_wait_us": 0,
-      "byte_store_get_us": 16478,
-      "byte_store_put_us": 702,
+      "byte_store_get_us": 30923,
+      "byte_store_put_us": 1880,
       "byte_store_gets": 1044,
-      "byte_store_puts": 22,
-      "byte_store_hits": 1022
+      "byte_store_puts": 43,
+      "byte_store_hits": 1001
     }
   },
   {
@@ -31,24 +31,24 @@
     "first_resolvers": [
       {
         "builder": "json_serializable:json_serializable",
-        "resolver_first_get_us": 42607,
-        "driver_create_us": 37338,
-        "resolver_sdk_summary_us": 1504
+        "resolver_first_get_us": 48995,
+        "driver_create_us": 40608,
+        "resolver_sdk_summary_us": 4238
       },
       {
         "builder": "json_serializable:json_serializable",
-        "resolver_first_get_us": 48941,
-        "driver_create_us": 37651,
-        "resolver_sdk_summary_us": 7705
+        "resolver_first_get_us": 49190,
+        "driver_create_us": 39167,
+        "resolver_sdk_summary_us": 5664
       }
     ],
     "totals": {
       "analysis_startup_wait_us": 0,
-      "byte_store_get_us": 14866,
-      "byte_store_put_us": 1295,
+      "byte_store_get_us": 15110,
+      "byte_store_put_us": 1749,
       "byte_store_gets": 1044,
-      "byte_store_puts": 29,
-      "byte_store_hits": 1015
+      "byte_store_puts": 40,
+      "byte_store_hits": 1004
     }
   },
   {
@@ -57,24 +57,24 @@
     "first_resolvers": [
       {
         "builder": "json_serializable:json_serializable",
-        "resolver_first_get_us": 45291,
-        "driver_create_us": 40443,
-        "resolver_sdk_summary_us": 1337
+        "resolver_first_get_us": 45869,
+        "driver_create_us": 39250,
+        "resolver_sdk_summary_us": 2466
       },
       {
         "builder": "json_serializable:json_serializable",
-        "resolver_first_get_us": 53136,
-        "driver_create_us": 37764,
-        "resolver_sdk_summary_us": 8181
+        "resolver_first_get_us": 49945,
+        "driver_create_us": 38053,
+        "resolver_sdk_summary_us": 8095
       }
     ],
     "totals": {
       "analysis_startup_wait_us": 0,
-      "byte_store_get_us": 1308961,
-      "byte_store_put_us": 872,
+      "byte_store_get_us": 1751840,
+      "byte_store_put_us": 1276,
       "byte_store_gets": 1044,
-      "byte_store_puts": 22,
-      "byte_store_hits": 1022
+      "byte_store_puts": 43,
+      "byte_store_hits": 1001
     }
   },
   {
@@ -83,24 +83,24 @@
     "first_resolvers": [
       {
         "builder": "json_serializable:json_serializable",
-        "resolver_first_get_us": 48176,
-        "driver_create_us": 39887,
-        "resolver_sdk_summary_us": 4104
+        "resolver_first_get_us": 59811,
+        "driver_create_us": 42028,
+        "resolver_sdk_summary_us": 10083
       },
       {
         "builder": "json_serializable:json_serializable",
-        "resolver_first_get_us": 52534,
-        "driver_create_us": 37902,
-        "resolver_sdk_summary_us": 9301
+        "resolver_first_get_us": 55531,
+        "driver_create_us": 48991,
+        "resolver_sdk_summary_us": 2389
       }
     ],
     "totals": {
       "analysis_startup_wait_us": 0,
-      "byte_store_get_us": 58320,
-      "byte_store_put_us": 6686,
+      "byte_store_get_us": 59422,
+      "byte_store_put_us": 1735,
       "byte_store_gets": 1044,
-      "byte_store_puts": 29,
-      "byte_store_hits": 1015
+      "byte_store_puts": 40,
+      "byte_store_hits": 1004
     }
   }
 ]

@@ -14,9 +14,51 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import statistics
 import subprocess
+import threading
 import time
+
+
+def wait_for_process(process, timeout):
+    """Reap the isolated frontend with wait4; kill its group on a deadline."""
+    expired = threading.Event()
+
+    def kill_group():
+        expired.set()
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    watchdog = threading.Timer(timeout, kill_group)
+    watchdog.daemon = True
+    watchdog.start()
+    try:
+        try:
+            _, status, usage = os.wait4(process.pid, 0)
+        except BaseException:
+            kill_group()
+            _, status, _ = os.wait4(process.pid, 0)
+            process.returncode = os.waitstatus_to_exitcode(status)
+            raise
+    finally:
+        watchdog.cancel()
+        watchdog.join()
+    process.returncode = os.waitstatus_to_exitcode(status)
+    if expired.is_set():
+        raise subprocess.TimeoutExpired(process.args, timeout)
+    return usage
+
+
+def clear_graph(root):
+    """Remove the graph and both source/native outputs before a clean build."""
+    (root / '.dart_tool/build_runner_accelerator/graph-v3.bin').unlink(missing_ok=True)
+    for f in (root / 'lib').glob('*.g.dart'):
+        f.unlink()
+    for f in (root / '.dart_tool/build_runner_accelerator/cache').rglob('*.g.part'):
+        f.unlink()
 
 
 def main():
@@ -26,10 +68,14 @@ def main():
         p.add_argument('--' + name, type=Path, required=True)
     p.add_argument('--repeats', type=int, default=5)
     p.add_argument('--jobs', type=int, default=4)
+    p.add_argument('--timeout', type=float, default=300,
+                   help='Maximum seconds per frontend run (default: 300).')
     p.add_argument('--counts', type=int, nargs='+', default=[10, 500])
     args = p.parse_args()
     if args.repeats < 1 or args.jobs < 1:
         p.error('--repeats and --jobs must be positive')
+    if not 0 < args.timeout < float('inf'):
+        p.error('--timeout must be positive and finite')
     for name in ('baseline_worker', 'candidate_worker', 'baseline_probe',
                  'candidate_probe', 'cache', 'results', 'dart', 'frontend'):
         setattr(args, name, getattr(args, name).resolve())
@@ -47,19 +93,13 @@ def main():
         start = time.perf_counter()
         with log.with_suffix('.stdout').open('w') as out, log.with_suffix('.stderr').open('w') as err:
             process = subprocess.Popen(command, cwd=cwd, env=dict(env, **(extra or {})),
-                                       stdout=out, stderr=err)
-            _, status, usage = os.wait4(process.pid, 0)
-            process.returncode = os.waitstatus_to_exitcode(status)
+                                       stdout=out, stderr=err, start_new_session=True)
+            usage = wait_for_process(process, args.timeout)
             if process.returncode:
                 raise subprocess.CalledProcessError(process.returncode, command)
         elapsed = time.perf_counter() - start
         return dict(elapsed_s=elapsed, user_s=usage.ru_utime, system_s=usage.ru_stime,
                     peak_process_rss_kib=usage.ru_maxrss, command=command, cwd=str(cwd))
-
-    def clear_graph(root):
-        (root / '.dart_tool/build_runner_accelerator/graph-v3.bin').unlink(missing_ok=True)
-        for f in (root / 'lib').glob('*.g.dart'):
-            f.unlink()
 
     def outputs(root):
         files = list((root / 'lib').glob('*.g.dart'))

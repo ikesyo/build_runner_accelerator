@@ -22,6 +22,8 @@
   "micro_samples": 140,
   "analysis_single_flight": "disabled (main default)",
   "metrics_enabled_in_timed_builds": false,
-  "independent_crc32_records_checked": 66086,
-  "output_manifest_sha256": "SHA-256 of UTF-8 JSON of relative path -> file SHA-256, sort_keys=True, separators=(comma,colon); includes generated source and native output parts"
+  "independent_crc32_records_checked": 66064,
+  "output_manifest_sha256": "SHA-256 of UTF-8 JSON of relative path -> file SHA-256, sort_keys=True, separators=(comma,colon); includes generated source and native output parts",
+  "native_output_parts_removed_for_clean": true,
+  "frontend_timeout_seconds": 300
 }

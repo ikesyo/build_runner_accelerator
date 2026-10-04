@@ -30,5 +30,8 @@
   "measured_builds_with_matching_output_manifests": 180,
   "stock_output_comparisons": 8,
   "blocked_cache_builds_with_matching_outputs": 2,
-  "full_matrix_rerun_after_rebase": false
+  "full_matrix_rerun_after_rebase": false,
+  "benchmark_lifecycle_regression_tests": 3,
+  "clean_includes_native_parts": true,
+  "comparison_repeated_with_corrected_clean": true
 }
