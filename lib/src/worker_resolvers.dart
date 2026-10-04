@@ -355,8 +355,8 @@ ByteStore sharedAnalysisByteStore(
         ? _MetricsByteStore(store)
         : store;
     if (Platform
-            .environment['BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT'] !=
-        '0') {
+            .environment['BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT'] ==
+        '1') {
       _sharedStartupGates[result] = AnalysisStartupGate(
         p.join(dir, '.analysis-startup.lock'),
         isWarm: disk is PackedAnalysisByteStore

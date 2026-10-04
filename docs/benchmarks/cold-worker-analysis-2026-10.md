@@ -190,3 +190,40 @@ outputs remained byte-identical. `--jobs 4` retains the existing resolver cap
 of two active resolver workers. Raw action metrics are in
 `/workspace/single-flight-native-probe.log`; process tests exercise contention
 explicitly because this small fixture need not overlap the first linking call.
+
+## Large-workspace report and opt-in default
+
+A user-supplied report compared PR #80 at `b7db40a` against `a722a77` and stock
+build_runner 2.16.1 on a large Flutter app: 26,103 actions and 827 generated
+files, four vCPUs, ext4, Dart 3.13.4, synchronous worker AOT. Full cold runs
+removed all accelerator caches, build directories and generated files; worker
+compilation was included. This report was measured outside the local fixture
+environment documented above.
+
+In the initial alternating set, stock's median was 77.2s (four samples), main's
+82.0s (four samples), the PR with single-flight enabled 80.6s (four samples),
+and the PR with it disabled 71.6s (two samples). A separate ABBA comparison,
+repeated twice, isolated the setting within the PR:
+
+| Single-flight | Cold samples | Median |
+| --- | --- | ---: |
+| Enabled | 75.9s, 77.7s, 78.8s, 79.0s | 78.3s |
+| Disabled | 71.4s, 71.4s, 71.0s, 72.9s | 71.4s |
+
+All 827 generated files matched the reference byte-for-byte in every cold run.
+Repeated clean builds were effectively unchanged: main 23.4–24.8s and the PR
+23.0–24.7s.
+
+A separate one-run metrics probe found the first owner resolving a smaller
+closure (2,091 byte-store gets) in 10.4s. A larger waiting action (9,842 gets)
+then spent 26.5s: about 8.0s waiting and 18.5s processing, still writing 5,199
+entries. With single-flight disabled it completed in 21.2s without the wait;
+another action reused 93% of its entries. The existence of linked entries is
+therefore insufficient evidence that the waiting action's closure is warm.
+
+This report supports keeping the packed-write improvements and making
+single-flight experimental opt-in. From 2026-10-04, enable the gate explicitly
+with `BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT=1`; it is disabled when
+unset or given any other value. The preceding fixture comparisons describe
+the earlier enabled default. No timings from separate sets or environments
+are combined to estimate the new default's speedup.
