@@ -235,7 +235,8 @@ bytes do not grow either file. Writers publish data before index entries and
 repair incomplete tails under the append lock. Cache entries are not fsynced;
 missing or corrupt entries are recomputed. Earlier packed and per-key formats
 are ignored, with no migration. `BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0` retains
-the separate per-key implementation.
+the separate per-key implementation. The first build after updating rebuilds
+the shared caches from empty. Older cache directories remain on disk.
 
 The pack has no compaction yet, and stale fingerprint directories are not
 garbage-collected. Reclaim space by removing caches for toolchains you no longer

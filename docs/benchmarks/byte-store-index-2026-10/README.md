@@ -121,6 +121,60 @@ clean/no-op/one-file/broad source outputs match stock build_runner. With the
 shared cache root blocked by a regular file, both candidate builds succeed and
 produce those same clean outputs.
 
+## Supplied large Flutter application results
+
+These results come from the supplied `build_runner_accelerator-pr82-report.md`,
+not a rerun in the fixture environment above. The application has 26,103 actions
+and 827 generated files. The host has 4 vCPUs, ext4 and Dart 3.13.4. It compares
+main `5dc2e1b` with PR #82 head `e16f7fa`, using the same native binary because
+Rust is unchanged. Worker AOT is enabled and metrics are disabled. The report
+does not specify whether cold timings include AOT compilation or the configured
+worker count. The 4 vCPU host count is not a worker-count measurement.
+
+### Cold and fresh-cache regeneration
+
+ABBA × 2 gives four cold samples per version; each repetition also includes two
+regeneration builds with a fresh history. Times are wall seconds.
+
+| Case | Main samples / range | Publication-index samples / range | Main / index median |
+| --- | --- | --- | --- |
+| Cold | 77.9, 75.0, 75.1, 75.5 | 76.2, 73.8, 76.9, 75.7 | 75.3 / 76.0 |
+| Fresh-cache regen | 22.2–23.9 | 22.7–24.0 | 23.4 / 23.1 |
+
+These samples do not demonstrate a cold or fresh-cache speedup or regression.
+They agree with the fixture result that small unused history gives little room
+for improvement.
+
+### History accumulated through real builds
+
+A public declaration was added to a widely imported shared library, built, then
+reverted. Repeating this five times leaves unused linked summaries from actual
+builds. Both formats grow from about 92 MB to 168 MB; about 76 MB (45%) is unused
+by the restored source. The publication index is 1.2 MB. Regeneration then uses
+the original source with this history intact.
+
+| Measurement | Main | Publication index |
+| --- | --- | --- |
+| Alternating regen samples, wall s | 23.0, 23.5, 23.6 | 22.7, 22.2, 22.2 |
+| Regen median, wall s | 23.5 | 22.2 |
+| Reported CPU time, s | 45.4–46.9 | 44.1–45.2 |
+| Reference switching regens, wall s | 23.8, 23.0 | 22.7, 22.3 |
+| Builds accumulating history, wall s | 27.2, 27.6, 28.0, 28.4, 29.0 | 27.8, 27.3, 27.9, 26.1, 26.7 |
+
+The three measured regen samples show about a 5% improvement with separated
+ranges. The two switching regens are reference runs, not additional samples in
+the reported medians. The increasing main times while accumulating history are
+consistent with historical payload scanning; these few observations do not
+establish a linear speedup model or predict gains for larger caches.
+
+The supplied report states that all 827 generated files match the reference in
+every run. Its `missing=1` refers to a pre-existing stale file without a generator.
+The report also records 29 passing tests in the indexed store, packed store and
+fingerprint test files.
+Memory measurements and the full commands/cache paths are not included in the
+supplied report. These observations apply to this application and cache history;
+they do not identify it as the previously mentioned ~91-second workspace.
+
 ## Reproduction and artifacts
 
 Use `tool/benchmark_blob_store.dart` as an isolated Linux AOT probe: compile it

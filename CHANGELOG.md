@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Read persistent publication metadata instead of scanning unused shared byte-store payloads at worker startup.
+- Rebuild shared analyzer and directive caches in new format namespaces without migration. The first build after updating recomputes those caches; older cache directories remain on disk and can be removed while builds are stopped.
+
 ## [v0.8.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.7.0...v0.8.0) - 2026-10-02
 
 - Run full verification coverage in PR CI by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/66
