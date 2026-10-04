@@ -141,6 +141,17 @@ The same harness supports the tracked Riverpod fixture with
 clearing the analyzer byte store. See
 [conditional directive collection measurements](benchmarks/resolver-conditional-directives-2026-10.md)
 for isolated main/candidate workers, collector diagnostics and cold-cache limits.
+For collector digest reuse, compare against the unchanged PR #84 worker, and
+use `--stock-check` to prepare untimed stock references for each edit case.
+`scripts/prepare_resolver_digest_fixture.py --root <new-disposable-directory>`
+creates 24 Riverpod entrypoints importing eight shared API pairs through
+conditional URIs (16 shared sources); `--ordinary-imports` instead prepares
+eight shared sources with ordinary imports. Resolve it
+with the same pub cache, prepare both AOT workers outside timing, and pass
+`--fixture-kind riverpod-shared` to the comparison harness. Metrics/trace must
+remain disabled for timings; use a separate `--metrics` invocation for digest
+computation/reuse counts and collector stage times. See
+[digest reuse measurements](benchmarks/resolver-content-digest-2026-10.md).
 
 For detailed per-worker diagnostics, set both
 `BUILD_RUNNER_ACCELERATOR_METRICS=1` and

@@ -4,18 +4,67 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:build/build.dart';
+import 'package:build_runner_accelerator/src/asset_read_cache.dart';
 import 'package:glob/glob.dart';
 import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:build_runner_accelerator/src/remote_build_step.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('same-action output rewrites never reuse an earlier digest', () async {
+    final id = AssetId('app', 'lib/output.dart');
+    final io = RemoteAssetReaderWriter(
+      readCache: AssetReadCache({
+        id: [0],
+      }),
+      readableCache: {},
+    );
+    io.beginAction(
+      rpc: _rpc(),
+      package: 'app',
+      primaryInput: id,
+      blockedAssets: {id},
+    );
+    try {
+      await io.writeAsBytes(id, [1]);
+      final first = await io.readContent(id);
+      final firstDigest = first.contentDigest;
+      await io.writeAsBytes(id, [2]);
+      expect((await io.readContent(id)).contentDigest, isNot(firstDigest));
+      // Even direct mutation of the output map cannot mutate an old snapshot.
+      io.outputs[id]![0] = 3;
+      expect((await io.readContent(id)).bytes, [3]);
+      expect(first.bytes, [1]);
+      expect(first.contentDigest, firstDigest);
+    } finally {
+      io.endAction();
+    }
+  });
+
+  test(
+    'builder mutation cannot change a collector snapshot or digest',
+    () async {
+      final id = AssetId('app', 'lib/main.dart');
+      final cache = AssetReadCache({
+        id: [1, 2, 3],
+      });
+      final io = RemoteAssetReaderWriter(readCache: cache, readableCache: {});
+      final content = await io.readContent(id);
+      final digest = content.contentDigest;
+      final builderBytes = await io.readAsBytes(id);
+      builderBytes[0] = 9;
+      expect((await io.readContent(id)).contentDigest, digest);
+      expect(await io.readAsBytes(id), [1, 2, 3]);
+      expect(io.observedReads, {id});
+    },
+  );
+
   test(
     'visible glob results reuse readability and still track reads',
     () async {
       final id = AssetId('app', 'lib/model.g.part');
       final readable = <AssetId>{};
-      final cache = <AssetId, List<int>>{};
+      final cache = AssetReadCache(<AssetId, List<int>>{});
       final io = RemoteAssetReaderWriter(
         readCache: cache,
         readableCache: readable,
@@ -83,7 +132,7 @@ void main() {
   ]) {
     test('declined prefetch ($error) preserves sequential reads', () async {
       final id = AssetId('app', 'lib/generated.dart');
-      final cache = <AssetId, List<int>>{};
+      final cache = AssetReadCache(<AssetId, List<int>>{});
       final readable = <AssetId>{};
       final temporary = await Directory.systemTemp.createTemp(
         'prefetch-fallback-',
@@ -140,12 +189,12 @@ void main() {
     final outerBlocked = AssetId('app', 'lib/outer_blocked.dart');
     final nestedBlocked = AssetId('app', 'lib/nested_blocked.dart');
     final io = RemoteAssetReaderWriter(
-      readCache: <AssetId, List<int>>{
+      readCache: AssetReadCache(<AssetId, List<int>>{
         outerInput: <int>[1],
         nestedInput: <int>[2],
         outerBlocked: <int>[3],
         nestedBlocked: <int>[4],
-      },
+      }),
       readableCache: <AssetId>{},
     );
     final outerRpc = _rpc();

@@ -12,6 +12,7 @@ import 'package:build_runner/src/io/reader_writer.dart' show ReaderWriter;
 import 'package:crypto/crypto.dart';
 import 'package:glob/glob.dart';
 
+import 'asset_read_cache.dart';
 import 'protocol.dart';
 import 'resolver_metrics.dart';
 
@@ -40,7 +41,7 @@ class _RemoteActionState {
 class _RemoteIoState {
   _RemoteIoState({required this.readCache, required this.readableCache});
 
-  final Map<AssetId, List<int>> readCache;
+  final AssetReadCache readCache;
   final Set<AssetId> readableCache;
   final List<_RemoteActionState> _actions = <_RemoteActionState>[];
   final Map<AssetId, Uint8List> _idleOutputs = <AssetId, Uint8List>{};
@@ -101,7 +102,7 @@ final bool _depPrefetchEnabled =
 /// the Rust frontend through the existing asset RPC protocol.
 class RemoteAssetReaderWriter extends ReaderWriter {
   factory RemoteAssetReaderWriter({
-    required Map<AssetId, List<int>> readCache,
+    required AssetReadCache readCache,
     required Set<AssetId> readableCache,
   }) {
     final state = _RemoteIoState(
@@ -280,19 +281,23 @@ class RemoteAssetReaderWriter extends ReaderWriter {
   Future<List<int>> readAsBytes(
     AssetId id, {
     bool inArtifactTree = false,
-  }) async {
+  }) async => List<int>.from((await readContent(id)).bytes);
+
+  /// Collector-only immutable snapshot. Uses the same visibility and read
+  /// tracking path as builder reads, before exposing bytes or a cached digest.
+  Future<AssetReadContent> readContent(AssetId id) async {
     _state.observedReads.add(id);
     final primaryInput = _state.primaryInput;
     if (primaryInput != null && id != primaryInput) {
       throw AssetNotFoundException(id);
     }
     final local = _state.outputs[id];
-    if (local != null) return List<int>.from(local);
+    if (local != null) return AssetReadContent(local);
     if (_isBlocked(id)) throw AssetNotFoundException(id);
-    final cached = _state.readCache[id];
+    final cached = _state.readCache.contentFor(id);
     if (cached != null) {
       resolverActionMetrics.ipcReadCacheHits++;
-      return List<int>.from(cached);
+      return cached;
     }
     try {
       final timer = resolverActionMetrics.enabled
@@ -313,7 +318,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
       if (path is String) {
         final bytes = await File(path).readAsBytes();
         _state.readCache[id] = bytes;
-        return List<int>.from(bytes);
+        return _state.readCache.contentFor(id)!;
       }
       final rawBytes = response['bytes'];
       if (rawBytes is! List) {
@@ -324,7 +329,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
           : Uint8List.fromList(List<int>.from(rawBytes));
       resolverActionMetrics.ipcReadBytes += bytes.length;
       _state.readCache[id] = bytes;
-      return List<int>.from(bytes);
+      return _state.readCache.contentFor(id)!;
     } on StateError catch (error) {
       if (error.message.toString().contains('asset not found')) {
         throw AssetNotFoundException(id);

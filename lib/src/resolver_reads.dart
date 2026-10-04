@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as p;
 
+import 'asset_read_cache.dart';
 import 'cache_directory.dart';
 import 'indexed_blob_store.dart';
 import 'remote_build_step.dart';
@@ -191,13 +192,13 @@ Future<void> collectResolverReads(
     final asset = pending.removeFirst();
     if (!visited.add(asset)) continue;
 
-    List<int> bytes;
+    AssetReadContent content;
     final readTimer = metrics.enabled ? (Stopwatch()..start()) : null;
     try {
       // Validate the asset under this action's visibility before consulting
       // cached parse results. The reader also records this action's observed
       // read, and its shared byte cache avoids another RPC when available.
-      bytes = await io.readAsBytes(asset);
+      content = await io.readContent(asset);
     } on AssetNotFoundException {
       // A demanded optional output can appear later in this phase. Do not
       // memoize a missing asset across actions.
@@ -208,8 +209,14 @@ Future<void> collectResolverReads(
       }
     }
 
+    final bytes = content.bytes;
     final digestTimer = metrics.enabled ? (Stopwatch()..start()) : null;
-    final digest = _contentDigest(bytes);
+    if (content.cachedContentDigest == null) {
+      metrics.resolverReadsDigestComputations++;
+    } else {
+      metrics.resolverReadsDigestReuses++;
+    }
+    final digest = content.contentDigest;
     if (digestTimer != null) {
       metrics.resolverReadsDigestUs += digestTimer.elapsedMicroseconds;
     }
