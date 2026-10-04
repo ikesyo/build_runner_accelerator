@@ -42,6 +42,8 @@ final class ResolverActionMetrics {
   /// Conditional directive collection, separate from cycle-graph parsing.
   int resolverReadsReadUs = 0;
   int resolverReadsDigestUs = 0;
+  int resolverReadsDigestComputations = 0;
+  int resolverReadsDigestReuses = 0;
   int resolverReadsCacheUs = 0;
   int resolverReadsDecodeUs = 0;
   int resolverReadsParseUs = 0;
@@ -129,6 +131,8 @@ final class ResolverActionMetrics {
     depParseUs = 0;
     resolverReadsReadUs = 0;
     resolverReadsDigestUs = 0;
+    resolverReadsDigestComputations = 0;
+    resolverReadsDigestReuses = 0;
     resolverReadsCacheUs = 0;
     resolverReadsDecodeUs = 0;
     resolverReadsParseUs = 0;
@@ -192,6 +196,8 @@ final class ResolverActionMetrics {
     'dep_parse_us': depParseUs,
     'resolver_reads_read_us': resolverReadsReadUs,
     'resolver_reads_digest_us': resolverReadsDigestUs,
+    'resolver_reads_digest_computations': resolverReadsDigestComputations,
+    'resolver_reads_digest_reuses': resolverReadsDigestReuses,
     'resolver_reads_cache_us': resolverReadsCacheUs,
     'resolver_reads_decode_us': resolverReadsDecodeUs,
     'resolver_reads_parse_us': resolverReadsParseUs,

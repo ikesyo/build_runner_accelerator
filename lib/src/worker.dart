@@ -17,6 +17,7 @@ import 'package:package_config/package_config.dart';
 import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
 import 'package:build_runner/src/build_plan/build_inputs.dart' show BuildInputs;
 
+import 'asset_read_cache.dart';
 import 'current_build_runtime.dart';
 import 'protocol.dart';
 import 'remote_build_step.dart';
@@ -179,7 +180,7 @@ class _WorkerRuntime {
   final ResolverInitializationProfile resolverProfile;
   WorkerResolversImpl resolver;
   final ResourceManager resourceManager = ResourceManager();
-  final Map<AssetId, List<int>> readCache = <AssetId, List<int>>{};
+  final readCache = AssetReadCache();
   final Set<AssetId> readableCache = <AssetId>{};
   final ResolverDependencyCache resolverDependencyCache =
       ResolverDependencyCache();

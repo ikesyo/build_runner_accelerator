@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:build/build.dart';
+import 'package:build_runner_accelerator/src/asset_read_cache.dart';
 import 'package:crypto/crypto.dart';
 import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:build_runner_accelerator/src/indexed_blob_store.dart';
@@ -14,6 +15,67 @@ import 'package:package_config/package_config.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test(
+    'phase eviction and delete/recreate refresh conditional reads',
+    () async {
+      final main = AssetId('app', 'lib/main.dart');
+      final old = AssetId('app', 'lib/old.dart');
+      final next = AssetId('app', 'lib/next.dart');
+      final reads = AssetReadCache({
+        main: utf8.encode("export 'old.dart' if (dart.library.io) 'dart:io';"),
+        old: [],
+        next: [],
+      });
+      final cache = _newTestCache();
+      final config = PackageConfig([]);
+      Future<Set<AssetId>> collect({bool deleted = false}) async {
+        // Resolver replacement keeps the worker's byte cache for unchanged
+        // assets; changed IDs are evicted before constructing the new reader.
+        final io = RemoteAssetReaderWriter(readCache: reads, readableCache: {});
+        io.beginAction(
+          rpc: _rpc(),
+          package: 'app',
+          primaryInput: null,
+          blockedAssets: deleted ? {main} : {},
+        );
+        try {
+          io.observedReads.add(main);
+          await collectResolverReads(io, config, cache);
+          return Set.of(io.observedReads);
+        } finally {
+          io.endAction();
+        }
+      }
+
+      expect(await collect(), contains(old));
+      cache.clear();
+      resolverActionMetrics.beginAction();
+      expect(await collect(), contains(old));
+      expect(resolverActionMetrics.resolverReadsDigestComputations, 0);
+      expect(resolverActionMetrics.resolverReadsDigestReuses, 2);
+      reads.remove(main);
+      expect(await collect(deleted: true), {main});
+      reads[main] = utf8.encode(
+        "export 'next.dart' if (dart.library.io) 'dart:io';",
+      );
+      resolverActionMetrics.beginAction();
+      final recreated = await collect();
+      expect(recreated, contains(next));
+      expect(recreated, isNot(contains(old)));
+      expect(resolverActionMetrics.resolverReadsDigestComputations, 2);
+      // A failed build/restart clears all bytes even if content is restored.
+      reads.clear();
+      cache.clear();
+      reads.addAll({
+        main: utf8.encode("export 'old.dart' if (dart.library.io) 'dart:io';"),
+        old: [],
+      });
+      resolverActionMetrics.beginAction();
+      expect(await collect(), contains(old));
+      expect(resolverActionMetrics.resolverReadsDigestComputations, 2);
+    },
+  );
+
   test(
     'persistent extraction remaps relative and file URIs after reset',
     () async {
@@ -49,14 +111,14 @@ void main() {
         String input,
       ) async {
         final asset = AssetId('app', input);
-        final reads = <AssetId, List<int>>{
+        final reads = AssetReadCache(<AssetId, List<int>>{
           asset: content,
           AssetId('app', input.replaceFirst('main.dart', 'relative.dart')): [],
           AssetId('old', 'lib/alternate.dart'): [],
           AssetId('new', 'lib/alternate.dart'): [],
           AssetId('other', 'lib/base.dart'): [],
           AssetId('other', 'lib/web.dart'): [],
-        };
+        });
         final io = RemoteAssetReaderWriter(readCache: reads, readableCache: {});
         io.observedReads.add(asset);
         await collectResolverReads(io, config, cache);
@@ -114,11 +176,11 @@ void main() {
     );
     store.put(sha256.convert(bytes).toString(), utf8.encode('[42]'));
     final io = RemoteAssetReaderWriter(
-      readCache: {
+      readCache: AssetReadCache({
         main: bytes,
         AssetId('app', 'lib/base.dart'): [],
         AssetId('app', 'lib/io.dart'): [],
-      },
+      }),
       readableCache: {},
     );
     io.observedReads.add(main);
@@ -144,7 +206,7 @@ void main() {
     final generated = AssetId('app', 'lib/generated.dart');
     final leaf = AssetId('app', 'lib/leaf.dart');
     final io = RemoteAssetReaderWriter(
-      readCache: {
+      readCache: AssetReadCache({
         main: utf8.encode(
           "import 'generated.dart' if (dart.library.io) 'dart:io';",
         ),
@@ -152,7 +214,7 @@ void main() {
           "export 'leaf.dart' if (dart.library.io) 'dart:io';",
         ),
         leaf: [],
-      },
+      }),
       readableCache: {},
     );
     final cache = _newTestCache();
@@ -192,11 +254,11 @@ void main() {
       });
       final main = AssetId('app', 'lib/main.dart');
       final io = RemoteAssetReaderWriter(
-        readCache: {
+        readCache: AssetReadCache({
           main: utf8.encode(
             "import 'ordinary.dart'; export 'another.dart'; class Main {}",
           ),
-        },
+        }),
         readableCache: {},
       );
       io.observedReads.add(main);
@@ -219,7 +281,7 @@ void main() {
     final shared = AssetId('app', 'lib/shared.dart');
     final dependency = AssetId('app', 'lib/dependency.dart');
     final anotherInput = AssetId('app', 'lib/other.dart');
-    final readCache = <AssetId, List<int>>{
+    final readCache = AssetReadCache(<AssetId, List<int>>{
       shared: utf8.encode(
         "import 'dependency.dart' if (dart.library.io) 'dependency_io.dart';",
       ),
@@ -227,7 +289,7 @@ void main() {
       AssetId('app', 'lib/dependency_io.dart'): utf8.encode(
         'class DependencyIo {}',
       ),
-    };
+    });
     final io = RemoteAssetReaderWriter(
       readCache: readCache,
       readableCache: <AssetId>{},
@@ -275,7 +337,7 @@ void main() {
     expect(packageConfigUri, isNotNull);
     final packageConfig = await loadPackageConfigUri(packageConfigUri!);
     final io = RemoteAssetReaderWriter(
-      readCache: <AssetId, List<int>>{},
+      readCache: AssetReadCache(<AssetId, List<int>>{}),
       readableCache: <AssetId>{},
     );
     io.observedReads.add(AssetId('app', 'lib/main.dart'));
@@ -298,12 +360,12 @@ void main() {
       final fallbackIo = AssetId('app', 'lib/fallback_io.dart');
       final replacementIo = AssetId('app', 'lib/replacement_io.dart');
       final io = RemoteAssetReaderWriter(
-        readCache: <AssetId, List<int>>{
+        readCache: AssetReadCache(<AssetId, List<int>>{
           fallback: utf8.encode('class Fallback {}'),
           replacement: utf8.encode('class Replacement {}'),
           fallbackIo: utf8.encode('class FallbackIo {}'),
           replacementIo: utf8.encode('class ReplacementIo {}'),
-        },
+        }),
         readableCache: <AssetId>{},
       );
       final cache = _newTestCache();
@@ -360,7 +422,7 @@ void main() {
       final semicolonFallback = AssetId('app', 'lib/semicolon;fallback.dart');
       final semicolonVariant = AssetId('app', 'lib/semicolon;html.dart');
       final noise = AssetId('app', 'lib/noise.dart');
-      final readCache = <AssetId, List<int>>{
+      final readCache = AssetReadCache(<AssetId, List<int>>{
         main: utf8.encode(
           "import 'fallback.dart' if (dart.library.io) 'io.dart';",
         ),
@@ -382,7 +444,7 @@ void main() {
           '''// import 'comment.dart' if (dart.library.io) 'comment_io.dart';
 final text = "export 'string.dart' if (dart.library.io) 'string_io.dart';";''',
         ),
-      };
+      });
       final cache = _newTestCache();
 
       Future<Set<AssetId>> collectPass() async {
@@ -397,7 +459,10 @@ final text = "export 'string.dart' if (dart.library.io) 'string_io.dart';";''',
         return Set<AssetId>.of(io.observedReads);
       }
 
+      resolverActionMetrics.beginAction();
       final firstReads = await collectPass();
+      expect(resolverActionMetrics.resolverReadsDigestComputations, 9);
+      expect(resolverActionMetrics.resolverReadsDigestReuses, 0);
       expect(
         firstReads,
         containsAll(<AssetId>[
@@ -428,7 +493,10 @@ final text = "export 'string.dart' if (dart.library.io) 'string_io.dart';";''',
       );
       expect(cachedMainDependencies, isNotNull);
 
+      resolverActionMetrics.beginAction();
       final repeatedReads = await collectPass();
+      expect(resolverActionMetrics.resolverReadsDigestComputations, 0);
+      expect(resolverActionMetrics.resolverReadsDigestReuses, 9);
       expect(
         repeatedReads,
         containsAll(<AssetId>[
@@ -452,7 +520,9 @@ final text = "export 'string.dart' if (dart.library.io) 'string_io.dart';";''',
       readCache[main] = utf8.encode(
         "import 'replacement.dart' if (dart.library.io) 'replacement_io.dart';",
       );
+      resolverActionMetrics.beginAction();
       final samePhaseReads = await collectPass();
+      expect(resolverActionMetrics.resolverReadsDigestComputations, 3);
       expect(
         samePhaseReads,
         containsAll(<AssetId>[main, replacement, replacementIo]),
