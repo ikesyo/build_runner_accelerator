@@ -9,22 +9,14 @@ import 'package:path/path.dart' as p;
 
 import 'indexed_blob_store.dart';
 
-/// Packed analyzer cache with read-time migration of legacy shard files.
+/// Disposable v2 analyzer pack. Earlier formats are intentionally ignored.
 final class PackedAnalysisByteStore implements ByteStore {
   PackedAnalysisByteStore(String dir)
-    : _directory = dir,
-      _store = IndexedBlobStore(p.join(dir, 'store.v1.bin')),
-      _legacy = FileByteStore(dir),
-      _legacyFiles = _findLegacyFiles(dir);
+    : _store = IndexedBlobStore(p.join(dir, 'store.v2.bin'));
 
   final IndexedBlobStore _store;
-  final FileByteStore _legacy;
-  final Map<String, File> _legacyFiles;
-  final String _directory;
 
-  /// Unlinked syntax entries alone do not mean the expensive linking is warm.
-  bool get hasLinkedEntries =>
-      _store.containsKeySuffix('.linked') || hasLegacyLinkedEntries(_directory);
+  bool get hasLinkedEntries => _store.containsKeySuffix('.linked');
 
   static bool hasLegacyLinkedEntries(String dir) {
     final legacy = FileByteStore(dir);
@@ -34,20 +26,11 @@ final class PackedAnalysisByteStore implements ByteStore {
   }
 
   @override
-  Uint8List? get(String key) {
-    final bytes = _store.get(key);
-    if (bytes != null) {
-      _removeLegacy(key);
-      return bytes;
-    }
-    final legacy = _legacy.get(key);
-    if (legacy != null && _store.put(key, legacy)) _removeLegacy(key);
-    return legacy;
-  }
+  Uint8List? get(String key) => _store.get(key);
 
   @override
   Uint8List putGet(String key, Uint8List bytes) {
-    if (_store.put(key, bytes)) _removeLegacy(key);
+    _store.put(key, bytes);
     return bytes;
   }
 
@@ -56,22 +39,7 @@ final class PackedAnalysisByteStore implements ByteStore {
 
   void close() => _store.close();
 
-  void _removeLegacy(String key) {
-    final file = _legacyFiles[key];
-    if (file == null) return;
-    try {
-      file.deleteSync();
-      _legacyFiles.remove(key);
-    } on PathNotFoundException {
-      // Another worker already removed this migrated entry.
-      _legacyFiles.remove(key);
-    } on FileSystemException {
-      // Cleanup is best-effort; retain it for a later attempt.
-    }
-  }
-
-  /// Snapshot shard filenames once, avoiding a legacy stat/unlink for every
-  /// packed hit after migration. Ignore links, temp files and other layouts.
+  /// Used only by the per-key opt-out store's readiness check.
   static Map<String, File> _findLegacyFiles(String dir) {
     final files = <String, File>{};
     final shardPattern = RegExp(r'^[a-z0-9_]{2}$');

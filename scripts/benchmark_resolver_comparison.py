@@ -170,7 +170,7 @@ def main():
             log_path = results / f'{fixture_name}-{mode}-{iteration}-{case}.log'
             pack_root = Path(run_env['BUILD_RUNNER_ACCELERATOR_CACHE']) / 'byte_store'
             def packed_bytes():
-                return sum(p.stat().st_size for p in pack_root.rglob('store.v1.bin'))
+                return sum(p.stat().st_size for p in pack_root.rglob('store.*.bin*') if p.is_file())
             packed_before = packed_bytes()
             wall = command(argv, root, log_path, run_env)
             packed_after = packed_bytes()

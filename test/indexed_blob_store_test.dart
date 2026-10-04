@@ -78,20 +78,21 @@ void main() {
     expect(store.get('later'), [8]);
   });
 
-  test('reader leaves a partial tail intact and retries after completion', () {
+  test('reader retries an incomplete publication without repairing it', () {
     store.put('existing', Uint8List.fromList([1]));
-    final siblingFile = File('${dir.path}/sibling.bin');
-    final sibling = IndexedBlobStore(siblingFile.path);
+    final journal = File('${dir.path}/store.bin.index');
+    final length = journal.lengthSync();
+    final sibling = IndexedBlobStore('${dir.path}/store.bin');
     sibling.put('later', Uint8List.fromList([8]));
     sibling.close();
-    final record = siblingFile.readAsBytesSync();
-    final file = File('${dir.path}/store.bin');
-    final length = file.lengthSync();
-    file.writeAsBytesSync(record.sublist(0, 9), mode: FileMode.append);
+    final record = journal.readAsBytesSync().sublist(length);
+    final handle = journal.openSync(mode: FileMode.append);
+    handle.truncateSync(length + 9);
+    handle.closeSync();
     store.refresh();
     expect(store.get('later'), isNull);
-    expect(file.lengthSync(), length + 9);
-    file.writeAsBytesSync(record.sublist(9), mode: FileMode.append);
+    expect(journal.lengthSync(), length + 9);
+    journal.writeAsBytesSync(record.sublist(9), mode: FileMode.append);
     store.refresh();
     expect(store.get('later'), [8]);
   });
@@ -119,6 +120,104 @@ void main() {
       expect(reader.get('new.linked'), [8]);
     });
   }
+  test('writer repairs incomplete publication even on an identical put', () {
+    final value = Uint8List.fromList([7]);
+    store.put('first', value);
+    final journal = File('${dir.path}/store.bin.index');
+    final end = journal.lengthSync();
+    final data = File('${dir.path}/store.bin');
+    final dataEnd = data.lengthSync();
+    final sibling = IndexedBlobStore(data.path);
+    sibling.put('lost', Uint8List.fromList([8]));
+    sibling.close();
+    final handle = journal.openSync(mode: FileMode.append);
+    handle.truncateSync(journal.lengthSync() - 1);
+    handle.closeSync();
+    expect(store.put('first', value), isTrue);
+    expect(journal.lengthSync(), end);
+    expect(data.lengthSync(), dataEnd);
+    expect(store.put('after', Uint8List.fromList([9])), isTrue);
+    final reader = IndexedBlobStore(data.path);
+    addTearDown(reader.close);
+    expect(reader.get('first'), value);
+    expect(reader.get('lost'), isNull);
+    expect(reader.get('after'), [9]);
+  });
+
+  test('invalid journal generation is a miss and rebuilds safely', () {
+    store.put('old', Uint8List.fromList([1]));
+    final journal = File('${dir.path}/store.bin.index');
+    final bytes = journal.readAsBytesSync()..[4] ^= 1;
+    journal.writeAsBytesSync(bytes);
+    store.refresh();
+    expect(store.get('old'), isNull);
+    expect(store.put('new', Uint8List.fromList([2])), isTrue);
+    final reader = IndexedBlobStore('${dir.path}/store.bin');
+    addTearDown(reader.close);
+    expect(reader.get('old'), isNull);
+    expect(reader.get('new'), [2]);
+  });
+
+  test('corrupt payload misses without hiding later published records', () {
+    store.put('bad', Uint8List.fromList([1, 2, 3]));
+    store.put('good', Uint8List.fromList([4]));
+    final file = File('${dir.path}/store.bin');
+    final bytes = file.readAsBytesSync()..[11] = 99;
+    file.writeAsBytesSync(bytes);
+    final reader = IndexedBlobStore(file.path);
+    addTearDown(reader.close);
+    expect(reader.get('bad'), isNull);
+    expect(reader.get('good'), [4]);
+    expect(reader.put('bad', Uint8List.fromList([1, 2, 3])), isTrue);
+    expect(reader.get('good'), [4]);
+    expect(reader.get('bad'), [1, 2, 3]);
+  });
+
+  test('lost journal discards unpublished data and rebuilds', () {
+    store.put('old', Uint8List.fromList([1]));
+    store.close();
+    File('${dir.path}/store.bin.index').deleteSync();
+    final reader = IndexedBlobStore('${dir.path}/store.bin');
+    addTearDown(reader.close);
+    expect(reader.get('old'), isNull);
+    expect(reader.put('new', Uint8List.fromList([2])), isTrue);
+    expect(reader.get('new'), [2]);
+    expect(reader.get('old'), isNull);
+  });
+
+  test('corrupt publication header is rejected and repaired under lock', () {
+    store.put('first', Uint8List.fromList([1]));
+    final journal = File('${dir.path}/store.bin.index');
+    final end = journal.lengthSync();
+    store.put('second', Uint8List.fromList([2]));
+    final bytes = journal.readAsBytesSync()..[end + 4] ^= 1;
+    journal.writeAsBytesSync(bytes);
+    final reader = IndexedBlobStore('${dir.path}/store.bin');
+    addTearDown(reader.close);
+    expect(reader.get('first'), [1]);
+    expect(reader.get('second'), isNull);
+    expect(reader.put('third!', Uint8List.fromList([3])), isTrue);
+    reader.refresh();
+    expect(reader.get('third!'), [3]);
+    // A stale offset now points at a different key; it must never hit.
+    expect(store.get('second'), isNull);
+    store.refresh();
+    expect(store.get('third!'), [3]);
+  });
+
+  test('data loss resets publication and never returns stale offsets', () {
+    store.put('first', Uint8List.fromList([1]));
+    final file = File('${dir.path}/store.bin');
+    final handle = file.openSync(mode: FileMode.append);
+    handle.truncateSync(0);
+    handle.closeSync();
+    expect(store.get('first'), isNull);
+    expect(store.put('other', Uint8List.fromList([2])), isTrue);
+    final reader = IndexedBlobStore(file.path);
+    addTearDown(reader.close);
+    expect(reader.get('first'), isNull);
+    expect(reader.get('other'), [2]);
+  });
 
   test('identical writes do not grow the pack across builds', () {
     final file = File('${dir.path}/store.bin');
@@ -175,8 +274,8 @@ void main() {
     expect(store.get('k'), isNull);
     store.put('k', value);
     expect(store.get('k'), value);
-    // A fresh scan encounters the corrupt record first. Its next put must
-    // truncate that tail and restore a record visible to later readers.
+    // A fresh reader selects the published replacement and deduplicates it
+    // without discarding any earlier data records.
     final reopened = IndexedBlobStore(file.path);
     addTearDown(reopened.close);
     reopened.put('k', value);
