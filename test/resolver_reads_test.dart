@@ -155,7 +155,7 @@ void main() {
       },
       readableCache: {},
     );
-    final cache = ResolverDependencyCache();
+    final cache = _newTestCache();
     io.beginAction(
       rpc: _rpc(),
       package: 'app',
@@ -232,7 +232,7 @@ void main() {
       readCache: readCache,
       readableCache: <AssetId>{},
     );
-    final cache = ResolverDependencyCache();
+    final cache = _newTestCache();
 
     io.beginAction(
       rpc: _rpc(),
@@ -281,7 +281,7 @@ void main() {
     io.observedReads.add(AssetId('app', 'lib/main.dart'));
 
     await expectLater(
-      collectResolverReads(io, packageConfig, ResolverDependencyCache()),
+      collectResolverReads(io, packageConfig, _newTestCache()),
       throwsA(isA<StateError>()),
     );
   });
@@ -306,7 +306,7 @@ void main() {
         },
         readableCache: <AssetId>{},
       );
-      final cache = ResolverDependencyCache();
+      final cache = _newTestCache();
 
       Future<Set<AssetId>> collectPostProcessOutput(String target) async {
         io.beginAction(
@@ -383,7 +383,7 @@ void main() {
 final text = "export 'string.dart' if (dart.library.io) 'string_io.dart';";''',
         ),
       };
-      final cache = ResolverDependencyCache();
+      final cache = _newTestCache();
 
       Future<Set<AssetId>> collectPass() async {
         final io = RemoteAssetReaderWriter(
@@ -476,6 +476,17 @@ final text = "export 'string.dart' if (dart.library.io) 'string_io.dart';";''',
       expect(cache.scannedAssetCount, 7);
     },
   );
+}
+
+// Keep dependency collection tests independent of the shared machine cache.
+ResolverDependencyCache _newTestCache() {
+  final directory = Directory.systemTemp.createTempSync('resolver-reads-');
+  final store = IndexedBlobStore('${directory.path}/store.bin');
+  addTearDown(() async {
+    store.close();
+    await directory.delete(recursive: true);
+  });
+  return ResolverDependencyCache(directiveStore: store);
 }
 
 RpcSession _rpc() => RpcSession(
