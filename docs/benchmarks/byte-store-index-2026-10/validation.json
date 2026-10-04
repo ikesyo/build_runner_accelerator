@@ -1,0 +1,37 @@
+{
+  "sdk": "Dart 3.13.3 linux_x64",
+  "before_main_rebase": {
+    "format": "0",
+    "analyze": "0",
+    "dart-tests": "0",
+    "rust-tests": "0",
+    "verify": "0",
+    "verify-arbitrary": "0",
+    "verify-full": "0",
+    "watch": "0",
+    "freezed-correctness": "0",
+    "freezed-watch": "0",
+    "freezed-benchmark": "0",
+    "riverpod-correctness": "0",
+    "riverpod-watch": "0",
+    "riverpod-benchmark": "0",
+    "matrix": "0"
+  },
+  "after_main_rebase": {
+    "format": "0",
+    "analyze": "0",
+    "dart-tests": "0",
+    "rust-tests": "0",
+    "verify": "0",
+    "verify-arbitrary": "0"
+  },
+  "after_rebase_dart_tests": 140,
+  "rust_tests": 97,
+  "measured_builds_with_matching_output_manifests": 180,
+  "stock_output_comparisons": 8,
+  "blocked_cache_builds_with_matching_outputs": 2,
+  "full_matrix_rerun_after_rebase": false,
+  "benchmark_lifecycle_regression_tests": 4,
+  "clean_includes_native_parts": true,
+  "comparison_repeated_with_corrected_clean": true
+}

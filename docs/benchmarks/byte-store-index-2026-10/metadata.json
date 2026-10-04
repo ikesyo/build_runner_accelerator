@@ -1,0 +1,29 @@
+{
+  "baseline_commit": "5dc2e1bf166fa4b4f6ba4a41f030d66822216ea6",
+  "sdk": "Dart 3.13.3 linux_x64",
+  "rust": "1.98.1 release",
+  "cpu_quota": "200000 100000",
+  "cpu_info": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           46 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  3\nOn-line CPU(s) list:                     0-2\nVendor ID:                               AuthenticAMD\nModel name:                              AMD EPYC 7763 64-Core Processor\nCPU family:                              25\nModel:                                   1\nThread(s) per core:                      1\nCore(s) per socket:                      3\nSocket(s):                               1\nStepping:                                1\nBogoMIPS:                                4890.85\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 xsaves clzero xsaveerptr arat npt nrip_save tsc_scale vmcb_clean flushbyasid pausefilter pfthreshold v_vmsave_vmload umip vaes vpclmulqdq rdpid fsrm arch_capabilities\nHypervisor vendor:                       KVM\nVirtualization type:                     full\nL1d cache:                               64 KiB (2 instances)\nL1i cache:                               64 KiB (2 instances)\nL2 cache:                                1 MiB (2 instances)\nL3 cache:                                32 MiB (1 instance)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-2\nVulnerability Gather data sampling:      Not affected\nVulnerability Ghostwrite:                Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Old microcode:             Not affected\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Vulnerable\nVulnerability Spec store bypass:         Vulnerable\nVulnerability Spectre v1:                Vulnerable: __user pointer sanitization and usercopy barriers only; no swapgs barriers\nVulnerability Spectre v2:                Vulnerable; STIBP: disabled; PBRSB-eIBRS: Not affected; BHI: Not affected\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Vulnerable\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Not affected\n",
+  "filesystem": "overlayfs",
+  "cache_root": "/workspace/byte-store-results/build-cache",
+  "worker_count": 4,
+  "aot_compile_included": false,
+  "launcher_included": false,
+  "sdk_summary_warm": true,
+  "baseline_worker_sha256": "60f33e6523b27bd32c18fd9484d676d6d92804ff5dfd08cf364e24c948913046",
+  "candidate_worker_sha256": "2225191c9e95087890f804652279641ed790ec0803dc876a55beb2c05704e584",
+  "fixture_package_configs": {
+    "10": "6891ab54914ed5cc46e34cc81876c53132a697dc25b4d1c2db61768b45e424c7",
+    "500": "3aa83c1d671211f652e7f21567f00aeead96e1eb1ff2a177d9647e2aae63f0d4"
+  },
+  "branch_derived_from_pr80_commit": "b7db40a0547f78f97f2dfede4a39e0401697bf7f",
+  "rebased_onto_merged_pr80": true,
+  "build_samples": 180,
+  "micro_samples": 140,
+  "analysis_single_flight": "disabled (main default)",
+  "metrics_enabled_in_timed_builds": false,
+  "independent_crc32_records_checked": 66064,
+  "output_manifest_sha256": "SHA-256 of UTF-8 JSON of relative path -> file SHA-256, sort_keys=True, separators=(comma,colon); includes generated source and native output parts",
+  "native_output_parts_removed_for_clean": true,
+  "frontend_timeout_seconds": 300
+}

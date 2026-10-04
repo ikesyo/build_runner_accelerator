@@ -21,8 +21,8 @@ import 'indexed_blob_store.dart';
 /// builds reuse it instead of re-parsing.
 ///
 /// By default entries live in one packed file per SDK under the shared
-/// accelerator cache directory (`store.v2.bin`), read through an in-memory
-/// offset index — one file scan per worker instead of ~900 individual file
+/// accelerator cache directory (`v3-<sdk>/store.bin`), read through an in-memory
+/// offset index — one metadata scan per worker instead of ~900 individual file
 /// opens during the dep walk. With
 /// `BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0` the legacy layout is used: small
 /// JSON files, one per key. Both layouts are namespaced by the running SDK
@@ -36,7 +36,7 @@ final class AssetDepsCache {
   AssetDepsCache._(this._dir, this._packed);
 
   static const _version = 'v1';
-  static const _packedVersion = 'v2';
+  static const _packedVersion = 'v3';
 
   /// The shared process-wide cache, or `null` when disabled.
   static AssetDepsCache? shared() {
