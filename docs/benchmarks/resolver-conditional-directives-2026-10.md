@@ -226,9 +226,31 @@ Completed: scoped Dart analysis/formatting, 98 locked Rust tests, locked
 debug/release builds, Rust formatting and eight Python workflow/benchmark
 checks. The final nine collector/directive-parity tests pass with persistent
 reuse enabled and disabled, and with Analyzer 13.3.0 and 14.3.0.
-All 146 CI-style Dart source tests also pass. Final full
-correctness/watch/arbitrary suites are running; their final status is
-recorded before publication.
+All 146 CI-style Dart source tests also pass. Quick and arbitrary-builder
+verification pass. Final full verification passes all five suites (core,
+current-codegen, compatibility-lifecycle, compatibility-graph and
+compatibility-mapping), including stock/native correctness and watch checks.
+Standard Freezed/Riverpod benchmarks and the JSON/Freezed/Riverpod matrix
+also pass output equality/no-op checks, with metrics and trace disabled.
+These standard script runs are validation, not the paired main/candidate
+speedup measurements above.
+
+Verification commands (same SDK and shared verification cache):
+
+```bash
+bash scripts/verify.sh
+VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
+VERIFY_ARBITRARY_BUILDER=1 VERIFY_LEVEL=full bash scripts/verify.sh
+BUILD_RUNNER_ACCELERATOR_METRICS=0 BUILD_RUNNER_ACCELERATOR_TRACE=0 bash scripts/benchmark_freezed.sh
+BUILD_RUNNER_ACCELERATOR_METRICS=0 BUILD_RUNNER_ACCELERATOR_TRACE=0 bash scripts/benchmark_riverpod.sh
+BUILD_RUNNER_ACCELERATOR_METRICS=0 BUILD_RUNNER_ACCELERATOR_TRACE=0 bash scripts/benchmark_matrix.sh
+dart analyze lib bin test tool
+dart test --compiler=source
+cargo test --locked --manifest-path rust/Cargo.toml
+```
+
+The environment uses `env -u HOME` for Dart to avoid writing analytics state
+outside the workspace, plus the local SDK/pub/Rust paths above.
 
 This is a small fixture and prepared-worker measurement, not an application,
 launcher-inclusive, AOT-compilation or machine-cold speedup claim. The cache
