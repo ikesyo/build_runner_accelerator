@@ -216,7 +216,8 @@ Verification commands and results are recorded in [validation.json](validation.j
 The benchmark lifecycle tests run with
 `python3 -m unittest discover -s scripts -p test_benchmark_shared_byte_store.py`.
 They cover exit status/resource preservation, timeout of a frontend and forked
-worker, reaping, and removal of nested native outputs without clearing byte stores.
+worker, reaping, disappearance of procfs entries during read, and removal of
+nested native outputs without clearing byte stores.
 An independent Python zlib CRC32/layout check validates all 66,064 metadata
 records in the cache templates, preventing a matching reader/writer checksum bug
 from escaping tests.

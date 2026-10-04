@@ -1,3 +1,4 @@
+import errno
 import os
 from pathlib import Path
 import signal
@@ -6,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from benchmark_shared_byte_store import clear_graph, wait_for_process
 
@@ -24,6 +26,9 @@ class BenchmarkLifecycleTest(unittest.TestCase):
             os.waitpid(process.pid, os.WNOHANG)
 
     def test_deadline_kills_workers_and_reaps_frontend(self):
+        self._check_deadline()
+
+    def _check_deadline(self):
         # A forked worker inherits the isolated process group. Killing only the
         # frontend would leave this worker able to mutate benchmark files.
         code = ('import os, time\n'
@@ -48,11 +53,19 @@ class BenchmarkLifecycleTest(unittest.TestCase):
                 try:
                     if state.read_text().split(') ')[1].split()[0] == 'Z':
                         break
-                except FileNotFoundError:
+                except (FileNotFoundError, ProcessLookupError):
                     break
                 time.sleep(0.01)
             else:
                 self.fail('worker survived the frontend timeout')
+
+    def test_deadline_handles_proc_entry_disappearing_during_read(self):
+        # procfs can return ESRCH after open succeeds if init reaps the worker
+        # before read. Exercise the full timeout/reaping check with that race.
+        with patch.object(Path, 'read_text',
+                          side_effect=ProcessLookupError(errno.ESRCH, 'No such process')) as read:
+            self._check_deadline()
+        read.assert_called_once()
 
     def test_clean_removes_nested_native_outputs_without_clearing_byte_store(self):
         with tempfile.TemporaryDirectory() as directory:
