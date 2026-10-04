@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.9.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.8.0...v0.9.0) - 2026-10-04
+
+- perf: reduce resolver startup with cached directives, batched reads, and packed stores by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/73
+- fix: stop duplicate packed cache growth and remove migrated legacy shards by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/76
+- perf: reduce cold AOT startup by isolating trigger parsing by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/77
+- perf: avoid SDK summary copy during resolver initialization by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/79
+- ci: run Dart format only with the development SDK by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/81
+- perf: reduce cache write overhead and make single-flight opt-in by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/80
+
 ## [v0.8.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.7.0...v0.8.0) - 2026-10-02
 
 - Run full verification coverage in PR CI by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/66

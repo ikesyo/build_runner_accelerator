@@ -13,18 +13,18 @@ delete, rename, and watch semantics.
 
 ## Installation
 
-The current package version is `0.8.0`. Add it to the
+The current package version is `0.9.0`. Add it to the
 target project's `dev_dependencies`:
 
 ```bash
-dart pub add dev:build_runner_accelerator:^0.8.0
+dart pub add dev:build_runner_accelerator:^0.9.0
 ```
 
 Or add the dependency explicitly:
 
 ```yaml
 dev_dependencies:
-  build_runner_accelerator: ^0.8.0
+  build_runner_accelerator: ^0.9.0
 ```
 
 Run the project-local executable in the same place where you would normally
