@@ -8,20 +8,12 @@
 
 ## Evidence and decision
 
-PR #80 already removed per-record fsync and redundant filesystem operations.
-This branch was derived from its original head
-`b7db40a0547f78f97f2dfede4a39e0401697bf7f`, then rebased onto main after
-PR #80 merged. The final comparison baseline is merged main
-`5dc2e1bf166fa4b4f6ba4a41f030d66822216ea6`, including its fingerprint fix and
-single-flight disabled by default. The remaining packed-store startup reads all
-historical payloads, validates them and builds an offset map independently in each worker.
-
-An initial AOT probe measured a 500 MiB pack's index startup at 904 ms and
-514 MiB peak RSS; reading all values alone took 193 ms and a standalone
-Fletcher-16 workload over the same byte count took 353 ms. An 8 MiB pack's
-startup took 11 ms. Repeated, alternating probes below confirm that payload
-scanning is material once unused history accumulates. Normal fixtures' packs
-are much smaller, so their warm startup has little room for improvement.
+Packed-store startup reads all historical payloads, validates them and builds
+an offset map independently in each worker. With accumulated unused history,
+this makes startup time and memory usage depend on values the build never reads.
+For a 500 MiB pack, the measured startup cost is 724 ms and 514 MiB peak RSS;
+metadata-only startup takes 19 ms and 18 MiB. Normal fixtures' packs are much
+smaller, so their warm startup has little room for improvement.
 
 Use a separate append-only publication journal containing keys, offsets,
 lengths and metadata checksums. Index startup reads metadata, never unused
@@ -79,9 +71,9 @@ all entries, and an invalid metadata entry discards its suffix on repair.
 
 Repair writes a new checksummed random 63-bit generation. Refresh checks the
 generation even if file length is unchanged: length-only freshness can miss a
-repaired journal that regrows to the same size. PR #80's startup ownership
-handoff still refreshes waiting readers; there is no filesystem poll on every
-new-key miss. Readiness requires a valid linked value, not just its metadata.
+repaired journal that regrows to the same size. Startup ownership handoff
+refreshes waiting readers; there is no filesystem poll on every new-key miss.
+Readiness requires a valid linked value, not just its metadata.
 
 Neither record publication nor generation repair requests fsync. Machine
 failure may lose either file or reorder durable writes; bounds, key and checksum
@@ -109,8 +101,8 @@ restore independently primed equivalent caches for each format. Clean removes
 outputs and graph; no-op follows clean. One-file renames a model field from
 `value` to `valueEdited`; broad renames it to `valueBroad` in all inputs,
 including the previously edited file, so every input and its output change.
-The source files are restored afterwards. Both timed lanes use main's default
-parallel analysis (single-flight disabled); metrics are disabled.
+Both timed lanes use parallel analysis (single-flight disabled); metrics are
+disabled.
 
 ### Isolated AOT probes
 
@@ -121,8 +113,6 @@ workspace filesystem; the build measurements use the production cache paths.
 CPU uses Linux
 CLOCK_PROCESS_CPUTIME_ID, including Dart mutator/GC threads. Peak RSS is for the
 whole isolated process, including untimed index preparation for get/write.
-The initial OS thread's schedstat is unsuitable because the mutator runs on
-another thread; it was replaced with the process clock before final reporting.
 
 | Cache / operation | Before wall / CPU ms | After wall / CPU ms | Before / after peak RSS MiB |
 | --- | ---: | ---: | ---: |
@@ -220,18 +210,21 @@ against the baseline/candidate store source, then run `seed`, `index`, `read`,
 count and value size. `load` isolates bulk file read/allocation; `index-only`
 preloads bytes and isolates UTF-8 decoding/map construction without checksums.
 
-Prepare a baseline worker from main `5dc2e1b` and a candidate worker against the
-same absolute fixture package configuration. Keep SDK `lib`/`version` beside the
+Prepare baseline and candidate workers against the same absolute fixture
+package configuration. The measured baseline and toolchain identities are
+recorded in [metadata.json](../benchmarks/byte-store-index-2026-10/metadata.json).
+Keep SDK `lib`/`version` beside the
 benchmark worker `bin` as in the production AOT SDK facade. Run:
 
 ```sh
+BENCH_DIR=/path/to/benchmark-artifacts
 python3 scripts/benchmark_shared_byte_store.py \
-  --baseline-worker /workspace/byte-store-results/baseline-worker \
-  --candidate-worker /workspace/byte-store-results/candidate-worker \
-  --baseline-probe /workspace/byte-store-results/baseline-probe \
-  --candidate-probe /workspace/byte-store-results/candidate-probe \
-  --cache /workspace/byte-store-results/build-cache \
-  --results /workspace/byte-store-results/comparison-final \
+  --baseline-worker "$BENCH_DIR/baseline-worker" \
+  --candidate-worker "$BENCH_DIR/candidate-worker" \
+  --baseline-probe "$BENCH_DIR/baseline-probe" \
+  --candidate-probe "$BENCH_DIR/candidate-probe" \
+  --cache "$BENCH_DIR/build-cache" \
+  --results "$BENCH_DIR/comparison" \
   --dart "$PWD/.toolchains/dart/dart-sdk/bin/dart" \
   --frontend "$PWD/rust/target/release/build_runner_accelerator" \
   --jobs 4 --repeats 5 --counts 10 500
@@ -241,29 +234,16 @@ The supplied cache is disposable: the script clears it and restores its own
 format-specific templates. Retained per-run timing/resource rows are in
 [builds.csv](../benchmarks/byte-store-index-2026-10/builds.csv) and
 [micro.csv](../benchmarks/byte-store-index-2026-10/micro.csv). Build rows also retain
-a digest of the sorted output-file SHA-256 manifest for each case. Full commands,
-logs, output digests, workers and templates remain under
-`/workspace/byte-store-results`; they are local artifacts, not distributed SDK
-binaries. The checked-in harness and probes make the comparison repeatable.
+a digest of the sorted output-file SHA-256 manifest for each case. The checked-in
+harness and probes make the comparison repeatable.
 
 ## Validation and remaining limits
 
-The full repository verification matrix passed on the PR #80-based implementation
-before the main rebase:
-
-- `VERIFY_LEVEL=full bash scripts/verify.sh` (all five suites)
-- `bash scripts/watch_smoke.sh`
-- `bash scripts/correctness_freezed.sh`, `watch_smoke_freezed.sh`, `benchmark_freezed.sh`
-- `bash scripts/correctness_riverpod.sh`, `watch_smoke_riverpod.sh`, `benchmark_riverpod.sh`
-- `bash scripts/benchmark_matrix.sh`
-
-After rebasing onto main `5dc2e1b`, formatting, analysis, all 140 Dart tests and
-97 Rust tests passed. The two required `scripts/verify.sh` invocations (default
-and `VERIFY_ARBITRARY_BUILDER=1`) both passed on the rebased tree. The final 180-build comparison, eight stock-output
-comparisons, and two blocked-cache builds above all use the rebased code.
-The full matrix was not rerun after the rebase. An independent Python zlib
-CRC32/layout check validates all 66,086 metadata records in the final cache
-templates, preventing a matching reader/writer checksum bug from escaping tests.
+Verification commands and results are recorded in
+[validation.json](../benchmarks/byte-store-index-2026-10/validation.json).
+An independent Python zlib CRC32/layout check validates metadata records in the
+cache templates, preventing a matching reader/writer checksum bug from escaping
+tests.
 
 Focused regression coverage includes concurrent writers, exact-byte
 deduplication, refresh after publication, incomplete journal retry/repair,
