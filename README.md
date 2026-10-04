@@ -240,8 +240,9 @@ the separate per-key implementation.
 The pack has no compaction yet, and stale fingerprint directories are not
 garbage-collected. Reclaim space by removing caches for toolchains you no longer
 use while builds are stopped, or prune the whole byte store. See
-[ADR 0026](docs/adr/0026-byte-store-publication-index.md) for format, recovery,
-measurements and limitations.
+[ADR 0026](docs/adr/0026-byte-store-publication-index.md) for format, recovery and
+limitations, and the [benchmark report](docs/benchmarks/byte-store-index-2026-10/README.md)
+for measurements.
 
 | Variable | Effect |
 | --- | --- |
