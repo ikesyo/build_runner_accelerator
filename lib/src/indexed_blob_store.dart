@@ -40,6 +40,18 @@ final class IndexedBlobStore {
   /// Total entries in the index; exposed for tests.
   int get entryCount => (_index ??= _scan()).length;
 
+  /// Includes complete records appended by sibling processes since our scan.
+  bool containsKeySuffix(String suffix) {
+    final index = _index ??= _scan();
+    _refreshIndex(index);
+    return index.keys.any((key) => key.endsWith(suffix));
+  }
+
+  /// Refresh once at a publication boundary rather than polling on every
+  /// miss. Cold analysis creates many genuinely new keys, so miss polling
+  /// adds filesystem work even when there is no sibling value to reuse.
+  void refresh() => _refreshIndex(_index ??= _scan());
+
   Uint8List? get(String key) {
     final index = _index ??= _scan();
     final slice = index[key];
@@ -56,20 +68,47 @@ final class IndexedBlobStore {
     }
   }
 
+  /// Read-only tail adoption. A reader must never truncate a writer's partial
+  /// record; leave it unindexed and retry it on the next refresh.
+  /// Completed prefixes are immutable: writer recovery truncates only the
+  /// invalid tail, which a reader has never included in [_indexedEnd].
+  void _refreshIndex(Map<String, (int, int)> index) {
+    try {
+      final file = File(_filePath);
+      final length = file.lengthSync();
+      if (length == _indexedEnd) return;
+      if (length < _indexedEnd) {
+        _raf?.closeSync();
+        _raf = null;
+        index
+          ..clear()
+          ..addAll(_scan());
+        return;
+      }
+      final raf = _raf ??= file.openSync(mode: FileMode.append);
+      raf.setPositionSync(_indexedEnd);
+      final tail = raf.readSync(length - _indexedEnd);
+      _indexedEnd = _parseInto(index, tail, _indexedEnd);
+    } on FileSystemException {
+      // A missing or unavailable cache remains a miss.
+    }
+  }
+
   /// Appends `value` under `key` unless the checksum-valid value is identical.
   /// Best-effort: any failure is swallowed so a
   /// cache write can never break the build; a later read just misses.
-  /// Returns whether the value was already present or flushed successfully.
+  /// Returns whether the value was already present or written successfully.
+  /// Records are immediately visible to sibling readers, but are not fsynced:
+  /// losing cache entries after a machine crash only requires recomputation.
   bool put(String key, Uint8List value) {
     try {
       final index = _index ??= _scan();
       final keyBytes = utf8.encode(key);
       if (keyBytes.isEmpty || keyBytes.length > _maxKeyLength) return false;
-      File(_filePath).parent.createSync(recursive: true);
-      final raf = _raf ??= File(_filePath).openSync(mode: FileMode.append);
+      final raf = _raf ??= _openForWrite();
       raf.lockSync(FileLock.exclusive);
       try {
-        _adoptTail(raf, index);
+        final offset = _adoptTail(raf, index);
         // Check after adopting sibling writers' records, while holding the
         // lock. Keys alone cannot establish equality or detect corruption.
         final slice = index[key];
@@ -79,8 +118,7 @@ final class IndexedBlobStore {
         }
         // Re-seek to the live end: reads or a truncation since the last write
         // may have moved the handle's position.
-        raf.setPositionSync(raf.lengthSync());
-        final offset = raf.lengthSync();
+        raf.setPositionSync(offset);
         final recordBytes =
             (BytesBuilder()
                   ..add(_u32(keyBytes.length))
@@ -90,7 +128,6 @@ final class IndexedBlobStore {
                   ..add(_u16(_fletcher16(value))))
                 .toBytes();
         raf.writeFromSync(recordBytes);
-        raf.flushSync();
         index[key] = (offset + _headerLength + keyBytes.length, value.length);
         _indexedEnd = offset + recordBytes.length;
         return true;
@@ -103,21 +140,27 @@ final class IndexedBlobStore {
     }
   }
 
+  RandomAccessFile _openForWrite() {
+    final file = File(_filePath);
+    file.parent.createSync(recursive: true);
+    return file.openSync(mode: FileMode.append);
+  }
+
   /// Indexes complete records appended after [_indexedEnd] and truncates a
   /// torn tail. Runs under the write lock, so no writer is mid-append.
-  void _adoptTail(RandomAccessFile raf, Map<String, (int, int)> index) {
+  int _adoptTail(RandomAccessFile raf, Map<String, (int, int)> index) {
     final length = raf.lengthSync();
-    if (length <= _indexedEnd) return;
+    if (length <= _indexedEnd) return length;
     raf.setPositionSync(_indexedEnd);
     final tail = raf.readSync(length - _indexedEnd);
     final end = _parseInto(index, tail, _indexedEnd);
     _indexedEnd = end;
     if (end < length) {
       raf.truncateSync(end);
-      // An append-mode handle can hold a stale end position: re-seek so the
-      // next write lands at the new end, not past the truncated gap.
-      raf.setPositionSync(raf.lengthSync());
     }
+    // The caller re-seeks after any deduplication read. Keep the live end
+    // obtained under the lock rather than asking the filesystem again.
+    return end;
   }
 
   /// Reads the store file once and indexes every complete record, stopping

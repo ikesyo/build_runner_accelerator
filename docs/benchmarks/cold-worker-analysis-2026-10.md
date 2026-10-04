@@ -1,0 +1,229 @@
+# Cold worker analysis and packed cache write experiments
+
+These native-frontend experiments support [ADR 0024](../adr/0024-cold-analysis-single-flight.md)
+and [ADR 0025](../adr/0025-packed-cache-publication-without-fsync.md). They exclude
+launcher startup and are separate from the public launcher-inclusive benchmark
+summary. The early measurements below are superseded; their limitations are
+retained to explain the final comparison. Raw artifact paths identify the local
+execution workspace and are not a portable reproduction harness.
+
+## Initial local timing
+
+Compared baseline commit `a722a77` with this implementation using the same
+release native binary, precompiled AOT workers, warm SDK summaries, `--jobs 4`,
+isolated caches, and alternating variant order. Each value is the median of
+five runs; cold runs clear the byte store, and both cases clear build outputs
+and the build graph. Metrics were enabled for both variants. The machine had
+three CPUs in its affinity mask but a two-CPU cgroup quota. No other verification
+jobs ran during these measurements.
+
+| JSON inputs | Byte store | Baseline seconds | Candidate seconds | Change |
+| ---: | --- | ---: | ---: | ---: |
+| 10 | Empty | 0.345 | 0.365 | +5.8% |
+| 10 | Warm | 0.320 | 0.310 | -3.2% |
+| 500 | Empty | 1.645 | 1.836 | +11.6% |
+| 500 | Warm | 1.428 | 1.629 | +14.1% |
+
+Disabling the gate on the candidate did not remove the 500-input regression.
+A further check with metrics disabled and explicit precompiled worker paths
+(bypassing normal AOT validation) also retained that regression. Crossing the
+two worker binaries between the two workspaces subsequently showed that the
+extra system CPU followed the workspace rather than the binary. These initial
+results do not isolate a regression caused by the gate; the shared-directory
+comparison below supersedes them for assessing worker behavior.
+The approximately 91-second reference workspace is unavailable in this
+environment; these fixtures cannot establish its expected ten-second saving.
+Raw measurements and scripts are in `/workspace/single-flight-speed`, including
+`results/optimized-summary.json` and `results/selected-aot-summary.json`.
+
+## Shared-directory comparison and lock lifetime correction
+
+The first implementation retained ownership until the entire builder action
+released its resolver. It now releases when linking completes, before arbitrary
+builder code resumes. Concurrent linking calls share ownership until all finish;
+stream consumers do not retain ownership between library events. Failure and
+resolver cleanup also release ownership. This removes unnecessary serialization
+after cache publication without adding another warmup process.
+
+The final comparison alternates baseline and candidate precompiled workers in
+the **same working directory**, with the same package config, analyzer cache and
+accelerator cache. Each cold case clears the byte store, and clean cases clear
+the graph and generated files. AOT compilation is excluded; explicit worker
+paths bypass AOT validation. Metrics are disabled. No other verification jobs
+run during measurement. The CPU quota, SDK, native binary and four-worker
+setting are unchanged. Each value is the median of five runs.
+
+One case extends the ten-input JSON fixture with a synthetic shared import cycle
+of 200 files, each containing a class with 100 fields. This tests repeated linking
+of a common dependency closure; it is not the unavailable reference workspace.
+
+| Case | Shared closure baseline | Shared closure candidate | 500-input baseline | 500-input candidate |
+| --- | ---: | ---: | ---: | ---: |
+| Empty byte store, clean | 1.225s | 1.141s | 1.529s | 1.524s |
+| Warm byte store, clean | 0.443s | 0.422s | 1.320s | 1.300s |
+| No-op | 0.0101s | 0.0105s | 0.0404s | 0.0401s |
+| One-file comment edit | 0.325s | 0.322s | 0.261s | 0.257s |
+| Broad comment edit | 0.574s | 0.540s | 1.318s | 1.278s |
+
+The shared-closure cold case uses 2.280s versus 1.752s of aggregate child CPU
+(user plus system), a 23% reduction; elapsed time falls 6.9%. The normal
+500-input cold case is effectively unchanged. These measurements validate
+reduced redundant work on a shared closure but cannot predict a ten-second
+saving on the reference workspace or isolate the timing correction's share of
+the gain. All source and native cache outputs match baseline for every measured
+case. The synthetic case is also checked against stock build_runner.
+
+Reproduce locally with `python3 /workspace/single-flight-speed/final.py` after
+preparing the workspaces; `heavy.py` generates the synthetic inputs. Raw data,
+artifact hashes and full commands are retained in `results/final-measurements.json`,
+`results/final-metadata.json`, and `results/final-summary.json`. These are local
+artifacts, not a portable benchmark harness.
+
+A subsequent stream-only correction defers subscription until lock acquisition;
+neither JSON benchmark uses that entry point. Tests assert that stream analysis
+starts under ownership and that consumer work does not retain ownership.
+
+## Follow-up: cache write overhead
+
+[ADR 0025](../adr/0025-packed-cache-publication-without-fsync.md) removes per-record
+disk synchronization from disposable packed caches, creates parent directories
+only when opening a write handle, and reuses the append offset obtained under
+the lock. The synchronous record write still completes before publication.
+
+The follow-up compares the existing PR's precompiled worker from the comparison
+above against these additional changes, using the same workspaces and benchmark
+conditions. Both use the single-flight gate. The baseline artifact predates the
+stream-only correction; these JSON builders use `libraryFor`, whose path is
+unchanged by that correction. Values are medians of five alternating runs;
+metrics are disabled and no verification runs concurrently.
+
+| Case | Shared closure before | Shared closure after | 500-input before | 500-input after |
+| --- | ---: | ---: | ---: | ---: |
+| Empty byte store, clean | 1.140s | 1.009s | 1.541s | 1.274s |
+| Warm byte store, clean | 0.406s | 0.413s | 1.292s | 1.209s |
+| No-op | 0.0100s | 0.0096s | 0.0409s | 0.0411s |
+| One-file comment edit | 0.315s | 0.323s | 0.253s | 0.257s |
+| Broad comment edit | 0.514s | 0.474s | 1.238s | 1.136s |
+
+Cold elapsed time falls a further 11.4% on the shared closure and 17.3% on
+the ordinary 500-input fixture. The latter's warm clean and broad cases improve
+6.4% and 8.2%. No-op and one-file samples overlap, as do shared-closure warm
+samples; the small median increases do not establish a regression or an
+improvement. All 100 generated-source and native-cache output comparisons match
+the existing PR implementation. The earlier stock comparison remains valid
+for the synthetic generated sources. These measurements exclude the launcher,
+AOT compilation and AOT validation; they do not predict the unavailable
+91-second workspace's saving.
+
+A separate four-build probe with metrics enabled and no competing verification
+records total analyzer byte-store put time of 153.2ms → 14.6ms for the shared
+closure and 396.5ms → 33.1ms for the 500-input fixture. This is diagnostic data
+from one cold run per variant, separate from the timing medians.
+
+The standalone write probe appends 2,000 distinct 8KiB values in each run.
+Eight measured runs follow one warmup, with variant order alternating. On
+`/workspace`, the median falls from 1.066s to 0.041s. Removing `flushSync`
+alone gives 0.049s; avoiding repeated directory and file-length operations
+reduces the remaining overhead. On `/tmp`, disk synchronization showed no
+benefit from removal, illustrating why a temporary-filesystem result cannot
+stand in for the cache's actual filesystem.
+
+Raw scripts and data are local artifacts in `/workspace/single-flight-deeper`:
+`measure.py`, `profile.py`, `micro-workspace.dart`, `results/final-summary.json`,
+`results/final-measurements.json`, `results/final-metadata.json` (including worker
+hashes), `results/profile-measurements.json`, and `micro-workspace.jsonl`.
+Run `python3 /workspace/single-flight-deeper/measure.py` after preparing the
+original benchmark workspaces and both precompiled workers. SDK version,
+four-worker setting, two-CPU quota and release native binary are unchanged.
+
+The existing 133 Dart tests pass with these changes, including live
+cross-process publication and torn-tail recovery. A further process regression
+test verifies that a waiter reads published records when their owner is killed
+before graceful close. Static analysis, quick verification and arbitrary-builder
+verification are repeated for the follow-up; logs are under the same local
+artifact directory. The full release matrix remains required before merging.
+
+## Local verification
+
+Linux x64, Dart 3.13.3, Cargo 1.98.1; the repository pub cache and an offline
+Dart CLI wrapper alongside the SDK executable were used. Static analysis of
+`lib bin test tool`, all 133 Dart tests, Rust's 97 tests, both the default quick
+verification and `VERIFY_ARBITRARY_BUILDER=1` quick verification, and generic watch smoke passed. Watch covered generated-output
+deletion, source edits, and conditional dependency edits.
+
+Final verification logs are in `/workspace/single-flight-speed/final-verify.log`,
+`final-arbitrary-verify.log`, `final-all-dart-tests-stream.log`, and
+`final-stream-analyze.log`. The arbitrary-builder run covers every case,
+including failure recovery, selective invalidation, globs, target sources,
+extension mapping and output conflicts. The timing comparison baseline is
+`a722a77`; the full release matrix is still required before merging.
+
+Functional four-worker check:
+
+```bash
+DART_BIN=/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/dart-single-flight \
+BUILD_RUNNER_ACCELERATOR_CACHE=/workspace/build_runner_accelerator/.toolchains/single-flight-json-final-cache \
+BUILD_RUNNER_ACCELERATOR_METRICS=1 JOBS=4 COUNT=10 \
+  bash scripts/benchmark_json_serializable.sh
+```
+
+The ten-input JSON fixture used an empty accelerator cache, existing SDK
+summary and workspace dependencies, and AOT workers. All source-output byte
+comparisons with stock passed; no-op used the native no-work path. Native
+end-to-end seconds from this single functional run:
+
+| Clean | No-op | One file | Broad (10 files) |
+| ---: | ---: | ---: | ---: |
+| 46.908 | 0.223 | 0.639 | 0.844 |
+
+Clean includes worker compilation. Other verification processes ran
+concurrently, and stock's build cache was already populated. These times are
+recorded for the validation policy, not a performance comparison or evidence
+of the anticipated large-workspace saving. The command log is
+`/workspace/single-flight-json4-final.log`.
+
+A separate native clean probe with warm worker AOT and an empty byte store
+recorded 24 gets / 0 hits / 24 puts for the first resolver action, versus
+24 gets / 22 hits / 2 puts for the other resolver worker's first action.
+The remaining two puts belong to its different primary input. All ten source
+outputs remained byte-identical. `--jobs 4` retains the existing resolver cap
+of two active resolver workers. Raw action metrics are in
+`/workspace/single-flight-native-probe.log`; process tests exercise contention
+explicitly because this small fixture need not overlap the first linking call.
+
+## Large-workspace report and opt-in default
+
+A user-supplied report compared PR #80 at `b7db40a` against `a722a77` and stock
+build_runner 2.16.1 on a large Flutter app: 26,103 actions and 827 generated
+files, four vCPUs, ext4, Dart 3.13.4, synchronous worker AOT. Full cold runs
+removed all accelerator caches, build directories and generated files; worker
+compilation was included. This report was measured outside the local fixture
+environment documented above.
+
+In the initial alternating set, stock's median was 77.2s (four samples), main's
+82.0s (four samples), the PR with single-flight enabled 80.6s (four samples),
+and the PR with it disabled 71.6s (two samples). A separate ABBA comparison,
+repeated twice, isolated the setting within the PR:
+
+| Single-flight | Cold samples | Median |
+| --- | --- | ---: |
+| Enabled | 75.9s, 77.7s, 78.8s, 79.0s | 78.3s |
+| Disabled | 71.4s, 71.4s, 71.0s, 72.9s | 71.4s |
+
+All 827 generated files matched the reference byte-for-byte in every cold run.
+Repeated clean builds were effectively unchanged: main 23.4–24.8s and the PR
+23.0–24.7s.
+
+A separate one-run metrics probe found the first owner resolving a smaller
+closure (2,091 byte-store gets) in 10.4s. A larger waiting action (9,842 gets)
+then spent 26.5s: about 8.0s waiting and 18.5s processing, still writing 5,199
+entries. With single-flight disabled it completed in 21.2s without the wait;
+another action reused 93% of its entries. The existence of linked entries is
+therefore insufficient evidence that the waiting action's closure is warm.
+
+This report supports keeping the packed-write improvements and making
+single-flight experimental opt-in. From 2026-10-04, enable the gate explicitly
+with `BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT=1`; it is disabled when
+unset or given any other value. The preceding fixture comparisons describe
+the earlier enabled default. No timings from separate sets or environments
+are combined to estimate the new default's speedup.

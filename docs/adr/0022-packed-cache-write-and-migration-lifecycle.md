@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 2026-10-02
 - Amends: ADR 0021 (duplicate writes and legacy retention)
+- Per-record disk synchronization amended by
+  [ADR 0025](0025-packed-cache-publication-without-fsync.md).
 
 ## Context
 

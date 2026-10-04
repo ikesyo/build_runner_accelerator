@@ -12,6 +12,9 @@ final class ResolverActionMetrics {
 
   final bool enabled;
 
+  /// Time acquiring/checking the cold-analysis gate before linking.
+  int analysisStartupWaitUs = 0;
+
   /// `LibraryCycleGraphLoader.libraryCycleGraphOf` inside `updateDriver`.
   int cycleGraphWalkUs = 0;
 
@@ -93,6 +96,7 @@ final class ResolverActionMetrics {
   int librariesStreamUs = 0;
 
   void beginAction() {
+    analysisStartupWaitUs = 0;
     cycleGraphWalkUs = 0;
     cycleGraphFileLoads = 0;
     depParseCacheHits = 0;
@@ -136,6 +140,7 @@ final class ResolverActionMetrics {
   }
 
   Map<String, Object?> toJson() => <String, Object?>{
+    'analysis_startup_wait_us': analysisStartupWaitUs,
     'cycle_graph_walk_us': cycleGraphWalkUs,
     'cycle_graph_file_loads': cycleGraphFileLoads,
     'dep_parse_cache_hits': depParseCacheHits,

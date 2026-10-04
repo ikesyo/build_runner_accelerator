@@ -222,7 +222,18 @@ first filled). Pass an explicit `--jobs` to override the default in either
 direction.
 
 Byte-store entries are content-addressed and safe to share across workers.
+Workers analyze in parallel by default. Experimental cold-analysis
+single-flight can be enabled with
+`BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT=1`: when the shared store has
+no linked entries, one resolver worker fills it while others wait for its
+linking call to complete. This can increase elapsed time when the first owner
+warms only a small part of the other workers' dependencies; see
+[ADR 0024](docs/adr/0024-cold-analysis-single-flight.md).
 Repeated writes of the same key and bytes do not grow the packed store.
+Packed cache writes are visible to other workers when the write completes,
+without forcing each record to disk. A machine crash may lose cache entries;
+they are validated and recomputed on the next build. See
+[ADR 0025](docs/adr/0025-packed-cache-publication-without-fsync.md).
 Legacy per-key files are migrated on read and deleted after a successful
 packed write; an existing valid packed hit also removes its legacy copy.
 Entries that have not been read remain in the old layout. With
@@ -238,6 +249,7 @@ adjust the root for your platform or `BUILD_RUNNER_ACCELERATOR_CACHE`).
 | `BUILD_RUNNER_ACCELERATOR_CACHE` | Relocate or isolate all machine-wide caches. |
 | `BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT=0` | Run the manifest generator from source instead of its cached kernel. |
 | `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0` | Disable the shared analyzer byte store. |
+| `BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT=1` | Opt in to experimental cold-analysis ownership. Disabled by default; shared caching remains enabled. |
 | `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` | Disable the analysis shards spawned by `aot-prewarm`. |
 | `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS=<n>` | Override the prewarm shard count (default: half of available CPUs). |
 | `BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM=1` | Opt-in: overlap the synchronous worker AOT compile with JIT analysis shards that start filling the byte store (useful on slower machines where the compile window is long). |

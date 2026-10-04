@@ -23,6 +23,7 @@ import 'package:path/path.dart' as p;
 import 'package:pool/pool.dart';
 import 'package:pub_semver/pub_semver.dart';
 
+import 'analysis_startup_gate.dart';
 import 'cache_directory.dart';
 import 'analysis_byte_store_fingerprint.dart';
 import 'packed_analysis_byte_store.dart';
@@ -43,12 +44,11 @@ import 'package:build_runner/src/build/library_cycle_graph/phased_asset_deps.dar
 import 'package:build_runner/src/build/resolver/analysis_driver.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/analysis_driver_filesystem.dart';
-import 'package:analyzer/dart/ast/ast.dart';
-import 'package:analyzer/dart/element/element.dart';
 import 'resolver_host.dart' show ResolverInitializationProfile;
 import 'resolver_metrics.dart';
 import 'sdk_summary_lock.dart';
 import 'worker_analysis_driver_model.dart';
+import 'worker_step_resolver.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/build_resolver.dart';
 // ignore: implementation_imports
@@ -75,6 +75,7 @@ class WorkerResolversImpl implements Resolvers {
 
   /// The main build resolver backed by an analysis driver.
   BuildResolver? _buildResolver;
+  AnalysisStartupGate? _startupGate;
 
   /// State supporting the analysis driver.
   WorkerAnalysisDriverModel _analysisDriverModel;
@@ -141,6 +142,8 @@ class WorkerResolversImpl implements Resolvers {
       final driverCreateTimer = _profile?.enabled == true
           ? (Stopwatch()..start())
           : null;
+      final byteStore = sharedAnalysisByteStore(sdkSummaryBytes, loadedConfig);
+      _startupGate = _sharedStartupGates[byteStore];
       final driver = _analysisDriver(
         _analysisDriverModel,
         AnalysisOptionsImpl()
@@ -150,7 +153,7 @@ class WorkerResolversImpl implements Resolvers {
           ),
         sdkSummaryBytes,
         loadedConfig,
-        sharedAnalysisByteStore(sdkSummaryBytes, loadedConfig),
+        byteStore,
       );
       if (driverCreateTimer != null) {
         _profile?.driverCreateUs = driverCreateTimer.elapsedMicroseconds;
@@ -169,8 +172,12 @@ class WorkerResolversImpl implements Resolvers {
       _buildResolver!,
       buildStep as BuildStepImpl,
     );
-    if (_profile?.enabled == true) {
-      return _TimingResolver(stepResolver);
+    if (_profile?.enabled == true || _startupGate?.isReady == false) {
+      return WorkerStepResolver(
+        stepResolver,
+        startupGate: _startupGate,
+        timingEnabled: _profile?.enabled == true,
+      );
     }
     return stepResolver;
   }
@@ -301,6 +308,7 @@ const _packedStoreEnv = 'BUILD_RUNNER_ACCELERATOR_PACKED_STORE';
 /// version-addressed, so entries stay valid and missed keys are simply
 /// recomputed — the memory layer never caches nulls.
 final _sharedByteStores = <String, ByteStore>{};
+final _sharedStartupGates = <ByteStore, AnalysisStartupGate>{};
 
 /// A [ByteStore] shared between workers and across builds.
 ///
@@ -339,7 +347,20 @@ ByteStore sharedAnalysisByteStore(
         ? FileByteStore(dir) as ByteStore
         : PackedAnalysisByteStore(dir);
     final store = MemoryCachingByteStore(disk, _memoryCacheBytes);
-    return resolverActionMetrics.enabled ? _MetricsByteStore(store) : store;
+    final result = resolverActionMetrics.enabled
+        ? _MetricsByteStore(store)
+        : store;
+    if (Platform
+            .environment['BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT'] ==
+        '1') {
+      _sharedStartupGates[result] = AnalysisStartupGate(
+        p.join(dir, '.analysis-startup.lock'),
+        isWarm: disk is PackedAnalysisByteStore
+            ? () => disk.hasLinkedEntries
+            : () => PackedAnalysisByteStore.hasLegacyLinkedEntries(dir),
+      );
+    }
+    return result;
   });
 }
 
@@ -415,88 +436,6 @@ class _MetricsFileContentCache implements FileContentCache {
 
   @override
   void invalidateAll() => _delegate.invalidateAll();
-}
-
-/// Times each [ReleasableResolver] entry point for the per-action breakdown.
-///
-/// The first `libraryFor`/`libraries` call is where the analyzer loads the
-/// transitive library cycle: separating the call's wall time from the
-/// dep-graph walk and pending-change application measured inside
-/// `updateDriver` shows the element-model (summary link/load) share.
-class _TimingResolver implements ReleasableResolver {
-  _TimingResolver(this._delegate);
-
-  final ReleasableResolver _delegate;
-
-  Future<T> _time<T>(String name, Future<T> Function() call) async {
-    final timer = Stopwatch()..start();
-    try {
-      return await call();
-    } finally {
-      final us = timer.elapsedMicroseconds;
-      resolverActionMetrics.resolverFirstCallUs.putIfAbsent(name, () => us);
-      resolverActionMetrics.resolverCallUs.update(
-        name,
-        (total) => total + us,
-        ifAbsent: () => us,
-      );
-    }
-  }
-
-  @override
-  Stream<LibraryElement> get libraries async* {
-    final timer = Stopwatch()..start();
-    await for (final library in _delegate.libraries) {
-      resolverActionMetrics.librariesCount++;
-      yield library;
-    }
-    resolverActionMetrics.librariesStreamUs += timer.elapsedMicroseconds;
-  }
-
-  @override
-  Future<LibraryElement?> findLibraryByName(String libraryName) => _time(
-    'findLibraryByName',
-    () => _delegate.findLibraryByName(libraryName),
-  );
-
-  @override
-  Future<bool> isLibrary(AssetId assetId) =>
-      _time('isLibrary', () => _delegate.isLibrary(assetId));
-
-  @override
-  Future<AstNode?> astNodeFor(Fragment fragment, {bool resolve = false}) =>
-      _time(
-        'astNodeFor',
-        () => _delegate.astNodeFor(fragment, resolve: resolve),
-      );
-
-  @override
-  Future<CompilationUnit> compilationUnitFor(
-    AssetId assetId, {
-    bool allowSyntaxErrors = false,
-  }) => _time(
-    'compilationUnitFor',
-    () => _delegate.compilationUnitFor(
-      assetId,
-      allowSyntaxErrors: allowSyntaxErrors,
-    ),
-  );
-
-  @override
-  Future<LibraryElement> libraryFor(
-    AssetId assetId, {
-    bool allowSyntaxErrors = false,
-  }) => _time(
-    'libraryFor',
-    () => _delegate.libraryFor(assetId, allowSyntaxErrors: allowSyntaxErrors),
-  );
-
-  @override
-  Future<AssetId> assetIdForElement(Element element) =>
-      _time('assetIdForElement', () => _delegate.assetIdForElement(element));
-
-  @override
-  void release() => _delegate.release();
 }
 
 /// Checks that the current analyzer version supports the current language
