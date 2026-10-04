@@ -93,3 +93,32 @@ building unrelated declaration ASTs without changing builders' resolvers.
 Empty-cache publication still adds cost; see
 [the paired measurements](../benchmarks/resolver-conditional-directives-2026-10.md)
 for the fixture's improvements and limits.
+
+## Collector digest lifetime (2026-10-04)
+
+Keep the collector's content-only SHA-256 on an owned immutable byte snapshot
+in the worker's existing read cache. Copy input buffers on insertion and expose
+an unmodifiable typed byte view. Public builder reads still return mutable
+copies. The collector reads the snapshot through the same action visibility,
+post-process primary-input restriction and observed-read path before accessing
+its lazy digest; it no longer copies and hashes shared cached bytes per action.
+The ReaderWriter MD5 includes the AssetId and cannot serve this content key.
+build_runner's `AssetContent.digest` is also MD5; `withBytes` can carry an old
+digest onto replacement bytes by design. Neither provides the collector's
+exact-byte SHA-256 guarantee. Rust snapshot digests are not carried by the
+asset-read protocol, so this change does not expand that protocol. SHA-256
+keys and the persistent raw-URI schema stay identical; no persistent namespace
+change is needed.
+
+Replacement always creates a new snapshot, even for the same caller buffer or
+equal bytes. Removal and clear discard bytes and digest together: the existing
+updated/deleted source/cache deltas evict changed IDs on resolver resets, and
+build start/failure recovery clear the cache. Unchanged entries may survive an
+incremental resolver reset. No digest persists beyond its byte entry or crosses
+worker processes. There is no AssetId/mtime/object-identity validity shortcut.
+
+Action-local outputs are mutable and separate from the shared cache. Reading
+them creates a fresh snapshot and hashes it, so a same-phase or post-process
+rewrite cannot reuse an earlier output digest. Missing/blocked assets do not
+yield a snapshot or digest; generated assets are retried under each action's
+visibility. Conditional URI resolution and dependency recording are unchanged.
