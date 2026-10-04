@@ -558,6 +558,21 @@ pub fn glob_literal_prefix(pattern: &str) -> &str {
     &pattern[..wildcard]
 }
 
+/// Restrict logical asset keys to the package and literal glob prefix before
+/// applying the glob or phase visibility rules. The ordered map is already
+/// the current overlay/optional-output index; no cached view can become stale.
+pub(crate) fn glob_candidates<'a, V>(
+    assets: &'a BTreeMap<String, V>,
+    package: &str,
+    pattern: &str,
+) -> impl Iterator<Item = &'a String> {
+    let prefix = format!("{package}|{}", glob_literal_prefix(pattern));
+    assets
+        .range(prefix.clone()..)
+        .map(|(asset, _)| asset)
+        .take_while(move |asset| asset.starts_with(&prefix))
+}
+
 fn matches_non_recursive_glob(pattern: &str, path: &str) -> bool {
     let mut pattern_segments = pattern.split('/');
     let mut path_segments = path.split('/');
@@ -657,7 +672,8 @@ fn segment_matches(pattern: &str, value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_files, glob_literal_prefix, lower_bound, matches_glob};
+    use super::{collect_files, glob_candidates, glob_literal_prefix, lower_bound, matches_glob};
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -686,6 +702,55 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn ordered_glob_candidates_preserve_exhaustive_results() {
+        let mut assets = BTreeMap::from([
+            ("app|lib/model.json.g.part".to_owned(), ()),
+            ("app|lib/model_other.g.part".to_owned(), ()),
+            ("app|lib/sub/model.json.g.part".to_owned(), ()),
+            ("app|lib/modèle.json.g.part".to_owned(), ()),
+            ("app|web/model.dart".to_owned(), ()),
+            ("app2|lib/model.json.g.part".to_owned(), ()),
+            ("other|lib/model.json.g.part".to_owned(), ()),
+        ]);
+        // Include an overlay update after a previous search: the range must
+        // observe the current map rather than a separately cached index.
+        for pattern in [
+            "lib/model.*.g.part",
+            "**/*.g.part",
+            "lib/??*.g.part",
+            "lib/modèle.*",
+            "web/model.dart",
+            "missing*",
+        ] {
+            for package in ["app", "app2", "other", "absent"] {
+                let exhaustive = assets
+                    .keys()
+                    .filter(|asset| {
+                        let (asset_package, path) = asset.split_once('|').unwrap();
+                        asset_package == package && matches_glob(pattern, path)
+                    })
+                    .collect::<Vec<_>>();
+                let indexed = glob_candidates(&assets, package, pattern)
+                    .filter(|asset| matches_glob(pattern, asset.split_once('|').unwrap().1))
+                    .collect::<Vec<_>>();
+                assert_eq!(indexed, exhaustive, "{package}: {pattern}");
+            }
+        }
+        let before = glob_candidates(&assets, "app", "lib/model.*.g.part").count();
+        assets.insert("app|lib/model.second.g.part".to_owned(), ());
+        assert_eq!(
+            glob_candidates(&assets, "app", "lib/model.*.g.part").count(),
+            before + 1
+        );
+        assets.remove("app|lib/model.json.g.part");
+        assert_eq!(
+            glob_candidates(&assets, "app", "lib/model.*.g.part").count(),
+            before
+        );
+        assert_eq!(glob_candidates(&assets, "app", "**").count(), 5);
     }
 
     #[test]

@@ -4,11 +4,79 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:build/build.dart';
+import 'package:glob/glob.dart';
 import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:build_runner_accelerator/src/remote_build_step.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test(
+    'visible glob results reuse readability and still track reads',
+    () async {
+      final id = AssetId('app', 'lib/model.g.part');
+      final readable = <AssetId>{};
+      final cache = <AssetId, List<int>>{};
+      final io = RemoteAssetReaderWriter(
+        readCache: cache,
+        readableCache: readable,
+      );
+      final response = utf8.encode(
+        jsonEncode({
+          'id': 1000,
+          'type': 'asset_response',
+          'ok': true,
+          'assets': [id.toString()],
+        }),
+      );
+      final size = ByteData(4)..setUint32(0, response.length, Endian.big);
+      io.beginAction(
+        rpc: RpcSession(
+          FrameReader(
+            Stream.fromIterable([size.buffer.asUint8List(), response]),
+          ),
+          FrameWriter(IOSink(_DiscardingConsumer())),
+          buildId: 1,
+          phase: 1,
+          postProcess: false,
+        ),
+        package: 'app',
+        primaryInput: null,
+        blockedAssets: {},
+      );
+      expect(await io.findAssets(Glob('lib/*.g.part')).toList(), [id]);
+      expect(readable, {id});
+      expect(io.observedReads, isEmpty);
+      // There is no second response: canRead must reuse the positive answer.
+      expect(await io.canRead(id), isTrue);
+      expect(io.observedReads, {id});
+      expect(io.observedGlobResults, {id});
+      expect(cache, isEmpty);
+      io.endAction();
+      // Each action's visibility is checked before the shared positive cache.
+      io.beginAction(
+        rpc: _rpc(),
+        package: 'app',
+        primaryInput: null,
+        blockedAssets: {id},
+      );
+      expect(await io.canRead(id), isFalse);
+      await expectLater(
+        io.readAsBytes(id),
+        throwsA(isA<AssetNotFoundException>()),
+      );
+      io.endAction();
+      // A post-process action may read only its primary input.
+      io.beginAction(
+        rpc: _rpc(),
+        package: 'app',
+        primaryInput: AssetId('app', 'lib/other.dart'),
+        blockedAssets: {},
+      );
+      expect(await io.canRead(id), isFalse);
+      io.endAction();
+    },
+  );
+
   for (final error in [
     'prefetch disabled during lazy builds',
     'resolve_assets response exceeds frame limit',

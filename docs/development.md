@@ -129,6 +129,23 @@ one-file and broad incremental builds against stock output bytes; commands
 and cache conditions are recorded in
 [`cross-workspace-startup-2026-10.md`](benchmarks/cross-workspace-startup-2026-10.md).
 
+To compare build-cache-cold main/candidate implementations in the same fixture
+and cache paths, use `scripts/benchmark_cold_build.py`. Prepared AOT and
+`--aot-cold` comparisons are separate; the latter includes manifest/probe/kernel
+and worker compilation. It alternates lanes and checks output bytes for cold,
+warm clean, no-op and real one-file/broad edits. See
+[cold Builder lookup measurements](benchmarks/cold-builder-lookups-2026-10.md)
+for commands, distributions and cache conditions.
+
+For detailed per-worker diagnostics, set both
+`BUILD_RUNNER_ACCELERATOR_METRICS=1` and
+`BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=1`. Action JSON then includes worker
+PID/RSS, Analyzer file-content paths, byte-store miss keys, uncached can-read
+assets and Linux cumulative CPU ticks (`getconf CLK_TCK` converts to seconds).
+Driver creation and resolver replacement counts help distinguish initialization
+from reuse. File-content paths and linked bundle misses do not directly count
+parsed libraries. Keep these traces separate from performance timing runs.
+
 For unexpectedly large native action plans, use the pre-worker diagnostics:
 
 ```bash

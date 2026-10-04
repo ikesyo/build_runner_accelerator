@@ -33,6 +33,8 @@ class ResolverInitializationProfile {
   ResolverInitializationProfile({required this.enabled});
 
   final bool enabled;
+  int driverCreations = 0;
+  int resolverReplacements = 0;
   int packageConfigLoadUs = 0;
   int resolverConstructorUs = 0;
   int sdkSummaryUs = 0;
