@@ -338,11 +338,20 @@ ByteStore sharedAnalysisByteStore(
     experiments: enabledExperiments,
     analyzerRoot: packageConfig['analyzer']?.root.toString() ?? '',
   );
-  final dir = p.join(acceleratorCacheDirectory(), 'byte_store', fingerprint);
+  final dir = p.joinAll([
+    acceleratorCacheDirectory(),
+    'byte_store',
+    if (Platform.environment[_packedStoreEnv] != '0') 'v2',
+    fingerprint,
+  ]);
   // Neither on-disk store creates the directory itself; without it the writes
   // fail silently.
   return _sharedByteStores.putIfAbsent(fingerprint, () {
-    Directory(dir).createSync(recursive: true);
+    try {
+      Directory(dir).createSync(recursive: true);
+    } on FileSystemException {
+      return MemoryByteStore();
+    }
     final disk = Platform.environment[_packedStoreEnv] == '0'
         ? FileByteStore(dir) as ByteStore
         : PackedAnalysisByteStore(dir);

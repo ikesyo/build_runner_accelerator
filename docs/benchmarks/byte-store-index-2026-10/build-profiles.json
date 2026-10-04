@@ -1,0 +1,106 @@
+[
+  {
+    "size": "small",
+    "lane": "baseline",
+    "first_resolvers": [
+      {
+        "builder": "json_serializable:json_serializable",
+        "resolver_first_get_us": 46254,
+        "driver_create_us": 40284,
+        "resolver_sdk_summary_us": 2151
+      },
+      {
+        "builder": "json_serializable:json_serializable",
+        "resolver_first_get_us": 54321,
+        "driver_create_us": 37377,
+        "resolver_sdk_summary_us": 9231
+      }
+    ],
+    "totals": {
+      "analysis_startup_wait_us": 0,
+      "byte_store_get_us": 16478,
+      "byte_store_put_us": 702,
+      "byte_store_gets": 1044,
+      "byte_store_puts": 22,
+      "byte_store_hits": 1022
+    }
+  },
+  {
+    "size": "small",
+    "lane": "candidate",
+    "first_resolvers": [
+      {
+        "builder": "json_serializable:json_serializable",
+        "resolver_first_get_us": 42607,
+        "driver_create_us": 37338,
+        "resolver_sdk_summary_us": 1504
+      },
+      {
+        "builder": "json_serializable:json_serializable",
+        "resolver_first_get_us": 48941,
+        "driver_create_us": 37651,
+        "resolver_sdk_summary_us": 7705
+      }
+    ],
+    "totals": {
+      "analysis_startup_wait_us": 0,
+      "byte_store_get_us": 14866,
+      "byte_store_put_us": 1295,
+      "byte_store_gets": 1044,
+      "byte_store_puts": 29,
+      "byte_store_hits": 1015
+    }
+  },
+  {
+    "size": "large",
+    "lane": "baseline",
+    "first_resolvers": [
+      {
+        "builder": "json_serializable:json_serializable",
+        "resolver_first_get_us": 45291,
+        "driver_create_us": 40443,
+        "resolver_sdk_summary_us": 1337
+      },
+      {
+        "builder": "json_serializable:json_serializable",
+        "resolver_first_get_us": 53136,
+        "driver_create_us": 37764,
+        "resolver_sdk_summary_us": 8181
+      }
+    ],
+    "totals": {
+      "analysis_startup_wait_us": 0,
+      "byte_store_get_us": 1308961,
+      "byte_store_put_us": 872,
+      "byte_store_gets": 1044,
+      "byte_store_puts": 22,
+      "byte_store_hits": 1022
+    }
+  },
+  {
+    "size": "large",
+    "lane": "candidate",
+    "first_resolvers": [
+      {
+        "builder": "json_serializable:json_serializable",
+        "resolver_first_get_us": 48176,
+        "driver_create_us": 39887,
+        "resolver_sdk_summary_us": 4104
+      },
+      {
+        "builder": "json_serializable:json_serializable",
+        "resolver_first_get_us": 52534,
+        "driver_create_us": 37902,
+        "resolver_sdk_summary_us": 9301
+      }
+    ],
+    "totals": {
+      "analysis_startup_wait_us": 0,
+      "byte_store_get_us": 58320,
+      "byte_store_put_us": 6686,
+      "byte_store_gets": 1044,
+      "byte_store_puts": 29,
+      "byte_store_hits": 1015
+    }
+  }
+]

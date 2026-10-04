@@ -1,30 +1,26 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
-/// A single-file, append-only key/value blob store.
-///
-/// Layout: a sequence of
-/// `[u32 keyLen][u32 valueLen][key][value][u16 fletcher16(value)]`
-/// records. The first read scans the file once and builds an in-memory index
-/// of `key -> (value offset, value length)`; reads after that are a single
-/// `RandomAccessFile` seek+read, replacing the open/read/close-per-key cost
-/// of one-file-per-key stores.
-///
-/// Writers serialize appends with an exclusive file lock, so a concurrent
-/// reader can only ever observe a torn *tail* record — which the scanner
-/// tolerates by stopping at the first malformed record. Before appending, a
-/// writer re-validates the bytes appended since its own scan: complete
-/// records are adopted into the index, and a torn tail (a crashed writer's
-/// partial record) is truncated so it cannot shadow later entries.
-/// Entries are content-addressed upstream, so a missing or corrupt record is
-/// just a cache miss and the caller recomputes and re-appends it.
+/// Append-only data pack with a separate, checksummed publication journal.
+/// Startup reads only metadata; values are verified when used. The data file
+/// is the stable writer lock. A writer writes data before publishing metadata,
+/// and removes incomplete journal/data tails under that lock. Lost metadata
+/// loses cache entries, never requires reconstructing disposable payloads.
 final class IndexedBlobStore {
   IndexedBlobStore(this._filePath);
 
   static const _headerLength = 8;
   static const _trailerLength = 2;
   static const _maxKeyLength = 4096;
+  static const _indexHeaderLength = 16;
+  static const _journalHeaderLength = 16;
+  static const _magic = 0x32494253;
+  int? _generation;
+  int _dataEnd = 0;
+  RandomAccessFile? _journal;
+  String get _indexPath => '$_filePath.index';
 
   final String _filePath;
 
@@ -44,7 +40,7 @@ final class IndexedBlobStore {
   bool containsKeySuffix(String suffix) {
     final index = _index ??= _scan();
     _refreshIndex(index);
-    return index.keys.any((key) => key.endsWith(suffix));
+    return index.keys.any((key) => key.endsWith(suffix) && get(key) != null);
   }
 
   /// Refresh once at a publication boundary rather than polling on every
@@ -58,11 +54,29 @@ final class IndexedBlobStore {
     if (slice == null) return null;
     try {
       final raf = _raf ??= File(_filePath).openSync(mode: FileMode.append);
-      raf.setPositionSync(slice.$1);
-      final bytes = raf.readSync(slice.$2 + _trailerLength);
-      if (bytes.length != slice.$2 + _trailerLength) return null;
-      if (_checksumOf(bytes, slice.$2) == null) return null;
-      return Uint8List.sublistView(bytes, 0, slice.$2);
+      // Bind the offset to the requested key as well as checking the value.
+      // This also makes stale offsets safe after recovery reuses a data tail.
+      final keyBytes = utf8.encode(key);
+      final recordStart = slice.$1 - _headerLength - keyBytes.length;
+      if (recordStart < 0) return null;
+      raf.setPositionSync(recordStart);
+      final recordLength =
+          _headerLength + keyBytes.length + slice.$2 + _trailerLength;
+      final record = raf.readSync(recordLength);
+      if (record.length != recordLength) return null;
+      final header = ByteData.sublistView(record);
+      if (header.getUint32(0, Endian.little) != keyBytes.length ||
+          header.getUint32(4, Endian.little) != slice.$2)
+        return null;
+      for (var i = 0; i < keyBytes.length; i++) {
+        if (record[_headerLength + i] != keyBytes[i]) return null;
+      }
+      final valueStart = _headerLength + keyBytes.length;
+      final valueEnd = valueStart + slice.$2;
+      if (header.getUint16(valueEnd, Endian.little) !=
+          _fletcher16(record, valueStart, valueEnd))
+        return null;
+      return Uint8List.sublistView(record, valueStart, valueEnd);
     } on Object {
       return null;
     }
@@ -74,24 +88,62 @@ final class IndexedBlobStore {
   /// invalid tail, which a reader has never included in [_indexedEnd].
   void _refreshIndex(Map<String, (int, int)> index) {
     try {
-      final file = File(_filePath);
-      final length = file.lengthSync();
-      if (length == _indexedEnd) return;
-      if (length < _indexedEnd) {
-        _raf?.closeSync();
-        _raf = null;
-        index
-          ..clear()
-          ..addAll(_scan());
+      final journal = _journal ??= File(
+        _indexPath,
+      ).openSync(mode: FileMode.append);
+      final length = journal.lengthSync();
+      journal.setPositionSync(0);
+      final bytes = journal.readSync(_journalHeaderLength);
+      if (bytes.length != _journalHeaderLength) {
+        _reset(index);
         return;
       }
-      final raf = _raf ??= file.openSync(mode: FileMode.append);
-      raf.setPositionSync(_indexedEnd);
-      final tail = raf.readSync(length - _indexedEnd);
-      _indexedEnd = _parseInto(index, tail, _indexedEnd);
-    } on FileSystemException {
-      // A missing or unavailable cache remains a miss.
+      final header = ByteData.sublistView(bytes);
+      if (header.getUint32(0, Endian.little) != _magic ||
+          header.getUint32(12, Endian.little) !=
+              _crc32(Uint8List.sublistView(bytes, 0, 12))) {
+        _reset(index);
+        return;
+      }
+      final generation = header.getUint64(4, Endian.little);
+      if (_generation != generation || length < _indexedEnd) {
+        _reset(index);
+        _generation = generation;
+        _indexedEnd = _journalHeaderLength;
+      }
+      if (length == _indexedEnd) return;
+      journal.setPositionSync(_indexedEnd);
+      _indexedEnd = _parseInto(
+        index,
+        journal.readSync(length - _indexedEnd),
+        _indexedEnd,
+      );
+    } on Object {
+      _reset(index);
+      // Cache failure is a miss. Readers never repair a concurrent writer.
     }
+  }
+
+  void _reset(Map<String, (int, int)> index) {
+    index.clear();
+    _indexedEnd = 0;
+    _dataEnd = 0;
+    _generation = null;
+  }
+
+  void _writeGeneration(RandomAccessFile journal) {
+    final random = Random.secure();
+    _generation = (random.nextInt(1 << 31) << 32) | random.nextInt(1 << 32);
+    final header = ByteData(_journalHeaderLength)
+      ..setUint32(0, _magic, Endian.little)
+      ..setUint64(4, _generation!, Endian.little);
+    header.setUint32(
+      12,
+      _crc32(Uint8List.sublistView(header.buffer.asUint8List(), 0, 12)),
+      Endian.little,
+    );
+    journal.setPositionSync(0);
+    journal.writeFromSync(header.buffer.asUint8List());
   }
 
   /// Appends `value` under `key` unless the checksum-valid value is identical.
@@ -108,7 +160,10 @@ final class IndexedBlobStore {
       final raf = _raf ??= _openForWrite();
       raf.lockSync(FileLock.exclusive);
       try {
-        final offset = _adoptTail(raf, index);
+        final journal = _journal ??= File(
+          _indexPath,
+        ).openSync(mode: FileMode.append);
+        final offset = _adoptTail(raf, journal, index);
         // Check after adopting sibling writers' records, while holding the
         // lock. Keys alone cannot establish equality or detect corruption.
         final slice = index[key];
@@ -128,8 +183,27 @@ final class IndexedBlobStore {
                   ..add(_u16(_fletcher16(value))))
                 .toBytes();
         raf.writeFromSync(recordBytes);
+        // The journal is the publication boundary. No fsync is needed for
+        // disposable cache bytes; synchronous writes publish to other workers.
+        final metadata = ByteData(_indexHeaderLength)
+          ..setUint32(0, keyBytes.length, Endian.little)
+          ..setUint32(4, value.length, Endian.little)
+          ..setUint64(8, offset, Endian.little);
+        final entry =
+            (BytesBuilder()
+                  ..add(metadata.buffer.asUint8List())
+                  ..add(keyBytes))
+                .toBytes();
+        journal.setPositionSync(_indexedEnd);
+        journal.writeFromSync(
+          (BytesBuilder()
+                ..add(entry)
+                ..add(_u32(_crc32(entry))))
+              .toBytes(),
+        );
         index[key] = (offset + _headerLength + keyBytes.length, value.length);
-        _indexedEnd = offset + recordBytes.length;
+        _indexedEnd += entry.length + 4;
+        _dataEnd = offset + recordBytes.length;
         return true;
       } finally {
         raf.unlockSync();
@@ -146,78 +220,100 @@ final class IndexedBlobStore {
     return file.openSync(mode: FileMode.append);
   }
 
-  /// Indexes complete records appended after [_indexedEnd] and truncates a
-  /// torn tail. Runs under the write lock, so no writer is mid-append.
-  int _adoptTail(RandomAccessFile raf, Map<String, (int, int)> index) {
+  /// Repair only while holding the data lock. Unpublished data is discarded;
+  /// published values are checked lazily, so corruption cannot hide later keys.
+  int _adoptTail(
+    RandomAccessFile raf,
+    RandomAccessFile journal,
+    Map<String, (int, int)> index,
+  ) {
+    _refreshIndex(index);
+    final journalLength = journal.lengthSync();
     final length = raf.lengthSync();
-    if (length <= _indexedEnd) return length;
-    raf.setPositionSync(_indexedEnd);
-    final tail = raf.readSync(length - _indexedEnd);
-    final end = _parseInto(index, tail, _indexedEnd);
-    _indexedEnd = end;
-    if (end < length) {
-      raf.truncateSync(end);
+    if (length < _dataEnd) _reset(index);
+    final repair = _generation == null || journalLength != _indexedEnd;
+    if (repair) {
+      journal.truncateSync(_indexedEnd);
+      _writeGeneration(journal);
+      if (_indexedEnd == 0) _indexedEnd = _journalHeaderLength;
     }
-    // The caller re-seeks after any deduplication read. Keep the live end
-    // obtained under the lock rather than asking the filesystem again.
-    return end;
+    if (length != _dataEnd) raf.truncateSync(_dataEnd);
+    return _dataEnd;
   }
 
-  /// Reads the store file once and indexes every complete record, stopping
-  /// at the first malformed or truncated (concurrently appended) record.
   Map<String, (int, int)> _scan() {
     final index = <String, (int, int)>{};
-    try {
-      final bytes = File(_filePath).readAsBytesSync();
-      _indexedEnd = _parseInto(index, bytes, 0);
-    } on Object {
-      _indexedEnd = 0;
-      // A missing or unreadable file means an empty store.
-    }
+    _reset(index);
+    _refreshIndex(index);
     return index;
   }
 
-  /// Parses records in [bytes] starting at file offset [base], adding
-  /// `key -> (value offset, value length)` entries, and returns the file
-  /// offset just past the last complete, checksum-valid record.
+  /// Journal entry: [u32 keyLen][u32 valueLen][u64 recordOffset][key]
+  /// [u32 CRC32(header + key)]. Offsets must be contiguous. Never read values.
   int _parseInto(Map<String, (int, int)> index, Uint8List bytes, int base) {
     var pos = 0;
-    while (pos + _headerLength + _trailerLength <= bytes.length) {
-      final header = ByteData.sublistView(bytes, pos, pos + _headerLength);
+    while (pos + _indexHeaderLength + 4 <= bytes.length) {
+      final header = ByteData.sublistView(bytes, pos, pos + _indexHeaderLength);
       final keyLen = header.getUint32(0, Endian.little);
       final valLen = header.getUint32(4, Endian.little);
-      final recordLen = _headerLength + keyLen + valLen + _trailerLength;
+      final offset = header.getUint64(8, Endian.little);
+      final end = pos + _indexHeaderLength + keyLen;
       if (keyLen == 0 ||
           keyLen > _maxKeyLength ||
-          pos + recordLen > bytes.length) {
+          end + 4 > bytes.length ||
+          offset != _dataEnd)
+        break;
+      if (ByteData.sublistView(
+            bytes,
+            end,
+            end + 4,
+          ).getUint32(0, Endian.little) !=
+          _crc32(Uint8List.sublistView(bytes, pos, end)))
+        break;
+      final String key;
+      try {
+        key = utf8.decode(
+          Uint8List.sublistView(bytes, pos + _indexHeaderLength, end),
+        );
+      } on FormatException {
         break;
       }
-      final key = utf8.decode(
-        Uint8List.sublistView(
-          bytes,
-          pos + _headerLength,
-          pos + _headerLength + keyLen,
-        ),
-        allowMalformed: true,
-      );
-      final valStart = pos + _headerLength + keyLen;
-      final stored = ByteData.sublistView(
-        bytes,
-        valStart + valLen,
-        valStart + valLen + _trailerLength,
-      ).getUint16(0, Endian.little);
-      if (stored != _fletcher16(bytes, valStart, valStart + valLen)) {
-        break;
-      }
-      index[key] = (base + pos + _headerLength + keyLen, valLen);
-      pos += recordLen;
+      index[key] = (offset + _headerLength + keyLen, valLen);
+      _dataEnd = offset + _headerLength + keyLen + valLen + _trailerLength;
+      pos = end + 4;
     }
     return base + pos;
   }
 
+  static final _crcTable = List<int>.generate(256, (i) {
+    var crc = i;
+    for (var bit = 0; bit < 8; bit++) {
+      crc = (crc >> 1) ^ ((crc & 1) != 0 ? 0xedb88320 : 0);
+    }
+    return crc;
+  });
+
+  static int _crc32(Uint8List bytes) {
+    var crc = 0xffffffff;
+    for (final byte in bytes) {
+      crc = (crc >> 8) ^ _crcTable[(crc ^ byte) & 255];
+    }
+    return crc ^ 0xffffffff;
+  }
+
   void close() {
-    _raf?.closeSync();
+    try {
+      _raf?.closeSync();
+    } on Object {
+      /* Best effort. */
+    }
+    try {
+      _journal?.closeSync();
+    } on Object {
+      /* Best effort. */
+    }
     _raf = null;
+    _journal = null;
   }
 
   static Uint8List _u32(int value) {
@@ -235,17 +331,6 @@ final class IndexedBlobStore {
   static Uint8List _u16(int value) {
     final data = ByteData(2)..setUint16(0, value, Endian.little);
     return data.buffer.asUint8List();
-  }
-
-  /// The value bytes when the trailing checksum matches, else null.
-  Uint8List? _checksumOf(Uint8List bytes, int valLen) {
-    final stored = ByteData.sublistView(
-      bytes,
-      valLen,
-      valLen + _trailerLength,
-    ).getUint16(0, Endian.little);
-    if (stored != _fletcher16(bytes, 0, valLen)) return null;
-    return bytes;
   }
 
   /// Fletcher-16 over `[start, end)`. The mod-255 reduction is deferred to

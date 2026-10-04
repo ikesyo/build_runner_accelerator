@@ -160,7 +160,7 @@ The accelerator keeps four shared caches under a machine-wide cache root
 so repeated builds — including builds in fresh checkouts on the same
 machine — skip the expensive cold paths:
 
-- `<cache>/byte_store/<fingerprint>` — the analyzer byte store shared by all
+- `<cache>/byte_store/v2/<fingerprint>` — the analyzer byte store shared by all
   workers. The fingerprint covers the SDK summary and analyzer-relevant
   configuration, so resolved entries are reused across workers, workspaces,
   checkouts, and phase resets within a build.
@@ -229,20 +229,19 @@ no linked entries, one resolver worker fills it while others wait for its
 linking call to complete. This can increase elapsed time when the first owner
 warms only a small part of the other workers' dependencies; see
 [ADR 0024](docs/adr/0024-cold-analysis-single-flight.md).
-Repeated writes of the same key and bytes do not grow the packed store.
-Packed cache writes are visible to other workers when the write completes,
-without forcing each record to disk. A machine crash may lose cache entries;
-they are validated and recomputed on the next build. See
-[ADR 0025](docs/adr/0025-packed-cache-publication-without-fsync.md).
-Legacy per-key files are migrated on read and deleted after a successful
-packed write; an existing valid packed hit also removes its legacy copy.
-Entries that have not been read remain in the old layout. With
-`BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0`, the per-key layout is retained.
+The v2 pack has a separate checksummed publication index: startup reads metadata,
+and validates only the values actually used. Repeated writes of the same key and
+bytes do not grow either file. Writers publish data before index entries and
+repair incomplete tails under the append lock. Cache entries are not fsynced;
+missing or corrupt entries are recomputed. Earlier packed and per-key formats
+are ignored, with no migration. `BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0` retains
+the separate per-key implementation.
+
 The pack has no compaction yet, and stale fingerprint directories are not
-garbage-collected — reclaim
-space by deleting directories for toolchains you no longer use, or prune
-the whole store (`rm -rf ~/.cache/build_runner_accelerator/byte_store`;
-adjust the root for your platform or `BUILD_RUNNER_ACCELERATOR_CACHE`).
+garbage-collected. Reclaim space by removing caches for toolchains you no longer
+use while builds are stopped, or prune the whole byte store. See
+[ADR 0026](docs/adr/0026-byte-store-publication-index.md) for format, recovery,
+measurements and limitations.
 
 | Variable | Effect |
 | --- | --- |
