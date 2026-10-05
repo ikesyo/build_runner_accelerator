@@ -126,48 +126,7 @@ before final measurements. No launcher/AOT strategy was changed. Initial
 prepared-worker measurements remain valid under their recorded wrapper because
 their manifest is retained; a final confirmation uses the repaired wrapper.
 
-## Results
-
-All times below are milliseconds, median [minimum, maximum]. Speed rows have
-all diagnostics disabled. A negative change is faster; no runtime optimization
-was made, and all final ranges overlap. The first three-repeat prepared run had
-a jobs=4 broad increase of 4.2% with disjoint ranges. An earlier five-repeat
-confirmation reversed that direction; the final five-repeat group below has
-+4.7% with overlapping ranges. Small regressions cannot be excluded, and these
-variable samples do not establish a stable trace-disabled effect.
-The final conditions contain **142 stock-identical builds** (124 speed samples
-and 18 instrumentation samples), each checking all 256 output files. Earlier speed/diagnostic groups also matched stock and are retained locally;
-the tables below use the final hardened trace implementation.
-
-| Jobs | Prepared case | Main | Candidate | Median change |
-| --- | --- | --- | --- | --- |
-| 2 | cold | 2616.6 [2204.1, 2722.4] | 2535.3 [2394.6, 2687.5] | -3.1% |
-| 2 | warm-clean | 1242.0 [1180.8, 1302.0] | 1207.7 [1140.8, 1247.1] | -2.8% |
-| 2 | no-op | 29.3 [28.6, 31.1] | 28.4 [27.7, 30.6] | -2.9% |
-| 2 | one-file | 327.3 [307.8, 336.0] | 305.4 [292.1, 315.7] | -6.7% |
-| 2 | broad | 1396.9 [1291.0, 1412.3] | 1293.9 [1262.5, 1338.0] | -7.4% |
-| 4 | cold | 2570.8 [2435.3, 2753.3] | 2595.2 [2488.1, 2610.0] | +0.9% |
-| 4 | warm-clean | 1267.3 [1202.9, 1380.2] | 1207.0 [1156.2, 1276.5] | -4.8% |
-| 4 | no-op | 29.6 [28.7, 31.8] | 28.7 [28.3, 30.2] | -3.0% |
-| 4 | one-file | 315.4 [298.6, 331.3] | 318.7 [300.1, 345.5] | +1.1% |
-| 4 | broad | 1295.4 [1256.8, 1431.6] | 1356.8 [1317.8, 1372.7] | +4.7% |
-
-Five repeats per lane/case/jobs, alternating lane order. Prepared cold clears
-byte-store/directive caches and graph/outputs, retaining manifest/worker/SDK
-summaries; warm-clean retains analyzer caches and also clears graph/outputs.
-Neither includes AOT preparation or the launcher.
-
-| Route | Jobs | Full regen main | Candidate | Median change |
-| --- | --- | --- | --- | --- |
-| native | 2 | 1852.6 [1793.8, 1855.9] | 1815.6 [1799.6, 1840.8] | -2.0% |
-| native | 4 | 1828.4 [1791.0, 1849.2] | 1889.9 [1812.4, 2027.5] | +3.4% |
-| launcher | 2 | 1816.9 [1779.1, 1942.9] | 1880.0 [1786.6, 1982.9] | +3.5% |
-| launcher | 4 | 1861.3 [1801.7, 1894.8] | 1767.1 [1752.0, 1880.5] | -5.1% |
-
-Three alternating repeats per lane/jobs. These remove the entire accelerator
-workspace directory and all source outputs, retaining shared caches. Worker
-restore/validation and manifest generation are included. Launcher pub-executable
-snapshot is primed outside timing. These distributions do not establish speedup.
+## Wall findings
 
 ### Complete native wall partition
 
@@ -245,6 +204,46 @@ Full event streams, per-input hash maps, expanded command/environment dumps, com
 summary JSON, raw stderr logs, and complete per-file output manifests remain local;
 the benchmark and summarizer scripts reproduce them.
 
+## Trace-disabled regression checks
+
+These main/candidate comparisons check for default-path regressions introduced
+by the trace instrumentation. Metrics, analysis trace and wall trace are all
+disabled. Times are milliseconds, median [minimum, maximum]; the change column
+records the observed timing difference. All final ranges overlap and earlier
+groups varied in direction, so small regressions cannot be excluded.
+The final validation includes 124 trace-disabled samples and 18 instrumentation
+samples; all matched stock outputs. The tables use the final trace implementation.
+
+| Jobs | Prepared case | Main | Candidate | Median change |
+| --- | --- | --- | --- | --- |
+| 2 | cold | 2616.6 [2204.1, 2722.4] | 2535.3 [2394.6, 2687.5] | -3.1% |
+| 2 | warm-clean | 1242.0 [1180.8, 1302.0] | 1207.7 [1140.8, 1247.1] | -2.8% |
+| 2 | no-op | 29.3 [28.6, 31.1] | 28.4 [27.7, 30.6] | -2.9% |
+| 2 | one-file | 327.3 [307.8, 336.0] | 305.4 [292.1, 315.7] | -6.7% |
+| 2 | broad | 1396.9 [1291.0, 1412.3] | 1293.9 [1262.5, 1338.0] | -7.4% |
+| 4 | cold | 2570.8 [2435.3, 2753.3] | 2595.2 [2488.1, 2610.0] | +0.9% |
+| 4 | warm-clean | 1267.3 [1202.9, 1380.2] | 1207.0 [1156.2, 1276.5] | -4.8% |
+| 4 | no-op | 29.6 [28.7, 31.8] | 28.7 [28.3, 30.2] | -3.0% |
+| 4 | one-file | 315.4 [298.6, 331.3] | 318.7 [300.1, 345.5] | +1.1% |
+| 4 | broad | 1295.4 [1256.8, 1431.6] | 1356.8 [1317.8, 1372.7] | +4.7% |
+
+Five repeats per lane/case/jobs, alternating lane order. Prepared cold clears
+byte-store/directive caches and graph/outputs, retaining manifest/worker/SDK
+summaries; warm-clean retains analyzer caches and also clears graph/outputs.
+Neither includes AOT preparation or the launcher.
+
+| Route | Jobs | Full regen main | Candidate | Median change |
+| --- | --- | --- | --- | --- |
+| native | 2 | 1852.6 [1793.8, 1855.9] | 1815.6 [1799.6, 1840.8] | -2.0% |
+| native | 4 | 1828.4 [1791.0, 1849.2] | 1889.9 [1812.4, 2027.5] | +3.4% |
+| launcher | 2 | 1816.9 [1779.1, 1942.9] | 1880.0 [1786.6, 1982.9] | +3.5% |
+| launcher | 4 | 1861.3 [1801.7, 1894.8] | 1767.1 [1752.0, 1880.5] | -5.1% |
+
+Three alternating repeats per lane/jobs. These remove the entire accelerator
+workspace directory and all source outputs, retaining shared caches. Worker
+restore/validation and manifest generation are included. Launcher pub-executable
+snapshot is primed outside timing.
+
 ## Correctness and checks
 
 All **142 timed or diagnostic fixture builds** matched stock output hashes for
@@ -300,5 +299,6 @@ The current fixture cannot explain the private application's 6.648-second
 remainder. Manifest internals' official configuration/probe work and worker
 CPU versus IPC/file-I/O inside receive envelopes still need a further probe
 if they become the measured application bottleneck. Native gaps and external
-startup/flush/exit remain explicitly reported. No general cold/regen speedup,
-application shortening, or measurement-overhead upper bound is established.
+startup/flush/exit remain explicitly reported. Application attribution needs
+its own frontend trace; the fixture runs do not establish a measurement-overhead
+upper bound.
