@@ -47,7 +47,7 @@ class WallSummaryTest(unittest.TestCase):
                         event('diagnostic_json_size', 30, 70, worker_pid=7),
                         event('diagnostic_json_size', 40, 75, worker_pid=7)
                         )['phase_dispatches'][0]
-        children = phase['critical_batch']['children']
+        children = phase['batches'][phase['critical_batch_index']]['children']
         self.assertEqual(children['diagnostic_json_size']['exclusive_us'], 45)
         self.assertEqual(children['result_decode_validate']['union_us'], 60)
         self.assertEqual(children['result_decode_validate']['exclusive_us'], 15)
@@ -132,7 +132,7 @@ class WallSummaryTest(unittest.TestCase):
         self.assertEqual(phase['worker_batches']['union_us'], 65)
         self.assertEqual(phase['worker_batches']['envelope_us'], 65)
         self.assertEqual(phase['outside_worker_batches']['intervals'], [[10, 20], [85, 95]])
-        self.assertEqual(phase['critical_batch']['worker_pid'], 11)
+        self.assertEqual(phase['batches'][phase['critical_batch_index']]['worker_pid'], 11)
         self.assertEqual(phase['critical_batch_index'], 1)
         batch = phase['batches'][0]
         self.assertEqual(batch['children']['receive_frame']['union_us'], 35)
@@ -157,7 +157,7 @@ class WallSummaryTest(unittest.TestCase):
             event('receive_frame', 80, 95, **identity),
             event('result_decode_validate', 50, 60, batch_id=3, **identity),
         )['phase_dispatches'][0]
-        batch = phase['critical_batch']
+        batch = phase['batches'][phase['critical_batch_index']]
         self.assertEqual(batch['children']['asset_rpc']['union_us'], 50)
         self.assertEqual(batch['children']['receive_frame']['union_us'], 30)
         self.assertEqual(batch['children']['result_decode_validate']['union_us'], 0)
@@ -172,7 +172,7 @@ class WallSummaryTest(unittest.TestCase):
         self.assertEqual(phase['worker_batches']['union_us'], 30)
         self.assertEqual(phase['worker_batches']['envelope_us'], 50)
         self.assertEqual(phase['workers'][0]['intervals'], [[10, 20], [40, 60]])
-        self.assertEqual(phase['critical_batch']['batch_id'], 2)
+        self.assertEqual(phase['batches'][phase['critical_batch_index']]['batch_id'], 2)
 
     def test_multiple_sessions_have_independent_origins(self):
         result = summarize(['unrelated worker metrics\n'] + log(
@@ -185,7 +185,7 @@ class WallSummaryTest(unittest.TestCase):
 
     def test_empty_dispatch_zero_session_and_unknown_stage(self):
         result = session(event('phase_dispatch', 0, 0), end=0)
-        self.assertIsNone(result['phase_dispatches'][0]['critical_batch'])
+        self.assertIsNone(result['phase_dispatches'][0]['critical_batch_index'])
         self.assertEqual(result['categories']['unattributed']['exclusive_us'], 0)
         self.assertEqual(session(event('future_stage', 0, 100))['categories']
                          ['unattributed']['exclusive_us'], 100)

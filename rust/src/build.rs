@@ -30,7 +30,6 @@ pub(crate) fn graph_path(workspace: &Workspace) -> PathBuf {
 }
 
 pub(crate) fn run(options: &Options, pool: Option<&mut WorkerPool>) -> io::Result<()> {
-    let _wall = crate::wall::Session::new();
     let load = crate::wall::Span::new("workspace_load");
     let workspace = Workspace::load(options.root.clone())?;
     drop(load);

@@ -428,7 +428,7 @@ pub(crate) fn run_dart_fallback(options: &Options, workspace: &Workspace) -> io:
 
 #[cfg(test)]
 mod tests {
-    use super::{EARLY_WORKER_MARKER_MAX_AGE, cleanup_stale_worker_readiness_markers};
+    use super::{cleanup_stale_worker_readiness_markers, EARLY_WORKER_MARKER_MAX_AGE};
     use std::fs::{self, File, FileTimes};
     use std::time::{Duration, SystemTime};
 

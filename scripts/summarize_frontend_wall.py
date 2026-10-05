@@ -37,7 +37,8 @@ NOTES = [
     'No direct Dart timestamps or worker CPU attribution are available.',
     'Child category unions may overlap (including recursive lazy work); '
     'exclusive_us uses child_priority to partition the batch.',
-    'Critical batch means latest frontend finish, not a measured CPU critical path.',
+    'critical_batch_index selects the latest-finishing entry in batches; '
+    'it does not identify a measured CPU critical path.',
     'diagnostic_json_size is metrics-only hypothetical JSON sizing nested in '
     'result_decode_validate; its exclusive time is removed from decode attribution. '
     'Zero means no recorded interval, not necessarily no sizing work.',
@@ -244,7 +245,6 @@ def _session_report(root, events):
                 [('batch', left, right) for left, right in spans], ('batch',)
             )['unattributed'],
             'critical_batch_index': critical,
-            'critical_batch': reports[critical] if critical is not None else None,
         })
     return {
         **root, 'wall_us': root['end_us'], 'event_count': len(events),

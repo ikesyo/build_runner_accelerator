@@ -1,17 +1,11 @@
 # Frontend regen wall attribution after PR #87
 
 Work started from freshly fetched main `b852ba75798837e248a394199e2e279c88837c82`
-(PR #87 merged). It is identical to the user's last inspected main; there are
-no intervening changes to duplicate. Read AGENTS.md, development/roadmap,
-protocol v1, ADRs 0002/0003/0005 and the prior manifest, resolver digest,
-conditional-directive and cycle-read investigations.
+(PR #87 merged); there were no intervening main changes.
 
-This is a **diagnostic change**, not a production performance optimization.
-The fixture identifies expensive envelopes, but does not identify a removable
-frontend operation on the application's critical path. It does not justify a
-new cache, scheduling policy, resolver cap, single-flight default, driver
-recreation, or AOT strategy. All existing phase/visibility/read/optional-builder
-and all-success commit behavior is retained.
+This change adds frontend wall tracing and interval analysis. The fixture
+identifies expensive envelopes, but does not identify a removable frontend
+operation on the application's critical path. Existing build behavior is retained.
 
 ## Supplied application evidence and its limits
 
@@ -48,11 +42,10 @@ Existing counters have these boundaries:
 | Existing dirty/scan/graph timers | Individual operations, not complete frontend stages. Dirty timer excludes persisted-output hashing and subsequent propagation/deletion work. |
 | Resolver cycle/dep stages | Nested worker work. `dep_prefetch_us` is outside phased reads but inside cycle walking. Decode/hash is inside phased reads. Summing these with action or Rust envelopes double-counts. |
 
-The new attachment confirms zero same-worker positive asset/content reloads,
+The supplied archive reports zero same-worker positive asset/content reloads,
 0.246 worker-seconds of Rust asset handling, 2.535 cycle-walk worker-seconds,
 1.191 phased-read worker-seconds (about 0.989 decode/hash). Driver creations
-are **two**, summing per-PID maxima of cumulative counters; replacements are
-zero. These facts do not justify new conversion/digest retention.
+are **two**, summing per-PID maxima of cumulative counters; replacements are zero.
 
 ## New frontend timeline
 
@@ -113,18 +106,13 @@ bytes, pub cache, machine-wide cache paths and SDK summaries are used per
 comparison. Worker hashes are checked after every full regen. OS page cache is
 warm and not flushed. Jobs 2/4 are explicit; the Linux container has a two-CPU
 quota and 8 GiB memory, so jobs=4 is not four physical CPUs. Metrics, analysis
-trace and wall trace are disabled in speed comparisons. Orders alternate per
+trace and wall trace are disabled in regression comparisons. Orders alternate per
 repeat; diagnostic orders rotate/reverse. Preparation and correctness checks
-are outside timings, and performance groups run serially.
+are outside timings, and comparison groups run serially.
 
-The initial `.toolchains/dart-wrapper` lived outside the SDK's `bin`, causing
-manifest snapshot preparation to infer an invalid SDK and fall back to source.
-Those full-regen samples are retained locally as a separate fallback condition,
-excluded from the default-route comparison. A wrapper in the same SDK's `bin`
-keeps the identical underlying SDK and confirms a warm manifest snapshot hit
-before final measurements. No launcher/AOT strategy was changed. Initial
-prepared-worker measurements remain valid under their recorded wrapper because
-their manifest is retained; a final confirmation uses the repaired wrapper.
+Full-regen measurements use a Dart wrapper in the SDK's `bin` directory so
+manifest preparation resolves the correct SDK. A warm manifest snapshot hit
+was verified; source-fallback samples are excluded from the comparison.
 
 ## Wall findings
 
@@ -174,7 +162,7 @@ responses gate the next phase. The latest finish, rather than a sum of parallel
 worker durations, defines each batch gate. Request send, Rust asset handling,
 result decode and unclassified worker time are included in the batch. The receive
 envelope cannot separate builder/Analyzer CPU, worker-side serialization,
-filesystem reads, IPC and descheduling. No new runtime cache follows from it.
+filesystem reads, IPC and descheduling.
 
 ### Instrumentation cost, separate runs
 
@@ -193,16 +181,14 @@ resolution, **not zero overhead or a proven overhead bound**. Native interval
 bookkeeping is inside wall; buffered serialization/flush is in external time.
 Metrics-only hypothetical JSON sizing contributes about 12–17 ms along the
 latest-finishing batches in these captures; ordinary wall-only result decoding
-is roughly 0.06–0.23 ms per critical batch. This is diagnostic work, not binary
-protocol overhead to optimize. Worker metrics additionally time/log Dart work.
+is roughly 0.06–0.23 ms per critical batch. This sizing runs only with metrics
+enabled; worker metrics additionally time/log Dart work.
 
-The committed artifacts are the [raw samples](prepared-samples.csv), [full regen native samples](regen-native-samples.csv),
-[launcher samples](regen-launcher-samples.csv), [overhead samples](overhead-samples.csv),
-[SDK/toolchain and compact binary/input identities](toolchain.json), and [output validation fingerprints](outputs.json).
-This report includes the medians/ranges and representative frontend/batch timelines.
-Full event streams, per-input hash maps, expanded command/environment dumps, computed
-summary JSON, raw stderr logs, and complete per-file output manifests remain local;
-the benchmark and summarizer scripts reproduce them.
+Committed samples cover [prepared cases](prepared-samples.csv), [native regen](regen-native-samples.csv),
+[launcher regen](regen-launcher-samples.csv), and [instrumentation cost](overhead-samples.csv).
+[Toolchain/input identities](toolchain.json) and [output fingerprints](outputs.json)
+record the validation inputs and stock equality. Full traces, command/environment
+dumps and per-file hash maps stay local; the scripts reproduce them.
 
 ## Trace-disabled regression checks
 
@@ -211,8 +197,8 @@ by the trace instrumentation. Metrics, analysis trace and wall trace are all
 disabled. Times are milliseconds, median [minimum, maximum]; the change column
 records the observed timing difference. All final ranges overlap and earlier
 groups varied in direction, so small regressions cannot be excluded.
-The final validation includes 124 trace-disabled samples and 18 instrumentation
-samples; all matched stock outputs. The tables use the final trace implementation.
+The tables were captured before the review cleanup; measured binary identities
+are recorded in [toolchain.json](toolchain.json).
 
 | Jobs | Prepared case | Main | Candidate | Median change |
 | --- | --- | --- | --- | --- |
@@ -246,20 +232,20 @@ snapshot is primed outside timing.
 
 ## Correctness and checks
 
-All **142 timed or diagnostic fixture builds** matched stock output hashes for
-all 256 generated source/cache artifacts. The candidate source snapshot used
-for final verification matched the working tree for all 11 changed Rust files.
+All **142 fixture builds** (124 trace-disabled and 18 instrumentation samples)
+matched stock output hashes for all 256 generated source/cache artifacts.
 
-The final verification run passed Dart tests (161), Rust tests (101), the
-wall-summary tests (14), Dart analyze/format/publish dry-run, CI and changed
-Rust formatting checks, and a locked candidate build. Both quick verification
-and arbitrary-builder verification with wall tracing enabled passed. All five
-full verification suites passed: core, current-codegen,
-compatibility-lifecycle, compatibility-graph and compatibility-mapping.
-Optional-builder and post-process correctness with wall tracing enabled passed,
-as did the watch smoke, Freezed/Riverpod correctness, watch and benchmark
-scripts, benchmark matrix, and signing/benchmark helper tests. There were no
-failed checks.
+Before review cleanup, verification passed Dart tests (161), Rust tests (101),
+wall-summary tests (14), package analyze/format/publish checks, Rust formatting,
+quick/arbitrary-builder verification and all five full suites. Wall-enabled
+optional/post-process correctness, Freezed/Riverpod correctness and watch checks,
+benchmarks, the benchmark matrix and Python helper tests also passed.
+
+Review cleanup passed Rust (101) and wall-summary (14) tests, quick verification,
+wall-enabled arbitrary-builder verification, a locked build and CI formatting.
+Replaying 12 saved traces preserved all wall/batch timing fields after summary
+deduplication; a fresh runtime trace also formed a complete wall partition.
+Full `cargo fmt --check` retains main's same 23 pre-existing failing files.
 
 ## Reproduction and unresolved work
 
@@ -295,10 +281,6 @@ python3 scripts/summarize_frontend_wall.py frontend-wall.log >frontend-wall.json
 ```
 
 Repeat jobs=4 under the same application's regen deletion/cache conditions.
-The current fixture cannot explain the private application's 6.648-second
-remainder. Manifest internals' official configuration/probe work and worker
-CPU versus IPC/file-I/O inside receive envelopes still need a further probe
-if they become the measured application bottleneck. Native gaps and external
-startup/flush/exit remain explicitly reported. Application attribution needs
-its own frontend trace; the fixture runs do not establish a measurement-overhead
-upper bound.
+Manifest configuration/probe work and worker CPU versus IPC/filesystem work
+inside receive envelopes need finer probes if they dominate the application.
+Native gaps and external startup/flush/exit remain explicitly reported.
