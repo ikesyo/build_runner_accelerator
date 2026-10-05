@@ -122,3 +122,34 @@ them creates a fresh snapshot and hashes it, so a same-phase or post-process
 rewrite cannot reuse an earlier output digest. Missing/blocked assets do not
 yield a snapshot or digest; generated assets are retried under each action's
 visibility. Conditional URI resolution and dependency recording are unchanged.
+
+## Phased dependency content conversion (2026-10-05)
+
+The remote filesystem's empty build plan delegates visibility to Rust and the
+reader. Keep checking `canRead` on every phased load, and keep the existing
+phase expiry for missing, blocked, empty, or invalid-UTF-8 content. For positive
+loads, use the reader's owned immutable snapshot directly to create an
+`AssetContent`, rather than its builder-facing `List<int>` copy. The typed bytes
+also allow UTF-8's typed-buffer path. Keep the usual fresh `AssetContent` and its lazy
+UTF-8 conversion/content-only MD5; no new conversion/digest cache or validity
+key is introduced. Byte replacement, removal, phase-reset deltas, and
+build/failure clears still govern the existing snapshot cache.
+
+Always replay `updateSourceContent` and the content listener on a positive
+load. A retained snapshot can be read after a clean resolver reset when the
+Analyzer filesystem is empty; copy avoidance cannot suppress that update.
+Committed overlay content retains its existing start-build notification path.
+Action-local outputs yield fresh snapshots and cannot share bytes across
+rewrites. Ordinary `contentOf` and builder-facing byte reads keep the inherited
+mutable-copy behavior. Dependency parsing, graph reuse/expiry, conditional
+selection, optional demand, and the protocol remain unchanged.
+
+The diagnostic `dep_content_*` and `dep_visibility_us` timers describe boundaries
+inside `dep_read_phased_us`; prefetch runs after that timer. Conversion/hash is
+materialized immediately before the normal content notification only when
+metrics are enabled, so its cost can be separated from notification bookkeeping.
+`dep_loads` under analysis trace records actual returned content versions and
+phase expiries, including unavailable loads. These diagnostics are separate
+from performance timing. See [the cycle-read benchmark report](../benchmarks/cycle-dependency-reads-2026-10/README.md)
+for evidence and limits; a repeated unavailable load is not a cache miss that can safely be
+eliminated.

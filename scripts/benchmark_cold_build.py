@@ -27,7 +27,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('baseline', 'candidate', 'frontend-dart', 'root', 'cache', 'results'):
         parser.add_argument('--' + name, type=Path, required=True)
-    parser.add_argument('--fixture-kind', choices=('json', 'riverpod', 'riverpod-shared'), default='json')
+    parser.add_argument('--fixture-kind', choices=('json', 'riverpod', 'riverpod-shared', 'riverpod-cycle'), default='json')
     parser.add_argument('--stock-check', action='store_true',
                         help='Prepare untimed stock output references for every edit case')
     parser.add_argument('--worker', type=Path, help='Prepared baseline worker')
@@ -38,11 +38,14 @@ def main():
     parser.add_argument('--retain-dep-parse', action='store_true',
                         help='Retain directive caches while clearing the analyzer byte store')
     parser.add_argument('--metrics', action='store_true', help='Diagnostic runs; separate from timings')
+    parser.add_argument('--trace', action='store_true', help='Per-asset/phase diagnostics; requires --metrics')
     parser.add_argument('--aot-cold', action='store_true',
                         help='Include manifest/kernel/probe/worker compilation; measure cold only')
     parser.add_argument('--baseline-package', type=Path)
     parser.add_argument('--candidate-package', type=Path)
     args = parser.parse_args()
+    if args.trace and not args.metrics:
+        parser.error('--trace requires --metrics; traces must not enter timing runs')
     if args.repeats < 1 or any(j < 1 for j in args.jobs):
         parser.error('repeats and jobs must be positive')
     if args.aot_cold:
@@ -61,14 +64,14 @@ def main():
     config_path = args.root / '.dart_tool/package_config.json'
     original_config = config_path.read_bytes()
     source_pattern = ('model_*.dart' if args.fixture_kind == 'json' else
-                      'provider_*.dart' if args.fixture_kind == 'riverpod-shared' else '*.dart')
+                      'provider_*.dart' if args.fixture_kind in ('riverpod-shared', 'riverpod-cycle') else '*.dart')
     sources = {p: p.read_bytes() for p in (args.root / 'lib').glob(source_pattern)
                if not p.name.endswith(('.g.dart', '.freezed.dart'))}
     if not sources:
         parser.error('requires prepared model fixture')
     environment = dict(os.environ, BUILD_RUNNER_ACCELERATOR_CACHE=str(args.cache),
                        BUILD_RUNNER_ACCELERATOR_METRICS=str(int(args.metrics)),
-                       BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE='0')
+                       BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=str(int(args.trace)))
     environment.pop('BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH', None)
     environment['BUILD_RUNNER_ACCELERATOR_WORKER_AOT'] = '1'
     environment.pop('BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT', None)
@@ -99,7 +102,7 @@ def main():
 
     metadata = dict(sdk=subprocess.check_output([str(args.frontend_dart), '--version'], text=True).strip(),
                     root=str(args.root), cache=str(args.cache), worker=str(args.worker),
-                    fixture_kind=args.fixture_kind, trace=False, stock_check=args.stock_check,
+                    fixture_kind=args.fixture_kind, trace=args.trace, stock_check=args.stock_check,
                     jobs=args.jobs, repeats=args.repeats, metrics=args.metrics,
                     dep_parse='retained' if args.retain_dep_parse else 'cleared',
                     sdk_summary='retained', os_page_cache='not flushed',
@@ -196,7 +199,7 @@ def main():
                         elif args.fixture_kind == 'riverpod':
                             assert len(hashes) == 6, log
                         else:
-                            assert len(hashes) == len(sources) * 2, log
+                            assert len(hashes) == len(sources) * (4 if args.fixture_kind == 'riverpod-cycle' else 2), log
                         if args.stock_check:
                             assert hashes == stock_expected[case], f'{log}: differs from stock'
                         if case in ('one-file', 'broad'):

@@ -1,0 +1,26 @@
+[
+  [
+    "/workspace/build_runner_accelerator/rust/target/release/build_runner_accelerator",
+    "build",
+    "--root",
+    "/workspace/bra-cycle-fixture",
+    "--dart",
+    "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/dart-workspace",
+    "--mode",
+    "rust",
+    "--jobs",
+    "2"
+  ],
+  [
+    "/workspace/build_runner_accelerator/rust/target/release/build_runner_accelerator",
+    "build",
+    "--root",
+    "/workspace/bra-cycle-fixture",
+    "--dart",
+    "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/dart-workspace",
+    "--mode",
+    "rust",
+    "--jobs",
+    "4"
+  ]
+]

@@ -1,8 +1,9 @@
 import 'package:build/build.dart';
+import 'package:build_runner/src/bootstrap/processes.dart' show ChildProcess;
 import 'package:built_collection/built_collection.dart';
 import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
 import 'package:build_runner/src/build/builder_filesystem.dart'
-    show BuilderFilesystem;
+    show BuilderFilesystem, AssetContentExtension;
 import 'package:build_runner/src/build/build_state/build_state.dart'
     show BuildState;
 import 'package:build_runner/src/build/build_state/build_step_id.dart'
@@ -26,6 +27,7 @@ import 'package:glob/glob.dart';
 import 'package:package_config/package_config.dart';
 
 import 'remote_build_step.dart';
+import 'resolver_metrics.dart';
 
 /// Creates the minimal current build_runner package view required by a
 /// worker. The Rust frontend already owns package dependency resolution; all
@@ -149,6 +151,68 @@ class RemoteBuilderFilesystem extends BuilderFilesystem {
 
   final RemoteAssetReaderWriter _remoteReaderWriter;
 
+  void Function(AssetId, AssetContent?)? _contentListener;
+
+  @override
+  void listenToContentUpdates(
+    void Function(AssetId, AssetContent?) onUpdateContent,
+  ) {
+    // Keep the inherited one-listener check and notifications for other hooks.
+    super.listenToContentUpdates(onUpdateContent);
+    _contentListener = onUpdateContent;
+  }
+
+  /// Dep loads avoid the builder-facing byte copy. Public contentOf/readAsBytes
+  /// keep the inherited mutable-copy behavior.
+  Future<AssetContent> _contentOfForDeps(AssetId id) async {
+    final committed = buildState.contentOf(id);
+    if (committed != null) return committed;
+    if (!buildState.isSource(id)) {
+      throw StateError(
+        'Cannot read $id, it is not a known source or generated output.',
+      );
+    }
+    final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
+    late AssetContent content;
+    try {
+      // Read the action-visible snapshot first. Never use an AssetId-only
+      // content cache: blocked/primary-input checks and observedReads must run
+      // before using even an already-cached byte snapshot.
+      final snapshot = await _remoteReaderWriter.readContent(id);
+      if (resolverActionMetrics.enabled) {
+        resolverActionMetrics.depContentSnapshotBytes += snapshot.bytes.length;
+      }
+      content = AssetContent.bytes(snapshot.bytes);
+    } on AssetNotFoundException {
+      await ChildProcess.exitDueToAssetDeleted(id);
+    }
+    if (timer != null) {
+      resolverActionMetrics.depContentCalls++;
+      resolverActionMetrics.depContentUs += timer.elapsedMicroseconds;
+      timer.reset();
+      // Split the work normally performed by the Analyzer content listener.
+      // Invalid UTF-8 remains reported by that listener, as before.
+      try {
+        content.stringValue();
+      } on FormatException {
+        /* listener logs */
+      }
+      // Non-Dart assets do not enter the Analyzer content listener: avoid
+      // introducing a diagnostic-only hash that their normal read never pays.
+      if (id.extension == '.dart') content.digest;
+      resolverActionMetrics.depContentDecodeHashUs += timer.elapsedMicroseconds;
+      timer.reset();
+    }
+    // Replaying both updates is required, especially after a clean resolver
+    // reset with a warm read cache but an empty Analyzer filesystem.
+    buildState.updateSourceContent(id, content);
+    _contentListener?.call(id, content);
+    if (timer != null) {
+      resolverActionMetrics.depContentUpdateUs += timer.elapsedMicroseconds;
+    }
+    return content;
+  }
+
   /// Pre-resolves dep ids the loader is about to `readPhased` so the batched
   /// `resolve_assets` RPC can warm the reader's caches in one round-trip.
   ///
@@ -175,12 +239,30 @@ class RemoteBuilderFilesystem extends BuilderFilesystem {
   /// committed content and its real deps.
   @override
   Future<PhasedValue<String>> readPhased(int phase, AssetId id) async {
-    final read = await super.readPhased(phase, id);
-    if (read.values.last.expiresAfter == null &&
-        read.values.last.value.isEmpty) {
+    // This adapter's empty plan declares no outputs. Rust and the reader
+    // decide current visibility; unknown/missing/blocked/empty contents expire
+    // at this phase and must be tried again at a later phase, as before.
+    final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
+    final known = buildState.isKnownAsset(id);
+    if (!known) buildState.addMissingSource(id);
+    final readable =
+        known &&
+        await _remoteReaderWriter.canRead(
+          id,
+          inArtifactTree: buildState.isInArtifactTree(id),
+        );
+    if (timer != null) {
+      resolverActionMetrics.depVisibilityUs += timer.elapsedMicroseconds;
+    }
+    if (!readable) {
       return PhasedValue.unavailable(before: '', expiresAfter: phase);
     }
-    return read;
+    final value = (await _contentOfForDeps(
+      id,
+    )).dartStringValueOrEmptyFail(id: id);
+    return value.isEmpty
+        ? PhasedValue.unavailable(before: '', expiresAfter: phase)
+        : PhasedValue.fixed(value);
   }
 
   @override

@@ -153,6 +153,18 @@ remain disabled for timings; use a separate `--metrics` invocation for digest
 computation/reuse counts and collector stage times. See
 [digest reuse measurements](benchmarks/resolver-content-digest-2026-10.md).
 
+For cycle-graph read work, `scripts/prepare_cycle_read_fixture.py --root
+<new-disposable-directory>` prepares 64 mixed Riverpod/Freezed/JSON inputs
+sharing 144 conditional/transitive sources. Use `benchmark_cold_build.py
+--fixture-kind riverpod-cycle --stock-check` with isolated main/candidate AOT
+workers for jobs 2/4 and the full clean/no-op/one-file/broad comparison.
+`--aot-cold` with both package roots includes worker/manifest preparation.
+Use a separate `--metrics --trace` run for phased-load content versions,
+visibility, content conversion/hash and update-notification boundaries.
+`--trace` requires `--metrics` to prevent traces entering timing comparisons.
+See [cycle dependency read measurements](benchmarks/cycle-dependency-reads-2026-10/README.md)
+for cache conditions, results, and limits.
+
 For detailed per-worker diagnostics, set both
 `BUILD_RUNNER_ACCELERATOR_METRICS=1` and
 `BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=1`. Action JSON then includes worker
