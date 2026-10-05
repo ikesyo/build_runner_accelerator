@@ -183,6 +183,30 @@ class WallSummaryTest(unittest.TestCase):
                          [[5, 8]])
         self.assertEqual(result['sessions'][1]['event_count'], 1)
 
+    def test_reset_workers_overlap_without_becoming_frontend_wall(self):
+        events = [event('phase_reset', 0, 100, phase=2, builder='pkg:builder'),
+                  event('reset_overlay_spool', 0, 10),
+                  event('reset_delta_encode', 10, 15)]
+        for pid, start, finish in ((10, 20, 90), (11, 25, 95)):
+            events.extend([event('worker_resolver_reset', start, finish, worker_pid=pid),
+                           event('reset_encode_send', start, start + 5, worker_pid=pid),
+                           event('reset_receive', start + 5, finish, worker_pid=pid)])
+        result = session(*events)['phase_resets'][0]
+        self.assertEqual(result['wall_us'], 100)
+        self.assertEqual(result['children']['worker_resolver_reset']['exclusive_us'], 75)
+        self.assertEqual(result['children']['unattributed']['exclusive_us'], 10)
+        self.assertEqual(sum(w['wall_us'] for w in result['workers']), 140)
+        self.assertEqual([w['children']['reset_encode_send']['exclusive_us']
+                          for w in result['workers']], [5, 5])
+        self.assertEqual(sum(c['exclusive_us'] for c in result['children'].values()), 100)
+
+    def test_reset_legacy_and_watch_gaps_are_preserved(self):
+        result = summarize(log(event('phase_reset', 0, 20), root(30),
+                               event('phase_reset', 0, 5), root(10)))
+        self.assertEqual([s['phase_resets'][0]['children']['unattributed']['exclusive_us']
+                          for s in result['sessions']], [20, 5])
+        self.assertEqual([s['phase_resets'][0]['workers'] for s in result['sessions']], [[], []])
+
     def test_empty_dispatch_zero_session_and_unknown_stage(self):
         result = session(event('phase_dispatch', 0, 0), end=0)
         self.assertIsNone(result['phase_dispatches'][0]['critical_batch_index'])
@@ -198,7 +222,7 @@ class WallSummaryTest(unittest.TestCase):
                    event('planning', 5, 4), event('planning', -1, 2),
                    dict(event('planning', 0, 2), thread=None),
                    dict(event('planning', 0, 2), phase=True),
-                   event('worker_batch', 0, 5), [],
+                   event('worker_batch', 0, 5), event('worker_resolver_reset', 0, 5), [],
                    dict(event('planning', 0, 2), stage='')]
         for bad in invalid:
             with self.subTest(event=bad), self.assertRaises(ValueError):

@@ -30,6 +30,8 @@ import 'manifest/trigger_worker.dart' show writeManifestTriggers;
 
 final _metricsEnabled =
     Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1';
+final _resetTraceEnabled =
+    Platform.environment['BUILD_RUNNER_ACCELERATOR_WALL_TRACE'] == '1';
 
 Future<void> runWorker({
   required Map<String, BuilderFactory> catalog,
@@ -270,6 +272,12 @@ class _WorkerRuntime {
     bool incremental = false,
   }) async {
     if (!_buildStarted) return;
+    final resetTimer = _resetTraceEnabled ? (Stopwatch()..start()) : null;
+    final stages = <String, int>{};
+    void mark(String stage) {
+      if (resetTimer != null) stages[stage] = resetTimer.elapsedMicroseconds;
+    }
+
     resolverDependencyCache.clear();
     final changedAssets = <AssetId>{
       ...updatedSources,
@@ -284,6 +292,7 @@ class _WorkerRuntime {
     for (final id in deletedSources.followedBy(deletedCache)) {
       producedOutputs.remove(id);
     }
+    mark('cache_invalidation');
     // Updated assets produced by another worker are spooled by Rust under the
     // workspace overlay directory. Cache outputs ride the same transport and
     // are refreshed into the shared caches on incremental resets too.
@@ -306,6 +315,7 @@ class _WorkerRuntime {
       await _startBuild(clearReadCaches: false, clearBuilders: false);
       return;
     }
+    mark('overlay_read');
     for (final id in updatedSources.followedBy(updatedCache)) {
       if (producedOutputs.containsKey(id)) continue;
       final spoolFile = File(
@@ -357,6 +367,7 @@ class _WorkerRuntime {
       _committedDartDirectives.remove('${id.package}|${id.path}');
     }
     resolver.reset(clearGraph: dartGraphChanged);
+    mark('directives_and_graph');
     _buildStarted = false;
     await _startBuild(
       buildInputs: BuildInputs((builder) {
@@ -369,6 +380,12 @@ class _WorkerRuntime {
       clearReadCaches: false,
       clearBuilders: false,
     );
+    mark('analyzer_start');
+    if (resetTimer != null) {
+      stderr.writeln(
+        'BRA_RESET_TRACE ${jsonEncode({'pid': pid, 'updated': updatedSources.length + updatedCache.length, 'deleted': deletedSources.length + deletedCache.length, 'graph_cleared': dartGraphChanged, 'elapsed_us': stages})}',
+      );
+    }
   }
 
   Future<void> close() async {

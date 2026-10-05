@@ -236,6 +236,7 @@ impl WorkerClient {
         let _wall = self.wall_span("worker_resolver_reset", None);
         let started = Instant::now();
         let id = self.next_id();
+        let encoding = self.wall_span("reset_encode_send", Some(id));
         self.send(&json!({
             "v": 1,
             "type": "reset_resolver",
@@ -246,7 +247,10 @@ impl WorkerClient {
             "deleted_cache": deleted_cache,
             "incremental": incremental,
         }))?;
+        drop(encoding);
+        let receive = self.wall_span("reset_receive", Some(id));
         let response = self.receive_json()?;
+        drop(receive);
         if response.get("type").and_then(Value::as_str) != Some("reset_resolver")
             || response.get("id").and_then(Value::as_u64) != Some(id)
         {

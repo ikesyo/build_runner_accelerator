@@ -569,6 +569,7 @@ impl WorkerPool {
         if count == 0 {
             return Ok(());
         }
+        let spool = crate::wall::Span::new("reset_overlay_spool");
         // Each worker serves updated contents from the outputs it produced
         // itself. With multiple workers, updated assets may come from another
         // producer, so spool them under the workspace overlay directory where
@@ -605,10 +606,13 @@ impl WorkerPool {
                 let _ = fs::remove_file(spool_root.join(asset.replacen('|', "/", 1)));
             }
         }
+        drop(spool);
+        let delta = crate::wall::Span::new("reset_delta_encode");
         let updated = json!(updated_sources);
         let deleted = json!(deleted_sources);
         let updated_cache = json!(updated_cache);
         let deleted_cache = json!(deleted_cache);
+        drop(delta);
         if count == 1 {
             self.workers[0].reset_resolver(
                 &updated,

@@ -1,0 +1,7874 @@
+[
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3970,
+      "cache_invalidation": 67,
+      "directives_and_graph": 2743,
+      "overlay_read": 779
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8006,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5649,
+      "cache_invalidation": 60,
+      "directives_and_graph": 3606,
+      "overlay_read": 748
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8010,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7435,
+      "cache_invalidation": 30,
+      "directives_and_graph": 3831,
+      "overlay_read": 1007
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8010,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 43734,
+      "cache_invalidation": 24,
+      "directives_and_graph": 18076,
+      "overlay_read": 1813
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8006,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3437,
+      "cache_invalidation": 58,
+      "directives_and_graph": 1501,
+      "overlay_read": 825
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8006,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3516,
+      "cache_invalidation": 55,
+      "directives_and_graph": 1495,
+      "overlay_read": 825
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8010,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3249,
+      "cache_invalidation": 59,
+      "directives_and_graph": 2122,
+      "overlay_read": 642
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8061,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3762,
+      "cache_invalidation": 56,
+      "directives_and_graph": 1922,
+      "overlay_read": 482
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8065,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 6789,
+      "cache_invalidation": 35,
+      "directives_and_graph": 3720,
+      "overlay_read": 664
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8065,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8180,
+      "cache_invalidation": 37,
+      "directives_and_graph": 4595,
+      "overlay_read": 972
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8061,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3072,
+      "cache_invalidation": 53,
+      "directives_and_graph": 1627,
+      "overlay_read": 632
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8061,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3173,
+      "cache_invalidation": 227,
+      "directives_and_graph": 1501,
+      "overlay_read": 832
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8065,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3984,
+      "cache_invalidation": 74,
+      "directives_and_graph": 2347,
+      "overlay_read": 574
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8110,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3689,
+      "cache_invalidation": 68,
+      "directives_and_graph": 2565,
+      "overlay_read": 581
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8114,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 18009,
+      "cache_invalidation": 25,
+      "directives_and_graph": 4246,
+      "overlay_read": 1056
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8110,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7479,
+      "cache_invalidation": 23,
+      "directives_and_graph": 3994,
+      "overlay_read": 899
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8114,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3449,
+      "cache_invalidation": 71,
+      "directives_and_graph": 1518,
+      "overlay_read": 874
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8110,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2958,
+      "cache_invalidation": 51,
+      "directives_and_graph": 1354,
+      "overlay_read": 714
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8114,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4224,
+      "cache_invalidation": 66,
+      "directives_and_graph": 2377,
+      "overlay_read": 733
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8160,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4357,
+      "cache_invalidation": 78,
+      "directives_and_graph": 2500,
+      "overlay_read": 804
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8164,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9874,
+      "cache_invalidation": 30,
+      "directives_and_graph": 4995,
+      "overlay_read": 1085
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8160,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 16555,
+      "cache_invalidation": 28,
+      "directives_and_graph": 7236,
+      "overlay_read": 3480
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8164,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2810,
+      "cache_invalidation": 37,
+      "directives_and_graph": 1028,
+      "overlay_read": 445
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8164,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3326,
+      "cache_invalidation": 58,
+      "directives_and_graph": 1657,
+      "overlay_read": 820
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8160,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3502,
+      "cache_invalidation": 56,
+      "directives_and_graph": 2173,
+      "overlay_read": 788
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8212,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3978,
+      "cache_invalidation": 63,
+      "directives_and_graph": 2283,
+      "overlay_read": 1089
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8208,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 13135,
+      "cache_invalidation": 46,
+      "directives_and_graph": 3409,
+      "overlay_read": 677
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8212,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8389,
+      "cache_invalidation": 37,
+      "directives_and_graph": 4703,
+      "overlay_read": 1044
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8208,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2552,
+      "cache_invalidation": 40,
+      "directives_and_graph": 1041,
+      "overlay_read": 611
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8208,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2864,
+      "cache_invalidation": 37,
+      "directives_and_graph": 1419,
+      "overlay_read": 944
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8212,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4427,
+      "cache_invalidation": 78,
+      "directives_and_graph": 2556,
+      "overlay_read": 846
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8260,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4389,
+      "cache_invalidation": 67,
+      "directives_and_graph": 2521,
+      "overlay_read": 808
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8256,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7894,
+      "cache_invalidation": 23,
+      "directives_and_graph": 4617,
+      "overlay_read": 874
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8260,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 26507,
+      "cache_invalidation": 26,
+      "directives_and_graph": 5747,
+      "overlay_read": 1973
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8256,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2262,
+      "cache_invalidation": 37,
+      "directives_and_graph": 1034,
+      "overlay_read": 527
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8260,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2547,
+      "cache_invalidation": 55,
+      "directives_and_graph": 994,
+      "overlay_read": 531
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8256,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4013,
+      "cache_invalidation": 62,
+      "directives_and_graph": 2300,
+      "overlay_read": 705
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8308,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4892,
+      "cache_invalidation": 38,
+      "directives_and_graph": 1925,
+      "overlay_read": 516
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8309,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 7521,
+      "cache_invalidation": 135,
+      "directives_and_graph": 6189,
+      "overlay_read": 809
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8304,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4236,
+      "cache_invalidation": 38,
+      "directives_and_graph": 1936,
+      "overlay_read": 486
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8310,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9042,
+      "cache_invalidation": 20,
+      "directives_and_graph": 4016,
+      "overlay_read": 704
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8304,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8012,
+      "cache_invalidation": 30,
+      "directives_and_graph": 4058,
+      "overlay_read": 835
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8308,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 28712,
+      "cache_invalidation": 46,
+      "directives_and_graph": 21810,
+      "overlay_read": 869
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8309,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 32447,
+      "cache_invalidation": 22,
+      "directives_and_graph": 21671,
+      "overlay_read": 528
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8310,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 4618,
+      "cache_invalidation": 56,
+      "directives_and_graph": 2622,
+      "overlay_read": 1503
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8304,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 5307,
+      "cache_invalidation": 40,
+      "directives_and_graph": 2359,
+      "overlay_read": 1262
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8310,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 6998,
+      "cache_invalidation": 54,
+      "directives_and_graph": 1387,
+      "overlay_read": 768
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8308,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 10748,
+      "cache_invalidation": 48,
+      "directives_and_graph": 4404,
+      "overlay_read": 2563
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8309,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4245,
+      "cache_invalidation": 99,
+      "directives_and_graph": 2408,
+      "overlay_read": 824
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8372,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5473,
+      "cache_invalidation": 90,
+      "directives_and_graph": 3725,
+      "overlay_read": 820
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8368,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4637,
+      "cache_invalidation": 39,
+      "directives_and_graph": 2225,
+      "overlay_read": 555
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8373,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3539,
+      "cache_invalidation": 40,
+      "directives_and_graph": 1720,
+      "overlay_read": 483
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8374,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9801,
+      "cache_invalidation": 22,
+      "directives_and_graph": 4984,
+      "overlay_read": 1138
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8372,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 16682,
+      "cache_invalidation": 15,
+      "directives_and_graph": 9199,
+      "overlay_read": 5403
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8373,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 17535,
+      "cache_invalidation": 23,
+      "directives_and_graph": 5345,
+      "overlay_read": 569
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8374,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 31986,
+      "cache_invalidation": 22,
+      "directives_and_graph": 25231,
+      "overlay_read": 1464
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8368,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 5673,
+      "cache_invalidation": 32,
+      "directives_and_graph": 1573,
+      "overlay_read": 1008
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8373,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 4673,
+      "cache_invalidation": 542,
+      "directives_and_graph": 2088,
+      "overlay_read": 1322
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8372,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 6680,
+      "cache_invalidation": 44,
+      "directives_and_graph": 1033,
+      "overlay_read": 560
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8368,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 13382,
+      "cache_invalidation": 69,
+      "directives_and_graph": 7160,
+      "overlay_read": 1241
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8374,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3091,
+      "cache_invalidation": 57,
+      "directives_and_graph": 1874,
+      "overlay_read": 505
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8431,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 7247,
+      "cache_invalidation": 62,
+      "directives_and_graph": 6048,
+      "overlay_read": 589
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8435,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5079,
+      "cache_invalidation": 39,
+      "directives_and_graph": 2870,
+      "overlay_read": 581
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8437,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5996,
+      "cache_invalidation": 38,
+      "directives_and_graph": 1846,
+      "overlay_read": 506
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8436,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 19856,
+      "cache_invalidation": 30,
+      "directives_and_graph": 5178,
+      "overlay_read": 1432
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8431,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 10122,
+      "cache_invalidation": 20,
+      "directives_and_graph": 5366,
+      "overlay_read": 938
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8436,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 16295,
+      "cache_invalidation": 15,
+      "directives_and_graph": 10025,
+      "overlay_read": 1167
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8437,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 31896,
+      "cache_invalidation": 24,
+      "directives_and_graph": 21799,
+      "overlay_read": 2022
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8435,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 5751,
+      "cache_invalidation": 38,
+      "directives_and_graph": 4187,
+      "overlay_read": 589
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8431,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 6029,
+      "cache_invalidation": 30,
+      "directives_and_graph": 1389,
+      "overlay_read": 697
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8436,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 7204,
+      "cache_invalidation": 41,
+      "directives_and_graph": 1695,
+      "overlay_read": 863
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8435,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 9971,
+      "cache_invalidation": 30,
+      "directives_and_graph": 5571,
+      "overlay_read": 4900
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8437,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3598,
+      "cache_invalidation": 64,
+      "directives_and_graph": 2371,
+      "overlay_read": 533
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8508,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4185,
+      "cache_invalidation": 66,
+      "directives_and_graph": 2454,
+      "overlay_read": 742
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8512,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 7869,
+      "cache_invalidation": 50,
+      "directives_and_graph": 6219,
+      "overlay_read": 823
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8513,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 6117,
+      "cache_invalidation": 38,
+      "directives_and_graph": 1694,
+      "overlay_read": 483
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8514,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9692,
+      "cache_invalidation": 27,
+      "directives_and_graph": 5178,
+      "overlay_read": 1007
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8512,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9411,
+      "cache_invalidation": 13,
+      "directives_and_graph": 3614,
+      "overlay_read": 624
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8513,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 13356,
+      "cache_invalidation": 18,
+      "directives_and_graph": 7105,
+      "overlay_read": 1511
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8514,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 23441,
+      "cache_invalidation": 20,
+      "directives_and_graph": 4820,
+      "overlay_read": 1431
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8508,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 7635,
+      "cache_invalidation": 74,
+      "directives_and_graph": 1538,
+      "overlay_read": 823
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8512,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3518,
+      "cache_invalidation": 54,
+      "directives_and_graph": 1479,
+      "overlay_read": 811
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8508,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 9737,
+      "cache_invalidation": 67,
+      "directives_and_graph": 6346,
+      "overlay_read": 1211
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8513,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 10168,
+      "cache_invalidation": 70,
+      "directives_and_graph": 4068,
+      "overlay_read": 1278
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8514,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3708,
+      "cache_invalidation": 61,
+      "directives_and_graph": 2437,
+      "overlay_read": 729
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8570,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4279,
+      "cache_invalidation": 70,
+      "directives_and_graph": 2368,
+      "overlay_read": 746
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8574,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4822,
+      "cache_invalidation": 50,
+      "directives_and_graph": 2437,
+      "overlay_read": 873
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8575,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5177,
+      "cache_invalidation": 38,
+      "directives_and_graph": 2485,
+      "overlay_read": 606
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8576,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 11658,
+      "cache_invalidation": 15,
+      "directives_and_graph": 4038,
+      "overlay_read": 617
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8576,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 21316,
+      "cache_invalidation": 14,
+      "directives_and_graph": 8358,
+      "overlay_read": 933
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8575,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 11765,
+      "cache_invalidation": 22,
+      "directives_and_graph": 6907,
+      "overlay_read": 1287
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8570,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 32021,
+      "cache_invalidation": 22,
+      "directives_and_graph": 27349,
+      "overlay_read": 1736
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8574,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 7356,
+      "cache_invalidation": 50,
+      "directives_and_graph": 5452,
+      "overlay_read": 725
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8574,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 7490,
+      "cache_invalidation": 53,
+      "directives_and_graph": 5581,
+      "overlay_read": 795
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8570,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 6217,
+      "cache_invalidation": 42,
+      "directives_and_graph": 1572,
+      "overlay_read": 842
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8576,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 6243,
+      "cache_invalidation": 44,
+      "directives_and_graph": 1574,
+      "overlay_read": 844
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8575,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5435,
+      "cache_invalidation": 62,
+      "directives_and_graph": 2818,
+      "overlay_read": 805
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8639,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5001,
+      "cache_invalidation": 53,
+      "directives_and_graph": 2687,
+      "overlay_read": 985
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8640,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 8900,
+      "cache_invalidation": 73,
+      "directives_and_graph": 7527,
+      "overlay_read": 5755
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8638,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 7647,
+      "cache_invalidation": 62,
+      "directives_and_graph": 2665,
+      "overlay_read": 1243
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8634,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 12797,
+      "cache_invalidation": 28,
+      "directives_and_graph": 8768,
+      "overlay_read": 5101
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8638,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 13603,
+      "cache_invalidation": 16,
+      "directives_and_graph": 8708,
+      "overlay_read": 793
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8639,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 17329,
+      "cache_invalidation": 28,
+      "directives_and_graph": 9104,
+      "overlay_read": 816
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8634,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 19244,
+      "cache_invalidation": 15,
+      "directives_and_graph": 8563,
+      "overlay_read": 5052
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8640,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 6961,
+      "cache_invalidation": 56,
+      "directives_and_graph": 4917,
+      "overlay_read": 4243
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8638,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 7902,
+      "cache_invalidation": 42,
+      "directives_and_graph": 1557,
+      "overlay_read": 790
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8640,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 7138,
+      "cache_invalidation": 40,
+      "directives_and_graph": 1485,
+      "overlay_read": 768
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8639,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3866,
+      "cache_invalidation": 55,
+      "directives_and_graph": 1413,
+      "overlay_read": 742
+    },
+    "graph_cleared": false,
+    "group": "experiment-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 8634,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 18329,
+      "cache_invalidation": 60,
+      "directives_and_graph": 16912,
+      "overlay_read": 14864
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8700,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4137,
+      "cache_invalidation": 59,
+      "directives_and_graph": 2589,
+      "overlay_read": 997
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8704,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 17062,
+      "cache_invalidation": 94,
+      "directives_and_graph": 6254,
+      "overlay_read": 1450
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8704,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 19186,
+      "cache_invalidation": 23,
+      "directives_and_graph": 8983,
+      "overlay_read": 1283
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8700,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3331,
+      "cache_invalidation": 39,
+      "directives_and_graph": 1315,
+      "overlay_read": 641
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8704,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3935,
+      "cache_invalidation": 40,
+      "directives_and_graph": 1844,
+      "overlay_read": 720
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8700,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 10369,
+      "cache_invalidation": 92,
+      "directives_and_graph": 8527,
+      "overlay_read": 819
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8752,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 10467,
+      "cache_invalidation": 84,
+      "directives_and_graph": 8545,
+      "overlay_read": 910
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8748,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7711,
+      "cache_invalidation": 23,
+      "directives_and_graph": 4399,
+      "overlay_read": 951
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8748,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 26921,
+      "cache_invalidation": 20,
+      "directives_and_graph": 22437,
+      "overlay_read": 3616
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8752,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2847,
+      "cache_invalidation": 40,
+      "directives_and_graph": 1196,
+      "overlay_read": 741
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8748,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3199,
+      "cache_invalidation": 38,
+      "directives_and_graph": 1252,
+      "overlay_read": 473
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8752,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 6492,
+      "cache_invalidation": 94,
+      "directives_and_graph": 3392,
+      "overlay_read": 984
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8799,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 6398,
+      "cache_invalidation": 115,
+      "directives_and_graph": 3243,
+      "overlay_read": 877
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8795,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 10993,
+      "cache_invalidation": 29,
+      "directives_and_graph": 6639,
+      "overlay_read": 3119
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8799,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7050,
+      "cache_invalidation": 26,
+      "directives_and_graph": 3707,
+      "overlay_read": 916
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8795,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2938,
+      "cache_invalidation": 54,
+      "directives_and_graph": 1327,
+      "overlay_read": 571
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8799,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2167,
+      "cache_invalidation": 38,
+      "directives_and_graph": 925,
+      "overlay_read": 455
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8795,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3199,
+      "cache_invalidation": 58,
+      "directives_and_graph": 2105,
+      "overlay_read": 838
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8847,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3924,
+      "cache_invalidation": 68,
+      "directives_and_graph": 2607,
+      "overlay_read": 626
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8843,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 13646,
+      "cache_invalidation": 30,
+      "directives_and_graph": 7250,
+      "overlay_read": 1073
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8847,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 44973,
+      "cache_invalidation": 27,
+      "directives_and_graph": 40281,
+      "overlay_read": 5964
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8843,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3270,
+      "cache_invalidation": 42,
+      "directives_and_graph": 1624,
+      "overlay_read": 1119
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8843,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2555,
+      "cache_invalidation": 39,
+      "directives_and_graph": 1121,
+      "overlay_read": 570
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8847,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3711,
+      "cache_invalidation": 55,
+      "directives_and_graph": 2113,
+      "overlay_read": 545
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8901,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3553,
+      "cache_invalidation": 58,
+      "directives_and_graph": 2211,
+      "overlay_read": 561
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8905,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 59667,
+      "cache_invalidation": 26,
+      "directives_and_graph": 49269,
+      "overlay_read": 1138
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8901,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 58354,
+      "cache_invalidation": 26,
+      "directives_and_graph": 47746,
+      "overlay_read": 997
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8905,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2743,
+      "cache_invalidation": 39,
+      "directives_and_graph": 1160,
+      "overlay_read": 690
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8901,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2541,
+      "cache_invalidation": 39,
+      "directives_and_graph": 989,
+      "overlay_read": 545
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 8905,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5172,
+      "cache_invalidation": 119,
+      "directives_and_graph": 3278,
+      "overlay_read": 758
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8953,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 6795,
+      "cache_invalidation": 85,
+      "directives_and_graph": 4769,
+      "overlay_read": 3303
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8949,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8153,
+      "cache_invalidation": 27,
+      "directives_and_graph": 3938,
+      "overlay_read": 849
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8953,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 15241,
+      "cache_invalidation": 23,
+      "directives_and_graph": 9012,
+      "overlay_read": 1212
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8949,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2364,
+      "cache_invalidation": 39,
+      "directives_and_graph": 928,
+      "overlay_read": 511
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8953,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2436,
+      "cache_invalidation": 39,
+      "directives_and_graph": 1258,
+      "overlay_read": 796
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 8949,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3297,
+      "cache_invalidation": 62,
+      "directives_and_graph": 2194,
+      "overlay_read": 896
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8999,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3711,
+      "cache_invalidation": 132,
+      "directives_and_graph": 2189,
+      "overlay_read": 703
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9003,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4292,
+      "cache_invalidation": 40,
+      "directives_and_graph": 2200,
+      "overlay_read": 554
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9004,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 8820,
+      "cache_invalidation": 38,
+      "directives_and_graph": 2613,
+      "overlay_read": 611
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9005,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9200,
+      "cache_invalidation": 27,
+      "directives_and_graph": 4596,
+      "overlay_read": 806
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9003,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 12204,
+      "cache_invalidation": 14,
+      "directives_and_graph": 4493,
+      "overlay_read": 641
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9004,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 14748,
+      "cache_invalidation": 27,
+      "directives_and_graph": 7189,
+      "overlay_read": 912
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8999,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 13891,
+      "cache_invalidation": 17,
+      "directives_and_graph": 7961,
+      "overlay_read": 757
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9005,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3457,
+      "cache_invalidation": 53,
+      "directives_and_graph": 1491,
+      "overlay_read": 786
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 8999,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3667,
+      "cache_invalidation": 41,
+      "directives_and_graph": 1690,
+      "overlay_read": 617
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9003,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 4093,
+      "cache_invalidation": 40,
+      "directives_and_graph": 1533,
+      "overlay_read": 817
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9004,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3204,
+      "cache_invalidation": 56,
+      "directives_and_graph": 1157,
+      "overlay_read": 646
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9005,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4378,
+      "cache_invalidation": 80,
+      "directives_and_graph": 2575,
+      "overlay_read": 835
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9068,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 8539,
+      "cache_invalidation": 264,
+      "directives_and_graph": 4639,
+      "overlay_read": 1636
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9069,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 14551,
+      "cache_invalidation": 77,
+      "directives_and_graph": 4879,
+      "overlay_read": 781
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9064,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 17073,
+      "cache_invalidation": 51,
+      "directives_and_graph": 14370,
+      "overlay_read": 10188
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9070,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 22820,
+      "cache_invalidation": 18,
+      "directives_and_graph": 17906,
+      "overlay_read": 754
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9070,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 26090,
+      "cache_invalidation": 17,
+      "directives_and_graph": 14717,
+      "overlay_read": 10897
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9069,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 12545,
+      "cache_invalidation": 41,
+      "directives_and_graph": 7613,
+      "overlay_read": 1108
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9068,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 19137,
+      "cache_invalidation": 22,
+      "directives_and_graph": 12786,
+      "overlay_read": 1234
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9064,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 5091,
+      "cache_invalidation": 30,
+      "directives_and_graph": 1775,
+      "overlay_read": 836
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9069,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 4026,
+      "cache_invalidation": 39,
+      "directives_and_graph": 2536,
+      "overlay_read": 631
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9064,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 8417,
+      "cache_invalidation": 41,
+      "directives_and_graph": 6198,
+      "overlay_read": 5320
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9068,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 9335,
+      "cache_invalidation": 28,
+      "directives_and_graph": 1939,
+      "overlay_read": 1091
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9070,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 7382,
+      "cache_invalidation": 83,
+      "directives_and_graph": 3005,
+      "overlay_read": 900
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9127,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 7907,
+      "cache_invalidation": 71,
+      "directives_and_graph": 2516,
+      "overlay_read": 752
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9132,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5801,
+      "cache_invalidation": 71,
+      "directives_and_graph": 4608,
+      "overlay_read": 725
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9131,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4528,
+      "cache_invalidation": 40,
+      "directives_and_graph": 2195,
+      "overlay_read": 617
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9133,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 6245,
+      "cache_invalidation": 22,
+      "directives_and_graph": 3465,
+      "overlay_read": 578
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9131,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8925,
+      "cache_invalidation": 18,
+      "directives_and_graph": 4142,
+      "overlay_read": 806
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9132,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 10857,
+      "cache_invalidation": 23,
+      "directives_and_graph": 8101,
+      "overlay_read": 751
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9127,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 16338,
+      "cache_invalidation": 55,
+      "directives_and_graph": 8335,
+      "overlay_read": 4841
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9133,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3772,
+      "cache_invalidation": 48,
+      "directives_and_graph": 1640,
+      "overlay_read": 909
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9131,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 4016,
+      "cache_invalidation": 43,
+      "directives_and_graph": 1701,
+      "overlay_read": 875
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9132,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3724,
+      "cache_invalidation": 75,
+      "directives_and_graph": 1441,
+      "overlay_read": 793
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9127,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 11004,
+      "cache_invalidation": 170,
+      "directives_and_graph": 6007,
+      "overlay_read": 5425
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9133,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4229,
+      "cache_invalidation": 86,
+      "directives_and_graph": 2399,
+      "overlay_read": 806
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9193,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 6529,
+      "cache_invalidation": 81,
+      "directives_and_graph": 2492,
+      "overlay_read": 858
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9197,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4647,
+      "cache_invalidation": 35,
+      "directives_and_graph": 2447,
+      "overlay_read": 478
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9199,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4744,
+      "cache_invalidation": 36,
+      "directives_and_graph": 2987,
+      "overlay_read": 1481
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9198,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 11287,
+      "cache_invalidation": 13,
+      "directives_and_graph": 6631,
+      "overlay_read": 3273
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9199,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 18021,
+      "cache_invalidation": 17,
+      "directives_and_graph": 9383,
+      "overlay_read": 1565
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9198,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 22244,
+      "cache_invalidation": 23,
+      "directives_and_graph": 10581,
+      "overlay_read": 2396
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9197,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 12295,
+      "cache_invalidation": 26,
+      "directives_and_graph": 6329,
+      "overlay_read": 2002
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9193,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3467,
+      "cache_invalidation": 55,
+      "directives_and_graph": 1484,
+      "overlay_read": 809
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9193,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 4921,
+      "cache_invalidation": 40,
+      "directives_and_graph": 1466,
+      "overlay_read": 782
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9198,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2994,
+      "cache_invalidation": 28,
+      "directives_and_graph": 1133,
+      "overlay_read": 616
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9199,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3019,
+      "cache_invalidation": 53,
+      "directives_and_graph": 1393,
+      "overlay_read": 714
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9197,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5963,
+      "cache_invalidation": 55,
+      "directives_and_graph": 4859,
+      "overlay_read": 484
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9260,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5202,
+      "cache_invalidation": 34,
+      "directives_and_graph": 1573,
+      "overlay_read": 435
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9262,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 7992,
+      "cache_invalidation": 55,
+      "directives_and_graph": 6267,
+      "overlay_read": 657
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9256,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5471,
+      "cache_invalidation": 37,
+      "directives_and_graph": 1839,
+      "overlay_read": 435
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9261,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9105,
+      "cache_invalidation": 18,
+      "directives_and_graph": 4222,
+      "overlay_read": 770
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9262,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 10918,
+      "cache_invalidation": 31,
+      "directives_and_graph": 4413,
+      "overlay_read": 906
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9260,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 10214,
+      "cache_invalidation": 22,
+      "directives_and_graph": 6955,
+      "overlay_read": 666
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9256,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 10147,
+      "cache_invalidation": 17,
+      "directives_and_graph": 4680,
+      "overlay_read": 879
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9261,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2256,
+      "cache_invalidation": 40,
+      "directives_and_graph": 1015,
+      "overlay_read": 530
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9256,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3844,
+      "cache_invalidation": 62,
+      "directives_and_graph": 1503,
+      "overlay_read": 806
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9261,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 6638,
+      "cache_invalidation": 50,
+      "directives_and_graph": 5368,
+      "overlay_read": 738
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9260,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 5399,
+      "cache_invalidation": 41,
+      "directives_and_graph": 1474,
+      "overlay_read": 767
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9262,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4219,
+      "cache_invalidation": 72,
+      "directives_and_graph": 2399,
+      "overlay_read": 827
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9326,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4011,
+      "cache_invalidation": 35,
+      "directives_and_graph": 2047,
+      "overlay_read": 666
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9327,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 6399,
+      "cache_invalidation": 62,
+      "directives_and_graph": 5279,
+      "overlay_read": 774
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9322,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5392,
+      "cache_invalidation": 51,
+      "directives_and_graph": 3164,
+      "overlay_read": 715
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9328,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8338,
+      "cache_invalidation": 21,
+      "directives_and_graph": 4596,
+      "overlay_read": 867
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9326,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 6116,
+      "cache_invalidation": 19,
+      "directives_and_graph": 3093,
+      "overlay_read": 680
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9327,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 27440,
+      "cache_invalidation": 17,
+      "directives_and_graph": 12662,
+      "overlay_read": 823
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9328,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 38183,
+      "cache_invalidation": 57,
+      "directives_and_graph": 34944,
+      "overlay_read": 25794
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9322,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3637,
+      "cache_invalidation": 52,
+      "directives_and_graph": 1680,
+      "overlay_read": 833
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9326,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3343,
+      "cache_invalidation": 55,
+      "directives_and_graph": 1473,
+      "overlay_read": 772
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9322,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 4620,
+      "cache_invalidation": 36,
+      "directives_and_graph": 1979,
+      "overlay_read": 929
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9327,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3010,
+      "cache_invalidation": 29,
+      "directives_and_graph": 1151,
+      "overlay_read": 591
+    },
+    "graph_cleared": false,
+    "group": "diagnostics-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9328,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 5105,
+      "cache_invalidation": 62,
+      "directives_and_graph": 3140,
+      "overlay_read": 1315
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 9391,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4304,
+      "cache_invalidation": 77,
+      "directives_and_graph": 2635,
+      "overlay_read": 813
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 9387,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9703,
+      "cache_invalidation": 33,
+      "directives_and_graph": 5034,
+      "overlay_read": 1079
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 9387,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9181,
+      "cache_invalidation": 26,
+      "directives_and_graph": 4675,
+      "overlay_read": 843
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 9391,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2409,
+      "cache_invalidation": 37,
+      "directives_and_graph": 1046,
+      "overlay_read": 596
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 9391,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2798,
+      "cache_invalidation": 77,
+      "directives_and_graph": 1396,
+      "overlay_read": 489
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 9387,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4350,
+      "cache_invalidation": 75,
+      "directives_and_graph": 2495,
+      "overlay_read": 803
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 9441,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4230,
+      "cache_invalidation": 72,
+      "directives_and_graph": 2358,
+      "overlay_read": 738
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 9437,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8898,
+      "cache_invalidation": 24,
+      "directives_and_graph": 5239,
+      "overlay_read": 999
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 9437,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7188,
+      "cache_invalidation": 21,
+      "directives_and_graph": 3595,
+      "overlay_read": 677
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 9441,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3828,
+      "cache_invalidation": 51,
+      "directives_and_graph": 1919,
+      "overlay_read": 1301
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 9437,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 4297,
+      "cache_invalidation": 43,
+      "directives_and_graph": 1648,
+      "overlay_read": 896
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 9441,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4084,
+      "cache_invalidation": 65,
+      "directives_and_graph": 2075,
+      "overlay_read": 577
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9484,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 11121,
+      "cache_invalidation": 116,
+      "directives_and_graph": 9609,
+      "overlay_read": 606
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9488,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4641,
+      "cache_invalidation": 149,
+      "directives_and_graph": 2349,
+      "overlay_read": 642
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9490,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 6391,
+      "cache_invalidation": 65,
+      "directives_and_graph": 2123,
+      "overlay_read": 660
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9489,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7887,
+      "cache_invalidation": 20,
+      "directives_and_graph": 4374,
+      "overlay_read": 887
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9488,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 16274,
+      "cache_invalidation": 27,
+      "directives_and_graph": 9393,
+      "overlay_read": 4901
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9489,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 17391,
+      "cache_invalidation": 23,
+      "directives_and_graph": 8804,
+      "overlay_read": 1261
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9484,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 16920,
+      "cache_invalidation": 12,
+      "directives_and_graph": 8162,
+      "overlay_read": 722
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9490,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2183,
+      "cache_invalidation": 37,
+      "directives_and_graph": 921,
+      "overlay_read": 484
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9484,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 21115,
+      "cache_invalidation": 29,
+      "directives_and_graph": 1031,
+      "overlay_read": 517
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9489,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2548,
+      "cache_invalidation": 41,
+      "directives_and_graph": 1224,
+      "overlay_read": 697
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9488,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 3010,
+      "cache_invalidation": 35,
+      "directives_and_graph": 1229,
+      "overlay_read": 603
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 9490,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 4019,
+      "cache_invalidation": 61,
+      "directives_and_graph": 2147,
+      "overlay_read": 629
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9564,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 3754,
+      "cache_invalidation": 73,
+      "directives_and_graph": 2412,
+      "overlay_read": 766
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9560,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 7060,
+      "cache_invalidation": 39,
+      "directives_and_graph": 3695,
+      "overlay_read": 514
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9566,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 288,
+    "elapsed_us": {
+      "analyzer_start": 9805,
+      "cache_invalidation": 39,
+      "directives_and_graph": 5136,
+      "overlay_read": 544
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9565,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7014,
+      "cache_invalidation": 20,
+      "directives_and_graph": 3957,
+      "overlay_read": 983
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9564,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9081,
+      "cache_invalidation": 15,
+      "directives_and_graph": 5135,
+      "overlay_read": 1400
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9566,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 13560,
+      "cache_invalidation": 22,
+      "directives_and_graph": 8573,
+      "overlay_read": 1069
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9560,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 12233,
+      "cache_invalidation": 14,
+      "directives_and_graph": 3415,
+      "overlay_read": 497
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9565,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2851,
+      "cache_invalidation": 128,
+      "directives_and_graph": 1209,
+      "overlay_read": 645
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9564,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 4082,
+      "cache_invalidation": 40,
+      "directives_and_graph": 1622,
+      "overlay_read": 804
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9566,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 2830,
+      "cache_invalidation": 31,
+      "directives_and_graph": 1180,
+      "overlay_read": 569
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9565,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 352,
+    "elapsed_us": {
+      "analyzer_start": 7944,
+      "cache_invalidation": 60,
+      "directives_and_graph": 1577,
+      "overlay_read": 857
+    },
+    "graph_cleared": false,
+    "group": "metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 9560,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 2884,
+      "cache_invalidation": 66,
+      "directives_and_graph": 1768,
+      "overlay_read": 554
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14660,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 3651,
+      "cache_invalidation": 58,
+      "directives_and_graph": 2436,
+      "overlay_read": 621
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14656,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7149,
+      "cache_invalidation": 26,
+      "directives_and_graph": 4413,
+      "overlay_read": 842
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14656,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7983,
+      "cache_invalidation": 24,
+      "directives_and_graph": 4740,
+      "overlay_read": 856
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14660,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 6880,
+      "cache_invalidation": 56,
+      "directives_and_graph": 5477,
+      "overlay_read": 766
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14660,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 8604,
+      "cache_invalidation": 49,
+      "directives_and_graph": 5954,
+      "overlay_read": 1346
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14656,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5544,
+      "cache_invalidation": 82,
+      "directives_and_graph": 3937,
+      "overlay_read": 586
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14660,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5181,
+      "cache_invalidation": 89,
+      "directives_and_graph": 2212,
+      "overlay_read": 533
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14656,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2672,
+      "cache_invalidation": 16,
+      "directives_and_graph": 763,
+      "overlay_read": 753
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14660,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2645,
+      "cache_invalidation": 14,
+      "directives_and_graph": 727,
+      "overlay_read": 714
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14656,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4566,
+      "cache_invalidation": 97,
+      "directives_and_graph": 2840,
+      "overlay_read": 599
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14720,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4510,
+      "cache_invalidation": 107,
+      "directives_and_graph": 3227,
+      "overlay_read": 706
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14724,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 10327,
+      "cache_invalidation": 79,
+      "directives_and_graph": 6333,
+      "overlay_read": 929
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14720,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 23532,
+      "cache_invalidation": 27,
+      "directives_and_graph": 6599,
+      "overlay_read": 793
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14724,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 2484,
+      "cache_invalidation": 41,
+      "directives_and_graph": 1096,
+      "overlay_read": 568
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14724,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7078,
+      "cache_invalidation": 38,
+      "directives_and_graph": 1032,
+      "overlay_read": 572
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14720,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5525,
+      "cache_invalidation": 174,
+      "directives_and_graph": 3090,
+      "overlay_read": 970
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14720,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7172,
+      "cache_invalidation": 53,
+      "directives_and_graph": 2593,
+      "overlay_read": 790
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14724,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2618,
+      "cache_invalidation": 15,
+      "directives_and_graph": 729,
+      "overlay_read": 718
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14720,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2578,
+      "cache_invalidation": 14,
+      "directives_and_graph": 713,
+      "overlay_read": 705
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14724,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4247,
+      "cache_invalidation": 61,
+      "directives_and_graph": 2339,
+      "overlay_read": 727
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14781,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 3606,
+      "cache_invalidation": 74,
+      "directives_and_graph": 2302,
+      "overlay_read": 734
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14785,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8177,
+      "cache_invalidation": 23,
+      "directives_and_graph": 4135,
+      "overlay_read": 684
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14781,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 6593,
+      "cache_invalidation": 20,
+      "directives_and_graph": 4027,
+      "overlay_read": 682
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14785,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7078,
+      "cache_invalidation": 39,
+      "directives_and_graph": 1418,
+      "overlay_read": 668
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14781,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 18930,
+      "cache_invalidation": 38,
+      "directives_and_graph": 994,
+      "overlay_read": 510
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14785,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5394,
+      "cache_invalidation": 70,
+      "directives_and_graph": 2622,
+      "overlay_read": 824
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14781,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5413,
+      "cache_invalidation": 74,
+      "directives_and_graph": 2671,
+      "overlay_read": 857
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14785,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2626,
+      "cache_invalidation": 15,
+      "directives_and_graph": 739,
+      "overlay_read": 729
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14785,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2582,
+      "cache_invalidation": 15,
+      "directives_and_graph": 701,
+      "overlay_read": 691
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14781,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 3415,
+      "cache_invalidation": 61,
+      "directives_and_graph": 2290,
+      "overlay_read": 765
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14841,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 3854,
+      "cache_invalidation": 71,
+      "directives_and_graph": 2424,
+      "overlay_read": 913
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14845,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 6063,
+      "cache_invalidation": 32,
+      "directives_and_graph": 3449,
+      "overlay_read": 569
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14841,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 6987,
+      "cache_invalidation": 18,
+      "directives_and_graph": 3937,
+      "overlay_read": 582
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14845,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 6032,
+      "cache_invalidation": 50,
+      "directives_and_graph": 2114,
+      "overlay_read": 1311
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14841,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 18085,
+      "cache_invalidation": 38,
+      "directives_and_graph": 979,
+      "overlay_read": 561
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14845,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5315,
+      "cache_invalidation": 74,
+      "directives_and_graph": 2656,
+      "overlay_read": 837
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14845,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5299,
+      "cache_invalidation": 68,
+      "directives_and_graph": 2622,
+      "overlay_read": 813
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14841,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2607,
+      "cache_invalidation": 36,
+      "directives_and_graph": 738,
+      "overlay_read": 730
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14845,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2617,
+      "cache_invalidation": 13,
+      "directives_and_graph": 745,
+      "overlay_read": 736
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14841,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 3115,
+      "cache_invalidation": 54,
+      "directives_and_graph": 1914,
+      "overlay_read": 521
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14903,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 3490,
+      "cache_invalidation": 149,
+      "directives_and_graph": 2096,
+      "overlay_read": 676
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14899,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 11530,
+      "cache_invalidation": 30,
+      "directives_and_graph": 6412,
+      "overlay_read": 1840
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14899,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9902,
+      "cache_invalidation": 27,
+      "directives_and_graph": 5229,
+      "overlay_read": 1246
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14903,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 6533,
+      "cache_invalidation": 47,
+      "directives_and_graph": 1153,
+      "overlay_read": 670
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14899,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7259,
+      "cache_invalidation": 40,
+      "directives_and_graph": 1070,
+      "overlay_read": 602
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14903,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7307,
+      "cache_invalidation": 58,
+      "directives_and_graph": 4095,
+      "overlay_read": 777
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14899,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7677,
+      "cache_invalidation": 60,
+      "directives_and_graph": 4505,
+      "overlay_read": 1711
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14903,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2575,
+      "cache_invalidation": 15,
+      "directives_and_graph": 702,
+      "overlay_read": 693
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14899,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 5038,
+      "cache_invalidation": 12,
+      "directives_and_graph": 674,
+      "overlay_read": 666
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 14903,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4193,
+      "cache_invalidation": 62,
+      "directives_and_graph": 2726,
+      "overlay_read": 576
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14959,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 6963,
+      "cache_invalidation": 91,
+      "directives_and_graph": 2665,
+      "overlay_read": 826
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14963,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9038,
+      "cache_invalidation": 27,
+      "directives_and_graph": 4315,
+      "overlay_read": 883
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14963,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9242,
+      "cache_invalidation": 24,
+      "directives_and_graph": 4559,
+      "overlay_read": 844
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14959,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 8102,
+      "cache_invalidation": 37,
+      "directives_and_graph": 1004,
+      "overlay_read": 502
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14959,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 10662,
+      "cache_invalidation": 43,
+      "directives_and_graph": 997,
+      "overlay_read": 563
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14963,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 3738,
+      "cache_invalidation": 55,
+      "directives_and_graph": 1871,
+      "overlay_read": 564
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14963,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5449,
+      "cache_invalidation": 288,
+      "directives_and_graph": 2523,
+      "overlay_read": 733
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14959,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2018,
+      "cache_invalidation": 15,
+      "directives_and_graph": 550,
+      "overlay_read": 542
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14959,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2194,
+      "cache_invalidation": 11,
+      "directives_and_graph": 480,
+      "overlay_read": 471
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 14963,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 7906,
+      "cache_invalidation": 58,
+      "directives_and_graph": 6651,
+      "overlay_read": 960
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15021,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 8642,
+      "cache_invalidation": 65,
+      "directives_and_graph": 7241,
+      "overlay_read": 870
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15017,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 7558,
+      "cache_invalidation": 38,
+      "directives_and_graph": 2063,
+      "overlay_read": 542
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15022,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 8579,
+      "cache_invalidation": 101,
+      "directives_and_graph": 2442,
+      "overlay_read": 512
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15023,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7676,
+      "cache_invalidation": 23,
+      "directives_and_graph": 3358,
+      "overlay_read": 567
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15023,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 11465,
+      "cache_invalidation": 21,
+      "directives_and_graph": 3121,
+      "overlay_read": 573
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15021,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 15761,
+      "cache_invalidation": 14,
+      "directives_and_graph": 3071,
+      "overlay_read": 624
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15022,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9780,
+      "cache_invalidation": 18,
+      "directives_and_graph": 3115,
+      "overlay_read": 554
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15017,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 4610,
+      "cache_invalidation": 120,
+      "directives_and_graph": 1864,
+      "overlay_read": 1379
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15021,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 2729,
+      "cache_invalidation": 29,
+      "directives_and_graph": 1080,
+      "overlay_read": 587
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15023,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 9144,
+      "cache_invalidation": 31,
+      "directives_and_graph": 7087,
+      "overlay_read": 6381
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15022,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 15107,
+      "cache_invalidation": 39,
+      "directives_and_graph": 1038,
+      "overlay_read": 603
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15017,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 4742,
+      "cache_invalidation": 51,
+      "directives_and_graph": 2675,
+      "overlay_read": 543
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15021,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7925,
+      "cache_invalidation": 84,
+      "directives_and_graph": 5225,
+      "overlay_read": 508
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15017,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 9901,
+      "cache_invalidation": 81,
+      "directives_and_graph": 5313,
+      "overlay_read": 3518
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15023,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 15466,
+      "cache_invalidation": 64,
+      "directives_and_graph": 5541,
+      "overlay_read": 798
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15022,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2173,
+      "cache_invalidation": 6,
+      "directives_and_graph": 551,
+      "overlay_read": 543
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15023,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 1892,
+      "cache_invalidation": 11,
+      "directives_and_graph": 588,
+      "overlay_read": 582
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15021,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 4876,
+      "cache_invalidation": 5,
+      "directives_and_graph": 697,
+      "overlay_read": 688
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15022,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 3354,
+      "cache_invalidation": 139,
+      "directives_and_graph": 1076,
+      "overlay_read": 1061
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15017,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4509,
+      "cache_invalidation": 78,
+      "directives_and_graph": 2654,
+      "overlay_read": 893
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15098,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4662,
+      "cache_invalidation": 50,
+      "directives_and_graph": 2382,
+      "overlay_read": 714
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15104,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 11273,
+      "cache_invalidation": 87,
+      "directives_and_graph": 7415,
+      "overlay_read": 5542
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15102,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 10563,
+      "cache_invalidation": 60,
+      "directives_and_graph": 2290,
+      "overlay_read": 724
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15103,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 12351,
+      "cache_invalidation": 32,
+      "directives_and_graph": 8566,
+      "overlay_read": 913
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15102,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 17852,
+      "cache_invalidation": 26,
+      "directives_and_graph": 7763,
+      "overlay_read": 622
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15098,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 18483,
+      "cache_invalidation": 13,
+      "directives_and_graph": 9269,
+      "overlay_read": 951
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15103,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 15428,
+      "cache_invalidation": 32,
+      "directives_and_graph": 6931,
+      "overlay_read": 903
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15104,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 24038,
+      "cache_invalidation": 80,
+      "directives_and_graph": 2837,
+      "overlay_read": 1252
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15104,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 30336,
+      "cache_invalidation": 43,
+      "directives_and_graph": 1443,
+      "overlay_read": 731
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15102,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 28447,
+      "cache_invalidation": 46,
+      "directives_and_graph": 2684,
+      "overlay_read": 1183
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15103,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 6497,
+      "cache_invalidation": 51,
+      "directives_and_graph": 1510,
+      "overlay_read": 826
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15098,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5043,
+      "cache_invalidation": 80,
+      "directives_and_graph": 2657,
+      "overlay_read": 891
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15102,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 4526,
+      "cache_invalidation": 93,
+      "directives_and_graph": 2462,
+      "overlay_read": 935
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15098,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 21508,
+      "cache_invalidation": 64,
+      "directives_and_graph": 2856,
+      "overlay_read": 931
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15103,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 31758,
+      "cache_invalidation": 59,
+      "directives_and_graph": 2163,
+      "overlay_read": 716
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15104,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2774,
+      "cache_invalidation": 37,
+      "directives_and_graph": 732,
+      "overlay_read": 722
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15102,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2023,
+      "cache_invalidation": 7,
+      "directives_and_graph": 688,
+      "overlay_read": 680
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15103,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2319,
+      "cache_invalidation": 12,
+      "directives_and_graph": 678,
+      "overlay_read": 669
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15098,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 5237,
+      "cache_invalidation": 6,
+      "directives_and_graph": 732,
+      "overlay_read": 725
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15104,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4916,
+      "cache_invalidation": 75,
+      "directives_and_graph": 3510,
+      "overlay_read": 1403
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15181,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4274,
+      "cache_invalidation": 96,
+      "directives_and_graph": 1892,
+      "overlay_read": 528
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15183,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 3878,
+      "cache_invalidation": 56,
+      "directives_and_graph": 2070,
+      "overlay_read": 513
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15177,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4515,
+      "cache_invalidation": 74,
+      "directives_and_graph": 2353,
+      "overlay_read": 757
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15182,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8519,
+      "cache_invalidation": 19,
+      "directives_and_graph": 4821,
+      "overlay_read": 845
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15181,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 17497,
+      "cache_invalidation": 15,
+      "directives_and_graph": 10605,
+      "overlay_read": 877
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15183,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 20795,
+      "cache_invalidation": 21,
+      "directives_and_graph": 16786,
+      "overlay_read": 906
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15182,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 10615,
+      "cache_invalidation": 21,
+      "directives_and_graph": 6742,
+      "overlay_read": 620
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15177,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 3206,
+      "cache_invalidation": 94,
+      "directives_and_graph": 1245,
+      "overlay_read": 748
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15177,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 15196,
+      "cache_invalidation": 66,
+      "directives_and_graph": 3276,
+      "overlay_read": 1476
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15183,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 16059,
+      "cache_invalidation": 53,
+      "directives_and_graph": 5732,
+      "overlay_read": 956
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15181,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 15312,
+      "cache_invalidation": 70,
+      "directives_and_graph": 6949,
+      "overlay_read": 5592
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15182,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 6537,
+      "cache_invalidation": 157,
+      "directives_and_graph": 3587,
+      "overlay_read": 1292
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15181,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 13722,
+      "cache_invalidation": 91,
+      "directives_and_graph": 6780,
+      "overlay_read": 4933
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15177,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 18964,
+      "cache_invalidation": 111,
+      "directives_and_graph": 4590,
+      "overlay_read": 1551
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15183,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 29836,
+      "cache_invalidation": 4177,
+      "directives_and_graph": 9754,
+      "overlay_read": 5716
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15182,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2698,
+      "cache_invalidation": 14,
+      "directives_and_graph": 800,
+      "overlay_read": 789
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15181,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2497,
+      "cache_invalidation": 6,
+      "directives_and_graph": 709,
+      "overlay_read": 700
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15183,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2271,
+      "cache_invalidation": 13,
+      "directives_and_graph": 717,
+      "overlay_read": 708
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15177,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 4931,
+      "cache_invalidation": 5,
+      "directives_and_graph": 493,
+      "overlay_read": 486
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15182,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4573,
+      "cache_invalidation": 67,
+      "directives_and_graph": 2559,
+      "overlay_read": 681
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15257,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 8375,
+      "cache_invalidation": 79,
+      "directives_and_graph": 6877,
+      "overlay_read": 1480
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15261,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 8091,
+      "cache_invalidation": 59,
+      "directives_and_graph": 2521,
+      "overlay_read": 855
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15262,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 10348,
+      "cache_invalidation": 44,
+      "directives_and_graph": 7523,
+      "overlay_read": 1373
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15263,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7561,
+      "cache_invalidation": 14,
+      "directives_and_graph": 3777,
+      "overlay_read": 490
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15262,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9093,
+      "cache_invalidation": 45,
+      "directives_and_graph": 4514,
+      "overlay_read": 847
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15257,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 12645,
+      "cache_invalidation": 27,
+      "directives_and_graph": 4569,
+      "overlay_read": 872
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15261,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7867,
+      "cache_invalidation": 18,
+      "directives_and_graph": 3373,
+      "overlay_read": 806
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15263,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7466,
+      "cache_invalidation": 41,
+      "directives_and_graph": 1473,
+      "overlay_read": 790
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15262,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 11326,
+      "cache_invalidation": 58,
+      "directives_and_graph": 1461,
+      "overlay_read": 822
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15257,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 12213,
+      "cache_invalidation": 30,
+      "directives_and_graph": 1680,
+      "overlay_read": 793
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15263,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 17045,
+      "cache_invalidation": 51,
+      "directives_and_graph": 1146,
+      "overlay_read": 587
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15261,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7911,
+      "cache_invalidation": 62,
+      "directives_and_graph": 3078,
+      "overlay_read": 1191
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15257,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 8679,
+      "cache_invalidation": 68,
+      "directives_and_graph": 3442,
+      "overlay_read": 804
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15262,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 9841,
+      "cache_invalidation": 77,
+      "directives_and_graph": 3060,
+      "overlay_read": 759
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15261,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 21739,
+      "cache_invalidation": 86,
+      "directives_and_graph": 10858,
+      "overlay_read": 2890
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15263,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 3227,
+      "cache_invalidation": 7,
+      "directives_and_graph": 1029,
+      "overlay_read": 1015
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15263,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 4742,
+      "cache_invalidation": 8,
+      "directives_and_graph": 3531,
+      "overlay_read": 3517
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15262,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 7509,
+      "cache_invalidation": 17,
+      "directives_and_graph": 1924,
+      "overlay_read": 1904
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15257,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 5480,
+      "cache_invalidation": 29,
+      "directives_and_graph": 711,
+      "overlay_read": 697
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15261,
+    "repeat": 1,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4344,
+      "cache_invalidation": 72,
+      "directives_and_graph": 2548,
+      "overlay_read": 889
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15337,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 3980,
+      "cache_invalidation": 154,
+      "directives_and_graph": 2443,
+      "overlay_read": 1041
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15341,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 9279,
+      "cache_invalidation": 52,
+      "directives_and_graph": 2354,
+      "overlay_read": 751
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15343,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 5701,
+      "cache_invalidation": 36,
+      "directives_and_graph": 2147,
+      "overlay_read": 790
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15342,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9328,
+      "cache_invalidation": 18,
+      "directives_and_graph": 4385,
+      "overlay_read": 834
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15343,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 10233,
+      "cache_invalidation": 30,
+      "directives_and_graph": 5217,
+      "overlay_read": 724
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15337,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 13244,
+      "cache_invalidation": 16,
+      "directives_and_graph": 4164,
+      "overlay_read": 798
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15342,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9823,
+      "cache_invalidation": 26,
+      "directives_and_graph": 6770,
+      "overlay_read": 872
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15341,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 3782,
+      "cache_invalidation": 55,
+      "directives_and_graph": 1836,
+      "overlay_read": 987
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15337,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5475,
+      "cache_invalidation": 105,
+      "directives_and_graph": 1779,
+      "overlay_read": 969
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15342,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 9398,
+      "cache_invalidation": 51,
+      "directives_and_graph": 1569,
+      "overlay_read": 946
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15341,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7075,
+      "cache_invalidation": 32,
+      "directives_and_graph": 4576,
+      "overlay_read": 2806
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15343,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 9991,
+      "cache_invalidation": 55,
+      "directives_and_graph": 5753,
+      "overlay_read": 890
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15341,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5867,
+      "cache_invalidation": 46,
+      "directives_and_graph": 2165,
+      "overlay_read": 645
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15343,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 6158,
+      "cache_invalidation": 75,
+      "directives_and_graph": 3599,
+      "overlay_read": 1856
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15337,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 14979,
+      "cache_invalidation": 43,
+      "directives_and_graph": 12050,
+      "overlay_read": 947
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15342,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2945,
+      "cache_invalidation": 17,
+      "directives_and_graph": 782,
+      "overlay_read": 771
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15341,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 3269,
+      "cache_invalidation": 16,
+      "directives_and_graph": 744,
+      "overlay_read": 732
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15337,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 3415,
+      "cache_invalidation": 7,
+      "directives_and_graph": 1141,
+      "overlay_read": 1130
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15343,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 3248,
+      "cache_invalidation": 6,
+      "directives_and_graph": 1244,
+      "overlay_read": 1234
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15342,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4333,
+      "cache_invalidation": 127,
+      "directives_and_graph": 2969,
+      "overlay_read": 911
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15420,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4755,
+      "cache_invalidation": 77,
+      "directives_and_graph": 2793,
+      "overlay_read": 859
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15424,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 5323,
+      "cache_invalidation": 52,
+      "directives_and_graph": 2740,
+      "overlay_read": 1049
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15425,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 5165,
+      "cache_invalidation": 40,
+      "directives_and_graph": 2715,
+      "overlay_read": 501
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15426,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8949,
+      "cache_invalidation": 31,
+      "directives_and_graph": 4256,
+      "overlay_read": 911
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15420,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8575,
+      "cache_invalidation": 20,
+      "directives_and_graph": 4904,
+      "overlay_read": 561
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15426,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8563,
+      "cache_invalidation": 29,
+      "directives_and_graph": 5887,
+      "overlay_read": 827
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15424,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 14439,
+      "cache_invalidation": 15,
+      "directives_and_graph": 8293,
+      "overlay_read": 864
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15425,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 6376,
+      "cache_invalidation": 56,
+      "directives_and_graph": 2759,
+      "overlay_read": 2148
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15424,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 8803,
+      "cache_invalidation": 53,
+      "directives_and_graph": 2321,
+      "overlay_read": 761
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15425,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 19052,
+      "cache_invalidation": 55,
+      "directives_and_graph": 1334,
+      "overlay_read": 732
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15420,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 28255,
+      "cache_invalidation": 157,
+      "directives_and_graph": 10587,
+      "overlay_read": 802
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15426,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5395,
+      "cache_invalidation": 83,
+      "directives_and_graph": 2658,
+      "overlay_read": 860
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15420,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7620,
+      "cache_invalidation": 113,
+      "directives_and_graph": 3156,
+      "overlay_read": 1104
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15426,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 8823,
+      "cache_invalidation": 98,
+      "directives_and_graph": 2473,
+      "overlay_read": 767
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15424,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 12703,
+      "cache_invalidation": 55,
+      "directives_and_graph": 6735,
+      "overlay_read": 856
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15425,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2886,
+      "cache_invalidation": 118,
+      "directives_and_graph": 903,
+      "overlay_read": 892
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15424,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2871,
+      "cache_invalidation": 6,
+      "directives_and_graph": 955,
+      "overlay_read": 944
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15426,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 4208,
+      "cache_invalidation": 15,
+      "directives_and_graph": 500,
+      "overlay_read": 492
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15420,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2210,
+      "cache_invalidation": 6,
+      "directives_and_graph": 587,
+      "overlay_read": 579
+    },
+    "graph_cleared": false,
+    "group": "mixed-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15425,
+    "repeat": 2,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4989,
+      "cache_invalidation": 67,
+      "directives_and_graph": 2373,
+      "overlay_read": 583
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 15512,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4956,
+      "cache_invalidation": 57,
+      "directives_and_graph": 3612,
+      "overlay_read": 849
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 15508,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7639,
+      "cache_invalidation": 26,
+      "directives_and_graph": 4494,
+      "overlay_read": 769
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 15508,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 8559,
+      "cache_invalidation": 22,
+      "directives_and_graph": 4546,
+      "overlay_read": 629
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 15512,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 3242,
+      "cache_invalidation": 61,
+      "directives_and_graph": 938,
+      "overlay_read": 505
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 15508,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 2569,
+      "cache_invalidation": 39,
+      "directives_and_graph": 1226,
+      "overlay_read": 598
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 15512,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5967,
+      "cache_invalidation": 77,
+      "directives_and_graph": 2666,
+      "overlay_read": 868
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 15512,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 6920,
+      "cache_invalidation": 79,
+      "directives_and_graph": 2634,
+      "overlay_read": 868
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 15508,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2018,
+      "cache_invalidation": 13,
+      "directives_and_graph": 488,
+      "overlay_read": 481
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 15508,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2454,
+      "cache_invalidation": 12,
+      "directives_and_graph": 719,
+      "overlay_read": 712
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "baseline",
+    "pid": 15512,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4393,
+      "cache_invalidation": 80,
+      "directives_and_graph": 2591,
+      "overlay_read": 878
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 15571,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4316,
+      "cache_invalidation": 85,
+      "directives_and_graph": 2498,
+      "overlay_read": 804
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 15567,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9034,
+      "cache_invalidation": 21,
+      "directives_and_graph": 4111,
+      "overlay_read": 674
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 15571,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9164,
+      "cache_invalidation": 25,
+      "directives_and_graph": 4191,
+      "overlay_read": 620
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 15567,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 2681,
+      "cache_invalidation": 59,
+      "directives_and_graph": 1372,
+      "overlay_read": 801
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 15571,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 3214,
+      "cache_invalidation": 61,
+      "directives_and_graph": 1531,
+      "overlay_read": 973
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 15567,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5486,
+      "cache_invalidation": 78,
+      "directives_and_graph": 2695,
+      "overlay_read": 877
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 15571,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5019,
+      "cache_invalidation": 72,
+      "directives_and_graph": 2417,
+      "overlay_read": 759
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 15567,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 1694,
+      "cache_invalidation": 13,
+      "directives_and_graph": 479,
+      "overlay_read": 471
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 15571,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2293,
+      "cache_invalidation": 10,
+      "directives_and_graph": 533,
+      "overlay_read": 526
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 2,
+    "lane": "candidate",
+    "pid": 15567,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 4257,
+      "cache_invalidation": 74,
+      "directives_and_graph": 2480,
+      "overlay_read": 829
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15624,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 8804,
+      "cache_invalidation": 37,
+      "directives_and_graph": 6713,
+      "overlay_read": 659
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15630,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 11780,
+      "cache_invalidation": 72,
+      "directives_and_graph": 10558,
+      "overlay_read": 715
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15629,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 10726,
+      "cache_invalidation": 46,
+      "directives_and_graph": 1857,
+      "overlay_read": 594
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15631,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9180,
+      "cache_invalidation": 21,
+      "directives_and_graph": 4599,
+      "overlay_read": 972
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15629,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 14767,
+      "cache_invalidation": 14,
+      "directives_and_graph": 6447,
+      "overlay_read": 775
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15631,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 23481,
+      "cache_invalidation": 87,
+      "directives_and_graph": 18612,
+      "overlay_read": 928
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15624,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 20986,
+      "cache_invalidation": 14,
+      "directives_and_graph": 12557,
+      "overlay_read": 727
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15630,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 6542,
+      "cache_invalidation": 42,
+      "directives_and_graph": 4973,
+      "overlay_read": 609
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15629,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 6231,
+      "cache_invalidation": 37,
+      "directives_and_graph": 2713,
+      "overlay_read": 893
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15624,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7258,
+      "cache_invalidation": 29,
+      "directives_and_graph": 1202,
+      "overlay_read": 621
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15630,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 3358,
+      "cache_invalidation": 92,
+      "directives_and_graph": 1452,
+      "overlay_read": 738
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15631,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 5227,
+      "cache_invalidation": 56,
+      "directives_and_graph": 3220,
+      "overlay_read": 937
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15624,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7959,
+      "cache_invalidation": 62,
+      "directives_and_graph": 2780,
+      "overlay_read": 770
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15630,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 9006,
+      "cache_invalidation": 106,
+      "directives_and_graph": 6764,
+      "overlay_read": 804
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15629,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 13012,
+      "cache_invalidation": 44,
+      "directives_and_graph": 6331,
+      "overlay_read": 537
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15631,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2654,
+      "cache_invalidation": 14,
+      "directives_and_graph": 612,
+      "overlay_read": 603
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15624,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 3038,
+      "cache_invalidation": 6,
+      "directives_and_graph": 1025,
+      "overlay_read": 1017
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15630,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 3628,
+      "cache_invalidation": 6,
+      "directives_and_graph": 454,
+      "overlay_read": 447
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15631,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2924,
+      "cache_invalidation": 15,
+      "directives_and_graph": 720,
+      "overlay_read": 711
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "baseline",
+    "pid": 15629,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 11403,
+      "cache_invalidation": 63,
+      "directives_and_graph": 3452,
+      "overlay_read": 1833
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15719,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 14687,
+      "cache_invalidation": 40,
+      "directives_and_graph": 6743,
+      "overlay_read": 1190
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15720,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 17947,
+      "cache_invalidation": 61,
+      "directives_and_graph": 10344,
+      "overlay_read": 726
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15721,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 290,
+    "elapsed_us": {
+      "analyzer_start": 41470,
+      "cache_invalidation": 54,
+      "directives_and_graph": 2764,
+      "overlay_read": 1410
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15715,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 6991,
+      "cache_invalidation": 13,
+      "directives_and_graph": 3767,
+      "overlay_read": 719
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15721,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 10571,
+      "cache_invalidation": 25,
+      "directives_and_graph": 6542,
+      "overlay_read": 2145
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15715,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 9202,
+      "cache_invalidation": 22,
+      "directives_and_graph": 5582,
+      "overlay_read": 1187
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15719,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 64,
+    "elapsed_us": {
+      "analyzer_start": 7241,
+      "cache_invalidation": 14,
+      "directives_and_graph": 3384,
+      "overlay_read": 551
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15720,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7778,
+      "cache_invalidation": 29,
+      "directives_and_graph": 1265,
+      "overlay_read": 508
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15721,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 12860,
+      "cache_invalidation": 83,
+      "directives_and_graph": 10075,
+      "overlay_read": 9256
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15720,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 16725,
+      "cache_invalidation": 39,
+      "directives_and_graph": 1795,
+      "overlay_read": 823
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15715,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 15246,
+      "cache_invalidation": 38,
+      "directives_and_graph": 1024,
+      "overlay_read": 491
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15719,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 4617,
+      "cache_invalidation": 58,
+      "directives_and_graph": 2638,
+      "overlay_read": 681
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15719,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 3761,
+      "cache_invalidation": 55,
+      "directives_and_graph": 1862,
+      "overlay_read": 532
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15715,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 7342,
+      "cache_invalidation": 99,
+      "directives_and_graph": 2987,
+      "overlay_read": 988
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15720,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 354,
+    "elapsed_us": {
+      "analyzer_start": 10721,
+      "cache_invalidation": 44,
+      "directives_and_graph": 1955,
+      "overlay_read": 509
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15721,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2687,
+      "cache_invalidation": 14,
+      "directives_and_graph": 794,
+      "overlay_read": 783
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15715,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 2597,
+      "cache_invalidation": 16,
+      "directives_and_graph": 667,
+      "overlay_read": 659
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15719,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 5624,
+      "cache_invalidation": 9,
+      "directives_and_graph": 745,
+      "overlay_read": 735
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15721,
+    "repeat": 0,
+    "updated": 64
+  },
+  {
+    "deleted": 0,
+    "elapsed_us": {
+      "analyzer_start": 5778,
+      "cache_invalidation": 6,
+      "directives_and_graph": 734,
+      "overlay_read": 724
+    },
+    "graph_cleared": false,
+    "group": "mixed-metrics",
+    "jobs": 4,
+    "lane": "candidate",
+    "pid": 15720,
+    "repeat": 0,
+    "updated": 64
+  }
+]
