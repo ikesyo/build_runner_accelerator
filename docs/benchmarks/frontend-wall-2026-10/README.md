@@ -237,12 +237,13 @@ latest-finishing batches in these captures; ordinary wall-only result decoding
 is roughly 0.06–0.23 ms per critical batch. This is diagnostic work, not binary
 protocol overhead to optimize. Worker metrics additionally time/log Dart work.
 
-[Raw samples](prepared-samples.csv), [full regen native samples](regen-native-samples.csv),
+The committed artifacts are the [raw samples](prepared-samples.csv), [full regen native samples](regen-native-samples.csv),
 [launcher samples](regen-launcher-samples.csv), [overhead samples](overhead-samples.csv),
-[medians/ranges](summary.json), [metadata and binary/worker/input identities](metadata.json), [SDK/toolchain](toolchain.json),
-[output validation fingerprints](outputs.json), and [frontend intervals and batches](timelines.json)
-are retained here. The `*-commands.json` files retain exact commands/flags.
-Raw stderr logs and complete per-file output manifests remain local.
+[SDK/toolchain and compact binary/input identities](toolchain.json), and [output validation fingerprints](outputs.json).
+This report includes the medians/ranges and representative frontend/batch timelines.
+Full event streams, per-input hash maps, expanded command/environment dumps, computed
+summary JSON, raw stderr logs, and complete per-file output manifests remain local;
+the benchmark and summarizer scripts reproduce them.
 
 ## Correctness and checks
 
