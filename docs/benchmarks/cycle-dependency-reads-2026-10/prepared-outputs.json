@@ -1,0 +1,27 @@
+{
+  "cold": {
+    "count": 256,
+    "manifest_sha256": "ae4f089bcf4fd14bbd53f456902444b20378273c9cdc26c0888b3750bf34b2eb",
+    "stock_byte_match": true
+  },
+  "warm-clean": {
+    "count": 256,
+    "manifest_sha256": "ae4f089bcf4fd14bbd53f456902444b20378273c9cdc26c0888b3750bf34b2eb",
+    "stock_byte_match": true
+  },
+  "no-op": {
+    "count": 256,
+    "manifest_sha256": "ae4f089bcf4fd14bbd53f456902444b20378273c9cdc26c0888b3750bf34b2eb",
+    "stock_byte_match": true
+  },
+  "one-file": {
+    "count": 256,
+    "manifest_sha256": "e8550fa3d391a5924acdb34bc24c279f9c01e6003321a01b041c1ab29e1ccb30",
+    "stock_byte_match": true
+  },
+  "broad": {
+    "count": 256,
+    "manifest_sha256": "c627815ece6e57eaccce43bcd2c5fbf07cd7fadeaec938cabbd88f462718abac",
+    "stock_byte_match": true
+  }
+}

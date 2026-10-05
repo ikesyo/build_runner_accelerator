@@ -36,6 +36,16 @@ final class ResolverActionMetrics {
   /// `BuilderFilesystem.readPhased` inside dep loads.
   int depReadPhasedUs = 0;
 
+  /// Content acquisition, conversion/hash, and notification are separate
+  /// boundaries inside depReadPhasedUs. Prefetch happens outside that timer.
+  int depVisibilityUs = 0;
+  int depContentCalls = 0;
+  int depContentUs = 0;
+  int depContentUpdateUs = 0;
+  int depContentDecodeHashUs = 0;
+  int depContentSnapshotBytes = 0;
+  final List<Map<String, Object?>> depLoads = [];
+
   /// `parseString` for dep files that miss the cache.
   int depParseUs = 0;
 
@@ -128,6 +138,13 @@ final class ResolverActionMetrics {
     depParseCacheMisses = 0;
     depParseCacheUs = 0;
     depReadPhasedUs = 0;
+    depVisibilityUs = 0;
+    depContentCalls = 0;
+    depContentUs = 0;
+    depContentUpdateUs = 0;
+    depContentDecodeHashUs = 0;
+    depContentSnapshotBytes = 0;
+    depLoads.clear();
     depParseUs = 0;
     resolverReadsReadUs = 0;
     resolverReadsDigestUs = 0;
@@ -193,6 +210,14 @@ final class ResolverActionMetrics {
     'dep_parse_cache_misses': depParseCacheMisses,
     'dep_parse_cache_us': depParseCacheUs,
     'dep_read_phased_us': depReadPhasedUs,
+    'dep_visibility_us': depVisibilityUs,
+    'dep_content_calls': depContentCalls,
+    'dep_content_us': depContentUs,
+    'dep_content_update_us': depContentUpdateUs,
+    'dep_content_decode_hash_us': depContentDecodeHashUs,
+    'dep_content_snapshot_bytes': depContentSnapshotBytes,
+    if (traceEnabled) 'dep_loads': depLoads,
+
     'dep_parse_us': depParseUs,
     'resolver_reads_read_us': resolverReadsReadUs,
     'resolver_reads_digest_us': resolverReadsDigestUs,

@@ -1,0 +1,205 @@
+--- a/lib/src/current_build_runtime.dart
++++ b/lib/src/current_build_runtime.dart
+@@ -1,8 +1,9 @@
+ import 'package:build/build.dart';
++import 'package:build_runner/src/bootstrap/processes.dart' show ChildProcess;
+ import 'package:built_collection/built_collection.dart';
+ import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
+ import 'package:build_runner/src/build/builder_filesystem.dart'
+-    show BuilderFilesystem;
++    show BuilderFilesystem, AssetContentExtension;
+ import 'package:build_runner/src/build/build_state/build_state.dart'
+     show BuildState;
+ import 'package:build_runner/src/build/build_state/build_step_id.dart'
+@@ -26,6 +27,7 @@
+ import 'package:package_config/package_config.dart';
+
+ import 'remote_build_step.dart';
++import 'resolver_metrics.dart';
+
+ /// Creates the minimal current build_runner package view required by a
+ /// worker. The Rust frontend already owns package dependency resolution; all
+@@ -149,6 +151,65 @@
+
+   final RemoteAssetReaderWriter _remoteReaderWriter;
+
++  void Function(AssetId, AssetContent?)? _contentListener;
++
++  @override
++  void listenToContentUpdates(
++    void Function(AssetId, AssetContent?) onUpdateContent,
++  ) {
++    // Keep the inherited one-listener check and notifications for other hooks.
++    super.listenToContentUpdates(onUpdateContent);
++    _contentListener = onUpdateContent;
++  }
++
++  /// Instrument the baseline dep content path, retaining its mutable byte copy.
++  Future<AssetContent> _contentOfForDeps(AssetId id) async {
++    final committed = buildState.contentOf(id);
++    if (committed != null) return committed;
++    if (!buildState.isSource(id)) {
++      throw StateError(
++        'Cannot read $id, it is not a known source or generated output.',
++      );
++    }
++    final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
++    late AssetContent content;
++    try {
++      // Retain the baseline copy through the public reader API after its
++      // action visibility checks and observed-read recording.
++      content = AssetContent.bytes(await _remoteReaderWriter.readAsBytes(id));
++      if (resolverActionMetrics.enabled) {
++        resolverActionMetrics.depContentSnapshotBytes += content.bytes.length;
++      }
++    } on AssetNotFoundException {
++      await ChildProcess.exitDueToAssetDeleted(id);
++    }
++    if (timer != null) {
++      resolverActionMetrics.depContentCalls++;
++      resolverActionMetrics.depContentUs += timer.elapsedMicroseconds;
++      timer.reset();
++      // Split the work normally performed by the Analyzer content listener.
++      // Invalid UTF-8 remains reported by that listener, as before.
++      try {
++        content.stringValue();
++      } on FormatException {
++        /* listener logs */
++      }
++      // Non-Dart assets do not enter the Analyzer content listener: avoid
++      // introducing a diagnostic-only hash that their normal read never pays.
++      if (id.extension == '.dart') content.digest;
++      resolverActionMetrics.depContentDecodeHashUs += timer.elapsedMicroseconds;
++      timer.reset();
++    }
++    // Replaying both updates is required, especially after a clean resolver
++    // reset with a warm read cache but an empty Analyzer filesystem.
++    buildState.updateSourceContent(id, content);
++    _contentListener?.call(id, content);
++    if (timer != null) {
++      resolverActionMetrics.depContentUpdateUs += timer.elapsedMicroseconds;
++    }
++    return content;
++  }
++
+   /// Pre-resolves dep ids the loader is about to `readPhased` so the batched
+   /// `resolve_assets` RPC can warm the reader's caches in one round-trip.
+   ///
+@@ -175,12 +236,26 @@
+   /// committed content and its real deps.
+   @override
+   Future<PhasedValue<String>> readPhased(int phase, AssetId id) async {
+-    final read = await super.readPhased(phase, id);
+-    if (read.values.last.expiresAfter == null &&
+-        read.values.last.value.isEmpty) {
++    // This adapter's empty plan declares no outputs. Rust and the reader
++    // decide current visibility; unknown/missing/blocked/empty contents expire
++    // at this phase and must be tried again at a later phase, as before.
++    final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
++    final known = buildState.isKnownAsset(id);
++    if (!known) buildState.addMissingSource(id);
++    final readable = known && await _remoteReaderWriter.canRead(
++          id,
++          inArtifactTree: buildState.isInArtifactTree(id),
++        );
++    if (timer != null) {
++      resolverActionMetrics.depVisibilityUs += timer.elapsedMicroseconds;
++    }
++    if (!readable) {
+       return PhasedValue.unavailable(before: '', expiresAfter: phase);
+     }
+-    return read;
++    final value = (await _contentOfForDeps(id)).dartStringValueOrEmptyFail(id: id);
++    return value.isEmpty
++        ? PhasedValue.unavailable(before: '', expiresAfter: phase)
++        : PhasedValue.fixed(value);
+   }
+
+   @override
+--- a/lib/src/resolver_metrics.dart
++++ b/lib/src/resolver_metrics.dart
+@@ -35,6 +35,16 @@
+
+   /// `BuilderFilesystem.readPhased` inside dep loads.
+   int depReadPhasedUs = 0;
++
++  /// Content acquisition, conversion/hash, and notification are separate
++  /// boundaries inside depReadPhasedUs. Prefetch happens outside that timer.
++  int depVisibilityUs = 0;
++  int depContentCalls = 0;
++  int depContentUs = 0;
++  int depContentUpdateUs = 0;
++  int depContentDecodeHashUs = 0;
++  int depContentSnapshotBytes = 0;
++  final List<Map<String, Object?>> depLoads = [];
+
+   /// `parseString` for dep files that miss the cache.
+   int depParseUs = 0;
+@@ -128,6 +138,13 @@
+     depParseCacheMisses = 0;
+     depParseCacheUs = 0;
+     depReadPhasedUs = 0;
++    depVisibilityUs = 0;
++    depContentCalls = 0;
++    depContentUs = 0;
++    depContentUpdateUs = 0;
++    depContentDecodeHashUs = 0;
++    depContentSnapshotBytes = 0;
++    depLoads.clear();
+     depParseUs = 0;
+     resolverReadsReadUs = 0;
+     resolverReadsDigestUs = 0;
+@@ -193,6 +210,14 @@
+     'dep_parse_cache_misses': depParseCacheMisses,
+     'dep_parse_cache_us': depParseCacheUs,
+     'dep_read_phased_us': depReadPhasedUs,
++    'dep_visibility_us': depVisibilityUs,
++    'dep_content_calls': depContentCalls,
++    'dep_content_us': depContentUs,
++    'dep_content_update_us': depContentUpdateUs,
++    'dep_content_decode_hash_us': depContentDecodeHashUs,
++    'dep_content_snapshot_bytes': depContentSnapshotBytes,
++    if (traceEnabled) 'dep_loads': depLoads,
++
+     'dep_parse_us': depParseUs,
+     'resolver_reads_read_us': resolverReadsReadUs,
+     'resolver_reads_digest_us': resolverReadsDigestUs,
+--- a/lib/src/worker_analysis_driver_model.dart
++++ b/lib/src/worker_analysis_driver_model.dart
+@@ -1,4 +1,6 @@
+ import 'dart:async';
++import 'dart:convert';
++import 'package:crypto/crypto.dart';
+
+ import 'package:analyzer/dart/analysis/utilities.dart';
+ import 'package:analyzer/dart/ast/ast.dart';
+@@ -207,12 +209,29 @@
+   @override
+   Future<PhasedValue<AssetDeps>> load(AssetId id) async {
+     resolverActionMetrics.cycleGraphFileLoads++;
++    final traceLoads =
++        resolverActionMetrics.enabled && resolverActionMetrics.traceEnabled;
++    final readCacheHits = traceLoads ? resolverActionMetrics.ipcReadCacheHits : 0;
++    final readRpcCalls = traceLoads ? resolverActionMetrics.ipcReadCalls : 0;
+     final readTimer = resolverActionMetrics.enabled
+         ? (Stopwatch()..start())
+         : null;
+     final content = await _filesystem.readPhased(phase, id);
+     if (readTimer != null) {
+       resolverActionMetrics.depReadPhasedUs += readTimer.elapsedMicroseconds;
++    }
++    if (traceLoads) {
++      final fc = _contentCache?.get(id.asPath);
++      resolverActionMetrics.depLoads.add({
++        'asset': id.toString(),
++        'phase': phase,
++        'content_hash': content.values.last.value.isEmpty ? null
++            : fc?.exists == true && identical(fc!.content, content.values.last.value)
++            ? fc.contentHash : md5.convert(utf8.encode(content.values.last.value)).toString(),
++        'expires_after': content.expiresAfter,
++        'read_cache_hits': resolverActionMetrics.ipcReadCacheHits - readCacheHits,
++        'read_rpc_calls': resolverActionMetrics.ipcReadCalls - readRpcCalls,
++      });
+     }
+     final result = PhasedValue<AssetDeps>((b) {
+       for (final expiring in content.values) {

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 
 import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
@@ -207,12 +209,35 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   @override
   Future<PhasedValue<AssetDeps>> load(AssetId id) async {
     resolverActionMetrics.cycleGraphFileLoads++;
+    final traceLoads =
+        resolverActionMetrics.enabled && resolverActionMetrics.traceEnabled;
+    final readCacheHits = traceLoads
+        ? resolverActionMetrics.ipcReadCacheHits
+        : 0;
+    final readRpcCalls = traceLoads ? resolverActionMetrics.ipcReadCalls : 0;
     final readTimer = resolverActionMetrics.enabled
         ? (Stopwatch()..start())
         : null;
     final content = await _filesystem.readPhased(phase, id);
     if (readTimer != null) {
       resolverActionMetrics.depReadPhasedUs += readTimer.elapsedMicroseconds;
+    }
+    if (traceLoads) {
+      final fc = _contentCache?.get(id.asPath);
+      resolverActionMetrics.depLoads.add({
+        'asset': id.toString(),
+        'phase': phase,
+        'content_hash': content.values.last.value.isEmpty
+            ? null
+            : fc?.exists == true &&
+                  identical(fc!.content, content.values.last.value)
+            ? fc.contentHash
+            : md5.convert(utf8.encode(content.values.last.value)).toString(),
+        'expires_after': content.expiresAfter,
+        'read_cache_hits':
+            resolverActionMetrics.ipcReadCacheHits - readCacheHits,
+        'read_rpc_calls': resolverActionMetrics.ipcReadCalls - readRpcCalls,
+      });
     }
     final result = PhasedValue<AssetDeps>((b) {
       for (final expiring in content.values) {
