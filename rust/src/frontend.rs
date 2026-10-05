@@ -114,6 +114,7 @@ fn generate_manifest(
     manifest_path: &Path,
     worker_entrypoint: &Path,
 ) -> io::Result<()> {
+    let _wall = crate::wall::Span::new("manifest_generate");
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     // Fill the shared analyzer byte store while this window is otherwise
     // CPU-idle on the Rust side: generator kernel compile/load, the early
@@ -427,7 +428,7 @@ pub(crate) fn run_dart_fallback(options: &Options, workspace: &Workspace) -> io:
 
 #[cfg(test)]
 mod tests {
-    use super::{cleanup_stale_worker_readiness_markers, EARLY_WORKER_MARKER_MAX_AGE};
+    use super::{EARLY_WORKER_MARKER_MAX_AGE, cleanup_stale_worker_readiness_markers};
     use std::fs::{self, File, FileTimes};
     use std::time::{Duration, SystemTime};
 

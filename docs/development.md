@@ -165,6 +165,27 @@ visibility, content conversion/hash and update-notification boundaries.
 See [cycle dependency read measurements](benchmarks/cycle-dependency-reads-2026-10/README.md)
 for cache conditions, results, and limits.
 
+For frontend wall attribution, set `BUILD_RUNNER_ACCELERATOR_WALL_TRACE=1`
+and capture stderr. This flag is independent of worker metrics/analysis trace;
+leave those disabled when diagnosing ordinary request/response and decode cost.
+`python3 scripts/summarize_frontend_wall.py <log>` partitions intervals on one
+Rust monotonic clock, reports per-worker batch boundaries and the latest batch
+finish for each phase, and preserves unattributed gaps. It rejects dropped or
+truncated traces. Events are buffered (up to 100,000 per build) and flushed after
+the native build interval; process/launcher timing includes that flush. For
+watch, each build has its own origin and excludes watch's earlier manifest/pool
+setup. `receive_frame` includes waiting, frame reads and control-JSON parsing;
+it does not measure worker CPU. Keep wall traces disabled in speed comparisons.
+
+`scripts/benchmark_frontend_regen.py` measures the supplied regen definition in
+a disposable cycle-read fixture: remove all workspace accelerator state and
+source outputs, retaining shared caches. Its native, `--launcher`, and
+`--diagnostic` modes are separate conditions; diagnostic mode compares disabled,
+wall-only, and wall+metrics on the same candidate. It checks all outputs against
+an untimed stock reference. See
+[frontend wall attribution](benchmarks/frontend-wall-2026-10/README.md) for
+boundaries, measured overhead, results, and application limits.
+
 For detailed per-worker diagnostics, set both
 `BUILD_RUNNER_ACCELERATOR_METRICS=1` and
 `BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=1`. Action JSON then includes worker

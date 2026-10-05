@@ -1,14 +1,14 @@
 use super::asset_rpc::batch_asset_request_context;
 use super::request::{
-    batch_blocked_assets, build_request_kind, json_build_batch_result_frame_size,
-    json_build_result_frame_size, BuildRequest,
+    BuildRequest, batch_blocked_assets, build_request_kind, json_build_batch_result_frame_size,
+    json_build_result_frame_size,
 };
 use crate::protocol::{
     BINARY_BUILD_RESULT_MAGIC, BuildResult, IncomingFrame, decode_build_batch_result_frame,
     decode_build_result_frame, read_message_with_size, write_binary_frame, write_frame,
 };
-use crate::worker_kernel::WorkerArtifact;
 use crate::visibility::AssetVisibility;
+use crate::worker_kernel::WorkerArtifact;
 use crate::workspace::Workspace;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,8 +25,7 @@ const SHARED_BLOCKED_ASSETS_CAPABILITY: &str = "shared-blocked-assets-v1";
 
 pub(super) fn is_worker_script(worker_executable: &str) -> bool {
     let path = Path::new(worker_executable);
-    path.is_absolute()
-        || path.extension().and_then(|extension| extension.to_str()) == Some("dart")
+    path.is_absolute() || path.extension().and_then(|extension| extension.to_str()) == Some("dart")
 }
 
 pub struct WorkerClient {
@@ -101,6 +100,7 @@ impl WorkerClient {
         worker_executable: &str,
         worker_artifact: &WorkerArtifact,
     ) -> io::Result<Self> {
+        let _wall = crate::wall::Span::new("worker_spawn");
         let started = Instant::now();
         let mut command = match worker_artifact {
             WorkerArtifact::Aot(executable) => Command::new(executable),
@@ -165,6 +165,7 @@ impl WorkerClient {
         phase_count: usize,
         requires_optional_builder: bool,
     ) -> io::Result<()> {
+        let _wall = crate::wall::Span::new("worker_initialize").worker(self.child.id(), None);
         let started = Instant::now();
         let id = self.next_id();
         self.send(&json!({
@@ -205,6 +206,7 @@ impl WorkerClient {
     }
 
     pub fn reset(&mut self) -> io::Result<()> {
+        let _wall = crate::wall::Span::new("worker_reset").worker(self.child.id(), None);
         let started = Instant::now();
         let id = self.next_id();
         self.send(&json!({
@@ -230,6 +232,7 @@ impl WorkerClient {
         deleted_cache: &Value,
         incremental: bool,
     ) -> io::Result<()> {
+        let _wall = crate::wall::Span::new("worker_resolver_reset").worker(self.child.id(), None);
         let started = Instant::now();
         let id = self.next_id();
         self.send(&json!({
@@ -262,11 +265,11 @@ impl WorkerClient {
     ) -> io::Result<BuildResult> {
         let started = Instant::now();
         let id = self.next_id();
-        let blocked_assets = visibility.blocked_assets(
-            request.phase,
-            build_request_kind(request),
-            deleted_overlay,
-        );
+        let _wall = crate::wall::Span::new("worker_build").worker(self.child.id(), Some(id));
+        let encoding =
+            crate::wall::Span::new("request_encode_send").worker(self.child.id(), Some(id));
+        let blocked_assets =
+            visibility.blocked_assets(request.phase, build_request_kind(request), deleted_overlay);
         self.send(&json!({
             "v": 1,
             "type": "build",
@@ -283,21 +286,20 @@ impl WorkerClient {
             "triggers": request.triggers,
         }))?;
 
+        drop(encoding);
         loop {
             match self.receive()? {
                 IncomingFrame::Json(response) => match response.get("type").and_then(Value::as_str)
                 {
-                    Some("asset_request") => {
-                        self.handle_asset_request(
-                            workspace,
-                            &response,
-                            overlay,
-                            deleted_overlay,
-                            visibility,
-                            request,
-                            id,
-                        )?
-                    }
+                    Some("asset_request") => self.handle_asset_request(
+                        workspace,
+                        &response,
+                        overlay,
+                        deleted_overlay,
+                        visibility,
+                        request,
+                        id,
+                    )?,
                     Some("build_result") => {
                         return Err(io::Error::other(
                             "worker sent JSON build result; binary capability is required",
@@ -307,6 +309,8 @@ impl WorkerClient {
                     _ => return Err(protocol_error("unexpected worker message", &response)),
                 },
                 IncomingFrame::Binary(frame) => {
+                    let _decode = crate::wall::Span::new("result_decode_validate")
+                        .worker(self.child.id(), Some(id));
                     let result = decode_build_result_frame(frame)?;
                     self.record_json_build_result_size(&result)?;
                     if result.id != id {
@@ -329,6 +333,9 @@ impl WorkerClient {
     ) -> io::Result<Vec<BuildResult>> {
         let started = Instant::now();
         let id = self.next_id();
+        let _wall = crate::wall::Span::new("worker_batch").worker(self.child.id(), Some(id));
+        let encoding =
+            crate::wall::Span::new("request_encode_send").worker(self.child.id(), Some(id));
         // Every request in this batch has the same phase and kind. Keep the
         // visibility hint at the batch level instead of copying the full
         // blocked-asset list into every request.
@@ -359,6 +366,7 @@ impl WorkerClient {
             "requests": batch_requests,
         }))?;
 
+        drop(encoding);
         loop {
             match self.receive()? {
                 IncomingFrame::Json(response) => match response.get("type").and_then(Value::as_str)
@@ -385,6 +393,8 @@ impl WorkerClient {
                     _ => return Err(protocol_error("unexpected worker message", &response)),
                 },
                 IncomingFrame::Binary(frame) => {
+                    let _decode = crate::wall::Span::new("result_decode_validate")
+                        .worker(self.child.id(), Some(id));
                     let decoded = decode_build_batch_result_frame(frame)?;
                     self.record_json_build_batch_result_size(decoded.id, &decoded.results)?;
                     if decoded.id != id {
@@ -409,6 +419,10 @@ impl WorkerClient {
         }
     }
 
+    pub(super) fn wall_span(&self, stage: &'static str, id: Option<u64>) -> crate::wall::Span {
+        crate::wall::Span::new(stage).worker(self.child.id(), id)
+    }
+
     pub(super) fn next_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
@@ -430,6 +444,7 @@ impl WorkerClient {
     }
 
     pub(super) fn receive(&mut self) -> io::Result<IncomingFrame> {
+        let _receive = crate::wall::Span::new("receive_frame").worker(self.child.id(), None);
         let (message, frame_size) = read_message_with_size(&mut self.output)?
             .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "Dart worker exited"))?;
         self.metrics.ipc_frames_received += 1;
@@ -456,6 +471,7 @@ impl WorkerClient {
 
     pub(super) fn record_json_build_result_size(&mut self, result: &BuildResult) -> io::Result<()> {
         if metrics_enabled() {
+            let _wall = self.wall_span("diagnostic_json_size", None);
             self.metrics.build_result_json_bytes += json_build_result_frame_size(result)?;
         }
         Ok(())
@@ -467,6 +483,7 @@ impl WorkerClient {
         results: &[BuildResult],
     ) -> io::Result<()> {
         if metrics_enabled() {
+            let _wall = self.wall_span("diagnostic_json_size", None);
             self.metrics.build_result_json_bytes +=
                 json_build_batch_result_frame_size(id, results)?;
         }
@@ -499,9 +516,9 @@ pub(super) fn protocol_error(prefix: &str, value: &Value) -> io::Error {
         .unwrap_or_else(|| value.to_string());
     let stack = value.get("stack").and_then(Value::as_str);
     match stack {
-        Some(stack) if !stack.is_empty() => io::Error::other(format!(
-            "{prefix}: {detail}\n{stack}"
-        )),
+        Some(stack) if !stack.is_empty() => {
+            io::Error::other(format!("{prefix}: {detail}\n{stack}"))
+        }
         _ => io::Error::other(format!("{prefix}: {detail}")),
     }
 }

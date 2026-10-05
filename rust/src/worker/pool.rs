@@ -3,11 +3,11 @@ use super::lazy::LazyBuildState;
 use super::request::BuildRequest;
 use crate::plan::BuildSpec;
 use crate::protocol::BuildResult;
+use crate::visibility::AssetVisibility;
 use crate::worker_kernel::{
     WorkerArtifact, background_worker_aot_if_ready, pinned_worker_artifact_is_current,
     resolve_worker_artifact,
 };
-use crate::visibility::AssetVisibility;
 use crate::workspace::Workspace;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -80,14 +80,11 @@ impl WorkerPool {
         jobs: usize,
         auto_worker_artifact: bool,
     ) -> io::Result<Self> {
+        let _wall = crate::wall::Span::new("pool_start");
         let dart_binary = dart_binary.to_owned();
         let worker_executable = worker_executable.to_owned();
-        let worker_artifact = resolve_worker_artifact(
-            root,
-            &dart_binary,
-            &worker_executable,
-            auto_worker_artifact,
-        )?;
+        let worker_artifact =
+            resolve_worker_artifact(root, &dart_binary, &worker_executable, auto_worker_artifact)?;
         let max_jobs = jobs.max(1);
         // Keep the initial pool small. Additional workers are started only when
         // a phase actually has enough independent actions to use them.
@@ -178,12 +175,7 @@ impl WorkerPool {
                 worker.reset()?;
             }
             self.worker_resets += reset_count as u64;
-            self.initialize_pending_workers(
-                root,
-                package,
-                phase_count,
-                requires_optional_builder,
-            )?;
+            self.initialize_pending_workers(root, package, phase_count, requires_optional_builder)?;
             return Ok(());
         }
 
@@ -220,12 +212,7 @@ impl WorkerPool {
             self.restart_workers(root, worker_artifact)?;
         }
         self.initialized_workers = 0;
-        self.initialize_pending_workers(
-            root,
-            package,
-            phase_count,
-            requires_optional_builder,
-        )?;
+        self.initialize_pending_workers(root, package, phase_count, requires_optional_builder)?;
         self.initialized = Some(signature);
         Ok(())
     }
@@ -250,6 +237,7 @@ impl WorkerPool {
     }
 
     pub fn prepare_for_requests(&mut self, root: &Path, request_count: usize) -> io::Result<()> {
+        let _wall = crate::wall::Span::new("pool_expand");
         let target = target_worker_count(self.max_jobs, request_count);
         // Never shrink the pool here: an idle worker that is retired now has to
         // be restarted and re-initialized by the next wider phase, which costs
@@ -274,6 +262,7 @@ impl WorkerPool {
         phase_count: usize,
         requires_optional_builder: bool,
     ) -> io::Result<()> {
+        let _wall = crate::wall::Span::new("pool_initialize_pending");
         let pending = self.workers.len().saturating_sub(self.initialized_workers);
         for worker in self.workers.iter_mut().skip(self.initialized_workers) {
             worker.initialize(root, package, phase_count, requires_optional_builder)?;
@@ -449,6 +438,7 @@ impl WorkerPool {
         visibility: &AssetVisibility,
         worker_limit: usize,
     ) -> io::Result<Vec<BuildResult>> {
+        let _wall = crate::wall::Span::new("dispatch_join");
         if requests.is_empty() {
             return Ok(Vec::new());
         }
@@ -560,6 +550,7 @@ impl WorkerPool {
         deleted_cache: BTreeSet<String>,
         incremental: bool,
     ) -> io::Result<()> {
+        let _wall = crate::wall::Span::new("pool_resolver_reset");
         let count = self.initialized_workers.min(self.workers.len());
         if count == 0 {
             return Ok(());
@@ -662,9 +653,7 @@ pub(super) fn homogeneous_resolver_usage_key(
     requests
         .iter()
         .all(|request| {
-            !request.post_process
-                && request.builder == key.0
-                && request.instance_key == key.1
+            !request.post_process && request.builder == key.0 && request.instance_key == key.1
         })
         .then_some(key)
 }
@@ -701,9 +690,7 @@ fn resolver_worker_cap() -> Option<usize> {
         Ok(0) => Some(usize::MAX),
         Ok(cap) => Some(cap),
         Err(_) => {
-            eprintln!(
-                "BUILD_RUNNER_ACCELERATOR_RESOLVER_CAP must be an integer; ignoring {value}"
-            );
+            eprintln!("BUILD_RUNNER_ACCELERATOR_RESOLVER_CAP must be an integer; ignoring {value}");
             None
         }
     }

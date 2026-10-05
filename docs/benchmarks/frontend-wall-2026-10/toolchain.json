@@ -1,0 +1,13 @@
+{
+  "dart_version": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+  "rust_version": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "rust_profile": "locked release",
+  "dart_sdk": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+  "sdk_files_sha256": {
+    "bin/dart": "aa5669aa3533bcfe5cdf8b57276c4479dff9987ed69951dc59694eef6f614bdd",
+    "version": "cab2a6ef71f91553b8974b642a96ec579e64be71518251f7f2501dffc228ec55"
+  },
+  "cargo_lock_sha256": "007c72692c362bed610035b58c1333367d1fde4e3484d0f397c528ba80b8464f",
+  "cpu_max": "200000 100000",
+  "memory_max": "8589934592"
+}

@@ -39,6 +39,7 @@ pub(super) fn save_no_work(
     current_snapshot: BTreeMap<String, AssetSnapshot>,
     graph_load_bytes: u64,
 ) -> io::Result<GraphSaveMetrics> {
+    let _no_work = crate::wall::Span::new("no_work_metadata");
     let skipped = !state.update_metadata_if_changed(config_digest, current_snapshot);
     if skipped {
         return Ok(GraphSaveMetrics {
@@ -50,7 +51,9 @@ pub(super) fn save_no_work(
         });
     }
     let graph_save_started = Instant::now();
+    let save = crate::wall::Span::new("graph_save");
     state.save(state_path)?;
+    drop(save);
     Ok(GraphSaveMetrics {
         graph_save_us: graph_save_started.elapsed().as_micros(),
         graph_save_bytes: graph_file_size(state_path),
@@ -74,6 +77,7 @@ pub(super) fn commit(
         transaction,
     } = inputs;
 
+    let outputs = crate::wall::Span::new("output_commit");
     // Commit only after every dirty action succeeded. Cache-built part files
     // are kept below .dart_tool and are visible to later phases through the
     // overlay and the cache-aware reader.
@@ -107,14 +111,23 @@ pub(super) fn commit(
         state.actions.insert(key, action);
     }
 
+    drop(outputs);
+    let metadata = crate::wall::Span::new("commit_metadata");
     workspace.clear_asset_caches()?;
     state.schema_version = GRAPH_SCHEMA_VERSION;
     state.config_digest = config_digest;
+    drop(metadata);
+    let scan = crate::wall::Span::new("post_snapshot");
     let (post_snapshot, post_scan_us, post_assets_us) =
         snapshot::scan_committed(workspace, state, build_config, scanned_packages)?;
+    drop(scan);
+    let update = crate::wall::Span::new("graph_update_assets");
     state.update_assets(post_snapshot);
+    drop(update);
     let graph_save_started = Instant::now();
+    let save = crate::wall::Span::new("graph_save");
     state.save(state_path)?;
+    drop(save);
     Ok(GraphSaveMetrics {
         graph_save_us: graph_save_started.elapsed().as_micros(),
         graph_save_bytes: graph_file_size(state_path),
