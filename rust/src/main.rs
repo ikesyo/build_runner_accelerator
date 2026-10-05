@@ -11,6 +11,7 @@ mod pattern;
 mod plan;
 mod protocol;
 mod snapshot;
+mod wall;
 mod watch;
 mod worker;
 mod worker_kernel;
@@ -32,6 +33,7 @@ fn main() -> io::Result<()> {
             Ok(())
         }
         "build" => {
+            let _wall = wall::Session::new();
             worker_kernel::apply_default_worker_aot_policy(&options.command);
             build::run(&options, None)
         }

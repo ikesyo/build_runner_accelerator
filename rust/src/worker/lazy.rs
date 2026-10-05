@@ -64,6 +64,7 @@ impl WorkerClient {
     ) -> io::Result<BuildResult> {
         let started = Instant::now();
         let id = self.next_id();
+        let _wall = self.wall_span("worker_build_lazy", Some(id));
         let blocked_assets =
             visibility.blocked_assets(request.phase, build_request_kind(request), deleted_overlay);
         self.send(&json!({
@@ -130,6 +131,7 @@ impl WorkerClient {
     ) -> io::Result<Vec<BuildResult>> {
         let started = Instant::now();
         let id = self.next_id();
+        let _wall = self.wall_span("worker_batch_lazy", Some(id));
         // Lazy batches have the same visibility context as ordinary batches;
         // the nested build path still carries its own single-action hint.
         let blocked_assets = batch_blocked_assets(requests, visibility, deleted_overlay)?;
@@ -187,6 +189,7 @@ impl WorkerClient {
                     _ => return Err(protocol_error("unexpected worker message", &response)),
                 },
                 IncomingFrame::Binary(frame) => {
+                    let _decode = self.wall_span("result_decode_validate", Some(id));
                     let decoded = decode_build_batch_result_frame(frame)?;
                     self.record_json_build_batch_result_size(decoded.id, &decoded.results)?;
                     if decoded.id != id {
@@ -223,6 +226,7 @@ impl WorkerClient {
         lazy_specs: &BTreeMap<String, BuildSpec>,
         lazy: &mut LazyBuildState,
     ) -> io::Result<()> {
+        let _wall = self.wall_span("asset_rpc_lazy", None);
         validate_asset_request_context(request, active_request, expected_build_id)?;
         let operation = request
             .get("op")

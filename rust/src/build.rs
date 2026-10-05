@@ -30,11 +30,19 @@ pub(crate) fn graph_path(workspace: &Workspace) -> PathBuf {
 }
 
 pub(crate) fn run(options: &Options, pool: Option<&mut WorkerPool>) -> io::Result<()> {
+    let load = crate::wall::Span::new("workspace_load");
     let workspace = Workspace::load(options.root.clone())?;
+    drop(load);
+    let selection = crate::wall::Span::new("manifest_select");
     let build_config = match select_frontend(options, &workspace)? {
         Some(config) => config,
-        None => return run_dart_fallback(options, &workspace),
+        None => {
+            drop(selection);
+            let _fallback = crate::wall::Span::new("dart_fallback");
+            return run_dart_fallback(options, &workspace);
+        }
     };
+    drop(selection);
     run_with_config(options, pool, workspace, build_config)
 }
 
@@ -46,15 +54,22 @@ pub(crate) fn run_with_config(
 ) -> io::Result<()> {
     // Watch already resolved the workspace and manifest to initialize or
     // reuse its worker pool. Keep that resolution alive for the build itself.
+    let _wall = crate::wall::Session::new();
+    let _build = crate::wall::Span::new("build_with_config");
     let state_path = graph_path(&workspace);
+    let load = crate::wall::Span::new("graph_load");
     let graph_load_started = Instant::now();
     let mut state = GraphState::load(&state_path)?;
     let graph_load_us = graph_load_started.elapsed().as_micros();
     let graph_load_bytes = graph_file_size(&state_path);
+    drop(load);
+    let digest = crate::wall::Span::new("config_digest");
     let config_digest = snapshot::config_digest(&workspace, &build_config)?;
+    drop(digest);
     let mut filesystem_metrics = FilesystemMetrics::default();
 
     let scanned_packages = snapshot::scanned_packages(&workspace, &build_config);
+    let scan = crate::wall::Span::new("initial_snapshot");
     let current_snapshot = snapshot::scan_initial(
         &workspace,
         &state,
@@ -62,12 +77,16 @@ pub(crate) fn run_with_config(
         &scanned_packages,
         &mut filesystem_metrics,
     )?;
+    drop(scan);
+    let planning = crate::wall::Span::new("planning");
     let plan = planning::create(&workspace, &state, &build_config, &current_snapshot)?;
+    drop(planning);
     planning::report_metrics(&plan, &state, &build_config);
     if planning::report_plan_only(&workspace, &plan) {
         return Ok(());
     }
 
+    let dirty = crate::wall::Span::new("dirty_check");
     let dirty_plan = dirty::analyze(
         &workspace,
         &state,
@@ -77,6 +96,7 @@ pub(crate) fn run_with_config(
         &plan,
         &mut filesystem_metrics,
     )?;
+    drop(dirty);
     if !dirty_plan.has_work() {
         println!("No work to do (Rust frontend)");
         let graph_metrics = commit::save_no_work(
@@ -100,6 +120,7 @@ pub(crate) fn run_with_config(
         return Ok(());
     }
 
+    let executing = crate::wall::Span::new("execution");
     let execution = execution::run(
         pool,
         execution::ExecutionInputs {
@@ -112,12 +133,14 @@ pub(crate) fn run_with_config(
             dirty_plan,
         },
     )?;
+    drop(executing);
     let execution::ExecutionResult {
         transaction,
         expected_outputs,
         pool_metrics,
         part_filtered_actions,
     } = execution;
+    let committing = crate::wall::Span::new("commit");
     let graph_metrics = commit::commit(
         &mut state,
         commit::CommitInputs {
@@ -130,6 +153,7 @@ pub(crate) fn run_with_config(
             transaction,
         },
     )?;
+    drop(committing);
     filesystem_metrics.post_scan_us = graph_metrics.post_scan_us;
     filesystem_metrics.post_assets_us = graph_metrics.post_assets_us;
 

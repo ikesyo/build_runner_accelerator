@@ -114,6 +114,7 @@ fn generate_manifest(
     manifest_path: &Path,
     worker_entrypoint: &Path,
 ) -> io::Result<()> {
+    let _wall = crate::wall::Span::new("manifest_generate");
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     // Fill the shared analyzer byte store while this window is otherwise
     // CPU-idle on the Rust side: generator kernel compile/load, the early

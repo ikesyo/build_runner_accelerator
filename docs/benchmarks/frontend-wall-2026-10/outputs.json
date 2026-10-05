@@ -1,0 +1,18 @@
+{
+  "outputs_per_build": 256,
+  "builds_by_group": {
+    "prepared": 100,
+    "regen-native": 12,
+    "regen-launcher": 12,
+    "overhead": 18
+  },
+  "all_stock_equal": true,
+  "prepared_fingerprints_by_case": {
+    "cold": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1",
+    "warm-clean": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1",
+    "no-op": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1",
+    "one-file": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95",
+    "broad": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  "regen_reference_case": "cold"
+}

@@ -24,6 +24,7 @@ impl WorkerClient {
         expected_build_id: u64,
     ) -> io::Result<()> {
         validate_asset_request_context(request, active_request, expected_build_id)?;
+        let _wall = self.wall_span("asset_rpc", None);
         let started = Instant::now();
         let id = request
             .get("id")

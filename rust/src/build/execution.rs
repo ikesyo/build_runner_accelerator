@@ -58,6 +58,7 @@ pub(super) fn run(
     let mut worker_pool = pool;
     let mut pool_metrics = None;
     let mut part_filtered_actions: usize = 0;
+    let setup = crate::wall::Span::new("transaction_setup");
     let expected_outputs = plan.expected_outputs();
     let mut transaction = PendingTransaction::new(&dirty, state, deleted_actions);
     let lazy_specs_by_output = specs
@@ -75,7 +76,9 @@ pub(super) fn run(
     // leaving the dirty set must not restart the resident workers.
     let optional_builder_capability_required = !lazy_specs_by_output.is_empty();
     let mut lazy_state = LazyBuildState::new(lazy_force_keys);
+    drop(setup);
     if !dirty.is_empty() {
+        let prepare = crate::wall::Span::new("worker_prepare");
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
         let worker_command = worker_executable(options, build_config)?;
         let phase_count = build_config.phase_count();
@@ -108,6 +111,8 @@ pub(super) fn run(
             optional_builder_capability_required,
         )?;
 
+        drop(prepare);
+
         // Outputs remain in the Rust overlay until the transaction commits.
         let mut resolver_needs_reset = false;
         // Source-tree and cache-tree deltas both ride the incremental reset:
@@ -120,6 +125,10 @@ pub(super) fn run(
         for configured_builder_index in execution_order(&build_config.builders) {
             let configured_builder = &build_config.builders[configured_builder_index];
             let builder = configured_builder.definition.as_ref();
+            let _phase =
+                crate::wall::Span::new("phase").phase(configured_builder.phase, &builder.id);
+            let select =
+                crate::wall::Span::new("phase_select").phase(configured_builder.phase, &builder.id);
             let phase_specs = dirty
                 .iter()
                 .filter(|spec| {
@@ -180,6 +189,9 @@ pub(super) fn run(
                     &mut transaction,
                 )?;
             }
+            drop(select);
+            let assemble = crate::wall::Span::new("phase_requests")
+                .phase(configured_builder.phase, &builder.id);
             let requests = runnable_phase_specs
                 .iter()
                 .map(|spec| BuildRequest {
@@ -194,9 +206,12 @@ pub(super) fn run(
                     triggers: spec.builder.triggers.clone(),
                 })
                 .collect::<Vec<_>>();
+            drop(assemble);
             if requests.is_empty() {
                 continue;
             }
+            let reset =
+                crate::wall::Span::new("phase_reset").phase(configured_builder.phase, &builder.id);
             if configured_builder.package != initialized_package {
                 active_pool.initialize(
                     &workspace.root,
@@ -220,6 +235,9 @@ pub(super) fn run(
                 )?;
                 resolver_needs_reset = false;
             }
+            drop(reset);
+            let dispatch = crate::wall::Span::new("phase_dispatch")
+                .phase(configured_builder.phase, &builder.id);
             let results = if !lazy_demand_possible {
                 active_pool.build_parallel(
                     workspace,
@@ -240,6 +258,9 @@ pub(super) fn run(
                 )?
             };
 
+            drop(dispatch);
+            let merge = crate::wall::Span::new("dep_graph_merge")
+                .phase(configured_builder.phase, &builder.id);
             // Merge resolver dependency edges the workers reported with
             // these results so dirty checks can expand entrypoints through
             // them, like stock's previousLibraryCycleGraphLoader.
@@ -247,6 +268,9 @@ pub(super) fn run(
                 .resolver_dep_graph
                 .extend(active_pool.take_dep_graph());
 
+            drop(merge);
+            let record = crate::wall::Span::new("results_record")
+                .phase(configured_builder.phase, &builder.id);
             let lazy_results = lazy_state.take_results();
             let lazy_source_output = lazy_results
                 .iter()
@@ -268,6 +292,7 @@ pub(super) fn run(
                 record_build_result(workspace, state, &spec, result, &mut transaction)?;
             }
 
+            drop(record);
             if transaction.resolver.has_changes() {
                 resolver_needs_reset = true;
             }

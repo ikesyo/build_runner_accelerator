@@ -80,6 +80,7 @@ impl WorkerPool {
         jobs: usize,
         auto_worker_artifact: bool,
     ) -> io::Result<Self> {
+        let _wall = crate::wall::Span::new("pool_start");
         let dart_binary = dart_binary.to_owned();
         let worker_executable = worker_executable.to_owned();
         let worker_artifact = resolve_worker_artifact(
@@ -250,6 +251,7 @@ impl WorkerPool {
     }
 
     pub fn prepare_for_requests(&mut self, root: &Path, request_count: usize) -> io::Result<()> {
+        let _wall = crate::wall::Span::new("pool_expand");
         let target = target_worker_count(self.max_jobs, request_count);
         // Never shrink the pool here: an idle worker that is retired now has to
         // be restarted and re-initialized by the next wider phase, which costs
@@ -274,6 +276,7 @@ impl WorkerPool {
         phase_count: usize,
         requires_optional_builder: bool,
     ) -> io::Result<()> {
+        let _wall = crate::wall::Span::new("pool_initialize_pending");
         let pending = self.workers.len().saturating_sub(self.initialized_workers);
         for worker in self.workers.iter_mut().skip(self.initialized_workers) {
             worker.initialize(root, package, phase_count, requires_optional_builder)?;
@@ -449,6 +452,7 @@ impl WorkerPool {
         visibility: &AssetVisibility,
         worker_limit: usize,
     ) -> io::Result<Vec<BuildResult>> {
+        let _wall = crate::wall::Span::new("dispatch_join");
         if requests.is_empty() {
             return Ok(Vec::new());
         }
@@ -560,6 +564,7 @@ impl WorkerPool {
         deleted_cache: BTreeSet<String>,
         incremental: bool,
     ) -> io::Result<()> {
+        let _wall = crate::wall::Span::new("pool_resolver_reset");
         let count = self.initialized_workers.min(self.workers.len());
         if count == 0 {
             return Ok(());
