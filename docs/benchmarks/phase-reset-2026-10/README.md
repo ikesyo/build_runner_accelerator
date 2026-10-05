@@ -121,10 +121,13 @@ bytes. Stock references are untimed and cover every source/cache artifact.
 Speed runs explicitly disable wall trace, metrics and analysis trace. Wall-only
 and combined metrics captures are separate. CPU is process-tree user+system
 time; RSS is `wait4` maximum-process RSS, not a sum or simultaneous tree peak.
-[Metadata](metadata.json), [inputs](inputs.json), [output manifests](outputs.json),
-[204 speed samples](speed-samples.csv), [44 wall/metrics samples](wall-samples.json),
-[492 worker reset records](worker-reset-samples.json) and [selected metrics](metrics.json)
-record identities and raw measurements. All **248 measured builds** matched
+The [204 speed samples](speed-samples.csv) remain in this review. Bulky raw JSON
+(metadata, inputs/output manifests, 44 wall/metrics samples, 492 worker reset
+records and selected metrics) is excluded from the final PR diff. It remains
+available in the [original measurement snapshot](https://github.com/ikesyo/build_runner_accelerator/tree/2a673a97264be9a3bf99bb14b073ed21fa65d094/docs/benchmarks/phase-reset-2026-10)
+and a separate `phase-reset-2026-10-raw-measurements.tar.gz` archive (SHA-256
+`551f4c5d82763f533ea60fda81a44741358df256d15216340b5c4ec798e9bcfd`).
+The tables below retain the conclusions needed for review. All **248 measured builds** matched
 stock bytes: 172 cycle builds with 256 artifacts and 76 mixed builds with 384.
 Full logs and per-output hash maps are retained locally under `/tmp/phase-reset`.
 

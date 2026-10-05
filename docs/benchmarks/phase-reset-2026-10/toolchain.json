@@ -1,8 +1,0 @@
-{
-  "base_commit": "f57b5faaf75173d049ba3a2a79c350e08b074172",
-  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
-  "dart": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
-  "cpu_quota": "200000 100000",
-  "memory_limit_bytes": 8589934592,
-  "traces_disabled_for_speed": true
-}
