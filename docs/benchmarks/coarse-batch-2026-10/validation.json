@@ -1,0 +1,248 @@
+[
+  {
+    "name": "rust-format",
+    "command": [
+      ".toolchains/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin/rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "rust/src/build.rs",
+      "rust/src/manifest_generator.rs"
+    ],
+    "environment": {},
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/rust-format.log",
+    "returncode": 0,
+    "cpu_s": 0.043949999999999996,
+    "elapsed_s": 0.04479178200017486
+  },
+  {
+    "name": "rust-tests",
+    "command": [
+      "/workspace/build_runner_accelerator/.toolchains/cargo/bin/cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "--manifest-path",
+      "rust/Cargo.toml"
+    ],
+    "environment": {},
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/rust-tests.log",
+    "returncode": 0,
+    "cpu_s": 3.606617,
+    "elapsed_s": 2.9354488279996076
+  },
+  {
+    "name": "rust-debug-build",
+    "command": [
+      "/workspace/build_runner_accelerator/.toolchains/cargo/bin/cargo",
+      "build",
+      "--locked",
+      "--offline",
+      "--manifest-path",
+      "rust/Cargo.toml"
+    ],
+    "environment": {},
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/rust-debug-build.log",
+    "returncode": 0,
+    "cpu_s": 7.571255000000001,
+    "elapsed_s": 5.531344793000244
+  },
+  {
+    "name": "dart-format",
+    "command": [
+      "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart",
+      "format",
+      "--output=none",
+      "--set-exit-if-changed",
+      "lib",
+      "bin",
+      "test",
+      "tool"
+    ],
+    "environment": {},
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/dart-format.log",
+    "returncode": 0,
+    "cpu_s": 0.24228,
+    "elapsed_s": 0.24096054299980096
+  },
+  {
+    "name": "dart-analyze",
+    "command": [
+      "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart",
+      "analyze",
+      "lib",
+      "bin",
+      "test",
+      "tool"
+    ],
+    "environment": {},
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/dart-analyze.log",
+    "returncode": 0,
+    "cpu_s": 3.066391,
+    "elapsed_s": 2.214554345000124
+  },
+  {
+    "name": "dart-tests",
+    "command": [
+      "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart",
+      "test",
+      "--compiler=source"
+    ],
+    "environment": {},
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/dart-tests.log",
+    "returncode": 0,
+    "cpu_s": 251.397785,
+    "elapsed_s": 182.36129393700003
+  },
+  {
+    "name": "python-signing",
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      ".github/scripts",
+      "-p",
+      "test_*.py"
+    ],
+    "environment": {},
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/python-signing.log",
+    "returncode": 0,
+    "cpu_s": 0.083227,
+    "elapsed_s": 0.08421623100002762
+  },
+  {
+    "name": "python-benchmark",
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "scripts",
+      "-p",
+      "test_benchmark_shared_byte_store.py"
+    ],
+    "environment": {},
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/python-benchmark.log",
+    "returncode": 0,
+    "cpu_s": 0.195216,
+    "elapsed_s": 0.3965234050001527
+  },
+  {
+    "name": "python-wall",
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "scripts",
+      "-p",
+      "test_summarize_frontend_wall.py"
+    ],
+    "environment": {},
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/python-wall.log",
+    "returncode": 0,
+    "cpu_s": 0.178272,
+    "elapsed_s": 0.17866217299979326
+  },
+  {
+    "name": "release-metadata",
+    "command": [
+      "python3",
+      "scripts/sync_release_metadata.py",
+      "--check"
+    ],
+    "environment": {},
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/release-metadata.log",
+    "returncode": 0,
+    "cpu_s": 0.039434,
+    "elapsed_s": 0.039896124999813765
+  },
+  {
+    "name": "coarse-lifetime",
+    "command": [
+      "python3",
+      "scripts/check_coarse_batch_lifetime.py",
+      "--root",
+      "/tmp/bra-lifetime-final",
+      "--native",
+      "/tmp/bra-tail2",
+      "--dart",
+      "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart",
+      "--cache",
+      "/tmp/bra-check-cache"
+    ],
+    "environment": {},
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/coarse-lifetime.log",
+    "returncode": 0,
+    "cpu_s": 59.294261999999996,
+    "elapsed_s": 48.36646702300004
+  },
+  {
+    "name": "verify-quick",
+    "command": [
+      "bash",
+      "scripts/verify.sh"
+    ],
+    "environment": {},
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/verify-quick.log",
+    "returncode": 0,
+    "cpu_s": 776.911893,
+    "elapsed_s": 587.06063967
+  },
+  {
+    "name": "verify-arbitrary",
+    "command": [
+      "bash",
+      "scripts/verify.sh"
+    ],
+    "environment": {
+      "VERIFY_ARBITRARY_BUILDER": "1"
+    },
+    "status": "passed",
+    "log": "/tmp/bra-final-checks/verify-arbitrary.log",
+    "returncode": 0,
+    "cpu_s": 813.354961,
+    "elapsed_s": 614.629660781
+  },
+  {
+    "name": "verify-full",
+    "command": [
+      "bash",
+      "scripts/verify.sh"
+    ],
+    "environment": {
+      "VERIFY_LEVEL": "full",
+      "BUILD_RUNNER_ACCELERATOR_BATCH_SCHEDULER": "tail2"
+    },
+    "status": "cancelled",
+    "log": "/tmp/bra-final-checks/verify-full.log",
+    "reason": "Stopped at user request; remaining integration coverage delegated to PR CI."
+  },
+  {
+    "name": "rust-tests-final-normal-only-scope",
+    "status": "passed",
+    "tests": 104,
+    "log": "/tmp/bra-final-rust-tests.log"
+  },
+  {
+    "name": "coarse-lifetime-final-same-phase-and-no-op",
+    "status": "pending-ci",
+    "reason": "Expanded assertions added to integration-arbitrary CI; earlier lifetime fixture passed locally."
+  }
+]

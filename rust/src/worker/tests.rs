@@ -3,7 +3,8 @@
     };
     use super::client::{has_capability, is_worker_script};
     use super::pool::{
-        balanced_request_ranges, homogeneous_resolver_usage_key, remember_resolver_usage,
+        balanced_request_ranges, claim_coarse_batch, coarse_batch_eligible, coarse_batch_queues,
+        homogeneous_resolver_usage_key, remember_resolver_usage,
         target_worker_count,
     };
     use super::request::{batch_blocked_assets, BuildRequest};
@@ -42,6 +43,52 @@
         );
         assert_eq!(balanced_request_ranges(3, 3), vec![(0, 1), (1, 2), (2, 3)]);
         assert_eq!(balanced_request_ranges(2, 4), vec![(0, 1), (1, 2)]);
+    }
+
+    #[test]
+    fn coarse_batches_keep_small_serial_and_post_process_calls_on_the_baseline() {
+        let normal = vec![build_request(0, false); 64];
+        assert!(coarse_batch_eligible(&normal, 2));
+        assert!(!coarse_batch_eligible(&normal[..63], 2));
+        assert!(!coarse_batch_eligible(&normal, 1));
+        assert!(!coarse_batch_eligible(&normal, 4));
+        assert!(coarse_batch_eligible(&vec![build_request(0, false); 128], 4));
+        assert!(!coarse_batch_eligible(&vec![build_request(0, true); 64], 2));
+        let mut mixed = normal;
+        mixed[63].post_process = true;
+        assert!(!coarse_batch_eligible(&mixed, 2));
+    }
+
+    #[test]
+    fn coarse_tail_keeps_prefix_and_steals_only_unstarted_work() {
+        let mut queues = coarse_batch_queues(&[(0, 32), (32, 65)]);
+        assert_eq!(queues[0].pop_front(), Some((0, 16)));
+        assert_eq!(queues[1].pop_front(), Some((32, 49)));
+        assert_eq!(claim_coarse_batch(&mut queues, 0, true), Some((16, 24)));
+        assert_eq!(claim_coarse_batch(&mut queues, 0, true), Some((24, 32)));
+        assert_eq!(claim_coarse_batch(&mut queues, 0, true), Some((57, 65)));
+        assert_eq!(claim_coarse_batch(&mut queues, 1, true), Some((49, 57)));
+        assert_eq!(claim_coarse_batch(&mut queues, 0, true), None);
+        assert_eq!(claim_coarse_batch(&mut queues, 1, true), None);
+    }
+
+    #[test]
+    fn coarse_claims_cover_uneven_ranges_exactly_once() {
+        for count in 1..100 {
+            for workers in 1..=4 {
+                for affinity in [false, true] {
+                    let mut queues = coarse_batch_queues(&balanced_request_ranges(count, workers));
+                    let mut claimed = Vec::new();
+                    for owner in (0..queues.len()).cycle().take(count * 3) {
+                        if let Some((start, end)) = claim_coarse_batch(&mut queues, owner, affinity) {
+                            claimed.extend(start..end);
+                        }
+                    }
+                    claimed.sort_unstable();
+                    assert_eq!(claimed, (0..count).collect::<Vec<_>>());
+                }
+            }
+        }
     }
 
     #[test]

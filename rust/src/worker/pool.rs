@@ -10,11 +10,12 @@ use crate::worker_kernel::{
 use crate::visibility::AssetVisibility;
 use crate::workspace::Workspace;
 use serde_json::json;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::thread;
 
 /// Workspace-relative directory where committed overlay contents are spooled
@@ -57,6 +58,8 @@ pub struct PoolMetrics {
     pub ipc_frames_received: u64,
     pub ipc_bytes_sent: u64,
     pub ipc_bytes_received: u64,
+    pub build_request_frames: u64,
+    pub build_request_bytes: u64,
     pub build_result_frames: u64,
     pub build_result_bytes: u64,
     pub build_result_json_bytes: u64,
@@ -316,6 +319,8 @@ impl WorkerPool {
             ipc_frames_received: worker_metrics.ipc_frames_received,
             ipc_bytes_sent: worker_metrics.ipc_bytes_sent,
             ipc_bytes_received: worker_metrics.ipc_bytes_received,
+            build_request_frames: worker_metrics.build_request_frames,
+            build_request_bytes: worker_metrics.build_request_bytes,
             build_result_frames: worker_metrics.build_result_frames,
             build_result_bytes: worker_metrics.build_result_bytes,
             build_result_json_bytes: worker_metrics.build_result_json_bytes,
@@ -468,6 +473,23 @@ impl WorkerPool {
 
         let worker_count = self.workers.len().min(requests.len()).min(worker_limit);
         let ranges = balanced_request_ranges(requests.len(), worker_count);
+        // Experimental only: retain the existing participant limit and use
+        // whole protocol batches, without resetting resident worker state.
+        let mode = env::var("BUILD_RUNNER_ACCELERATOR_BATCH_SCHEDULER").unwrap_or_default();
+        if matches!(mode.as_str(), "tail" | "tail2" | "queue")
+            && coarse_batch_eligible(requests, worker_count)
+        {
+            return self.build_sub_batches(
+                workspace,
+                requests,
+                overlay,
+                deleted_overlay,
+                visibility,
+                &ranges,
+                mode != "queue",
+                mode == "tail2",
+            );
+        }
         let batches = ranges
             .iter()
             .map(|(start, end)| &requests[*start..*end])
@@ -500,6 +522,103 @@ impl WorkerPool {
             results.extend(batch);
         }
         Ok(results)
+    }
+
+    fn build_sub_batches(
+        &mut self,
+        workspace: &Workspace,
+        requests: &[BuildRequest],
+        overlay: &BTreeMap<String, Vec<u8>>,
+        deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
+        ranges: &[(usize, usize)],
+        affinity: bool,
+        two_pieces: bool,
+    ) -> io::Result<Vec<BuildResult>> {
+        let mut queues = coarse_batch_queues(ranges);
+        if two_pieces {
+            for queue in &mut queues {
+                let first = queue.pop_front().expect("nonempty original range");
+                let second = queue.pop_front().expect("coarse first tail");
+                queue.push_front((first.0, second.1));
+            }
+        }
+        let initial = queues
+            .iter_mut()
+            .map(|queue| if affinity { queue.pop_front() } else { None })
+            .collect::<Vec<_>>();
+        let queues = Mutex::new(queues);
+        let batches = thread::scope(|scope| {
+            let handles = self
+                .workers
+                .iter_mut()
+                .take(ranges.len())
+                .enumerate()
+                .map(|(owner, worker)| {
+                    let queues = &queues;
+                    let mut first = initial[owner];
+                    scope.spawn(move || {
+                        let mut completed = Vec::new();
+                        loop {
+                            let next = match first.take() {
+                                Some(batch) => Some(batch),
+                                None => {
+                                    let mut queues = queues
+                                        .lock()
+                                        .map_err(|_| io::Error::other("batch queue poisoned"))?;
+                                    claim_coarse_batch(&mut queues, owner, affinity)
+                                }
+                            };
+                            let Some((start, end)) = next else { break };
+                            let mut results = worker.build_batch(
+                                workspace,
+                                &requests[start..end],
+                                overlay,
+                                deleted_overlay,
+                                visibility,
+                            )?;
+                            // Preserve original count-partition item IDs as well
+                            // as request order. Wire IDs remain batch-local and
+                            // are validated by WorkerClient before this mapping.
+                            let original_start = ranges
+                                .iter()
+                                .find(|(a, b)| *a <= start && start < *b)
+                                .expect("sub-batch belongs to an original range")
+                                .0;
+                            for (offset, result) in results.iter_mut().enumerate() {
+                                result.id = (start - original_start + offset) as u64;
+                            }
+                            completed.push((start, results));
+                        }
+                        Ok::<_, io::Error>(completed)
+                    })
+                })
+                .collect::<Vec<_>>();
+            // Join every participant even when an earlier worker fails. The
+            // phase caller receives no partial results on a protocol failure.
+            let mut all = Vec::new();
+            let mut error = None;
+            for handle in handles {
+                match handle
+                    .join()
+                    .unwrap_or_else(|_| Err(io::Error::other("worker thread panicked")))
+                {
+                    Ok(mut batches) => all.append(&mut batches),
+                    Err(err) if error.is_none() => error = Some(err),
+                    Err(_) => {}
+                }
+            }
+            match error {
+                Some(err) => Err(err),
+                None => Ok(all),
+            }
+        })?;
+        let mut batches = batches;
+        batches.sort_by_key(|(start, _)| *start);
+        Ok(batches
+            .into_iter()
+            .flat_map(|(_, results)| results)
+            .collect())
     }
 
     fn record_resolver_usage(&mut self, requests: &[BuildRequest], results: &[BuildResult]) {
@@ -734,6 +853,49 @@ pub(super) fn balanced_request_ranges(
         start = end;
     }
     ranges
+}
+
+/// Limit experiments to measured normal-builder phases. Post-process actions
+/// retain their original allocation, including rewrite/deletion visibility.
+pub(super) fn coarse_batch_eligible(requests: &[BuildRequest], worker_count: usize) -> bool {
+    worker_count > 1
+        && requests.len() >= worker_count * 32
+        && requests.iter().all(|request| !request.post_process)
+}
+
+/// Three coarse pieces per original range: half, then two quarters.
+/// The first input group remains on its original worker in affinity mode.
+pub(super) fn coarse_batch_queues(ranges: &[(usize, usize)]) -> Vec<VecDeque<(usize, usize)>> {
+    ranges
+        .iter()
+        .map(|&(start, end)| {
+            let middle = start + (end - start).div_ceil(2);
+            let tail = middle + (end - middle).div_ceil(2);
+            [(start, middle), (middle, tail), (tail, end)]
+                .into_iter()
+                .filter(|(a, b)| a < b)
+                .collect()
+        })
+        .collect()
+}
+
+pub(super) fn claim_coarse_batch(
+    queues: &mut [VecDeque<(usize, usize)>],
+    owner: usize,
+    affinity: bool,
+) -> Option<(usize, usize)> {
+    if affinity {
+        if let Some(batch) = queues[owner].pop_front() {
+            return Some(batch);
+        }
+        // Steal only an unstarted tail; an in-flight batch is never moved.
+        let donor = (0..queues.len())
+            .filter(|&i| i != owner)
+            .max_by_key(|&i| queues[i].len())?;
+        queues[donor].pop_back()
+    } else {
+        queues.iter_mut().find_map(VecDeque::pop_front)
+    }
 }
 
 impl Drop for WorkerPool {

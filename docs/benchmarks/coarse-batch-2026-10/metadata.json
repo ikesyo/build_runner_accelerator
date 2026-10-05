@@ -1,0 +1,770 @@
+{
+  "balanced-diagnostic": {
+    "aot_cold": false,
+    "binary_sha256": {
+      "baseline": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "tail2",
+    "dep_parse": "cleared",
+    "fixture_kind": "riverpod-cycle",
+    "jobs": [
+      2,
+      4
+    ],
+    "metrics": true,
+    "os_page_cache": "not flushed",
+    "package_config_sha256": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+    "pubspec_lock_sha256": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+    "repeats": 1,
+    "root": "/tmp/bra-skew-fixture",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_summary": "retained",
+    "sdk_summary_override": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+    "source_manifest_sha256": "aff4bad9b90f8e55c024abb37290e489c398d9b8502a2acc7624ed8ce1ea9cd0",
+    "stock_check": false,
+    "stock_reference_sha256": "65525cb6ac2f524c8ff13bd05f50cb31955471e791a4ffd09da1409c8f5904e3",
+    "trace": true,
+    "wall_trace": true,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": {
+      "baseline": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+      "candidate": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b"
+    }
+  },
+  "balanced-regen": {
+    "aot_policy": "native default; no worker pin; restore/validation included",
+    "binaries": {
+      "baseline": "/tmp/bra-baseline",
+      "candidate": "/tmp/bra-tail2"
+    },
+    "binary_sha256": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "tail2",
+    "cleanup": [
+      ".dart_tool/build_runner_accelerator",
+      "lib/*.g.dart",
+      "lib/*.freezed.dart"
+    ],
+    "dart": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart",
+    "dart_sha256": "75608ece0c559d7757ba6bc8bb218ea6ca2a884fe7db49d08af456a2e9754513",
+    "jobs": [
+      1,
+      2,
+      4
+    ],
+    "machine_wide_caches": "retained",
+    "mode": "speed",
+    "os_page_cache": "not flushed",
+    "protected_sha256": {
+      "/tmp/bra-balanced-speed/stock-outputs.json": "65525cb6ac2f524c8ff13bd05f50cb31955471e791a4ffd09da1409c8f5904e3",
+      "/tmp/bra-baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "/tmp/bra-skew-fixture/.dart_tool/package_config.json": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+      "/tmp/bra-skew-fixture/build.yaml": "73d413e8b07f7d68dfa4862853fd02fc8d9d59487ed80d6b0d9c53745947e59d",
+      "/tmp/bra-skew-fixture/pubspec.lock": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+      "/tmp/bra-skew-fixture/pubspec.yaml": "1731533dcd7ed677342a0048e31ce13c7adbb08643c1054dbb50e2e728c2f49a",
+      "/tmp/bra-tail2": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1",
+      "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart": "75608ece0c559d7757ba6bc8bb218ea6ca2a884fe7db49d08af456a2e9754513"
+    },
+    "repeats": 3,
+    "root": "/tmp/bra-skew-fixture",
+    "route": "native",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_binary_sha256": {
+      "bin/dart": "aa5669aa3533bcfe5cdf8b57276c4479dff9987ed69951dc59694eef6f614bdd",
+      "bin/utils/gen_snapshot": "9179511bce8df4bb3a4bb49df0f1000d821dcf555b4f0e1a42be7e5161430150"
+    },
+    "sdk_root": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+    "selected_environment": {
+      "ANALYZER_STATE_LOCATION_OVERRIDE": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE": "0",
+      "BUILD_RUNNER_ACCELERATOR_BIN": null,
+      "BUILD_RUNNER_ACCELERATOR_CACHE": "/tmp/bra-skew-cache",
+      "BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM": null,
+      "BUILD_RUNNER_ACCELERATOR_EARLY_CATALOG": null,
+      "BUILD_RUNNER_ACCELERATOR_MANIFEST_PREWARM": null,
+      "BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT": null,
+      "BUILD_RUNNER_ACCELERATOR_METRICS": "0",
+      "BUILD_RUNNER_ACCELERATOR_PACKED_STORE": null,
+      "BUILD_RUNNER_ACCELERATOR_PLAN_ONLY": null,
+      "BUILD_RUNNER_ACCELERATOR_WALL_TRACE": "0",
+      "BUILD_RUNNER_ACCELERATOR_WORKER_AOT": null,
+      "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH": null,
+      "BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL": null,
+      "DART_SDK": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+      "PUB_CACHE": "/workspace/build_runner_accelerator/.pub-cache"
+    },
+    "source_manifest_sha256": "aff4bad9b90f8e55c024abb37290e489c398d9b8502a2acc7624ed8ce1ea9cd0",
+    "stock_reference": "/tmp/bra-balanced-speed/stock-outputs.json",
+    "timeout_s": 300,
+    "timing": "perf_counter around subprocess spawn, wait and log flush/close; cleanup excluded",
+    "wall_trace": false,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+    "worker_source_sha256": "7ba4339159d7b8b4c6e966d2d48f312411a10bbc252b685ba1364ee17f210bc9"
+  },
+  "balanced-speed": {
+    "aot_cold": false,
+    "binary_sha256": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "tail2",
+    "dep_parse": "cleared",
+    "fixture_kind": "riverpod-cycle",
+    "jobs": [
+      1,
+      2,
+      4
+    ],
+    "metrics": false,
+    "os_page_cache": "not flushed",
+    "package_config_sha256": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+    "pubspec_lock_sha256": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+    "repeats": 3,
+    "root": "/tmp/bra-skew-fixture",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_summary": "retained",
+    "sdk_summary_override": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+    "source_manifest_sha256": "aff4bad9b90f8e55c024abb37290e489c398d9b8502a2acc7624ed8ce1ea9cd0",
+    "stock_check": true,
+    "trace": false,
+    "wall_trace": false,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": {
+      "baseline": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+      "candidate": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b"
+    }
+  },
+  "balanced-wall": {
+    "aot_policy": "native default; no worker pin; restore/validation included",
+    "binaries": {
+      "baseline": "/tmp/bra-baseline",
+      "candidate": "/tmp/bra-tail2"
+    },
+    "binary_sha256": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "tail2",
+    "cleanup": [
+      ".dart_tool/build_runner_accelerator",
+      "lib/*.g.dart",
+      "lib/*.freezed.dart"
+    ],
+    "dart": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart",
+    "dart_sha256": "75608ece0c559d7757ba6bc8bb218ea6ca2a884fe7db49d08af456a2e9754513",
+    "jobs": [
+      2,
+      4
+    ],
+    "machine_wide_caches": "retained",
+    "mode": "wall-only",
+    "os_page_cache": "not flushed",
+    "protected_sha256": {
+      "/tmp/bra-balanced-speed/stock-outputs.json": "65525cb6ac2f524c8ff13bd05f50cb31955471e791a4ffd09da1409c8f5904e3",
+      "/tmp/bra-baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "/tmp/bra-skew-fixture/.dart_tool/package_config.json": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+      "/tmp/bra-skew-fixture/build.yaml": "73d413e8b07f7d68dfa4862853fd02fc8d9d59487ed80d6b0d9c53745947e59d",
+      "/tmp/bra-skew-fixture/pubspec.lock": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+      "/tmp/bra-skew-fixture/pubspec.yaml": "1731533dcd7ed677342a0048e31ce13c7adbb08643c1054dbb50e2e728c2f49a",
+      "/tmp/bra-tail2": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1",
+      "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart": "75608ece0c559d7757ba6bc8bb218ea6ca2a884fe7db49d08af456a2e9754513"
+    },
+    "repeats": 3,
+    "root": "/tmp/bra-skew-fixture",
+    "route": "native",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_binary_sha256": {
+      "bin/dart": "aa5669aa3533bcfe5cdf8b57276c4479dff9987ed69951dc59694eef6f614bdd",
+      "bin/utils/gen_snapshot": "9179511bce8df4bb3a4bb49df0f1000d821dcf555b4f0e1a42be7e5161430150"
+    },
+    "sdk_root": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+    "selected_environment": {
+      "ANALYZER_STATE_LOCATION_OVERRIDE": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE": "0",
+      "BUILD_RUNNER_ACCELERATOR_BIN": null,
+      "BUILD_RUNNER_ACCELERATOR_CACHE": "/tmp/bra-skew-cache",
+      "BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM": null,
+      "BUILD_RUNNER_ACCELERATOR_EARLY_CATALOG": null,
+      "BUILD_RUNNER_ACCELERATOR_MANIFEST_PREWARM": null,
+      "BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT": null,
+      "BUILD_RUNNER_ACCELERATOR_METRICS": "0",
+      "BUILD_RUNNER_ACCELERATOR_PACKED_STORE": null,
+      "BUILD_RUNNER_ACCELERATOR_PLAN_ONLY": null,
+      "BUILD_RUNNER_ACCELERATOR_WALL_TRACE": "1",
+      "BUILD_RUNNER_ACCELERATOR_WORKER_AOT": null,
+      "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH": null,
+      "BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL": null,
+      "DART_SDK": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+      "PUB_CACHE": "/workspace/build_runner_accelerator/.pub-cache"
+    },
+    "source_manifest_sha256": "aff4bad9b90f8e55c024abb37290e489c398d9b8502a2acc7624ed8ce1ea9cd0",
+    "stock_reference": "/tmp/bra-balanced-speed/stock-outputs.json",
+    "timeout_s": 300,
+    "timing": "perf_counter around subprocess spawn, wait and log flush/close; cleanup excluded",
+    "wall_trace": true,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+    "worker_source_sha256": "7ba4339159d7b8b4c6e966d2d48f312411a10bbc252b685ba1364ee17f210bc9"
+  },
+  "queue-diagnostic": {
+    "aot_cold": false,
+    "binary_sha256": {
+      "baseline": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f",
+      "candidate": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "queue",
+    "dep_parse": "cleared",
+    "fixture_kind": "riverpod-cycle",
+    "jobs": [
+      2,
+      4
+    ],
+    "metrics": true,
+    "os_page_cache": "not flushed",
+    "package_config_sha256": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+    "pubspec_lock_sha256": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+    "repeats": 1,
+    "root": "/tmp/bra-skew-fixture",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_summary": "retained",
+    "sdk_summary_override": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+    "source_manifest_sha256": "fabf9f0b598a8fda4f07462dffc792064bf14b51f061950747b7950dede0945b",
+    "stock_check": false,
+    "stock_reference_sha256": "a2ef314d0466de65fc32e3371fdba0a4d73eec6d6d5c71b9e1d5caad349e18a8",
+    "trace": true,
+    "wall_trace": true,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": {
+      "baseline": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+      "candidate": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b"
+    }
+  },
+  "queue-speed": {
+    "aot_cold": false,
+    "binary_sha256": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "d3c812483e14e7b9aa4cf406088e9ec5c82ab4dea4d1c33783abf9f1b9deac8a"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "queue",
+    "dep_parse": "cleared",
+    "fixture_kind": "riverpod-cycle",
+    "jobs": [
+      1,
+      2,
+      4
+    ],
+    "metrics": false,
+    "os_page_cache": "not flushed",
+    "package_config_sha256": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+    "pubspec_lock_sha256": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+    "repeats": 3,
+    "root": "/tmp/bra-skew-fixture",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_summary": "retained",
+    "sdk_summary_override": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+    "source_manifest_sha256": "fabf9f0b598a8fda4f07462dffc792064bf14b51f061950747b7950dede0945b",
+    "stock_check": true,
+    "trace": false,
+    "wall_trace": false,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": {
+      "baseline": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+      "candidate": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b"
+    }
+  },
+  "regen-speed": {
+    "aot_policy": "native default; no worker pin; restore/validation included",
+    "binaries": {
+      "baseline": "/tmp/bra-baseline",
+      "candidate": "/tmp/bra-final"
+    },
+    "binary_sha256": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "tail",
+    "cleanup": [
+      ".dart_tool/build_runner_accelerator",
+      "lib/*.g.dart",
+      "lib/*.freezed.dart"
+    ],
+    "dart": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart",
+    "dart_sha256": "75608ece0c559d7757ba6bc8bb218ea6ca2a884fe7db49d08af456a2e9754513",
+    "jobs": [
+      1,
+      2,
+      4
+    ],
+    "machine_wide_caches": "retained",
+    "mode": "speed",
+    "os_page_cache": "not flushed",
+    "protected_sha256": {
+      "/tmp/bra-baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "/tmp/bra-final": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f",
+      "/tmp/bra-skew-fixture/.dart_tool/package_config.json": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+      "/tmp/bra-skew-fixture/build.yaml": "73d413e8b07f7d68dfa4862853fd02fc8d9d59487ed80d6b0d9c53745947e59d",
+      "/tmp/bra-skew-fixture/pubspec.lock": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+      "/tmp/bra-skew-fixture/pubspec.yaml": "1731533dcd7ed677342a0048e31ce13c7adbb08643c1054dbb50e2e728c2f49a",
+      "/tmp/bra-tail-speed/stock-outputs.json": "a2ef314d0466de65fc32e3371fdba0a4d73eec6d6d5c71b9e1d5caad349e18a8",
+      "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart": "75608ece0c559d7757ba6bc8bb218ea6ca2a884fe7db49d08af456a2e9754513"
+    },
+    "repeats": 3,
+    "root": "/tmp/bra-skew-fixture",
+    "route": "native",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_binary_sha256": {
+      "bin/dart": "aa5669aa3533bcfe5cdf8b57276c4479dff9987ed69951dc59694eef6f614bdd",
+      "bin/utils/gen_snapshot": "9179511bce8df4bb3a4bb49df0f1000d821dcf555b4f0e1a42be7e5161430150"
+    },
+    "sdk_root": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+    "selected_environment": {
+      "ANALYZER_STATE_LOCATION_OVERRIDE": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE": "0",
+      "BUILD_RUNNER_ACCELERATOR_BIN": null,
+      "BUILD_RUNNER_ACCELERATOR_CACHE": "/tmp/bra-skew-cache",
+      "BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM": null,
+      "BUILD_RUNNER_ACCELERATOR_EARLY_CATALOG": null,
+      "BUILD_RUNNER_ACCELERATOR_MANIFEST_PREWARM": null,
+      "BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT": null,
+      "BUILD_RUNNER_ACCELERATOR_METRICS": "0",
+      "BUILD_RUNNER_ACCELERATOR_PACKED_STORE": null,
+      "BUILD_RUNNER_ACCELERATOR_PLAN_ONLY": null,
+      "BUILD_RUNNER_ACCELERATOR_WALL_TRACE": "0",
+      "BUILD_RUNNER_ACCELERATOR_WORKER_AOT": null,
+      "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH": null,
+      "BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL": null,
+      "DART_SDK": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+      "PUB_CACHE": "/workspace/build_runner_accelerator/.pub-cache"
+    },
+    "source_manifest_sha256": "fabf9f0b598a8fda4f07462dffc792064bf14b51f061950747b7950dede0945b",
+    "stock_reference": "/tmp/bra-tail-speed/stock-outputs.json",
+    "timeout_s": 300,
+    "timing": "perf_counter around subprocess spawn, wait and log flush/close; cleanup excluded",
+    "wall_trace": false,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+    "worker_source_sha256": "7ba4339159d7b8b4c6e966d2d48f312411a10bbc252b685ba1364ee17f210bc9"
+  },
+  "regen-wall": {
+    "aot_policy": "native default; no worker pin; restore/validation included",
+    "binaries": {
+      "baseline": "/tmp/bra-baseline",
+      "candidate": "/tmp/bra-final"
+    },
+    "binary_sha256": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "tail",
+    "cleanup": [
+      ".dart_tool/build_runner_accelerator",
+      "lib/*.g.dart",
+      "lib/*.freezed.dart"
+    ],
+    "dart": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart",
+    "dart_sha256": "75608ece0c559d7757ba6bc8bb218ea6ca2a884fe7db49d08af456a2e9754513",
+    "jobs": [
+      1,
+      2,
+      4
+    ],
+    "machine_wide_caches": "retained",
+    "mode": "wall-only",
+    "os_page_cache": "not flushed",
+    "protected_sha256": {
+      "/tmp/bra-baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "/tmp/bra-final": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f",
+      "/tmp/bra-skew-fixture/.dart_tool/package_config.json": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+      "/tmp/bra-skew-fixture/build.yaml": "73d413e8b07f7d68dfa4862853fd02fc8d9d59487ed80d6b0d9c53745947e59d",
+      "/tmp/bra-skew-fixture/pubspec.lock": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+      "/tmp/bra-skew-fixture/pubspec.yaml": "1731533dcd7ed677342a0048e31ce13c7adbb08643c1054dbb50e2e728c2f49a",
+      "/tmp/bra-tail-speed/stock-outputs.json": "a2ef314d0466de65fc32e3371fdba0a4d73eec6d6d5c71b9e1d5caad349e18a8",
+      "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart": "75608ece0c559d7757ba6bc8bb218ea6ca2a884fe7db49d08af456a2e9754513"
+    },
+    "repeats": 3,
+    "root": "/tmp/bra-skew-fixture",
+    "route": "native",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_binary_sha256": {
+      "bin/dart": "aa5669aa3533bcfe5cdf8b57276c4479dff9987ed69951dc59694eef6f614bdd",
+      "bin/utils/gen_snapshot": "9179511bce8df4bb3a4bb49df0f1000d821dcf555b4f0e1a42be7e5161430150"
+    },
+    "sdk_root": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+    "selected_environment": {
+      "ANALYZER_STATE_LOCATION_OVERRIDE": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE": "0",
+      "BUILD_RUNNER_ACCELERATOR_BIN": null,
+      "BUILD_RUNNER_ACCELERATOR_CACHE": "/tmp/bra-skew-cache",
+      "BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM": null,
+      "BUILD_RUNNER_ACCELERATOR_EARLY_CATALOG": null,
+      "BUILD_RUNNER_ACCELERATOR_MANIFEST_PREWARM": null,
+      "BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT": null,
+      "BUILD_RUNNER_ACCELERATOR_METRICS": "0",
+      "BUILD_RUNNER_ACCELERATOR_PACKED_STORE": null,
+      "BUILD_RUNNER_ACCELERATOR_PLAN_ONLY": null,
+      "BUILD_RUNNER_ACCELERATOR_WALL_TRACE": "1",
+      "BUILD_RUNNER_ACCELERATOR_WORKER_AOT": null,
+      "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH": null,
+      "BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL": null,
+      "DART_SDK": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+      "PUB_CACHE": "/workspace/build_runner_accelerator/.pub-cache"
+    },
+    "source_manifest_sha256": "fabf9f0b598a8fda4f07462dffc792064bf14b51f061950747b7950dede0945b",
+    "stock_reference": "/tmp/bra-tail-speed/stock-outputs.json",
+    "timeout_s": 300,
+    "timing": "perf_counter around subprocess spawn, wait and log flush/close; cleanup excluded",
+    "wall_trace": true,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+    "worker_source_sha256": "7ba4339159d7b8b4c6e966d2d48f312411a10bbc252b685ba1364ee17f210bc9"
+  },
+  "tail-diagnostic": {
+    "aot_cold": false,
+    "binary_sha256": {
+      "baseline": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f",
+      "candidate": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "tail",
+    "dep_parse": "cleared",
+    "fixture_kind": "riverpod-cycle",
+    "jobs": [
+      1,
+      2,
+      4
+    ],
+    "metrics": true,
+    "os_page_cache": "not flushed",
+    "package_config_sha256": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+    "pubspec_lock_sha256": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+    "repeats": 1,
+    "root": "/tmp/bra-skew-fixture",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_summary": "retained",
+    "sdk_summary_override": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+    "source_manifest_sha256": "fabf9f0b598a8fda4f07462dffc792064bf14b51f061950747b7950dede0945b",
+    "stock_check": false,
+    "stock_reference_sha256": "a2ef314d0466de65fc32e3371fdba0a4d73eec6d6d5c71b9e1d5caad349e18a8",
+    "trace": true,
+    "wall_trace": true,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": {
+      "baseline": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+      "candidate": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b"
+    }
+  },
+  "tail-final-speed": {
+    "aot_cold": false,
+    "binary_sha256": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "tail",
+    "dep_parse": "cleared",
+    "fixture_kind": "riverpod-cycle",
+    "jobs": [
+      1,
+      2,
+      4
+    ],
+    "metrics": false,
+    "os_page_cache": "not flushed",
+    "package_config_sha256": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+    "pubspec_lock_sha256": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+    "repeats": 5,
+    "root": "/tmp/bra-skew-fixture",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_summary": "retained",
+    "sdk_summary_override": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+    "source_manifest_sha256": "fabf9f0b598a8fda4f07462dffc792064bf14b51f061950747b7950dede0945b",
+    "stock_check": false,
+    "stock_reference_sha256": "a2ef314d0466de65fc32e3371fdba0a4d73eec6d6d5c71b9e1d5caad349e18a8",
+    "trace": false,
+    "wall_trace": false,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": {
+      "baseline": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+      "candidate": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b"
+    }
+  },
+  "tail-speed": {
+    "aot_cold": false,
+    "binary_sha256": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "d3c812483e14e7b9aa4cf406088e9ec5c82ab4dea4d1c33783abf9f1b9deac8a"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "dep_parse": "cleared",
+    "fixture_kind": "riverpod-cycle",
+    "jobs": [
+      1,
+      2,
+      4
+    ],
+    "metrics": false,
+    "os_page_cache": "not flushed",
+    "package_config_sha256": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+    "pubspec_lock_sha256": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+    "repeats": 3,
+    "root": "/tmp/bra-skew-fixture",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_summary": "retained",
+    "sdk_summary_override": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+    "source_manifest_sha256": "fabf9f0b598a8fda4f07462dffc792064bf14b51f061950747b7950dede0945b",
+    "stock_check": true,
+    "trace": false,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": {
+      "baseline": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+      "candidate": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b"
+    }
+  },
+  "tail2-diagnostic": {
+    "aot_cold": false,
+    "binary_sha256": {
+      "baseline": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "tail2",
+    "dep_parse": "cleared",
+    "fixture_kind": "riverpod-cycle",
+    "jobs": [
+      2,
+      4
+    ],
+    "metrics": true,
+    "os_page_cache": "not flushed",
+    "package_config_sha256": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+    "pubspec_lock_sha256": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+    "repeats": 1,
+    "root": "/tmp/bra-skew-fixture",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_summary": "retained",
+    "sdk_summary_override": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+    "source_manifest_sha256": "fabf9f0b598a8fda4f07462dffc792064bf14b51f061950747b7950dede0945b",
+    "stock_check": false,
+    "stock_reference_sha256": "a2ef314d0466de65fc32e3371fdba0a4d73eec6d6d5c71b9e1d5caad349e18a8",
+    "trace": true,
+    "wall_trace": true,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": {
+      "baseline": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+      "candidate": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b"
+    }
+  },
+  "tail2-regen": {
+    "aot_policy": "native default; no worker pin; restore/validation included",
+    "binaries": {
+      "baseline": "/tmp/bra-baseline",
+      "candidate": "/tmp/bra-tail2"
+    },
+    "binary_sha256": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "tail2",
+    "cleanup": [
+      ".dart_tool/build_runner_accelerator",
+      "lib/*.g.dart",
+      "lib/*.freezed.dart"
+    ],
+    "dart": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart",
+    "dart_sha256": "75608ece0c559d7757ba6bc8bb218ea6ca2a884fe7db49d08af456a2e9754513",
+    "jobs": [
+      1,
+      2,
+      4
+    ],
+    "machine_wide_caches": "retained",
+    "mode": "speed",
+    "os_page_cache": "not flushed",
+    "protected_sha256": {
+      "/tmp/bra-baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "/tmp/bra-skew-fixture/.dart_tool/package_config.json": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+      "/tmp/bra-skew-fixture/build.yaml": "73d413e8b07f7d68dfa4862853fd02fc8d9d59487ed80d6b0d9c53745947e59d",
+      "/tmp/bra-skew-fixture/pubspec.lock": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+      "/tmp/bra-skew-fixture/pubspec.yaml": "1731533dcd7ed677342a0048e31ce13c7adbb08643c1054dbb50e2e728c2f49a",
+      "/tmp/bra-tail-speed/stock-outputs.json": "a2ef314d0466de65fc32e3371fdba0a4d73eec6d6d5c71b9e1d5caad349e18a8",
+      "/tmp/bra-tail2": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1",
+      "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart": "75608ece0c559d7757ba6bc8bb218ea6ca2a884fe7db49d08af456a2e9754513"
+    },
+    "repeats": 3,
+    "root": "/tmp/bra-skew-fixture",
+    "route": "native",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_binary_sha256": {
+      "bin/dart": "aa5669aa3533bcfe5cdf8b57276c4479dff9987ed69951dc59694eef6f614bdd",
+      "bin/utils/gen_snapshot": "9179511bce8df4bb3a4bb49df0f1000d821dcf555b4f0e1a42be7e5161430150"
+    },
+    "sdk_root": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+    "selected_environment": {
+      "ANALYZER_STATE_LOCATION_OVERRIDE": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE": "0",
+      "BUILD_RUNNER_ACCELERATOR_BIN": null,
+      "BUILD_RUNNER_ACCELERATOR_CACHE": "/tmp/bra-skew-cache",
+      "BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM": null,
+      "BUILD_RUNNER_ACCELERATOR_EARLY_CATALOG": null,
+      "BUILD_RUNNER_ACCELERATOR_MANIFEST_PREWARM": null,
+      "BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT": null,
+      "BUILD_RUNNER_ACCELERATOR_METRICS": "0",
+      "BUILD_RUNNER_ACCELERATOR_PACKED_STORE": null,
+      "BUILD_RUNNER_ACCELERATOR_PLAN_ONLY": null,
+      "BUILD_RUNNER_ACCELERATOR_WALL_TRACE": "0",
+      "BUILD_RUNNER_ACCELERATOR_WORKER_AOT": null,
+      "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH": null,
+      "BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL": null,
+      "DART_SDK": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+      "PUB_CACHE": "/workspace/build_runner_accelerator/.pub-cache"
+    },
+    "source_manifest_sha256": "fabf9f0b598a8fda4f07462dffc792064bf14b51f061950747b7950dede0945b",
+    "stock_reference": "/tmp/bra-tail-speed/stock-outputs.json",
+    "timeout_s": 300,
+    "timing": "perf_counter around subprocess spawn, wait and log flush/close; cleanup excluded",
+    "wall_trace": false,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+    "worker_source_sha256": "7ba4339159d7b8b4c6e966d2d48f312411a10bbc252b685ba1364ee17f210bc9"
+  },
+  "tail2-speed": {
+    "aot_cold": false,
+    "binary_sha256": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "tail2",
+    "dep_parse": "cleared",
+    "fixture_kind": "riverpod-cycle",
+    "jobs": [
+      1,
+      2,
+      4
+    ],
+    "metrics": false,
+    "os_page_cache": "not flushed",
+    "package_config_sha256": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+    "pubspec_lock_sha256": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+    "repeats": 3,
+    "root": "/tmp/bra-skew-fixture",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_summary": "retained",
+    "sdk_summary_override": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+    "source_manifest_sha256": "fabf9f0b598a8fda4f07462dffc792064bf14b51f061950747b7950dede0945b",
+    "stock_check": false,
+    "stock_reference_sha256": "a2ef314d0466de65fc32e3371fdba0a4d73eec6d6d5c71b9e1d5caad349e18a8",
+    "trace": false,
+    "wall_trace": false,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": {
+      "baseline": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+      "candidate": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b"
+    }
+  },
+  "tail2-wall": {
+    "aot_policy": "native default; no worker pin; restore/validation included",
+    "binaries": {
+      "baseline": "/tmp/bra-baseline",
+      "candidate": "/tmp/bra-tail2"
+    },
+    "binary_sha256": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "cache": "/tmp/bra-skew-cache",
+    "candidate_scheduler": "tail2",
+    "cleanup": [
+      ".dart_tool/build_runner_accelerator",
+      "lib/*.g.dart",
+      "lib/*.freezed.dart"
+    ],
+    "dart": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart",
+    "dart_sha256": "75608ece0c559d7757ba6bc8bb218ea6ca2a884fe7db49d08af456a2e9754513",
+    "jobs": [
+      1,
+      2,
+      4
+    ],
+    "machine_wide_caches": "retained",
+    "mode": "wall-only",
+    "os_page_cache": "not flushed",
+    "protected_sha256": {
+      "/tmp/bra-baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "/tmp/bra-skew-fixture/.dart_tool/package_config.json": "a8bb39d87d1b5af7a8d597a06773cb87e4b66cf3a0ce18790e9ed56b05f85126",
+      "/tmp/bra-skew-fixture/build.yaml": "73d413e8b07f7d68dfa4862853fd02fc8d9d59487ed80d6b0d9c53745947e59d",
+      "/tmp/bra-skew-fixture/pubspec.lock": "d102f4aa85f5f9c6fc47aa3e5d5efb466d5bbe27481576426c09e35783250f09",
+      "/tmp/bra-skew-fixture/pubspec.yaml": "1731533dcd7ed677342a0048e31ce13c7adbb08643c1054dbb50e2e728c2f49a",
+      "/tmp/bra-tail-speed/stock-outputs.json": "a2ef314d0466de65fc32e3371fdba0a4d73eec6d6d5c71b9e1d5caad349e18a8",
+      "/tmp/bra-tail2": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1",
+      "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk/bin/bra-dart": "75608ece0c559d7757ba6bc8bb218ea6ca2a884fe7db49d08af456a2e9754513"
+    },
+    "repeats": 3,
+    "root": "/tmp/bra-skew-fixture",
+    "route": "native",
+    "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+    "sdk_binary_sha256": {
+      "bin/dart": "aa5669aa3533bcfe5cdf8b57276c4479dff9987ed69951dc59694eef6f614bdd",
+      "bin/utils/gen_snapshot": "9179511bce8df4bb3a4bb49df0f1000d821dcf555b4f0e1a42be7e5161430150"
+    },
+    "sdk_root": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+    "selected_environment": {
+      "ANALYZER_STATE_LOCATION_OVERRIDE": "/workspace/build_runner_accelerator/.toolchains/analysis-cache",
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT": null,
+      "BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE": "0",
+      "BUILD_RUNNER_ACCELERATOR_BIN": null,
+      "BUILD_RUNNER_ACCELERATOR_CACHE": "/tmp/bra-skew-cache",
+      "BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM": null,
+      "BUILD_RUNNER_ACCELERATOR_EARLY_CATALOG": null,
+      "BUILD_RUNNER_ACCELERATOR_MANIFEST_PREWARM": null,
+      "BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT": null,
+      "BUILD_RUNNER_ACCELERATOR_METRICS": "0",
+      "BUILD_RUNNER_ACCELERATOR_PACKED_STORE": null,
+      "BUILD_RUNNER_ACCELERATOR_PLAN_ONLY": null,
+      "BUILD_RUNNER_ACCELERATOR_WALL_TRACE": "1",
+      "BUILD_RUNNER_ACCELERATOR_WORKER_AOT": null,
+      "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH": null,
+      "BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL": null,
+      "DART_SDK": "/workspace/build_runner_accelerator/.toolchains/dart/dart-sdk",
+      "PUB_CACHE": "/workspace/build_runner_accelerator/.pub-cache"
+    },
+    "source_manifest_sha256": "fabf9f0b598a8fda4f07462dffc792064bf14b51f061950747b7950dede0945b",
+    "stock_reference": "/tmp/bra-tail-speed/stock-outputs.json",
+    "timeout_s": 300,
+    "timing": "perf_counter around subprocess spawn, wait and log flush/close; cleanup excluded",
+    "wall_trace": true,
+    "worker": "/tmp/bra-skew-fixture/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker",
+    "worker_sha256": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+    "worker_source_sha256": "7ba4339159d7b8b4c6e966d2d48f312411a10bbc252b685ba1364ee17f210bc9"
+  }
+}

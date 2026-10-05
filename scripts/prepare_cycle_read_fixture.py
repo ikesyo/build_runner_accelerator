@@ -12,6 +12,8 @@ import shutil
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
+    parser.add_argument("--skewed", action="store_true",
+                        help="Add 23 extra provider declarations to the last half of inputs")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parent.parent
     root = args.root.resolve()
@@ -55,6 +57,13 @@ def main():
             '  final String label;\n'
             f'  factory User{n}.fromJson(Map<String, dynamic> json) => _$User{n}FromJson(json);\n'
             f'  Map<String, dynamic> toJson() => _$User{n}ToJson(this);\n}}\n')
+
+    if args.skewed:
+        for n in range(32, 64):
+            path = lib / f'provider_{n:02}.dart'
+            path.write_text(path.read_text() + ''.join(
+                f'@riverpod\nint extra{n}_{k}(Ref ref) => Shared0Type0({k}).value;\n'
+                for k in range(23)))
 
 
 if __name__ == '__main__':

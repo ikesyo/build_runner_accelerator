@@ -1,0 +1,6320 @@
+[
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 3,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 3,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 4,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-final-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 4,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "queue-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "regen-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "e345b69107e9034f7f50b9b640e10e2accb2d54e9ebc6b64323d80acdd700b48"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "tail2-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d03d549d34d9b4a92d9f42dd902aedbbe064709f9b071190f7e7f46e29a57136"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-regen",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "tail2-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "dbcc275474f8542b5a5574395c41ee4c24ffe0b7a7f9fd6d1f957194a6523d61"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-speed",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 1,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 1,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-regen",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-wall",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-wall",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 1,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-wall",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "regen",
+    "count": 256,
+    "dataset": "balanced-wall",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 2,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 2,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 2,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 4,
+    "lane": "baseline",
+    "repeat": 0,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  },
+  {
+    "case": "cold",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "warm-clean",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "no-op",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "54d34b279a9f998f55a29aef1d229ddf63f55c0c7ac61a1d6459c9b84ae2edd1"
+  },
+  {
+    "case": "one-file",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "d1feb6145e8ca634b40a99e4f7785224dced7a38d77696b9be157789ea4bba95"
+  },
+  {
+    "case": "broad",
+    "count": 256,
+    "dataset": "balanced-diagnostic",
+    "jobs": 4,
+    "lane": "candidate",
+    "repeat": 0,
+    "sha256": "4c0c02cab760f441591eb32e5cc444a82ac68394bb1ed3b01c6666d6d8f8f70c"
+  }
+]

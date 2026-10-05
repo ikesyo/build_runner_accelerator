@@ -126,6 +126,8 @@ def main():
                         help='Baseline release binary; required except in diagnostic mode')
     for name in ('candidate', 'dart', 'root', 'cache', 'results', 'stock-reference'):
         parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--candidate-scheduler', choices=('static', 'tail', 'tail2', 'queue'), default='static')
+    parser.add_argument('--wall-trace', action='store_true', help='Separate paired wall-only diagnostics')
     parser.add_argument('--jobs', type=int, nargs='+', default=[2, 4])
     parser.add_argument('--repeats', type=int, default=3)
     parser.add_argument('--launcher', action='store_true',
@@ -181,10 +183,10 @@ def main():
     for name in REMOVED_ENV:
         environment.pop(name, None)
     environment.update({PREFIX + 'CACHE': str(args.cache),
-                        PREFIX + 'METRICS': '0', PREFIX + 'WALL_TRACE': '0',
+                        PREFIX + 'METRICS': '0', PREFIX + 'WALL_TRACE': str(int(args.wall_trace)),
                         PREFIX + 'ANALYSIS_TRACE': '0'})
     route = 'launcher' if args.launcher else 'native'
-    mode = 'diagnostic' if args.diagnostic else 'speed'
+    mode = 'diagnostic' if args.diagnostic else 'wall-only' if args.wall_trace else 'speed'
     args.results.mkdir(parents=True, exist_ok=True)
     if any(args.results.iterdir()):
         parser.error('--results must be empty to preserve previous samples/logs')
@@ -192,6 +194,7 @@ def main():
         config_path, args.root / 'pubspec.yaml', args.root / 'pubspec.lock',
         args.root / 'build.yaml', args.stock_reference, *binaries.values(), args.dart)}
     metadata = dict(
+        candidate_scheduler=args.candidate_scheduler, wall_trace=args.wall_trace,
         route=route, mode=mode, root=str(args.root), cache=str(args.cache),
         jobs=args.jobs, repeats=args.repeats, timeout_s=300,
         sdk=subprocess.check_output([str(args.dart), '--version'], env=environment,
@@ -237,6 +240,8 @@ def main():
                 regen_cleanup(args.root)
                 binary = args.candidate if args.diagnostic else binaries[lane]
                 run_env = dict(environment)
+                run_env[PREFIX + 'BATCH_SCHEDULER'] = (
+                    args.candidate_scheduler if args.diagnostic or lane == 'candidate' else 'static')
                 if args.diagnostic:
                     run_env[PREFIX + 'WALL_TRACE'] = str(int(lane != 'disabled'))
                     run_env[PREFIX + 'METRICS'] = str(int(lane == 'wall+metrics'))

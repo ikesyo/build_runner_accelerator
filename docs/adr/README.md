@@ -42,6 +42,7 @@ boundary rather than restoring commit-level history.
 | [0024](0024-cold-analysis-single-flight.md) | Single-flight cold worker analysis and packed reader visibility |
 | [0025](0025-packed-cache-publication-without-fsync.md) | Publish packed cache records without per-record disk synchronization |
 | [0026](0026-byte-store-publication-index.md) | Persistent metadata publication index and lazy payload validation |
+| [0027](0027-experimental-coarse-batch-scheduling.md) | Experimental coarse batch scheduling; fixed ranges remain the default |
 
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for

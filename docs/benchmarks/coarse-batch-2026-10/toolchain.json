@@ -1,0 +1,82 @@
+{
+  "base_commit": "f57b5faaf75173d049ba3a2a79c350e08b074172",
+  "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+  "rust": "1.98.1",
+  "cpu_quota": "200000 / 100000 (2 CPUs)",
+  "memory_limit_bytes": 8589934592,
+  "dependency_versions": {
+    "analyzer": "14.3.0",
+    "build": "4.0.10",
+    "build_runner": "2.16.1",
+    "riverpod_generator": "4.0.9",
+    "freezed": "4.0.1",
+    "json_serializable": "6.14.1"
+  },
+  "worker_sha256": {
+    "baseline": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b",
+    "candidate": "ad5780caa2120b2f57c25941a179ec7a85ebdfd170132b5ac2f9017f33b8273b"
+  },
+  "binary_groups": {
+    "balanced-diagnostic": {
+      "baseline": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "balanced-regen": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "balanced-speed": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "balanced-wall": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "queue-diagnostic": {
+      "baseline": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f",
+      "candidate": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f"
+    },
+    "queue-speed": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "d3c812483e14e7b9aa4cf406088e9ec5c82ab4dea4d1c33783abf9f1b9deac8a"
+    },
+    "regen-speed": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f"
+    },
+    "regen-wall": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f"
+    },
+    "tail-diagnostic": {
+      "baseline": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f",
+      "candidate": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f"
+    },
+    "tail-final-speed": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "687e476e84827f1e01e0dbf11eb2f16c31a65eaee07a188d3e344f1ed8cb640f"
+    },
+    "tail-speed": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "d3c812483e14e7b9aa4cf406088e9ec5c82ab4dea4d1c33783abf9f1b9deac8a"
+    },
+    "tail2-diagnostic": {
+      "baseline": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "tail2-regen": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "tail2-speed": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    },
+    "tail2-wall": {
+      "baseline": "1819240cc87f803552a52c5a0438f54fd301065fb66f35a4232f3fdf09eadc30",
+      "candidate": "c8194ff7d6d59f007b60efbefbf04b00974383a5f58195a071f74d97a53962c1"
+    }
+  },
+  "note": "SDK-bin wrapper unsets HOME; caches and analyzer state are explicitly external. All performance groups were serial; correctness checks began afterwards."
+}

@@ -28,8 +28,11 @@ def main():
     for name in ('baseline', 'candidate', 'frontend-dart', 'root', 'cache', 'results'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--fixture-kind', choices=('json', 'riverpod', 'riverpod-shared', 'riverpod-cycle'), default='json')
+    parser.add_argument('--candidate-scheduler', choices=('static', 'tail', 'tail2', 'queue'), default='static')
+    parser.add_argument('--wall-trace', action='store_true', help='Separate diagnostic run, never a speed sample')
     parser.add_argument('--stock-check', action='store_true',
                         help='Prepare untimed stock output references for every edit case')
+    parser.add_argument('--stock-reference', type=Path, help='Reuse untimed stock output hashes for this exact fixture')
     parser.add_argument('--worker', type=Path, help='Prepared baseline worker')
     parser.add_argument('--candidate-worker', type=Path,
                         help='Prepared candidate worker in the same fixture SDK layout')
@@ -71,7 +74,8 @@ def main():
         parser.error('requires prepared model fixture')
     environment = dict(os.environ, BUILD_RUNNER_ACCELERATOR_CACHE=str(args.cache),
                        BUILD_RUNNER_ACCELERATOR_METRICS=str(int(args.metrics)),
-                       BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=str(int(args.trace)))
+                       BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=str(int(args.trace)),
+                       BUILD_RUNNER_ACCELERATOR_WALL_TRACE=str(int(args.wall_trace)))
     environment.pop('BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH', None)
     environment['BUILD_RUNNER_ACCELERATOR_WORKER_AOT'] = '1'
     environment.pop('BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT', None)
@@ -103,6 +107,7 @@ def main():
     metadata = dict(sdk=subprocess.check_output([str(args.frontend_dart), '--version'], text=True).strip(),
                     root=str(args.root), cache=str(args.cache), worker=str(args.worker),
                     fixture_kind=args.fixture_kind, trace=args.trace, stock_check=args.stock_check,
+                    candidate_scheduler=args.candidate_scheduler, wall_trace=args.wall_trace,
                     jobs=args.jobs, repeats=args.repeats, metrics=args.metrics,
                     dep_parse='retained' if args.retain_dep_parse else 'cleared',
                     sdk_summary='retained', os_page_cache='not flushed',
@@ -120,6 +125,11 @@ def main():
                     sdk_summary_override=environment.get('ANALYZER_STATE_LOCATION_OVERRIDE'))
     (args.results / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')
     stock_expected = {}
+    if args.stock_reference:
+        stock_expected = json.loads(args.stock_reference.read_text())
+        assert set(stock_expected) == {'cold', 'warm-clean', 'no-op', 'one-file', 'broad'}
+        metadata['stock_reference_sha256'] = hashlib.sha256(args.stock_reference.read_bytes()).hexdigest()
+        (args.results / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')
     if args.stock_check:
         stock_root = args.results / 'stock'
         stock_root.mkdir()
@@ -185,6 +195,8 @@ def main():
                         with log.open('w') as stream:
                             worker = args.worker if lane == 'baseline' else candidate_worker
                             run_env = dict(environment)
+                            run_env['BUILD_RUNNER_ACCELERATOR_BATCH_SCHEDULER'] = (
+                                args.candidate_scheduler if lane == 'candidate' else 'static')
                             if not args.aot_cold:
                                 run_env['BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH'] = str(worker)
                             process = subprocess.Popen(command, cwd=args.root, env=run_env,
@@ -200,7 +212,7 @@ def main():
                             assert len(hashes) == 6, log
                         else:
                             assert len(hashes) == len(sources) * (4 if args.fixture_kind == 'riverpod-cycle' else 2), log
-                        if args.stock_check:
+                        if args.stock_check or args.stock_reference:
                             assert hashes == stock_expected[case], f'{log}: differs from stock'
                         if case in ('one-file', 'broad'):
                             assert hashes != expected['cold'], log

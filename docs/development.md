@@ -186,6 +186,34 @@ an untimed stock reference. See
 [frontend wall attribution](benchmarks/frontend-wall-2026-10/README.md) for
 boundaries, measured overhead, results, and application limits.
 
+For coarse batch allocation experiments, prepare the cycle fixture with
+`prepare_cycle_read_fixture.py --skewed` (23 extra providers on each of the
+last 32 inputs). `benchmark_cold_build.py --candidate-scheduler tail` compares
+fixed ranges with affinity-preserving prefix batches and unstarted tail
+stealing; `tail2` keeps a three-quarter prefix with one stealable quarter,
+and `queue` compares a common coarse queue. Use jobs 1/2/4 and repeated
+alternating lanes. `--stock-check` creates references; `--stock-reference`
+reuses those output hashes for the exact same fixture and edits. Run the
+balanced fixture separately without `--skewed`.
+
+`benchmark_frontend_regen.py --candidate-scheduler tail` measures full workspace
+regen against the fixed-range binary. `--wall-trace` on either harness is a
+separate diagnostic condition, never a trace-disabled speed sample. The prepared
+harness also supports `--metrics --trace` separately for CPU/RSS, exact framed
+build request/result bytes, driver counts, cycle loads and byte-store hit rate.
+`summarize_coarse_batch.py --results <result directories> --output <summary>`
+exports timings, fingerprints and diagnostics; finish gap is the difference
+between each participant's final batch end, not the spread of all batch ends.
+
+`check_coarse_batch_lifetime.py --root <new disposable directory> --native
+<binary> --dart <SDK executable> --cache <external cache>` validates 64 stateful
+inputs across two phases, resident resources/builders across repeated batches,
+inter-worker output visibility and atomic failure. Stock byte comparison for
+this counter-emitting fixture is restricted to jobs=1: per-worker counters
+already differ on the existing multiworker path, and changed assignment can
+change them further. The scheduler remains experimental and opt-in; see
+[ADR 0027](adr/0027-experimental-coarse-batch-scheduling.md).
+
 For detailed per-worker diagnostics, set both
 `BUILD_RUNNER_ACCELERATOR_METRICS=1` and
 `BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=1`. Action JSON then includes worker

@@ -51,6 +51,8 @@ pub(super) struct WorkerClientMetrics {
     pub(super) ipc_frames_received: u64,
     pub(super) ipc_bytes_sent: u64,
     pub(super) ipc_bytes_received: u64,
+    pub(super) build_request_frames: u64,
+    pub(super) build_request_bytes: u64,
     pub(super) build_result_frames: u64,
     pub(super) build_result_bytes: u64,
     pub(super) build_result_json_bytes: u64,
@@ -78,6 +80,8 @@ impl WorkerClientMetrics {
         self.ipc_frames_received += other.ipc_frames_received;
         self.ipc_bytes_sent += other.ipc_bytes_sent;
         self.ipc_bytes_received += other.ipc_bytes_received;
+        self.build_request_frames += other.build_request_frames;
+        self.build_request_bytes += other.build_request_bytes;
         self.build_result_frames += other.build_result_frames;
         self.build_result_bytes += other.build_result_bytes;
         self.build_result_json_bytes += other.build_result_json_bytes;
@@ -431,6 +435,13 @@ impl WorkerClient {
         let frame_size = write_frame(&mut self.input, message)?;
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
+        if matches!(
+            message.get("type").and_then(Value::as_str),
+            Some("build" | "build_batch")
+        ) {
+            self.metrics.build_request_frames += 1;
+            self.metrics.build_request_bytes += frame_size as u64;
+        }
         Ok(())
     }
 

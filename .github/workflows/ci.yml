@@ -190,6 +190,14 @@ jobs:
         shell: bash
         run: |
           (cd fixtures/arbitrary_builder_app && dart --suppress-analytics pub get)
+      - name: Coarse batch lifecycle and phase visibility
+        shell: bash
+        run: |
+          python3 scripts/check_coarse_batch_lifetime.py \
+            --root "$RUNNER_TEMP/coarse-batch-lifetime" \
+            --native "$BUILD_RUNNER_ACCELERATOR_BIN" \
+            --dart "$(command -v dart)" \
+            --cache "$RUNNER_TEMP/coarse-batch-cache"
       - parallel:
           - name: Arbitrary correctness (output lifecycle)
             shell: bash

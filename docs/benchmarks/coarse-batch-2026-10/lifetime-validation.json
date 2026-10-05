@@ -1,0 +1,51 @@
+[
+  {
+    "mode": "single",
+    "stock_bytes_equal": true,
+    "outputs": 128
+  },
+  {
+    "mode": "static",
+    "actions": 128,
+    "batches": 4,
+    "resident_lifetimes": true,
+    "phase_visibility": true,
+    "atomic_failure": true
+  },
+  {
+    "mode": "tail",
+    "actions": 128,
+    "batches": 12,
+    "resident_lifetimes": true,
+    "phase_visibility": true,
+    "atomic_failure": true
+  },
+  {
+    "mode": "tail2",
+    "actions": 128,
+    "batches": 8,
+    "resident_lifetimes": true,
+    "phase_visibility": true,
+    "atomic_failure": true
+  },
+  {
+    "mode": "queue",
+    "actions": 128,
+    "batches": 12,
+    "resident_lifetimes": true,
+    "phase_visibility": true,
+    "atomic_failure": true
+  },
+  {
+    "mode": "tail2-delete-rename",
+    "outputs": 128,
+    "batches": 8,
+    "stale_outputs_removed": true
+  },
+  {
+    "mode": "tail-watch",
+    "resident_workers": 2,
+    "successful_batches": 24,
+    "atomic_failure": true
+  }
+]
