@@ -1,6 +1,6 @@
 # ADR 0027: Transport phase-reset overlays in one immutable blob
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-06
 - Replaces the multi-worker per-asset reset spool transport; retains ADR 0002
   transaction boundaries and ADR 0003 worker lifecycle.
