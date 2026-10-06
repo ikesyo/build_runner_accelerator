@@ -269,7 +269,7 @@ is intentionally bounded to the versions exercised by CI:
 
 | Dependency | Supported range |
 | --- | --- |
-| `analyzer` | `>=13.3.0 <15.0.0` |
+| `analyzer` | `>=13.3.0 <14.5.0` |
 | `build` | `>=4.0.9 <5.0.0` |
 | `build_config` | `>=1.3.2 <1.4.0` |
 | `build_runner` | `>=2.16.1 <2.17.0` |

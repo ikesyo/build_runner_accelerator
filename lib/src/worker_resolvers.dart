@@ -48,6 +48,7 @@ import 'resolver_host.dart' show ResolverInitializationProfile;
 import 'resolver_metrics.dart';
 import 'sdk_summary_lock.dart';
 import 'worker_analysis_driver_model.dart';
+import 'worker_analysis_options.dart';
 import 'worker_step_resolver.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/build_resolver.dart';
@@ -146,11 +147,9 @@ class WorkerResolversImpl implements Resolvers {
       _startupGate = _sharedStartupGates[byteStore];
       final driver = _analysisDriver(
         _analysisDriverModel,
-        AnalysisOptionsImpl()
-          // ignore: deprecated_member_use
-          ..contextFeatures = _featureSet(
-            enableExperiments: enabledExperiments,
-          ),
+        workerAnalysisOptions(
+          _featureSet(enableExperiments: enabledExperiments),
+        ),
         sdkSummaryBytes,
         loadedConfig,
         byteStore,
