@@ -27,7 +27,7 @@ AOT-specific scripts that inspect SDK files also accept `DART_SDK`.
 The 0.1.x package line supports Dart `>=3.11.0 <4.0.0`. Its tested core build
 stack is bounded as follows:
 
-- `analyzer >=13.3.0 <15.0.0`
+- `analyzer >=13.3.0 <14.5.0`
 - `build >=4.0.9 <5.0.0`
 - `build_config >=1.3.2 <1.4.0`
 - `build_runner >=2.16.1 <2.17.0`
@@ -45,21 +45,20 @@ exact version.
 
 The worker and analysis prewarm use `AnalysisOptionsBuilder` to support
 analyzer 14.5.0 without the removed `AnalysisOptionsImpl.contextFeatures`
-setter. The existing analyzer range remains unchanged. The builder import
+setter. The builder import
 uses analyzer's `src/generated/engine.dart` export so it also works with
 13.3.0, before `build_resolvers.dart` exported the builder. Both context and
 non-package features are set explicitly to preserve the older setter's behavior.
 
 As of 2026-10-06, the latest published build_runner is 2.16.1. It still
-uses the removed setter in `src/build/resolver/resolvers_impl.dart`, so
-`dart pub upgrade` resolves analyzer 14.5.0 but `dart run build_runner --help`
-fails to compile. This also affects stock fixture builds/watch and package
-tests importing that resolver. The accelerator's options migration does not
-repair that upstream source. Upstream build_runner main has migrated to the
-builder, but its 2.16.2-wip changes have not been released and include unrelated
-dependency/API changes. Validate the stock paths again when a compatible
-release is available; do not treat an accelerator-only analysis pass as a
-stock fallback compatibility pass.
+uses the removed setter in `src/build/resolver/resolvers_impl.dart`. Until a
+compatible release is validated, the package excludes analyzer 14.5.0 with
+`>=13.3.0 <14.5.0`, so upgrades and downstream resolutions select at most
+14.4.0. Updating our own options creation alone cannot repair stock fixture
+builds/watch or tests that import the upstream resolver. Upstream main has
+migrated to the builder, but its 2.16.2-wip line is unreleased and includes
+unrelated dependency/API changes. See [ADR 0028](adr/0028-analyzer-14-5-compatibility.md)
+for the criteria to reopen the window.
 
 ## Local checks
 

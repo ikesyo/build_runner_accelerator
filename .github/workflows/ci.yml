@@ -70,6 +70,8 @@ jobs:
             dart format --output=none --set-exit-if-changed lib bin test tool
           fi
           dart analyze lib bin test tool
+          # Ensure stock Dart fallback compiles under both dependency solutions.
+          dart run build_runner --help
           dart test --compiler=source
       - name: Validate publish package
         if: matrix.resolution == 'upgrade'
