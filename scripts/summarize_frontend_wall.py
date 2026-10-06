@@ -30,6 +30,8 @@ CHILD_PRIORITY = (
     'result_decode_validate', 'asset_rpc',
 )
 BATCH_STAGES = ('worker_batch', 'worker_batch_lazy')
+RESET_PRIORITY = ('reset_overlay_spool', 'reset_delta_encode',
+                  'worker_resolver_reset')
 NOTES = [
     'All timestamps are frontend Rust wall time, relative to each native_build.',
     'receive_frame includes blocking, frame reading and JSON parsing; it is '
@@ -138,6 +140,8 @@ def _validate(event):
         if event['stage'] in BATCH_STAGES:
             _integer(event, 'worker_pid', 1)
             _integer(event, 'batch_id')
+        if event['stage'] == 'worker_resolver_reset':
+            _integer(event, 'worker_pid', 1)
 
 
 class IntervalIndex:
@@ -246,12 +250,35 @@ def _session_report(root, events):
             )['unattributed'],
             'critical_batch_index': critical,
         })
+    resets = []
+    reset_index = IntervalIndex([e for e in events if e['stage'] in
+                                (*RESET_PRIORITY, 'reset_encode_send', 'reset_receive')])
+    for reset in sorted((e for e in events if e['stage'] == 'phase_reset'),
+                        key=lambda e: e['start_us']):
+        children = list(reset_index.contained(reset['start_us'], reset['end_us']))
+        workers = []
+        for worker in (e for e in children if e['stage'] == 'worker_resolver_reset'):
+            stages = [e for e in children if e.get('worker_pid') == worker['worker_pid']
+                      and e['thread'] == worker['thread']
+                      and worker['start_us'] <= e['start_us'] <= e['end_us'] <= worker['end_us']
+                      and e['stage'] in ('reset_encode_send', 'reset_receive')]
+            workers.append({**worker, 'wall_us': worker['end_us'] - worker['start_us'],
+                            'children': partition(worker['start_us'], worker['end_us'],
+                                                  [(e['stage'], e['start_us'], e['end_us'])
+                                                   for e in stages],
+                                                  ('reset_encode_send', 'reset_receive'))})
+        resets.append({**reset, 'wall_us': reset['end_us'] - reset['start_us'],
+                       'children': partition(reset['start_us'], reset['end_us'],
+                                             [(e['stage'], e['start_us'], e['end_us'])
+                                              for e in children], RESET_PRIORITY),
+                       'workers': workers})
     return {
         **root, 'wall_us': root['end_us'], 'event_count': len(events),
         'categories': partition(0, root['end_us'],
                                 [(e['stage'], e['start_us'], e['end_us'])
                                  for e in events], CATEGORY_PRIORITY),
         'phase_dispatches': phases,
+        'phase_resets': resets,
     }
 
 

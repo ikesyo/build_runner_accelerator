@@ -1,0 +1,21 @@
+--- a/rust/src/worker/pool.rs
++++ b/rust/src/worker/pool.rs
+@@ -575,6 +575,7 @@
+         // producer, so spool them under the workspace overlay directory where
+         // any worker can read them during its reset.
+         if count > 1 {
++            let mut created_parents = BTreeSet::new();
+             let spool_root = root.join(OVERLAY_SPOOL_DIR);
+             for asset in updated_sources.iter().chain(updated_cache.iter()) {
+                 let spool_path = spool_root.join(asset.replacen('|', "/", 1));
+@@ -585,7 +586,9 @@
+                     continue;
+                 };
+                 if let Some(parent) = spool_path.parent() {
+-                    fs::create_dir_all(parent)?;
++                    if created_parents.insert(parent.to_path_buf()) {
++                        fs::create_dir_all(parent)?;
++                    }
+                 }
+                 fs::write(&spool_path, bytes)?;
+             }
