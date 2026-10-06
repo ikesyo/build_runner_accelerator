@@ -284,7 +284,10 @@ class _WorkerRuntime {
 
     // Validate and read transport before mutating phase state.
     final updatedAssets = {...updatedSources, ...updatedCache};
-    final transported = readOverlayBlob(overlayBlob, updatedAssets);
+    // A single worker keeps its produced outputs in memory without a blob.
+    final transported = overlayBlob == null
+        ? null
+        : readOverlayBlob(overlayBlob, updatedAssets);
     resolverDependencyCache.clear();
     final changedAssets = <AssetId>{
       ...updatedSources,

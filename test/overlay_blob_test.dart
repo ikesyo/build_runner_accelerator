@@ -26,7 +26,7 @@ void main() {
         'app|lib/b.part': {'offset': 2, 'length': 1},
       }),
       {a, b},
-    )!;
+    );
     expect(values[a], [1, 2]);
     expect(values[b], [3]);
     expect(
@@ -35,10 +35,9 @@ void main() {
           'app|lib/b.part': {'offset': 0, 'length': 3},
         }),
         {a, b},
-      )!.containsKey(a),
+      ).containsKey(a),
       isFalse,
     );
-    expect(readOverlayBlob(null, {a}), isNull);
   });
   test('multiple resets update delete recreate, empty delta', () {
     expect(
@@ -47,7 +46,7 @@ void main() {
           'app|lib/a.dart': {'offset': 0, 'length': 3},
         }),
         {a},
-      )![a],
+      )[a],
       [1, 2, 3],
     );
     file.writeAsBytesSync([]);
@@ -59,7 +58,7 @@ void main() {
           'app|lib/a.dart': {'offset': 0, 'length': 1},
         }, length: 1),
         {a},
-      )![a],
+      )[a],
       [8],
     );
   });
@@ -120,7 +119,7 @@ void main() {
       throwsA(isA<FileSystemException>()),
     );
     file.writeAsBytesSync([7, 8, 9]);
-    expect(readOverlayBlob(data, {a})![a], [7, 8, 9]);
+    expect(readOverlayBlob(data, {a})[a], [7, 8, 9]);
   });
   test('rejects malformed metadata', () {
     for (final value in <Map<String, Object?>>[
