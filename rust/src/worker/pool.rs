@@ -548,6 +548,8 @@ impl WorkerPool {
         )
     }
 
+    /// Publishes one phase's committed overlay changes and joins every reset.
+    /// A single worker uses memory; missing update values fail before any RPC.
     pub fn reset_resolver(
         &mut self,
         root: &Path,
@@ -563,9 +565,12 @@ impl WorkerPool {
         if count == 0 {
             return Ok(());
         }
+        if count == 1 {
+            validate_memory_overlay(overlay, &updated_sources, &updated_cache)?;
+        }
         let spool = crate::wall::Span::new("reset_overlay_spool");
-        let updated_assets = updated_sources.union(&updated_cache).cloned().collect();
         let blob = if count > 1 {
+            let updated_assets = updated_sources.union(&updated_cache).cloned().collect();
             Some(super::overlay_blob::OverlayBlob::create(
                 root,
                 overlay,
@@ -633,6 +638,23 @@ impl WorkerPool {
         self.resolver_resets += count as u64;
         Ok(())
     }
+}
+
+/// Null transport is safe only when every updated value belongs to the
+/// current overlay; otherwise a worker could retain an older produced value.
+pub(super) fn validate_memory_overlay(
+    overlay: &BTreeMap<String, Vec<u8>>,
+    updated_sources: &BTreeSet<String>,
+    updated_cache: &BTreeSet<String>,
+) -> io::Result<()> {
+    for asset in updated_sources.iter().chain(updated_cache) {
+        if !overlay.contains_key(asset) {
+            return Err(io::Error::other(format!(
+                "single-worker reset missing overlay value for updated asset: {asset}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn homogeneous_resolver_usage_key(

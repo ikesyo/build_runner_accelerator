@@ -76,6 +76,7 @@ class WorkerResetMessage extends WorkerMessage {
 }
 
 class WorkerResetResolverMessage extends WorkerMessage {
+  /// Describes a committed phase delta and its explicit blob/memory transport.
   WorkerResetResolverMessage({
     required int id,
     required this.updatedSources,
@@ -106,6 +107,7 @@ class WorkerResetResolverMessage extends WorkerMessage {
   /// Required reset-scoped transport descriptor; null uses single-worker memory.
   final Map<String, Object?>? overlayBlob;
 
+  /// Validates required reset fields and normalizes the nullable descriptor.
   factory WorkerResetResolverMessage.fromJson(JsonMap message) {
     if (!message.containsKey('overlay_blob')) {
       throw const FormatException('reset_resolver requires overlay_blob');

@@ -27,11 +27,12 @@ or unlink failures can leave ignored files. Legacy spools are ignored.
 This ephemeral local IPC does not require durable storage or fsync.
 
 The index covers available overlay values in the union of source/cache
-updates. Deletions carry no bytes. Missing values invalidate stale local
-values and preserve the existing refresh fallback. One initialized worker
-continues to use its in-memory outputs, with an explicit null descriptor;
-zero workers require no reset. Workers validate and stage ranged reads before
-changing phase state. Invalid descriptors, bounds or incomplete bytes fail
+updates. Deletions carry no bytes. Missing multi-worker values invalidate stale
+local values and preserve the existing refresh fallback. One initialized
+worker continues to use its in-memory outputs with an explicit null descriptor;
+Rust rejects an updated ID absent from the current overlay before sending
+that memory-only reset. Zero workers require no reset. Workers validate and
+stage ranged reads before changing phase state. Invalid descriptors, bounds or incomplete bytes fail
 rather than publishing partial phase state. No scheduler, resolver cap,
 single-flight default, cache compaction or AOT policy is changed.
 

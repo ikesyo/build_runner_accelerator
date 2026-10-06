@@ -227,6 +227,7 @@ impl WorkerClient {
         Ok(())
     }
 
+    /// Sends reset deltas and their transport descriptor, then awaits the reply.
     pub fn reset_resolver(
         &mut self,
         updated_sources: &Value,

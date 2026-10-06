@@ -13,6 +13,8 @@ pub(super) struct OverlayBlob {
     pub metadata: Value,
 }
 impl OverlayBlob {
+    /// Writes available updated values into a new reset-owned blob.
+    /// Publication follows successful writes/flush/close; dropping removes it.
     pub fn create(
         root: &Path,
         overlay: &BTreeMap<String, Vec<u8>>,
@@ -20,6 +22,7 @@ impl OverlayBlob {
     ) -> io::Result<Self> {
         Self::create_with(root, overlay, updated, |file, bytes| file.write_all(bytes))
     }
+    /// Allows injected write failures while preserving partial-file cleanup.
     fn create_with(
         root: &Path,
         overlay: &BTreeMap<String, Vec<u8>>,

@@ -127,7 +127,7 @@ payload volume. A few large files can be neutral or slightly worse.
 
 ## Validation and limits
 
-105 Rust and 43 related Dart tests passed, along with analysis/format,
+106 Rust tests and related Dart tests passed, along with analysis/format,
 release compilation and both quick verification variants (with/without
 arbitrary builders). Coverage includes malformed/incomplete transport,
 partial-write cleanup/recovery, source/cache update→delete→recreate, repeated
