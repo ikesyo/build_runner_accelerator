@@ -66,7 +66,7 @@ def main():
         env.pop('BUILD_RUNNER_ACCELERATOR_' + key, None)
     if not args.root.exists():
         subprocess.run([sys.executable, str(REPO / 'scripts/prepare_cycle_read_fixture.py'),
-                        '--root', str(args.root)], check=True)
+                        '--root', str(args.root)], check=True, timeout=300)
         shutil.copy2(HERE / 'probe_builder.dart', args.root / 'lib/reset_probe_builder.dart')
         config = args.root / 'build.yaml'
         config.write_text(config.read_text() + '''
@@ -90,7 +90,7 @@ post_process_builders:
     build_to: source
 ''')
         subprocess.run([str(args.dart), 'pub', 'get', '--offline'], cwd=args.root,
-                       env=env, check=True)
+                       env=env, check=True, timeout=300)
     if (args.root / 'lib/reset_probe_builder.dart').read_bytes() != (HERE / 'probe_builder.dart').read_bytes():
         parser.error('requires the exact disposable probe fixture')
     sources = {p: p.read_bytes() for p in sorted((args.root / 'lib').glob('provider_??.dart'))}
@@ -152,7 +152,7 @@ post_process_builders:
     worker = args.root / '.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker'
     worker_hash = hashlib.sha256(worker.read_bytes()).hexdigest()
     write_json(args.results / 'metadata.json', dict(
-        sdk=subprocess.check_output([str(args.dart), '--version'], text=True).strip(),
+        sdk=subprocess.check_output([str(args.dart), '--version'], text=True, timeout=300).strip(),
         jobs=[2, 4], repeats=args.repeats, wall=args.wall, metrics=args.metrics,
         stock_reference_sha256=hashlib.sha256(args.stock_reference.read_bytes()).hexdigest()
         if args.stock_reference else None,
