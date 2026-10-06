@@ -21,6 +21,7 @@ use std::time::Instant;
 const BINARY_READ_CAPABILITY: &str = "asset-rpc-binary-read-v1";
 const BINARY_BUILD_RESULT_CAPABILITY: &str = "build-result-binary-v1";
 const OPTIONAL_BUILD_CAPABILITY: &str = "optional-builder-demand-v1";
+const OVERLAY_BLOB_CAPABILITY: &str = "reset-overlay-blob-v1";
 const SHARED_BLOCKED_ASSETS_CAPABILITY: &str = "shared-blocked-assets-v1";
 
 pub(super) fn is_worker_script(worker_executable: &str) -> bool {
@@ -202,6 +203,7 @@ impl WorkerClient {
                 "worker does not support required capability: {SHARED_BLOCKED_ASSETS_CAPABILITY}"
             )));
         }
+        require_overlay_blob_capability(&response)?;
         self.metrics.worker_initialize_us += started.elapsed().as_micros() as u64;
         Ok(())
     }
@@ -225,6 +227,7 @@ impl WorkerClient {
         Ok(())
     }
 
+    /// Sends reset deltas and their transport descriptor, then awaits the reply.
     pub fn reset_resolver(
         &mut self,
         updated_sources: &Value,
@@ -232,6 +235,7 @@ impl WorkerClient {
         updated_cache: &Value,
         deleted_cache: &Value,
         incremental: bool,
+        overlay_blob: &Value,
     ) -> io::Result<()> {
         let _wall = self.wall_span("worker_resolver_reset", None);
         let started = Instant::now();
@@ -246,6 +250,7 @@ impl WorkerClient {
             "updated_cache": updated_cache,
             "deleted_cache": deleted_cache,
             "incremental": incremental,
+            "overlay_blob": overlay_blob,
         }))?;
         drop(encoding);
         let receive = self.wall_span("reset_receive", Some(id));
@@ -534,4 +539,15 @@ pub(super) fn has_capability(response: &Value, required: &str) -> bool {
                 .iter()
                 .any(|capability| capability.as_str() == Some(required))
         })
+}
+
+/// Reject old workers before they can silently ignore the reset transport.
+pub(super) fn require_overlay_blob_capability(response: &Value) -> io::Result<()> {
+    if has_capability(response, OVERLAY_BLOB_CAPABILITY) {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "worker does not support required capability: {OVERLAY_BLOB_CAPABILITY}"
+        )))
+    }
 }

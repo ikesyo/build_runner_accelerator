@@ -12,15 +12,9 @@ use crate::workspace::Workspace;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::thread;
-
-/// Workspace-relative directory where committed overlay contents are spooled
-/// for multi-worker incremental resolver resets. The Dart worker resolves
-/// `<spool>/<package>/<asset path>` relative to its working directory.
-const OVERLAY_SPOOL_DIR: &str = ".dart_tool/build_runner_accelerator/overlay";
 
 pub struct WorkerPool {
     workers: Vec<WorkerClient>,
@@ -554,6 +548,8 @@ impl WorkerPool {
         )
     }
 
+    /// Publishes one phase's committed overlay changes and joins every reset.
+    /// A single worker uses memory; missing update values fail before any RPC.
     pub fn reset_resolver(
         &mut self,
         root: &Path,
@@ -569,43 +565,25 @@ impl WorkerPool {
         if count == 0 {
             return Ok(());
         }
-        let spool = crate::wall::Span::new("reset_overlay_spool");
-        // Each worker serves updated contents from the outputs it produced
-        // itself. With multiple workers, updated assets may come from another
-        // producer, so spool them under the workspace overlay directory where
-        // any worker can read them during its reset.
-        if count > 1 {
-            let spool_root = root.join(OVERLAY_SPOOL_DIR);
-            for asset in updated_sources.iter().chain(updated_cache.iter()) {
-                let spool_path = spool_root.join(asset.replacen('|', "/", 1));
-                let Some(bytes) = overlay.get(asset) else {
-                    // Do not let a leftover file from an earlier build be
-                    // mistaken for the current overlay value.
-                    let _ = fs::remove_file(&spool_path);
-                    continue;
-                };
-                if let Some(parent) = spool_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&spool_path, bytes)?;
-            }
-            for asset in deleted_sources.iter().chain(deleted_cache.iter()) {
-                let _ = fs::remove_file(spool_root.join(asset.replacen('|', "/", 1)));
-            }
-        } else {
-            // A previous multi-worker build may have left files for these
-            // assets. A single worker serves its current outputs from memory,
-            // so discard stale spool files before it receives the reset.
-            let spool_root = root.join(OVERLAY_SPOOL_DIR);
-            for asset in updated_sources
-                .iter()
-                .chain(deleted_sources.iter())
-                .chain(updated_cache.iter())
-                .chain(deleted_cache.iter())
-            {
-                let _ = fs::remove_file(spool_root.join(asset.replacen('|', "/", 1)));
-            }
+        if count == 1 {
+            validate_memory_overlay(overlay, &updated_sources, &updated_cache)?;
         }
+        let spool = crate::wall::Span::new("reset_overlay_spool");
+        let blob = if count > 1 {
+            let updated_assets = updated_sources.union(&updated_cache).cloned().collect();
+            Some(super::overlay_blob::OverlayBlob::create(
+                root,
+                overlay,
+                &updated_assets,
+            )?)
+        } else {
+            None
+        };
+        // null means single-worker memory transport; legacy spool is never read.
+        let blob_metadata = blob
+            .as_ref()
+            .map(|blob| &blob.metadata)
+            .unwrap_or(&serde_json::Value::Null);
         drop(spool);
         let delta = crate::wall::Span::new("reset_delta_encode");
         let updated = json!(updated_sources);
@@ -620,6 +598,7 @@ impl WorkerPool {
                 &updated_cache,
                 &deleted_cache,
                 incremental,
+                blob_metadata,
             )?;
         } else {
             // Workers reset their resolver independently; waiting on them one
@@ -641,6 +620,7 @@ impl WorkerPool {
                                 updated_cache,
                                 deleted_cache,
                                 incremental,
+                                blob_metadata,
                             )
                         })
                     })
@@ -658,6 +638,23 @@ impl WorkerPool {
         self.resolver_resets += count as u64;
         Ok(())
     }
+}
+
+/// Null transport is safe only when every updated value belongs to the
+/// current overlay; otherwise a worker could retain an older produced value.
+pub(super) fn validate_memory_overlay(
+    overlay: &BTreeMap<String, Vec<u8>>,
+    updated_sources: &BTreeSet<String>,
+    updated_cache: &BTreeSet<String>,
+) -> io::Result<()> {
+    for asset in updated_sources.iter().chain(updated_cache) {
+        if !overlay.contains_key(asset) {
+            return Err(io::Error::other(format!(
+                "single-worker reset missing overlay value for updated asset: {asset}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn homogeneous_resolver_usage_key(

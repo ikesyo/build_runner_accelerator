@@ -1,10 +1,10 @@
     use super::asset_rpc::{
         batch_asset_request_context, missing_asset_response, validate_asset_request_context,
     };
-    use super::client::{has_capability, is_worker_script};
+    use super::client::{has_capability, is_worker_script, require_overlay_blob_capability};
     use super::pool::{
         balanced_request_ranges, homogeneous_resolver_usage_key, remember_resolver_usage,
-        target_worker_count,
+        target_worker_count, validate_memory_overlay,
     };
     use super::request::{batch_blocked_assets, BuildRequest};
     use crate::visibility::AssetVisibility;
@@ -165,4 +165,31 @@
         assert_eq!(active_request.phase, 3);
         assert!(active_request.post_process);
         assert!(batch_asset_request_context(&json!({"build_id": 2}), &requests).is_err());
+    }
+
+    #[test]
+    fn old_workers_cannot_silently_ignore_overlay_blobs() {
+        let old = json!({"capabilities": ["asset-rpc-binary-read-v1", "build-result-binary-v1", "shared-blocked-assets-v1"]});
+        assert!(require_overlay_blob_capability(&old).is_err());
+        assert!(require_overlay_blob_capability(&json!({"capabilities": ["reset-overlay-blob-v1"]})).is_ok());
+    }
+
+    #[test]
+    fn memory_transport_rejects_missing_source_and_cache_updates() {
+        let source = "app|lib/generated.dart".to_string();
+        let cache = "app|lib/generated.part".to_string();
+        let sources = BTreeSet::from([source.clone()]);
+        let caches = BTreeSet::from([cache.clone()]);
+        let mut overlay = BTreeMap::from([(source.clone(), vec![1]), (cache.clone(), Vec::new())]);
+        assert!(validate_memory_overlay(&overlay, &sources, &caches).is_ok());
+        for asset in [&source, &cache] {
+            let bytes = overlay.remove(asset).unwrap();
+            let error = validate_memory_overlay(&overlay, &sources, &caches).unwrap_err();
+            assert!(error.to_string().contains(asset));
+            overlay.insert(asset.clone(), bytes);
+            assert!(validate_memory_overlay(&overlay, &sources, &caches).is_ok());
+        }
+        assert!(
+            validate_memory_overlay(&BTreeMap::new(), &BTreeSet::new(), &BTreeSet::new()).is_ok()
+        );
     }

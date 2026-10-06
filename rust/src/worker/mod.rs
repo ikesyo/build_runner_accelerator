@@ -2,6 +2,7 @@ mod asset_rpc;
 mod client;
 mod lazy;
 mod pool;
+mod overlay_blob;
 mod request;
 
 #[cfg(test)]
@@ -13,4 +14,3 @@ pub(crate) use lazy::LazyBuildResult;
 pub(crate) use lazy::LazyBuildState;
 pub(crate) use pool::{PoolMetrics, WorkerPool, shared_analysis_cache_enabled};
 pub(crate) use request::BuildRequest;
-

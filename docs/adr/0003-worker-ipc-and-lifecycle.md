@@ -28,6 +28,8 @@ Use the version 1 protocol in [protocol/v1.md](../../protocol/v1.md):
 - The worker must advertise shared-blocked-assets-v1. A build batch carries
   its phase-aware blocked-asset list once at the batch level; child requests
   inherit it instead of repeating the list. There is no per-request fallback.
+- Phase-reset overlay transport and the required reset-overlay-blob-v1
+  capability are specified by [ADR 0027](0027-reset-overlay-blob-transport.md).
 - Both endpoints enforce a 256 MiB complete-frame limit.
 - Worker stdout is reserved for frames. Human diagnostics go to stderr.
 - A worker remains resident across actions and watch builds. Resolver state can
