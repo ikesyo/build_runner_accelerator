@@ -1,18 +1,19 @@
 # Per-reset overlay blob measurements
 
-One blob replaces per-asset spool files. It reduces file creation and metadata
-work; it still writes each asset separately and workers still read indexed
-ranges. The mechanism is supported by synthetic I/O and reset traces. A
-reported application regen improvement warrants review; the smaller local
-fixture alone did not establish a meaningful whole-build improvement.
+Replacing per-asset spool files with one blob per reset substantially reduces
+spool time. A maintainer-reported application comparison improved regen by
+2.8%; the smaller local fixture did not establish a meaningful whole-build
+improvement. Synthetic I/O supports greater benefit for many small files.
+The [transport contract](../../adr/0027-reset-overlay-blob-transport.md)
+describes publication, validation and lifetime.
 
-## Application report supplied by the maintainer
+## Application comparison
 
-Baseline `633ba2b` contains PR #91 (the differences from merged `bc6bd61` are
-documentation/benchmark files); candidate `f7de876` is the rebased blob
-experiment. Release Rust and distinct cached AOT workers were used per lane.
-The application is unavailable in the local verification environment; these
-are supplied results, not independently rerun application measurements.
+Maintainer-supplied results; the application and raw traces were unavailable
+locally. Baseline `633ba2b` contains PR #91; candidate `f7de876` is the blob
+experiment. Dart 3.13.4 linux_x64, Rust 1.94.1 release, jobs=4 on four logical
+CPUs, kernel 6.18.44, ext4 (`rw,relatime,discard`) for workspace and caches.
+Each lane used a cached AOT worker built from its corresponding sources.
 
 Trace-disabled regen, alternating lanes, five samples per lane:
 
@@ -21,80 +22,43 @@ Trace-disabled regen, alternating lanes, five samples per lane:
 | Baseline | 21.2 | 20.5–22.0 |
 | Blob | 20.6 | 19.2–21.6 |
 
-The median reduction is 0.6 s (2.8%). All five paired differences favored
-blob: −1.4, −1.4, −0.3, −0.6, −0.1 s. This supports an application-specific
-improvement, not a general statistical-significance claim. Cold ABBA had two
-samples per lane (87.7/82.9 s versus 83.3/83.2 s), insufficient to establish
-an improvement.
+The median reduction is 0.6 s (2.8%), with all five paired runs favoring blob.
+Cold ABBA, two samples per lane, was 87.7/82.9 s versus 83.3/83.2 s; this
+is insufficient to establish a cold improvement. Cold runs rebuild AOT.
 
-Separate WALL_TRACE results show total spool about 400–750 ms becoming about
-10 ms, and phase-reset wall 1367–1586 ms becoming 800–926 ms. Large update
-sets included 649 files / 1.7 MB, 651 / 1.8 MB and 145 / 5.9 MB.
+Separate WALL_TRACE runs (baseline n=4, blob n=3) reduced total spool from
+about 400–750 ms to about 10 ms and phase-reset wall from 1367–1586 ms to
+800–926 ms. Large updates included 649 files / 1.7 MB, 651 / 1.8 MB and
+145 / 5.9 MB. Worker reset did not absorb the savings; Analyzer drivers
+remained resident. Cleanup reset remained dominated by worker work. Trace whole-build times overlap; they are not speed samples.
 
-| Phase | Baseline reset / spool ms | Blob reset / spool ms |
-| --- | ---: | ---: |
-| freezed | 362–603 / 214–432 | 163–218 / 3–4 |
-| json | 98–130 / 24–35 | 91–123 / 0–4 |
-| combining | 91–120 / 11–13 | 99–110 / 0–1 |
-| mockito | 339–479 / 191–242 | 140–171 / 2–7 |
-| part cleanup | 287–397 / 14–80 | 290–307 / 2 |
-
-Worker-reset union and directive/Analyzer time did not absorb the spool
-savings. Drivers remained resident (`graph_cleared=false`). The report says
-827/827 outputs matched byte-for-byte, with one pre-existing missing output, and no
-blob files remained after builds. The cleanup phase remains dominated by
-worker work. Trace whole-build times overlap and are not speed-run samples.
-
-Measurement metadata subsequently supplied by the maintainer: Dart 3.13.4
-stable linux_x64, rustc 1.94.1 with `cargo build --release`, kernel 6.18.44,
-four logical CPUs, default jobs=4 confirmed by four reset participants.
-Workspace, build outputs and machine-wide caches all reside on ext4 mounted
-`rw,relatime,discard`. Full commits are
-`633ba2b31247bbc4ca5129349b06dcb76a15cbfd` and
-`f7de876eff226f9bbc386c8b7aaca016e50037f6`.
-
-The seven adopted traces are baseline wall1–3 plus preliminary `dbg2_bra91`,
-and blob wall2–3 plus preliminary `dbg2_braBlob`. Preliminary runs used the
-same setup. Each lane used a separate cached AOT worker built from its
-corresponding sources. Workers used by wall1–3 were rebuilt after the last
-cold run. The two earlier dbg2 runs used the same sources, but executable
-identity with the later workers was not checked. Workers are not treated as
-byte-identical across lanes because transport sources differ.
-
-The report's original three-per-lane method and stated 20 measured builds
-do not include the adopted preliminary traces consistently; the explicit
-seven-run selection above supersedes that count. Lane selection swapped both
-package configuration and lockfile; a lockfile comment separated AOT cache
-keys because rootUri alone was insufficient. An AOT_PATH route causing source
-fallback and blob wall1 (61 s, recompiling AOT after cold) were excluded for
-setup reasons. Cold measurements delete/rebuild AOT. This container differed
-from earlier application measurements, so absolute times across reports are
-not comparable. Application raw traces were not available locally.
+The trace set includes one preliminary run per lane using the same sources
+and setup, without checking executable identity against later runs. An AOT
+recompilation run and a source-fallback setup were excluded. Earlier reports
+used a different container, so their absolute times are not comparable.
+The report records 827/827 outputs matching byte-for-byte, one pre-existing
+missing output, and no remaining blob files after builds.
 
 ## Controlled local mixed fixture
 
-Baseline PR #91 head `46ff144`; blob candidate `07ab22d` (same experimental
-transport subsequently rebased as `f7de876`). PR preparation additionally
-requires the new capability/explicit reset field; the numbers below predate
-that compatibility guard, and are not attributed to newly measured PR bytes.
-Linux x86_64, kernel 6.18.44, 2 CPU quota, 8 GiB limit, Dart 3.13.3, Rust
-1.98.1 release, `/workspace` overlay filesystem, warm OS page cache. Same
-SDK, dependencies, cache paths and worker implementation apart from transport.
-Each lane used its own AOT worker built from the corresponding sources,
-kept unchanged within that lane's measurements. Workers differ in source and
-bytes; they are not treated as identical.
+Baseline `46ff144` (PR #91); candidate `07ab22d`, subsequently rebased as
+`f7de876`. Measurements predate the PR's added capability guard. Linux x86_64,
+kernel 6.18.44, 2 CPU quota, 8 GiB limit, Dart 3.13.3, Rust 1.98.1 release,
+overlay filesystem, warm OS page cache. Both lanes use the same SDK,
+dependencies and cache conditions, with corresponding AOT workers differing
+only in transport sources and held unchanged within each lane.
 
-The six-phase fixture has 64 Riverpod/Freezed/JSON inputs, 144 shared
-conditional/transitive sources, generated outputs, a resolver-free probe and
-post-process. Every measured build matched 384 stock build_runner outputs by
-SHA-256. Five barriers transport 320 values / 665050 bytes per regen.
-Cold removes graph/outputs and analyzer caches but retains prepared AOT,
+The six-phase fixture includes 64 Riverpod/Freezed/JSON inputs, 144 shared
+conditional/transitive sources, a resolver-free probe and post-process.
+Every measured build matched all 384 stock build_runner outputs byte-for-byte.
+Five barriers transport 320 values / 665050 bytes per regen.
+
+Cold removes graph, outputs and analyzer caches while retaining prepared AOT,
 manifest and SDK summaries; regen removes workspace state and generated
-source outputs while retaining shared caches. No-op follows a successful
-build; one-file and broad edits change provider names and output bytes.
-Lane setup and priming are untimed. Runs alternate AB, BA, AB, with metrics,
-WALL_TRACE and analysis trace disabled. Each cell has n=3; milliseconds are
-median [min, max].
+source outputs while retaining shared caches. One-file and broad edits change
+provider names and output bytes. Setup and priming are untimed. Runs alternate
+AB, BA, AB, with all metrics/traces disabled. Each cell has n=3;
+milliseconds are median [min, max].
 
 | Jobs | Case | Baseline | Blob |
 | --- | --- | ---: | ---: |
@@ -109,10 +73,10 @@ median [min, max].
 | 4 | broad | 1631.4 [1591.1, 1693.7] | 1579.4 [1560.1, 1694.5] |
 | 4 | regen | 1845.1 [1835.4, 1925.9] | 1818.7 [1786.0, 1992.9] |
 
-Regen median reductions are 0.25%/1.43%, inside observed variability. The
-jobs=4 cold difference is unexplained and not used as evidence for reset.
+Regen median reductions of 0.25%/1.43% are inside observed variability. The
+jobs=4 cold difference is unexplained and is not evidence for reset savings.
 
-Separate WALL_TRACE, n=3 per lane/jobs, median [min, max] in milliseconds:
+Separate WALL_TRACE runs, n=3 per lane/jobs, milliseconds median [min, max]:
 
 | Jobs | Boundary | Baseline | Blob |
 |---|---|---:|---:|
@@ -127,25 +91,26 @@ Separate WALL_TRACE, n=3 per lane/jobs, median [min, max] in milliseconds:
 | 4 | frontend worker-reset union | 57.8 [57.7, 58.3] | 46.2 [44.1, 60.6] |
 | 4 | exclusive dispatch | 1197.9 [1153.9, 1217.7] | 1209.0 [1118.1, 1217.4] |
 
-Combined metrics were separate runs, one per lane/jobs. Reset RPC counts
-remain 10/20 for jobs=2/4, logical write bytes 665050 and worker read bytes
-1330100/2660200. Index JSON increases sent IPC bytes by 49082/98164.
-Transport staging moves into `cache_invalidation`; compare the sum of it and
-`overlay_read`, not `overlay_read` alone. Combined worker-stage medians fell
-665→253.5 µs (jobs=2) and 729.5→252.5 µs (jobs=4). These are worker durations,
-not frontend wall. No dispatch or next no-op penalty was established.
-Regen process-tree CPU medians were 3.040→3.023 s and 2.974→3.007 s; maximum
-individual-process RSS was 149.8→152.3 MiB and 156.2→162.8 MiB, not concurrent
-process-tree peak RSS. Independent interval medians must not be summed.
+Traces show spool/reset savings without a clear increase in worker reset or
+dispatch; next no-op timings remain comparable. Independent interval medians
+must not be summed; worker elapsed durations are not frontend wall. Staging
+moved transport reads into
+`cache_invalidation`, so compare it together with `overlay_read`.
 
-## Synthetic I/O mechanism
+Separate metrics runs retain 10/20 reset RPCs for jobs=2/4, 665050 logical
+write bytes and 1330100/2660200 worker read bytes. Index JSON adds about
+49/98 KB of IPC. Regen process-tree CPU medians were 3.040→3.023 s and
+2.974→3.007 s; maximum individual-process RSS was 149.8→152.3 MiB and
+156.2→162.8 MiB, rather than concurrent process-tree peak RSS.
 
-Actual Rust blob writer versus per-asset files, fresh disposable roots, warm
-page cache, seven alternating samples per lane, overlay and `/tmp` tmpfs,
-four sequential readers in this table. Reader primitives are Rust, not Dart
-workers, so these are transport microbenchmarks, not application speedups.
-Values are allocated outside timing. Blob RAII deletion is timed; baseline
-cleanup is outside timing. No fsync is issued. Total median milliseconds:
+## Synthetic I/O
+
+Actual Rust blob writer versus per-asset files, fresh roots, warm page cache,
+seven alternating samples per lane on overlay and tmpfs. Four sequential
+Rust readers are used below; this is a transport microbenchmark, not a Dart
+worker or application benchmark. Allocation is untimed; blob deletion is
+timed, while baseline file cleanup is untimed. No fsync is issued.
+Total median milliseconds:
 
 | Values × bytes | Overlay files→blob | tmpfs files→blob |
 | --- | ---: | ---: |
@@ -154,53 +119,22 @@ cleanup is outside timing. No fsync is issued. Total median milliseconds:
 | 145 × 41000 | 14.228→5.562 | 5.011→4.374 |
 | 8 × 1048576 | 5.116→4.840 | 6.220→6.601 |
 
-Separate strace of 650 × 2700 and four readers: openat/close 3260→15 each,
-statx 3252→7, read 5213→2613, lseek 0→2600, write 651→651, mkdir 655→6,
-fsync/fdatasync 0→0. Logical write/read bytes stay 1755000/7020000.
-Thousands of small files therefore offer greater potential; a few large files
-can be neutral or slightly worse. Filesystem and build-time share determine
-the whole-build benefit.
+Separate strace of 650 × 2700 with four readers reduced openat/close from
+3260 to 15 each and statx from 3252 to 7. Writes remained 651, with equal
+logical write/read bytes; indexed reads introduce seeks. The benefit comes
+from fewer files and metadata operations, not one write syscall or lower
+payload volume. A few large files can be neutral or slightly worse.
 
-## Validation and retained artifacts
+## Validation and limits
 
-The experiment passed 104 Rust and 42 Dart tests, targeted analysis/format,
-real-worker source/cache update→delete→recreate, empty reset, next build,
-malformed/truncated transport and failure recovery. Representative stock-byte
-checks covered multi-phase/shared-dependency output, optional outputs/failure
-atomicity, post-process incremental/delete/rename and four-worker watch.
-PR preparation adds old-worker/message rejection tests (105 Rust, 43 Dart).
+105 Rust and 43 related Dart tests passed, along with analysis/format,
+release compilation and both quick verification variants (with/without
+arbitrary builders). Coverage includes malformed/incomplete transport,
+partial-write cleanup/recovery, source/cache update→delete→recreate, repeated
+resets/next builds, stock output equality, incremental failure atomicity,
+post-process and four-worker watch. Full-suite and non-Linux validation
+remain outstanding.
 
-Full raw samples and local harnesses remain outside Git in
-`/tmp/phase-reset-blob-results/` and `/workspace/phase-reset-io/`; these paths
-are environment storage, not downloadable artifacts. Main tables and
-conditions are reproduced here so the result does not depend on those paths.
-The application report is maintainer-supplied and not committed verbatim.
-No full-suite or non-Linux validation is claimed; run repository merge gates
-before merging. There is no scheduler/batch/cap/single-flight/AOT/cache-policy
-change, overlapping reset, generation-owner omission or builder-name special
-case in this PR.
-
-### PR preparation checks
-
-Both required quick invocations passed on the prepared PR sources:
-
-```sh
-bash scripts/verify.sh
-VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
-```
-
-These include `dart analyze lib bin test tool`, Dart format checking, Rust
-unit tests, stock/native byte equality and no-op, manifest snapshot lifecycle,
-early-catalog/AOT/fallback checks, trigger incremental/rename/delete/failure
-and arbitrary-builder cases (including output conflicts). Related Dart tests
-passed 43/43; Rust tests passed 105/105; release compilation, new Rust blob
-module rustfmt checking and `git diff --check` passed. Unrelated baseline Rust
-formatting was preserved instead of committing whole-file reformatting.
-
-The initial quick invocation with the SDK wrapper failed the existing
-manifest snapshot expectation because its executable path cannot identify the
-SDK kernel slot. Re-running with the same SDK's real `bin/dart`, `env -u HOME`
-(to avoid the environment's read-only home), the same caches and toolchain
-passed both quick variants. This is a verification setup correction, not a
-transport failure or speed sample. Preparation logs are retained locally in
-`/tmp/phase-reset-blob-pr/`. No full merge gate or other OS run is claimed.
+Application findings are reported evidence, not a local rerun. Small sample
+counts do not establish general statistical significance. The detailed raw
+samples and harnesses are retained locally outside Git.
