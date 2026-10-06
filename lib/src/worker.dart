@@ -283,11 +283,10 @@ class _WorkerRuntime {
     }
 
     // Validate and read transport before mutating phase state.
-    final updatedAssets = {...updatedSources, ...updatedCache};
     // A single worker keeps its produced outputs in memory without a blob.
     final transported = overlayBlob == null
         ? null
-        : readOverlayBlob(overlayBlob, updatedAssets);
+        : readOverlayBlob(overlayBlob, {...updatedSources, ...updatedCache});
     resolverDependencyCache.clear();
     final changedAssets = <AssetId>{
       ...updatedSources,
@@ -303,13 +302,15 @@ class _WorkerRuntime {
       producedOutputs.remove(id);
     }
     mark('cache_invalidation');
-    for (final id in updatedAssets) {
-      final bytes = transported?[id];
-      if (bytes != null) {
-        producedOutputs[id] = AssetContent.bytes(bytes);
-      } else if (transported != null) {
-        // An absent index entry must not resurrect a previous overlay value.
-        producedOutputs.remove(id);
+    if (transported != null) {
+      for (final id in updatedSources.followedBy(updatedCache)) {
+        final bytes = transported[id];
+        if (bytes != null) {
+          producedOutputs[id] = AssetContent.bytes(bytes);
+        } else {
+          // An absent index entry must not resurrect a previous overlay value.
+          producedOutputs.remove(id);
+        }
       }
     }
     if (!incremental) {
