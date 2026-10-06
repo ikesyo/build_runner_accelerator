@@ -74,9 +74,32 @@ void main() {
         final reset =
             WorkerMessage.decode({...message, 'overlay_blob': blob})
                 as WorkerResetResolverMessage;
-        expect(reset.overlayBlob, same(blob));
+        expect(reset.overlayBlob, equals(blob));
       },
     );
+
+    test('rejects non-object overlay transport and non-string keys', () {
+      final message = <String, dynamic>{
+        'type': 'reset_resolver',
+        'id': 9,
+        'updated_sources': <String>[],
+        'deleted_sources': <String>[],
+        'updated_cache': <String>[],
+        'deleted_cache': <String>[],
+        'incremental': true,
+      };
+      for (final value in [
+        1,
+        'blob',
+        <Object?>[],
+        <Object?, Object?>{1: 'invalid key'},
+      ]) {
+        expect(
+          () => WorkerMessage.decode({...message, 'overlay_blob': value}),
+          throwsFormatException,
+        );
+      }
+    });
 
     test('decodes initialize messages into typed values', () {
       final message = WorkerMessage.decode(<String, dynamic>{

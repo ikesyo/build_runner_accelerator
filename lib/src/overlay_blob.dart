@@ -5,12 +5,11 @@ import 'package:build/build.dart';
 /// null preserves the single worker's memory-only transport. No legacy files.
 /// A multi-worker blob is a complete immutable reset snapshot, never retained.
 Map<AssetId, Uint8List>? readOverlayBlob(
-  Object? metadata,
+  Map<String, Object?>? metadata,
   Set<AssetId> updated,
 ) {
   if (metadata == null) return null;
-  if (metadata is! Map ||
-      metadata['path'] is! String ||
+  if (metadata['path'] is! String ||
       metadata['length'] is! int ||
       metadata['index'] is! Map) {
     throw const FormatException('Invalid overlay blob metadata');

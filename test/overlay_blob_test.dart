@@ -123,8 +123,7 @@ void main() {
     expect(readOverlayBlob(data, {a})![a], [7, 8, 9]);
   });
   test('rejects malformed metadata', () {
-    for (final value in [
-      1,
+    for (final value in <Map<String, Object?>>[
       {},
       {'path': 'relative', 'length': 0, 'index': {}},
       {'path': file.path, 'length': -1, 'index': {}},

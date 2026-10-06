@@ -273,7 +273,7 @@ class _WorkerRuntime {
     Set<AssetId> updatedCache = const <AssetId>{},
     Set<AssetId> deletedCache = const <AssetId>{},
     bool incremental = false,
-    Object? overlayBlob,
+    Map<String, Object?>? overlayBlob,
   }) async {
     if (!_buildStarted) return;
     final resetTimer = _resetTraceEnabled ? (Stopwatch()..start()) : null;

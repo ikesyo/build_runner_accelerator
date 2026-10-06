@@ -104,12 +104,13 @@ class WorkerResetResolverMessage extends WorkerMessage {
   final bool incremental;
 
   /// Required reset-scoped transport descriptor; null uses single-worker memory.
-  final Object? overlayBlob;
+  final Map<String, Object?>? overlayBlob;
 
   factory WorkerResetResolverMessage.fromJson(JsonMap message) {
     if (!message.containsKey('overlay_blob')) {
       throw const FormatException('reset_resolver requires overlay_blob');
     }
+    final overlayBlob = message['overlay_blob'];
     return WorkerResetResolverMessage(
       id: _requiredInt(message, 'id', 'reset_resolver'),
       updatedSources: _stringList(
@@ -129,7 +130,9 @@ class WorkerResetResolverMessage extends WorkerMessage {
         'reset_resolver deleted_cache',
       ),
       incremental: _requiredBool(message, 'incremental', 'reset_resolver'),
-      overlayBlob: message['overlay_blob'],
+      overlayBlob: overlayBlob == null
+          ? null
+          : _jsonMap(overlayBlob, 'reset_resolver overlay_blob'),
     );
   }
 }
