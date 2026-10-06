@@ -41,6 +41,26 @@ again in later minor releases. The release workflow validates a minimum solution
 is defined in `rust-toolchain.toml`; CI and release workflows use the same
 exact version.
 
+### analyzer 14.5 and stock build_runner
+
+The worker and analysis prewarm use `AnalysisOptionsBuilder` to support
+analyzer 14.5.0 without the removed `AnalysisOptionsImpl.contextFeatures`
+setter. The existing analyzer range remains unchanged. The builder import
+uses analyzer's `src/generated/engine.dart` export so it also works with
+13.3.0, before `build_resolvers.dart` exported the builder. Both context and
+non-package features are set explicitly to preserve the older setter's behavior.
+
+As of 2026-10-06, the latest published build_runner is 2.16.1. It still
+uses the removed setter in `src/build/resolver/resolvers_impl.dart`, so
+`dart pub upgrade` resolves analyzer 14.5.0 but `dart run build_runner --help`
+fails to compile. This also affects stock fixture builds/watch and package
+tests importing that resolver. The accelerator's options migration does not
+repair that upstream source. Upstream build_runner main has migrated to the
+builder, but its 2.16.2-wip changes have not been released and include unrelated
+dependency/API changes. Validate the stock paths again when a compatible
+release is available; do not treat an accelerator-only analysis pass as a
+stock fallback compatibility pass.
+
 ## Local checks
 
 ```bash

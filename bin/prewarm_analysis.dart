@@ -38,6 +38,7 @@ import 'package:build_runner/src/build/resolver/analysis_driver.dart'
     show sdkLanguageVersion;
 import 'package:build_runner_accelerator/src/sdk_summary_lock.dart'
     show sharedSdkSummaryPath;
+import 'package:build_runner_accelerator/src/worker_analysis_options.dart';
 import 'package:build_runner_accelerator/src/worker_resolvers.dart'
     show sharedAnalysisByteStore;
 import 'package:package_config/package_config.dart' as package_config;
@@ -129,12 +130,12 @@ Future<void> main(List<String> args) async {
     resourceProvider: provider,
     fileContentCache: FileContentCache.ephemeral(provider),
     sdkSummaryBytes: sdkSummaryBytes,
-    analysisOptions: AnalysisOptionsImpl()
-      // ignore: deprecated_member_use
-      ..contextFeatures = FeatureSet.fromEnableFlags2(
+    analysisOptions: workerAnalysisOptions(
+      FeatureSet.fromEnableFlags2(
         sdkLanguageVersion: sdkLanguageVersion,
         flags: enabledExperiments,
       ),
+    ),
     uriResolvers: [
       _PackageUriResolver(provider, {
         for (final package in packageConfig.packages)
