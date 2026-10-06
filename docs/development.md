@@ -45,10 +45,10 @@ exact version.
 
 The worker and analysis prewarm use `AnalysisOptionsBuilder` to support
 analyzer 14.5.0 without the removed `AnalysisOptionsImpl.contextFeatures`
-setter. The builder import
-uses analyzer's `src/generated/engine.dart` export so it also works with
-13.3.0, before `build_resolvers.dart` exported the builder. Both context and
-non-package features are set explicitly to preserve the older setter's behavior.
+setter. The builder import uses analyzer's `src/generated/engine.dart` export
+so it also works with 13.3.0, before `build_resolvers.dart` exported the builder.
+Both context and non-package features are set explicitly to preserve the older
+setter's behavior.
 
 As of 2026-10-06, the latest published build_runner is 2.16.1. It still
 uses the removed setter in `src/build/resolver/resolvers_impl.dart`. Until a
@@ -57,8 +57,11 @@ compatible release is validated, the package excludes analyzer 14.5.0 with
 14.4.0. Updating our own options creation alone cannot repair stock fixture
 builds/watch or tests that import the upstream resolver. Upstream main has
 migrated to the builder, but its 2.16.2-wip line is unreleased and includes
-unrelated dependency/API changes. See [ADR 0028](adr/0028-analyzer-14-5-compatibility.md)
-for the criteria to reopen the window.
+unrelated dependency/API changes. Reopen the analyzer window only after a
+compatible build_runner release is published and its private interfaces, package
+tests, native/stock fixtures, watch, and published-package smoke are validated.
+An accelerator-only analysis pass is insufficient to establish stock fallback
+compatibility.
 
 ## Local checks
 
