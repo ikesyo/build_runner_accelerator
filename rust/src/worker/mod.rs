@@ -1,8 +1,8 @@
 mod asset_rpc;
 mod client;
 mod lazy;
-mod overlay_blob;
 mod pool;
+mod overlay_blob;
 mod request;
 
 #[cfg(test)]

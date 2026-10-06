@@ -12,6 +12,7 @@ void main() {
         'updated_cache': <dynamic>['app|lib/generated.json'],
         'deleted_cache': <dynamic>['app|lib/old.json'],
         'incremental': false,
+        'overlay_blob': null,
       });
 
       expect(message, isA<WorkerResetResolverMessage>());
@@ -22,6 +23,7 @@ void main() {
       expect(reset.updatedCache, ['app|lib/generated.json']);
       expect(reset.deletedCache, ['app|lib/old.json']);
       expect(reset.incremental, isFalse);
+      expect(reset.overlayBlob, isNull);
     });
 
     test('rejects resolver resets with omitted deltas', () {
@@ -48,6 +50,33 @@ void main() {
         throwsA(isA<FormatException>()),
       );
     });
+
+    test(
+      'requires explicit overlay transport and preserves its descriptor',
+      () {
+        final message = <String, dynamic>{
+          'type': 'reset_resolver',
+          'id': 8,
+          'updated_sources': ['app|lib/a.dart'],
+          'deleted_sources': <String>[],
+          'updated_cache': <String>[],
+          'deleted_cache': <String>[],
+          'incremental': true,
+        };
+        expect(() => WorkerMessage.decode(message), throwsFormatException);
+        final blob = {
+          'path': '/tmp/reset.blob',
+          'length': 2,
+          'index': {
+            'app|lib/a.dart': {'offset': 0, 'length': 2},
+          },
+        };
+        final reset =
+            WorkerMessage.decode({...message, 'overlay_blob': blob})
+                as WorkerResetResolverMessage;
+        expect(reset.overlayBlob, same(blob));
+      },
+    );
 
     test('decodes initialize messages into typed values', () {
       final message = WorkerMessage.decode(<String, dynamic>{

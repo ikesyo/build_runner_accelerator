@@ -351,3 +351,8 @@ run its unchanged regen procedure with `WALL_TRACE=1`, action metrics disabled,
 and collect both frontend `phase_resets` and `BRA_RESET_TRACE` records. Compare
 repeated trace-disabled baseline/candidate builds separately; do not subtract
 worker durations from the application's native wall.
+
+## Subsequent blob transport experiment
+
+The per-reset blob follow-up, separate from the rejected directory change,
+is documented in [phase-reset-blob-2026-10](../phase-reset-blob-2026-10/README.md).

@@ -1,14 +1,14 @@
 use super::asset_rpc::batch_asset_request_context;
 use super::request::{
-    BuildRequest, batch_blocked_assets, build_request_kind, json_build_batch_result_frame_size,
-    json_build_result_frame_size,
+    batch_blocked_assets, build_request_kind, json_build_batch_result_frame_size,
+    json_build_result_frame_size, BuildRequest,
 };
 use crate::protocol::{
     BINARY_BUILD_RESULT_MAGIC, BuildResult, IncomingFrame, decode_build_batch_result_frame,
     decode_build_result_frame, read_message_with_size, write_binary_frame, write_frame,
 };
-use crate::visibility::AssetVisibility;
 use crate::worker_kernel::WorkerArtifact;
+use crate::visibility::AssetVisibility;
 use crate::workspace::Workspace;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,11 +21,13 @@ use std::time::Instant;
 const BINARY_READ_CAPABILITY: &str = "asset-rpc-binary-read-v1";
 const BINARY_BUILD_RESULT_CAPABILITY: &str = "build-result-binary-v1";
 const OPTIONAL_BUILD_CAPABILITY: &str = "optional-builder-demand-v1";
+const OVERLAY_BLOB_CAPABILITY: &str = "reset-overlay-blob-v1";
 const SHARED_BLOCKED_ASSETS_CAPABILITY: &str = "shared-blocked-assets-v1";
 
 pub(super) fn is_worker_script(worker_executable: &str) -> bool {
     let path = Path::new(worker_executable);
-    path.is_absolute() || path.extension().and_then(|extension| extension.to_str()) == Some("dart")
+    path.is_absolute()
+        || path.extension().and_then(|extension| extension.to_str()) == Some("dart")
 }
 
 pub struct WorkerClient {
@@ -201,6 +203,7 @@ impl WorkerClient {
                 "worker does not support required capability: {SHARED_BLOCKED_ASSETS_CAPABILITY}"
             )));
         }
+        require_overlay_blob_capability(&response)?;
         self.metrics.worker_initialize_us += started.elapsed().as_micros() as u64;
         Ok(())
     }
@@ -271,8 +274,11 @@ impl WorkerClient {
     ) -> io::Result<BuildResult> {
         let started = Instant::now();
         let id = self.next_id();
-        let blocked_assets =
-            visibility.blocked_assets(request.phase, build_request_kind(request), deleted_overlay);
+        let blocked_assets = visibility.blocked_assets(
+            request.phase,
+            build_request_kind(request),
+            deleted_overlay,
+        );
         self.send(&json!({
             "v": 1,
             "type": "build",
@@ -293,15 +299,17 @@ impl WorkerClient {
             match self.receive()? {
                 IncomingFrame::Json(response) => match response.get("type").and_then(Value::as_str)
                 {
-                    Some("asset_request") => self.handle_asset_request(
-                        workspace,
-                        &response,
-                        overlay,
-                        deleted_overlay,
-                        visibility,
-                        request,
-                        id,
-                    )?,
+                    Some("asset_request") => {
+                        self.handle_asset_request(
+                            workspace,
+                            &response,
+                            overlay,
+                            deleted_overlay,
+                            visibility,
+                            request,
+                            id,
+                        )?
+                    }
                     Some("build_result") => {
                         return Err(io::Error::other(
                             "worker sent JSON build result; binary capability is required",
@@ -514,9 +522,9 @@ pub(super) fn protocol_error(prefix: &str, value: &Value) -> io::Error {
         .unwrap_or_else(|| value.to_string());
     let stack = value.get("stack").and_then(Value::as_str);
     match stack {
-        Some(stack) if !stack.is_empty() => {
-            io::Error::other(format!("{prefix}: {detail}\n{stack}"))
-        }
+        Some(stack) if !stack.is_empty() => io::Error::other(format!(
+            "{prefix}: {detail}\n{stack}"
+        )),
         _ => io::Error::other(format!("{prefix}: {detail}")),
     }
 }
@@ -530,4 +538,15 @@ pub(super) fn has_capability(response: &Value, required: &str) -> bool {
                 .iter()
                 .any(|capability| capability.as_str() == Some(required))
         })
+}
+
+/// Reject old workers before they can silently ignore the reset transport.
+pub(super) fn require_overlay_blob_capability(response: &Value) -> io::Result<()> {
+    if has_capability(response, OVERLAY_BLOB_CAPABILITY) {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "worker does not support required capability: {OVERLAY_BLOB_CAPABILITY}"
+        )))
+    }
 }

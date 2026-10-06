@@ -83,7 +83,7 @@ class WorkerResetResolverMessage extends WorkerMessage {
     required this.updatedCache,
     required this.deletedCache,
     required this.incremental,
-    this.overlayBlob,
+    required this.overlayBlob,
   }) : super(id: id);
 
   /// Assets whose overlay content changed since the last phase commit.
@@ -93,7 +93,7 @@ class WorkerResetResolverMessage extends WorkerMessage {
   final List<String> deletedSources;
 
   /// Changed cache-tree assets. These are applied to the worker's asset view
-  /// but are never passed to Analyzer as source-file updates.
+  /// and generated Dart/part files remain Analyzer-visible.
   final List<String> updatedCache;
 
   /// Cache-tree assets removed from the overlay.
@@ -103,9 +103,13 @@ class WorkerResetResolverMessage extends WorkerMessage {
   /// incrementally. False when a clean resolver rebuild is required.
   final bool incremental;
 
+  /// Required reset-scoped transport descriptor; null uses single-worker memory.
   final Object? overlayBlob;
 
   factory WorkerResetResolverMessage.fromJson(JsonMap message) {
+    if (!message.containsKey('overlay_blob')) {
+      throw const FormatException('reset_resolver requires overlay_blob');
+    }
     return WorkerResetResolverMessage(
       id: _requiredInt(message, 'id', 'reset_resolver'),
       updatedSources: _stringList(

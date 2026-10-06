@@ -1,7 +1,7 @@
     use super::asset_rpc::{
         batch_asset_request_context, missing_asset_response, validate_asset_request_context,
     };
-    use super::client::{has_capability, is_worker_script};
+    use super::client::{has_capability, is_worker_script, require_overlay_blob_capability};
     use super::pool::{
         balanced_request_ranges, homogeneous_resolver_usage_key, remember_resolver_usage,
         target_worker_count,
@@ -165,4 +165,11 @@
         assert_eq!(active_request.phase, 3);
         assert!(active_request.post_process);
         assert!(batch_asset_request_context(&json!({"build_id": 2}), &requests).is_err());
+    }
+
+    #[test]
+    fn old_workers_cannot_silently_ignore_overlay_blobs() {
+        let old = json!({"capabilities": ["asset-rpc-binary-read-v1", "build-result-binary-v1", "shared-blocked-assets-v1"]});
+        assert!(require_overlay_blob_capability(&old).is_err());
+        assert!(require_overlay_blob_capability(&json!({"capabilities": ["reset-overlay-blob-v1"]})).is_ok());
     }

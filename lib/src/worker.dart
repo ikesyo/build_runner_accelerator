@@ -103,6 +103,7 @@ Future<void> runWorker({
                 'build-result-binary-v1',
                 'optional-builder-demand-v1',
                 'shared-blocked-assets-v1',
+                'reset-overlay-blob-v1',
                 'build-runner-current-v1',
               ],
             });
