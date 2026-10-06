@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:build/build.dart';
 import 'package:build_runner_accelerator/src/overlay_blob.dart';
@@ -38,6 +39,18 @@ void main() {
       ).containsKey(a),
       isFalse,
     );
+  });
+  test('accepts map types produced by JSON decoding', () {
+    final decoded =
+        jsonDecode(
+              jsonEncode(
+                metadata({
+                  'app|lib/a.dart': {'offset': 0, 'length': 3},
+                }),
+              ),
+            )
+            as Map<String, dynamic>;
+    expect(readOverlayBlob(decoded, {a})[a], [1, 2, 3]);
   });
   test('multiple resets update delete recreate, empty delta', () {
     expect(
@@ -126,6 +139,26 @@ void main() {
       {},
       {'path': 'relative', 'length': 0, 'index': {}},
       {'path': file.path, 'length': -1, 'index': {}},
+      {'path': file.path, 'length': 3, 'index': 1},
+      {
+        'path': file.path,
+        'length': 3,
+        'index': <int, Object?>{
+          1: {'offset': 0, 'length': 3},
+        },
+      },
+      {
+        'path': file.path,
+        'length': 3,
+        'index': {
+          'app|lib/a.dart': <int, Object?>{1: 0},
+        },
+      },
+      {
+        'path': file.path,
+        'length': 3,
+        'index': {'app|lib/a.dart': 1},
+      },
     ]) {
       expect(() => readOverlayBlob(value, {a}), throwsFormatException);
     }

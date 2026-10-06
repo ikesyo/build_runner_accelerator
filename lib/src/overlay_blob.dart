@@ -7,24 +7,23 @@ Map<AssetId, Uint8List> readOverlayBlob(
   Map<String, Object?> metadata,
   Set<AssetId> updated,
 ) {
-  if (metadata['path'] is! String ||
-      metadata['length'] is! int ||
-      metadata['index'] is! Map) {
+  final path = metadata['path'];
+  final length = metadata['length'];
+  final index = metadata['index'];
+  if (path is! String || length is! int || index is! Map<String, Object?>) {
     throw const FormatException('Invalid overlay blob metadata');
   }
-  final length = metadata['length'] as int;
-  final path = metadata['path'] as String;
   if (length < 0 || !File(path).isAbsolute) {
     throw const FormatException('Invalid overlay blob length/path');
   }
   final entries = <AssetId, (int, int)>{};
   var end = 0;
-  for (final entry in (metadata['index'] as Map).entries) {
-    if (entry.key is! String || entry.value is! Map) {
+  for (final entry in index.entries) {
+    final range = entry.value;
+    if (range is! Map<String, Object?>) {
       throw const FormatException('Invalid overlay blob index');
     }
-    final id = AssetId.parse(entry.key as String);
-    final range = entry.value as Map;
+    final id = AssetId.parse(entry.key);
     final offset = range['offset'];
     final size = range['length'];
     if (!updated.contains(id) ||
