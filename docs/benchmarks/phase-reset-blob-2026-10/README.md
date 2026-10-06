@@ -55,12 +55,11 @@ Workspace, build outputs and machine-wide caches all reside on ext4 mounted
 
 The seven adopted traces are baseline wall1–3 plus preliminary `dbg2_bra91`,
 and blob wall2–3 plus preliminary `dbg2_braBlob`. Preliminary runs used the
-same setup. Baseline AOT cache directory `04cffbeda64f05cf` has executable
-SHA-256 prefix `b1e2f192dfc06cb3`; blob `d4f13826ccc2aa80` has prefix
-`ac88014e82427f21`. These artifacts were rebuilt after the last cold run and
-used by wall1–3. The two earlier dbg2 runs used the same source but executable
-hash equivalence was not checked. Hashes for regen speed runs were not
-provided. Distinct worker bytes are expected because transport sources differ.
+same setup. Each lane used a separate cached AOT worker built from its
+corresponding sources. Workers used by wall1–3 were rebuilt after the last
+cold run. The two earlier dbg2 runs used the same sources, but executable
+identity with the later workers was not checked. Workers are not treated as
+byte-identical across lanes because transport sources differ.
 
 The report's original three-per-lane method and stated 20 measured builds
 do not include the adopted preliminary traces consistently; the explicit
@@ -81,10 +80,9 @@ that compatibility guard, and are not attributed to newly measured PR bytes.
 Linux x86_64, kernel 6.18.44, 2 CPU quota, 8 GiB limit, Dart 3.13.3, Rust
 1.98.1 release, `/workspace` overlay filesystem, warm OS page cache. Same
 SDK, dependencies, cache paths and worker implementation apart from transport.
-Baseline/candidate AOT SHA-256 respectively:
-`784f78fc28cd90d1693d0a23f24c345c48812953abd4f02f7bdf9b231e31419a` /
-`fe704a5d9420c1f3ccba5abd3cb333cc3d65b3bff24461b41081204b32c801ed`.
-Workers differ in source and bytes; they are not treated as identical.
+Each lane used its own AOT worker built from the corresponding sources,
+kept unchanged within that lane's measurements. Workers differ in source and
+bytes; they are not treated as identical.
 
 The six-phase fixture has 64 Riverpod/Freezed/JSON inputs, 144 shared
 conditional/transitive sources, generated outputs, a resolver-free probe and
