@@ -18,6 +18,7 @@ import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
 import 'package:build_runner/src/build_plan/build_inputs.dart' show BuildInputs;
 
 import 'asset_read_cache.dart';
+import 'overlay_blob.dart';
 import 'current_build_runtime.dart';
 import 'protocol.dart';
 import 'remote_build_step.dart';
@@ -127,6 +128,7 @@ Future<void> runWorker({
                   .map(AssetId.parse)
                   .toSet(),
               incremental: resetResolver.incremental,
+              overlayBlob: resetResolver.overlayBlob,
             );
             await writer.send(<String, dynamic>{
               'v': 1,
@@ -270,6 +272,7 @@ class _WorkerRuntime {
     Set<AssetId> updatedCache = const <AssetId>{},
     Set<AssetId> deletedCache = const <AssetId>{},
     bool incremental = false,
+    Object? overlayBlob,
   }) async {
     if (!_buildStarted) return;
     final resetTimer = _resetTraceEnabled ? (Stopwatch()..start()) : null;
@@ -278,6 +281,9 @@ class _WorkerRuntime {
       if (resetTimer != null) stages[stage] = resetTimer.elapsedMicroseconds;
     }
 
+    // Validate and read transport before mutating phase state.
+    final updatedAssets = {...updatedSources, ...updatedCache};
+    final transported = readOverlayBlob(overlayBlob, updatedAssets);
     resolverDependencyCache.clear();
     final changedAssets = <AssetId>{
       ...updatedSources,
@@ -293,20 +299,13 @@ class _WorkerRuntime {
       producedOutputs.remove(id);
     }
     mark('cache_invalidation');
-    // Updated assets produced by another worker are spooled by Rust under the
-    // workspace overlay directory. Cache outputs ride the same transport and
-    // are refreshed into the shared caches on incremental resets too.
-    for (final id in updatedSources.followedBy(updatedCache)) {
-      final spoolFile = File(
-        '${Directory.current.path}/.dart_tool/build_runner_accelerator/'
-        'overlay/${id.package}/${id.path}',
-      );
-      if (spoolFile.existsSync()) {
-        // The spool is the current overlay value, even if this worker produced
-        // an earlier version of the same asset in a previous phase.
-        producedOutputs[id] = AssetContent.bytes(spoolFile.readAsBytesSync());
-      } else if (producedOutputs.containsKey(id)) {
-        // In a single-worker build the current value is already in memory.
+    for (final id in updatedAssets) {
+      final bytes = transported?[id];
+      if (bytes != null) {
+        producedOutputs[id] = AssetContent.bytes(bytes);
+      } else if (transported != null) {
+        // An absent index entry must not resurrect a previous overlay value.
+        producedOutputs.remove(id);
       }
     }
     if (!incremental) {
@@ -318,16 +317,10 @@ class _WorkerRuntime {
     mark('overlay_read');
     for (final id in updatedSources.followedBy(updatedCache)) {
       if (producedOutputs.containsKey(id)) continue;
-      final spoolFile = File(
-        '${Directory.current.path}/.dart_tool/build_runner_accelerator/'
-        'overlay/${id.package}/${id.path}',
-      );
-      if (!spoolFile.existsSync()) {
-        _replaceResolver();
-        _buildStarted = false;
-        await _startBuild(clearReadCaches: false, clearBuilders: false);
-        return;
-      }
+      _replaceResolver();
+      _buildStarted = false;
+      await _startBuild(clearReadCaches: false, clearBuilders: false);
+      return;
     }
     // A committed Dart asset whose directive set changed can change the
     // import graph: the cycle loader caches parsed directives per asset, so

@@ -3,24 +3,18 @@ use super::lazy::LazyBuildState;
 use super::request::BuildRequest;
 use crate::plan::BuildSpec;
 use crate::protocol::BuildResult;
+use crate::visibility::AssetVisibility;
 use crate::worker_kernel::{
     WorkerArtifact, background_worker_aot_if_ready, pinned_worker_artifact_is_current,
     resolve_worker_artifact,
 };
-use crate::visibility::AssetVisibility;
 use crate::workspace::Workspace;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::thread;
-
-/// Workspace-relative directory where committed overlay contents are spooled
-/// for multi-worker incremental resolver resets. The Dart worker resolves
-/// `<spool>/<package>/<asset path>` relative to its working directory.
-const OVERLAY_SPOOL_DIR: &str = ".dart_tool/build_runner_accelerator/overlay";
 
 pub struct WorkerPool {
     workers: Vec<WorkerClient>,
@@ -83,12 +77,8 @@ impl WorkerPool {
         let _wall = crate::wall::Span::new("pool_start");
         let dart_binary = dart_binary.to_owned();
         let worker_executable = worker_executable.to_owned();
-        let worker_artifact = resolve_worker_artifact(
-            root,
-            &dart_binary,
-            &worker_executable,
-            auto_worker_artifact,
-        )?;
+        let worker_artifact =
+            resolve_worker_artifact(root, &dart_binary, &worker_executable, auto_worker_artifact)?;
         let max_jobs = jobs.max(1);
         // Keep the initial pool small. Additional workers are started only when
         // a phase actually has enough independent actions to use them.
@@ -179,12 +169,7 @@ impl WorkerPool {
                 worker.reset()?;
             }
             self.worker_resets += reset_count as u64;
-            self.initialize_pending_workers(
-                root,
-                package,
-                phase_count,
-                requires_optional_builder,
-            )?;
+            self.initialize_pending_workers(root, package, phase_count, requires_optional_builder)?;
             return Ok(());
         }
 
@@ -221,12 +206,7 @@ impl WorkerPool {
             self.restart_workers(root, worker_artifact)?;
         }
         self.initialized_workers = 0;
-        self.initialize_pending_workers(
-            root,
-            package,
-            phase_count,
-            requires_optional_builder,
-        )?;
+        self.initialize_pending_workers(root, package, phase_count, requires_optional_builder)?;
         self.initialized = Some(signature);
         Ok(())
     }
@@ -570,42 +550,21 @@ impl WorkerPool {
             return Ok(());
         }
         let spool = crate::wall::Span::new("reset_overlay_spool");
-        // Each worker serves updated contents from the outputs it produced
-        // itself. With multiple workers, updated assets may come from another
-        // producer, so spool them under the workspace overlay directory where
-        // any worker can read them during its reset.
-        if count > 1 {
-            let spool_root = root.join(OVERLAY_SPOOL_DIR);
-            for asset in updated_sources.iter().chain(updated_cache.iter()) {
-                let spool_path = spool_root.join(asset.replacen('|', "/", 1));
-                let Some(bytes) = overlay.get(asset) else {
-                    // Do not let a leftover file from an earlier build be
-                    // mistaken for the current overlay value.
-                    let _ = fs::remove_file(&spool_path);
-                    continue;
-                };
-                if let Some(parent) = spool_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&spool_path, bytes)?;
-            }
-            for asset in deleted_sources.iter().chain(deleted_cache.iter()) {
-                let _ = fs::remove_file(spool_root.join(asset.replacen('|', "/", 1)));
-            }
+        let updated_assets = updated_sources.union(&updated_cache).cloned().collect();
+        let blob = if count > 1 {
+            Some(super::overlay_blob::OverlayBlob::create(
+                root,
+                overlay,
+                &updated_assets,
+            )?)
         } else {
-            // A previous multi-worker build may have left files for these
-            // assets. A single worker serves its current outputs from memory,
-            // so discard stale spool files before it receives the reset.
-            let spool_root = root.join(OVERLAY_SPOOL_DIR);
-            for asset in updated_sources
-                .iter()
-                .chain(deleted_sources.iter())
-                .chain(updated_cache.iter())
-                .chain(deleted_cache.iter())
-            {
-                let _ = fs::remove_file(spool_root.join(asset.replacen('|', "/", 1)));
-            }
-        }
+            None
+        };
+        // null means single-worker memory transport; legacy spool is never read.
+        let blob_metadata = blob
+            .as_ref()
+            .map(|blob| &blob.metadata)
+            .unwrap_or(&serde_json::Value::Null);
         drop(spool);
         let delta = crate::wall::Span::new("reset_delta_encode");
         let updated = json!(updated_sources);
@@ -620,6 +579,7 @@ impl WorkerPool {
                 &updated_cache,
                 &deleted_cache,
                 incremental,
+                blob_metadata,
             )?;
         } else {
             // Workers reset their resolver independently; waiting on them one
@@ -641,6 +601,7 @@ impl WorkerPool {
                                 updated_cache,
                                 deleted_cache,
                                 incremental,
+                                blob_metadata,
                             )
                         })
                     })
@@ -671,9 +632,7 @@ pub(super) fn homogeneous_resolver_usage_key(
     requests
         .iter()
         .all(|request| {
-            !request.post_process
-                && request.builder == key.0
-                && request.instance_key == key.1
+            !request.post_process && request.builder == key.0 && request.instance_key == key.1
         })
         .then_some(key)
 }
@@ -710,9 +669,7 @@ fn resolver_worker_cap() -> Option<usize> {
         Ok(0) => Some(usize::MAX),
         Ok(cap) => Some(cap),
         Err(_) => {
-            eprintln!(
-                "BUILD_RUNNER_ACCELERATOR_RESOLVER_CAP must be an integer; ignoring {value}"
-            );
+            eprintln!("BUILD_RUNNER_ACCELERATOR_RESOLVER_CAP must be an integer; ignoring {value}");
             None
         }
     }

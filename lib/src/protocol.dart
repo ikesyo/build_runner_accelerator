@@ -83,6 +83,7 @@ class WorkerResetResolverMessage extends WorkerMessage {
     required this.updatedCache,
     required this.deletedCache,
     required this.incremental,
+    this.overlayBlob,
   }) : super(id: id);
 
   /// Assets whose overlay content changed since the last phase commit.
@@ -101,6 +102,8 @@ class WorkerResetResolverMessage extends WorkerMessage {
   /// Whether the worker may keep its resolver state and apply source changes
   /// incrementally. False when a clean resolver rebuild is required.
   final bool incremental;
+
+  final Object? overlayBlob;
 
   factory WorkerResetResolverMessage.fromJson(JsonMap message) {
     return WorkerResetResolverMessage(
@@ -122,6 +125,7 @@ class WorkerResetResolverMessage extends WorkerMessage {
         'reset_resolver deleted_cache',
       ),
       incremental: _requiredBool(message, 'incremental', 'reset_resolver'),
+      overlayBlob: message['overlay_blob'],
     );
   }
 }

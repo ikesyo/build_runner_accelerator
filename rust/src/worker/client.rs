@@ -1,14 +1,14 @@
 use super::asset_rpc::batch_asset_request_context;
 use super::request::{
-    batch_blocked_assets, build_request_kind, json_build_batch_result_frame_size,
-    json_build_result_frame_size, BuildRequest,
+    BuildRequest, batch_blocked_assets, build_request_kind, json_build_batch_result_frame_size,
+    json_build_result_frame_size,
 };
 use crate::protocol::{
     BINARY_BUILD_RESULT_MAGIC, BuildResult, IncomingFrame, decode_build_batch_result_frame,
     decode_build_result_frame, read_message_with_size, write_binary_frame, write_frame,
 };
-use crate::worker_kernel::WorkerArtifact;
 use crate::visibility::AssetVisibility;
+use crate::worker_kernel::WorkerArtifact;
 use crate::workspace::Workspace;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,8 +25,7 @@ const SHARED_BLOCKED_ASSETS_CAPABILITY: &str = "shared-blocked-assets-v1";
 
 pub(super) fn is_worker_script(worker_executable: &str) -> bool {
     let path = Path::new(worker_executable);
-    path.is_absolute()
-        || path.extension().and_then(|extension| extension.to_str()) == Some("dart")
+    path.is_absolute() || path.extension().and_then(|extension| extension.to_str()) == Some("dart")
 }
 
 pub struct WorkerClient {
@@ -232,6 +231,7 @@ impl WorkerClient {
         updated_cache: &Value,
         deleted_cache: &Value,
         incremental: bool,
+        overlay_blob: &Value,
     ) -> io::Result<()> {
         let _wall = self.wall_span("worker_resolver_reset", None);
         let started = Instant::now();
@@ -246,6 +246,7 @@ impl WorkerClient {
             "updated_cache": updated_cache,
             "deleted_cache": deleted_cache,
             "incremental": incremental,
+            "overlay_blob": overlay_blob,
         }))?;
         drop(encoding);
         let receive = self.wall_span("reset_receive", Some(id));
@@ -270,11 +271,8 @@ impl WorkerClient {
     ) -> io::Result<BuildResult> {
         let started = Instant::now();
         let id = self.next_id();
-        let blocked_assets = visibility.blocked_assets(
-            request.phase,
-            build_request_kind(request),
-            deleted_overlay,
-        );
+        let blocked_assets =
+            visibility.blocked_assets(request.phase, build_request_kind(request), deleted_overlay);
         self.send(&json!({
             "v": 1,
             "type": "build",
@@ -295,17 +293,15 @@ impl WorkerClient {
             match self.receive()? {
                 IncomingFrame::Json(response) => match response.get("type").and_then(Value::as_str)
                 {
-                    Some("asset_request") => {
-                        self.handle_asset_request(
-                            workspace,
-                            &response,
-                            overlay,
-                            deleted_overlay,
-                            visibility,
-                            request,
-                            id,
-                        )?
-                    }
+                    Some("asset_request") => self.handle_asset_request(
+                        workspace,
+                        &response,
+                        overlay,
+                        deleted_overlay,
+                        visibility,
+                        request,
+                        id,
+                    )?,
                     Some("build_result") => {
                         return Err(io::Error::other(
                             "worker sent JSON build result; binary capability is required",
@@ -518,9 +514,9 @@ pub(super) fn protocol_error(prefix: &str, value: &Value) -> io::Error {
         .unwrap_or_else(|| value.to_string());
     let stack = value.get("stack").and_then(Value::as_str);
     match stack {
-        Some(stack) if !stack.is_empty() => io::Error::other(format!(
-            "{prefix}: {detail}\n{stack}"
-        )),
+        Some(stack) if !stack.is_empty() => {
+            io::Error::other(format!("{prefix}: {detail}\n{stack}"))
+        }
         _ => io::Error::other(format!("{prefix}: {detail}")),
     }
 }
