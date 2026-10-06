@@ -29,6 +29,38 @@ gap, but whole regen medians moved little, balanced cold worsened, and repeated
 IPC/cross-worker work grew. None of its scheduler, assignment or ADR changes
 are included here.
 
+### Application follow-up (2026-10-06, user-provided report)
+
+The user compared PR head `633ba2b` with and without `rejected-spool.patch`,
+using release native binaries and a common PR worker. Trace-disabled runs
+alternated lanes: five regen runs and two cold runs each. Separate WALL_TRACE
+regen captures ran twice per lane. This is application evidence reported by
+the user, not a rerun in this workspace; raw captures and application sources
+were not supplied with the follow-up report.
+
+| Measurement | Baseline | Directory-deduplication patch |
+| --- | --- | --- |
+| Regen median [range], seconds | 16.0 [15.7, 16.6] | 16.2 [15.2, 16.6] |
+| Cold, two runs, seconds | 61.8 / 60.6 | 63.2 / 61.3 |
+| Traced native wall, seconds | 15.32 / 16.23 | 16.02 / 15.70 |
+| Exclusive reset total, milliseconds | 1097 / 1299 | 1425 / 1346 |
+
+No improvement was observed, supporting rejection of the patch. The report
+records 827/827 matching reference outputs on every run, with one pre-existing
+`missing=1` entry. SDK/cache details beyond the common worker were not included
+in the follow-up summary.
+
+Baseline spool totaled 425 / 648 ms, about 40–50% of reset wall; delta encoding
+was below 1 ms. Its larger phases wrote 649 or 651 files. The measured pattern
+points toward per-file creation/write overhead rather than directory creation,
+but does not isolate syscall costs. Cleanup reset instead had a worker-local
+`directives_and_graph` interval of 114–183 ms and `analyzer_start` of 47–118 ms;
+all workers reported `graph_cleared=false`. Directive decoding of 5.9 MB of
+mock outputs is a hypothesis: this boundary also includes availability checks,
+disk fallback and resolver unlock, and is not a pure decode measurement.
+Worker durations must not be summed into frontend wall. No additional
+optimization is adopted from these observations.
+
 ## Responsibilities and timing boundaries
 
 | Boundary | Existing responsibility | Diagnostic meaning |
@@ -78,7 +110,7 @@ An implementation would require ordered handling of update/delete/recreate,
 intermediate directive changes, the next resolver and watch build, nested lazy
 calls, and failure recovery. This draft does not introduce that mechanism or
 claim to have proved those new transitions. The measured non-resolver reset
-budget and unavailable application breakdown do not justify its complexity.
+budget and the follow-up application's negative experiment do not justify its complexity.
 The eager deltas, cache invalidation, visibility, read dependency recording,
 phase barriers and all-success commit remain exactly the existing mechanism.
 
@@ -286,9 +318,10 @@ compatibility, platform and dependency-window coverage is delegated to PR CI.
 There is no new delayed state machine requiring speculative transition tests;
 the new tests verify the diagnostic accounting, while existing relevant
 state-transition tests and stock comparisons verify the retained behavior.
-The isolated Dart-probe overhead and real application's detailed reset stages
-remain unmeasured; application sources and repeated application captures are
-needed before an application optimization claim.
+The isolated Dart-probe overhead remains unmeasured. The application follow-up
+above supplies reset-stage summaries, but not raw captures or an isolated
+directive/Analyzer CPU breakdown; further controlled measurements are needed
+before an application optimization claim.
 
 ## Reproduction
 
