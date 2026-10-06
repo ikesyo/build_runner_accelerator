@@ -1,182 +1,72 @@
-# Reset directive extraction and old-content comparison
+# Reset directive comparison measurements
 
-Started from freshly fetched main `1d536c4a19a8cd6c1d4d0f4c96ae4e3b7692b4c0`
-(PR #92). It equals the previously reviewed main, so there is no intervening
-optimization to duplicate. Read AGENTS, architecture/lifecycle/transaction and
-performance ADRs, ADR 0019 and 0027, protocol v1, and the PR #91/#92 measurement
-reports and PR discussions. The application sources and latest-main application
-traces are unavailable here; these results concern fixtures only.
+Measurements use baseline main `1d536c4` and candidate `d34324e`, Dart 3.13.3,
+locked analyzer 14.3.0, Rust 1.98.1 release, Linux x86_64, two-CPU quota,
+8 GiB limit and warm overlay filesystem page cache. These are fixture results;
+application sources/latest-main traces are unavailable. They do not measure
+the later dependency changes.
 
-## Contract and scope
+## Decision and contract
 
-The compared information is the legacy set of trimmed regex matches for
-import/export/part/part-of/library, including conditional clauses. It is not
-PR #84's conditional URI set: that omits library/part-of invalidation information
-and serves a different read/dependency-recording contract. Its directive-only
-parser still tokenizes the whole input and is not a drop-in replacement.
+Couple the updated immutable decoded String with its directive set. On an old
+per-asset record miss, read/decode the pre-build file normally and reuse the
+set **only if its entire decoded String equals the updated String**. Otherwise
+use the same full-content regex. No content cache, hash or deferred work is added.
+AssetId, mtime, mutable buffer identity and inherited digests cannot prove reuse.
 
-| Transition | Existing reset decision, retained by this change |
-| --- | --- |
-| First generated asset | Consult pre-build disk content if there is no committed directive record. Nonempty new directives alone do not clear a graph with no prior entry. |
-| Body-only change | Equal directive sets keep the graph; different complete content still requires a new extraction. |
-| Directive change | Unequal sets clear the graph, including when old/current full contents were checked for equality. |
-| Dependency-loaded while missing | Without previous content, nonempty directives clear a permanent empty-deps entry. Phase-expiring entries reload under the existing loader; keep the phased-deps check. |
-| Delete/recreate | Delete removes the per-asset previous directive record and produced value. Recreate checks disk or the missing-dependency case again. Pure content reuse cannot supply an old per-asset comparison record. |
-| Next watch build/failure recovery | Existing resolver replacement and per-build clears discard per-asset comparison records; the new reuse is local to one reset. |
+- Preserve the legacy import/export/library/part/part-of set, including conditional,
+  multiline, malformed/late matches and comment/string false positives. PR #84's
+  URI cache has different semantics and cannot substitute for this comparison.
+- Equal directive sets retain the graph; unequal sets clear it. Without old content,
+  preserve the permanent empty-dependency check and phase-expiring reload behavior.
+- Deletion removes the old per-asset record; recreation checks disk/missing state.
+  Next-build reset clears existing records. New String/result pairs are temporary.
+- Blob validation/lifetime, reader invalidation, visibility, dependency recording,
+  optional demand and atomic commit are unchanged, as are scheduling/AOT policies.
 
-Do not skip overlay validation/reads, old-file existence/reads, cache eviction,
-phase-visible content notification, read recording, optional demand, or atomic
-output/graph commit. No queue or deferred work is added. Scheduler, assignment,
-worker caps, single-flight, AOT policy and cache compaction are unchanged.
+A bounded full-String LRU was rejected: seven-sample extraction medians for equal
+large outputs were 49.657→26.585 ms, but unique-content misses were
+51.196→63.948 ms (+24.9%). Alternative whole-scan prefilters were also slower.
+The measured benefit below is available identical old content, **not regen**.
 
-## Final change and adoption boundary
+## Workload and reproduction
 
-Extract the updated version with the unchanged whole-content regex, coupling
-its immutable decoded String with an immutable directive set in a temporary
-`ResetDirectiveContent`. When the per-asset old directive record misses, retain
-the existing package search, existence check, synchronous disk read and UTF-8
-conversion. Compare that **entire old String** with the updated String. Only an
-exact equality permits reusing the already extracted set for the old side;
-otherwise run the unchanged regex on the old content too.
+Six phases: 64 Riverpod/Freezed/JSON inputs, 144 shared conditional/transitive
+sources, a large Dart probe reading generated/shared content, then post-process.
+Unique filename prefixes produce 64 large outputs (~8.19 MB). All 72 final speed
+samples match all 384 stock source/cache artifacts byte-for-byte; edits change bytes.
 
-This is a content-version proof: `oldText == updatedText` implies that the pure
-legacy extraction gives exactly the same set. AssetId, mtime, mutable bytes,
-object identity and AssetContent's optionally inherited digest cannot authorize
-reuse. A reused temporary result binds to the supplied String. The per-asset
-committed directive map still holds only sets and is invalidated exactly as
-before; the new String/result pairs are not retained across resets/builds.
-There is no additional content cache, hash, disk cache or publication contract.
-Existing AssetContent conversions are still materialized normally.
+Jobs=2/4, three repetitions, AB/BA/AB, same frontend and corresponding prepared
+AOT workers/SDK/package config/cache conditions. Speed disables metrics and traces;
+wall-only and detailed diagnostics are separate. Prepared cold clears graph,
+outputs, byte store and dependency parse cache, retaining SDK summaries/workers.
+Regen removes workspace state/outputs but retains shared caches; both lanes prime
+that route outside timing. Warm-clean deletes graph/post outputs while retaining
+old Dart/part files. Prepared workers exclude compile/restore/validation; manifest
+regeneration is included. CPU is process-tree user+system; RSS is maximum single
+process, **not** simultaneous tree peak. SDK/tool caches are not universally cold.
 
-The unchanged full-content extractor preserves multiline clauses, conditional
-import/export text, library/part/part-of, language-version comments, malformed
-and late matches, and legacy comment/string false positives and parser limits.
-A body-only or language-comment edit cannot take the equality shortcut even
-when its eventual directive set is unchanged. No prefix parser or changed
-fallback is introduced. Graph invalidation still compares the same old/new
-sets and checks the same missing permanent empty-deps case.
+[samples.csv](samples.csv) retains every final speed/wall/detail sample;
+[micro.csv](micro.csv) retains all seven alternating extraction samples.
+[metadata.json](metadata.json) records common tool/worker/input hashes and run modes;
+[directive-stats.csv](directive-stats.csv) sums every reset/worker counter by build.
+No final sample or counter is dropped; rejected experiment rows are excluded.
 
-Regen with removed old files cannot benefit from this shortcut. The benefit is
-specifically identical available pre-build content, not a general reset or
-application regen speedup. The old I/O/decode remains; only its redundant
-extraction is removed. There is no deferred work to dispatch or the next build.
+The one-off harness, builder, microbenchmark, baseline diagnostic patch and rejected
+experiment sources are available in the immutable [measurement archive](https://github.com/ikesyo/build_runner_accelerator/tree/09708bf40ee078a51fc7cafd570da62f0fa487b9/docs/benchmarks/reset-directives-2026-10).
+Its README contains the complete fixture/worker setup. For reproduction, use that
+checkout's `benchmark.py` with corresponding baseline/candidate workers and
+`--unique --cases cold no-op one-file broad regen warm-clean --repeats 3`.
+Run separately with `--wall` (regen), `--wall --prepared-wall` (warm-clean), and
+`--wall --metrics --repeats 1` for counters, supplying the speed stock reference.
+Microbenchmark decode/read/setup/oracle checks are outside timed extraction.
 
-## Rejected content-cache experiment
+## Results
 
-A process-local LRU keyed by complete immutable Strings, bounded to 128 entries
-and 1,048,576 key code units, was implemented and tested, then **not adopted**.
-It correctly binds content and sets but adds whole-content hash/equality work
-and retained text. AOT extraction-only comparisons with fresh decoded Strings
-per lane, seven alternating samples, milliseconds median [min,max]:
+All tables show median [min,max]; build/wall-only comparisons have three samples
+per lane/jobs. Worker elapsed sums are neither frontend wall nor CPU.
 
-| Workload | Legacy extraction | Content cache |
-| --- | ---: | ---: |
-| Equal large outputs, 401 files / 7,794,924 code units | 49.657 [33.797,65.214] | 26.585 [24.362,44.586] |
-| Unique large outputs, 401 files / 10,154,220 code units | 51.196 [38.137,68.429] | 63.948 [60.092,96.446] |
-
-The miss-heavy median worsens 24.9%. Whole-build distributions do not establish
-stable benefits; the application's hit rate is unknown. Retaining this cache
-by default would not be justified. The [unapplied patch](rejected-content-cache.patch)
-contains its implementation, tests and microbenchmark. Apply it to main after
-[the baseline diagnostic patch](baseline-diagnostic.patch), not to this PR's
-final implementation. Cache-experiment speed samples and metadata are separate
-from the final comparison. Alternative whole-scan regex/literal-keyword
-prefilters were also screened and slower, so none are adopted.
-
-## Diagnostics
-
-WALL_TRACE retains the original cumulative BRA_RESET_TRACE stages. Detailed
-`directive_stats` require METRICS **and** WALL_TRACE. They separate updated/old
-string conversion, extraction requests versus actual scans, full old/current text equality, old per-asset cache hit/miss, package lookup, existence checks,
-reads/bytes, set comparison, phased dependency lookup and graph end/unlock.
-Repeated complete-text requests are counted across resets (the raw
-field is named `repeated_content_extracts`). For the final candidate subtract
-`old_same_content_reuses` from that field to obtain actual repeated scans;
-all successful reuses were observed as a duplicate immediately after extracting
-the updated version. This diagnostic
-counter retains observed Strings until build reset and precomputes their hashes;
-its memory/CPU overhead is diagnostic-only, and its whole-content hashing is outside the scan/decode sub-timers and
-inside the detailed directive stage. Ordinary wall-only runs exclude it. Use the separate
-trace-disabled microbenchmark and build CPU/RSS for miss cost/production retention.
-Worker elapsed sums are not frontend wall or CPU. Frontend phase reset and
-exclusive dispatch are measured on Rust's clock by the existing wall summarizer.
-
-## Conditions and reproduction
-
-Dart 3.13.3, Rust 1.98.1 release, Linux x86_64, two-CPU quota, 8 GiB memory limit,
-overlay filesystem, warm OS page cache. One release frontend is used in both
-lanes because only Dart changes. Corresponding AOT workers use the same SDK,
-package config and builder implementation, with common diagnostic probes disabled
-in speed runs. Baseline preserves main's extraction/old-content algorithm.
-The instrumentation-only baseline patch and worker/source hashes are retained.
-
-The six-phase fixture derives from PR #91's mixed cycle fixture: 64
-Riverpod/Freezed/JSON inputs, 144 shared conditional/transitive sources, a large
-Dart-output probe reading generated and shared content, then post-process.
-It produces 384 source/cache artifacts. `--unique` salts every large generated
-class with its input filename, producing a miss-heavy control. The default intentionally generates equal bodies for equal input lengths,
-a favorable workload for the rejected global cache. The final comparison uses
-`--unique`; unchanged old/new content within each asset still permits the final
-shortcut without relying on equality between unrelated outputs.
-
-Prepared cold clears graph, outputs, analyzer byte store and dependency parse
-cache while retaining SDK summaries and prepared workers. Regen removes all
-workspace accelerator state/source outputs and retains shared caches. Explicit
-corresponding workers exclude compilation and AOT artifact restore/validation;
-manifest regeneration is included. Both lanes additionally prime the actual missing-state regen route outside
-measurement, so its factory/kernel first publications are not charged only to
-the first timed lane. An earlier regen group lacking that priming is excluded
-in full rather than selectively dropping its slowest sample.
-`warm-clean` deletes the graph and post-process outputs but retains pre-build
-Dart/part outputs and shared caches, isolating available identical old content.
-Stock references are untimed for cold,
-one-file and broad edits. Every measured source/cache output must match them
-byte-for-byte, and edits must change bytes. Speed runs alternate AB/BA/AB and
-disable metrics, wall and analysis trace. Diagnostics are separate executions.
-CPU is process-tree user+system; RSS is wait4's maximum individual process RSS,
-not simultaneous process-tree peak.
-
-Prepare a disposable fixture using `scripts/prepare_cycle_read_fixture.py`,
-copy `probe_builder.dart`, and append the probe/post-process configuration shown
-in `benchmark.py`. Resolve packages and generate its dynamic worker outside
-timing. Compile each lane with explicit `--packages=<fixture config>` and the
-same SDK. Put each binary in its own `bin/` under an SDK layout with `lib` and
-`version`, plus a discoverable `.dart_tool/package_config.json` whose package
-root URIs are absolute and refer to the same fixture/dependencies. Keep workers
-outside workspace state so regen cannot remove them. An executable relocated
-without that config fails `Isolate.packageConfig`; failed setup runs are excluded.
-
-```bash
-python3 docs/benchmarks/reset-directives-2026-10/benchmark.py \
-  --baseline "$native" --candidate "$native" --dart "$dart" \
-  --baseline-worker "$baseline_worker" --candidate-worker "$candidate_worker" \
-  --root "$fixture" --cache "$cache" --results "$speed" --repeats 3
-# Repeat with --unique, and separate result paths.
-# Then use --wall --stock-reference <matching speed/stock-outputs.json>.
-# --prepared-wall adds an available-old-content diagnostic, also with --wall.
-# Detailed counters use --wall --metrics; never compare these as speed samples.
-dart compile exe --packages=.dart_tool/package_config.json \
-  tool/benchmark_reset_directives.dart -o "$micro"
-"$micro" "$fixture/lib"
-```
-
-SDK/tool/build caches are not universally cold. These prepared native timings
-exclude the Dart launcher and automatic worker validation. They do not establish
-application regen savings, unprepared cold startup, Windows behavior, or a
-particular concurrent peak RSS.
-
-## Final performance results
-
-All times below are median [minimum,maximum]. Three repetitions per lane/jobs,
-alternating AB/BA/AB. Raw samples, CPU/RSS and byte-match flags are in
-[samples.csv](samples.csv); corresponding prepared workers, inputs and frontend
-hashes are in [metadata.json](metadata.json). `version-*` denotes the final
-implementation; other names identify the rejected cache experiment. All 72
-final speed samples matched all 384 stock source/cache artifacts byte-for-byte.
-
-### Trace-disabled whole build
-
-Seconds; these include setup/manifest work, not just phase reset.
+### Trace-disabled whole build (seconds)
 
 | Jobs | Case | Baseline wall s | Candidate wall s |
 | --- | --- | ---: | ---: |
@@ -193,15 +83,12 @@ Seconds; these include setup/manifest work, not just phase reset.
 | 4 | regen | 22.544 [21.854,22.808] | 20.485 [20.021,21.680] |
 | 4 | warm-clean | 3.792 [3.722,6.118] | 3.703 [3.613,4.125] |
 
-Regenerated outputs have no old files, so the shortcut has **zero hits** there.
-The lower candidate regen median cannot be attributed to removed extraction;
-manifest/kernel/source-helper work and host variation dominate (see the broad
-ranges). Cold/no-op/one-file/broad differences also do not establish a stable
-whole-build improvement. In particular jobs=4 one-file median rises 71 ms;
-its baseline/candidate ranges overlap. Jobs=2 cold maximum-process RSS rises
-from 255.7 to 276.0 MiB median, with overlapping ranges. No added persistent
-String cache exists, and these process maxima are not concurrent tree peaks.
-These observations are limitations, not an application acceleration claim.
+Regen has **zero reuse hits**, so its lower candidate whole-build median is not
+attributable to this shortcut. Wall-only manifest-selection medians are
+18.180→17.319 s (jobs=2) and 17.826→17.812 s (jobs=4), dwarfing reset work.
+No stable whole-build win is established: jobs=4 one-file median rises 71 ms,
+and jobs=2 cold max-process RSS rises 255.7→276.0 MiB with overlapping ranges.
+All CPU/RSS samples, including cold/no-op/incremental, remain in the CSV.
 
 | Jobs | Case | Baseline tree CPU s | Candidate tree CPU s | Baseline max-process RSS MiB | Candidate max-process RSS MiB |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -210,12 +97,9 @@ These observations are limitations, not an application acceleration claim.
 | 4 | regen | 37.387 [34.991,37.718] | 33.178 [32.780,35.160] | 610.316 [586.320,632.504] | 607.402 [604.234,614.359] |
 | 4 | warm-clean | 7.085 [7.052,10.723] | 7.036 [6.827,7.646] | 172.055 [167.746,178.098] | 168.684 [160.879,169.129] |
 
-### Isolated extraction, no diagnostics
+### Isolated extraction (milliseconds)
 
-401 files / 10,154,220 code units, fresh immutable decoded Strings per lane;
-seven alternating AOT samples. Decode/read/setup and checking against the legacy
-oracle are outside timing. These are elapsed times, not whole-build CPU.
-[micro.csv](micro.csv) includes every sample, including outliers.
+401 files / 10,154,220 code units, fresh decoded Strings per lane, seven samples.
 
 | Old version | Baseline ms | Candidate ms |
 | --- | ---: | ---: |
@@ -223,17 +107,12 @@ oracle are outside timing. These are elapsed times, not whole-build CPU.
 | Same full content (two scans vs scan plus equality) | 86.442 [78.501,105.496] | 46.861 [38.195,57.018] |
 | Changed body (still two scans) | 84.439 [78.732,94.746] | 85.599 [79.966,248.463] |
 
-The targeted same-version operation improves 45.8%; the miss/changed medians
-are 1.3%/1.4% slower. Retain the minimal equality shortcut on this evidence;
-reject the global content cache because its unique-content miss penalty is much
-larger. No scanning work moves to a later request, dispatch or next build.
+Same-version extraction improves 45.8%; missing/changed medians increase
+1.3%/1.4%. This supports the equality shortcut, not a persistent cache.
 
-### Separate wall-only reset/dispatch diagnostics
+### Separate wall-only reset/dispatch (milliseconds)
 
-No detailed counters/hashing in these runs. Milliseconds, three samples per
-lane/jobs. Worker values sum elapsed durations over workers; they are neither
-frontend wall nor CPU. Cleanup is the final large-Dart/post-process reset.
-All graph-clear counts are zero in both lanes.
+Cleanup is the final large-Dart/post-process reset. All graph-clear counts are zero.
 
 | Workload | Jobs | Lane | All reset frontend wall ms | Cleanup frontend wall ms | Cleanup directives worker sum ms | All dispatch exclusive wall ms |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
@@ -246,23 +125,17 @@ All graph-clear counts are zero in both lanes.
 | warm-clean | 4 | baseline | 367.0 [337.1,422.4] | 275.8 [271.9,308.6] | 583.8 [551.1,715.9] | 2680.0 [2452.5,3115.8] |
 | warm-clean | 4 | candidate | 321.6 [301.2,327.1] | 223.9 [219.0,232.1] | 336.3 [277.3,367.7] | 2959.9 [2943.1,3361.9] |
 
-The available-old jobs=4 cleanup removes redundant old scans and lowers its
-worker-sum/cleanup-wall medians. Jobs=2 is noisier and does not show a consistent
-wall reduction. Dispatch wall has overlapping distributions and some candidate
-medians rise (warm-clean jobs=4 2.680→2.960 s); this measurement cannot establish
-an end-to-end win. The implementation performs extraction and comparison within
-the same reset, introduces no queue, and trace-disabled subsequent no-op and
-incremental builds remain byte-correct. There is no algorithmic transfer of
-skipped scans to dispatch or the next build, but CPU scheduling noise prevents
-claiming unchanged downstream timing from three wall-only samples.
+Available-old jobs=4 cleanup improves, but jobs=2 is noisy. Dispatch ranges
+overlap and some candidate medians rise, so downstream timing is not established
+as unchanged. Extraction/comparison stays inside the same reset; no scans are
+queued for dispatch or the next build, whose no-op/incremental bytes remain correct.
 
-### Detailed counters, separate from speed/wall-only runs
+### Separate detailed counters
 
-One diagnostic build per lane/jobs/workload; summed over every incremental
-reset and worker. Missing fields in [directive-stats.csv](directive-stats.csv)
-mean zero. Timers are elapsed worker sums, include scheduling stalls, and the
-content-observation set adds hashing/retention outside these sub-timers. They
-identify work, not an independent speed comparison.
+One build per lane/jobs/workload; times are worker sums in milliseconds. Timers
+include scheduling stalls. Detailed probes require METRICS and WALL_TRACE;
+the observed-content set hashes/retains text outside decode/scan subtimers, so
+these identify work rather than independently establish speed.
 
 | Workload | Jobs | Lane | Updated decode/scan ms | Old decode/scan ms | Old full comparison ms | Package lookup/existence/read ms | Set comparison/deps lookup/graph end ms |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
@@ -275,8 +148,6 @@ identify work, not an independent speed comparison.
 | warm-clean | 4 | baseline | 30.632/364.460 | 23.217/408.636 | 0.000 | 2.998/18.635/68.961 | 1.356/0.000/0.062 |
 | warm-clean | 4 | candidate | 36.976/385.319 | 68.647/0.000 | 6.659 | 1.113/13.270/61.601 | 0.506/0.000/0.037 |
 
-Counts are identical between lanes except for old scanning/reuse:
-
 | Workload | Jobs | Updated Dart/part requests/scans | Updated bytes | Old record hit/miss | Old exists/read | Old bytes | Old scans baseline→candidate | Full-equality reuses | Actual repeated scans baseline→candidate | Dependency lookups | Graph clears |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | regen | 2 | 640/640 | 17,709,876 | 0/640 | 640/0 | 0 | 0→0 | 0 | 0→0 | 384 | 0 |
@@ -284,94 +155,32 @@ Counts are identical between lanes except for old scanning/reuse:
 | warm-clean | 2 | 640/640 | 17,709,876 | 0/640 | 640/384 | 17,504,844 | 384→0 | 384 | 384→0 | 0 | 0 |
 | warm-clean | 4 | 1280/1280 | 35,419,752 | 0/1280 | 1280/768 | 35,009,688 | 768→0 | 768 | 768→0 | 0 | 0 |
 
-These are worker-broadcast totals: 320 updated Dart/part assets per worker,
-including 64 large probe outputs (~8.19 MB). The six-phase stock inventory is
-384 artifacts, not 640/1280 distinct files. Every asset is updated only once
-per worker in this fixture; committed old-set hits are therefore zero here.
-The protocol test separately verifies a hit on a later reset for the same
-asset, and eviction on delete/recreate and next build.
+Counts are worker-broadcast totals: 320 updated Dart/part assets per worker,
+not 640/1280 distinct files. Each is updated once, explaining zero old-record hits;
+the protocol test separately verifies later hits and deletion/next-build eviction.
+`repeated_content_extracts` counts duplicate requests; subtract
+`old_same_content_reuses` to obtain actual repeated scans.
 
-The dominant saved operation is old whole-content scanning: warm-clean old
-scan sums 109/409 ms become zero, replaced by 1.7/6.7 ms of full equality.
-Package lookup is much smaller than scanning; old reads and conversion remain.
-Regen remains dominated by updated scanning and has no duplicated complete
-contents in this unique-output fixture, so a global cache cannot remove its
-work. This is why no package index, parser/prefix fast path or default content
-cache is adopted. A prefix-only extractor could miss late legacy matches;
-changing that behavior is not justified by these measurements.
+The removed old scans cost 109/409 ms; full equality costs 1.7/6.7 ms. Reads/decode
+remain. Package lookup, set comparison, dependency lookup and graph termination
+are smaller. Regen remains dominated by updated scanning and has no duplicate
+complete texts in this fixture; a prefix-only parser could miss late legacy matches.
+Production retains no additional text/cache. Diagnostic-only observation retains
+~17.7/35.4 MB of text across workers until next build reset, plus object overhead.
+Shared cache end-state was ~34 MiB, not a per-lane peak; no new cache files are added.
 
-There is no new production cache or persistent content retention. Existing
-per-asset directive sets have the same lifetime/count as main. In detailed
-runs only, the observation set holds 640/1280 distinct ASCII Strings across
-workers (~17.7/35.4 MB content bytes plus String/set overhead) until the next
-build reset; this is intentionally excluded from speed/RSS comparisons.
-The shared fixture SDK/analysis/factory cache was ~34 MiB after the final
-sequence, an end-state size rather than a per-lane peak; the shortcut adds no
-cache files and leaves shared cache key/compaction policies unchanged.
+## Validation and limits
 
-Wall-only regen manifest-selection medians are 18.180→17.319 s (jobs=2)
-and 17.826→17.812 s (jobs=4), whereas all frontend reset medians are
-0.201→0.191 s and 0.350→0.355 s. This directly separates the large setup cost
-from the operation under investigation. The main's application PR #91/#92
-figures are background only; none are substituted for these fresh measurements.
-
-## Related validation and CI boundary
-
-Local verification used the same Dart wrapper/SDK and offline resolved packages:
-
-```bash
-PUB_CACHE="$repo/.pub-cache" "$dart" test \
-  test/reset_directives_test.dart test/reset_directives_worker_test.dart \
-  test/phased_dependency_content_test.dart test/resolver_directives_test.dart \
-  test/overlay_blob_test.dart test/worker_step_resolver_test.dart \
-  test/resolver_reads_test.dart
-"$dart" analyze lib/src/worker.dart lib/src/reset_directives.dart \
-  test/reset_directives_test.dart test/reset_directives_worker.dart \
-  test/reset_directives_worker_test.dart tool/benchmark_reset_directives.dart
-"$dart" format --output=none --set-exit-if-changed \
-  lib/src/worker.dart lib/src/reset_directives.dart \
-  test/reset_directives_test.dart test/reset_directives_worker.dart \
-  test/reset_directives_worker_test.dart tool/benchmark_reset_directives.dart \
-  docs/benchmarks/reset-directives-2026-10/probe_builder.dart
-# Set DART_BIN, PUB_CACHE, CARGO_BIN, RUSTUP_HOME, CARGO_HOME,
-# BUILD_RUNNER_ACCELERATOR_BIN to the toolchain described above:
-PUB_GET_OFFLINE=1 bash scripts/correctness_riverpod.sh
-PUB_GET_OFFLINE=1 bash scripts/watch_smoke_riverpod.sh
-```
-
-All 38 related unit/protocol tests pass, targeted analysis reports no issues,
-and formatting reports zero changes. The extraction test compares the exact
-legacy regex with multiline/conditional clauses, library/part/part-of,
-comments/strings, language version, malformed/late directives and 300 seeded
-combinations. It verifies immutable results and rejection of a mutated byte
-buffer with an inherited unchanged digest. The framed worker test verifies
-same/changed bodies and directives, disk/committed comparison, deletion,
-recreation and full next-build reset; the existing phased-dependency, overlay
-and resolver-read tests cover phase expiration, visibility, conditional reads,
-nested optional demand and publication contracts. The permanent missing-entry
-branch is unchanged; this new protocol test does not manufacture that graph
-state, and is not evidence of new coverage for it.
-
-Riverpod stock/native correctness passes no-op, source edit/invalidation,
-generated Dart and cache-output deletion/recovery, and failure rollback with
-unchanged graph/output bytes. The intentional malformed-source build fails in
-both lanes as expected. Watch fails the source-edit event-count assertion in **both** candidate and
-fresh main `1d536c4` under the same SDK/native frontend/default worker policy.
-Both have three change notifications (the third is a no-op), three completed
-builds including the initial build, and stable worker starts=2. Generated-output
-delete/recovery passes; edited generated bytes change and match each other
-between main/candidate. Failure log tails are excluded from counts. See
-[watch-comparison.json](watch-comparison.json). This is a baseline-reproduced
-local watch/event issue, left outside this directive-only change; watch CI
-coverage remains necessary.
-The sandbox cannot publish the manifest snapshot to its default cache path;
-the existing Dart-source fallback succeeds. This also explains why prepared
-perf workers isolate startup policy from directive measurements.
-
-The benchmark Python file compiles, both documented experiment patches apply
-in sequence to an isolated main worker copy, and final diff whitespace is
-checked. No full local `verify.sh`, arbitrary-builder suite or matrix was made
-a PR prerequisite, following the explicit task instruction over AGENTS' broad
-recommendation. Full Dart 3.11 downgrade/3.13 upgrade package tests, Rust tests
-and the repository's baseline/optional/phase/post-process/watch integration
-matrix are delegated to PR CI. No merge is performed.
+Related 40 tests and targeted analysis pass, including analysis-options tests.
+Extraction tests compare the legacy oracle on directive edge cases and 300 seeded
+combinations; mutable bytes/stale digests cannot authorize reuse. The framed worker
+test covers old/current records, body/directive changes, delete/recreate and next
+build. Existing phased-dependency/overlay/resolver tests cover expiration,
+visibility, conditional reads and nested demand; the permanent missing-entry
+branch is unchanged and is not newly manufactured by this protocol test.
+Riverpod stock/native no-op, source invalidation, generated/cache-output recovery
+and failure rollback pass. Local watch event-count failure also reproduces on
+baseline (extra notification is a no-op, stable starts=2, edited bytes agree).
+[CI](https://github.com/ikesyo/build_runner_accelerator/actions/runs/37544309090)
+passes all 23 jobs, including watch and cross-SDK checks. No application, default
+startup, Windows performance or simultaneous tree-RSS improvement is established.
