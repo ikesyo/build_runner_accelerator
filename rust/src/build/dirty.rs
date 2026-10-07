@@ -40,16 +40,15 @@ pub(super) fn analyze(
         // edge: every spec is dirty, and there can be no deleted actions.
         // Still read/hash outputs once and propagate all I/O errors.
         check_unrecorded_outputs(workspace, specs, output_digest)?;
-        let dirty = specs
-            .iter()
-            .filter(|spec| !spec.builder.is_optional)
-            .cloned()
-            .collect();
-        let lazy_force_keys = specs
-            .iter()
-            .filter(|spec| spec.builder.is_optional)
-            .map(BuildSpec::action_key)
-            .collect();
+        let mut dirty = Vec::new();
+        let mut lazy_force_keys = BTreeSet::new();
+        for spec in specs {
+            if spec.builder.is_optional {
+                lazy_force_keys.insert(spec.action_key());
+            } else {
+                dirty.push(spec.clone());
+            }
+        }
         filesystem_metrics.dirty_check_us = dirty_check_started.elapsed().as_micros();
         return Ok(DirtyPlan {
             dirty,

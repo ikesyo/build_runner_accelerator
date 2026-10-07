@@ -1,6 +1,8 @@
 # Dirty output digest deduplication (2026-10-07)
 
 Baseline: main `b8b4ff9d1c387a332b9780d92e0a0b614e343395`.
+Measured candidate: `b544f3b`. The later single-loop required/optional partition
+refactor was checked with fmt, Clippy and build tests, without rerunning timings.
 Candidate deduplicates the union of recorded and declared outputs by the
 `PathBuf` returned by `output_path()`, for one `analyze()` call. It retains
 source/cache distinctions, recorded-only/dynamic/optional outputs, and replays
