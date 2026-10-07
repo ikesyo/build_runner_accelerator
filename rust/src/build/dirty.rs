@@ -1,10 +1,11 @@
 use crate::builder::RustBuildConfig;
 use crate::graph::{ActionState, GraphState};
 use crate::metrics::FilesystemMetrics;
-use crate::plan::{BuildSpec, output_digest};
+use crate::plan::{BuildSpec, output_digest, output_path};
 use crate::workspace::Workspace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Instant;
 
@@ -31,30 +32,17 @@ pub(super) fn analyze(
     plan: &PlannedActions,
     filesystem_metrics: &mut FilesystemMetrics,
 ) -> io::Result<DirtyPlan> {
+    let dirty_check_started = Instant::now();
     let specs = &plan.specs;
+    let (recorded_output_digests, spec_output_digests) =
+        collect_output_digests(workspace, state, build_config, specs, output_digest)?;
     let mut current_output_digests = BTreeMap::new();
-    for action in state.actions.values() {
-        if let Some(builder) = build_config.definition(&action.builder) {
-            for output in &action.outputs {
-                if let Some(digest) = output_digest(workspace, builder, output)? {
-                    current_output_digests.insert(output.clone(), digest);
-                }
-            }
-        }
-    }
+    apply_output_digests(&mut current_output_digests, recorded_output_digests);
     let mut dirty = Vec::new();
     let mut dirty_roots = Vec::new();
-    let dirty_check_started = Instant::now();
     let dirty_context = state.dirty_context(current_snapshot);
-    // Reading and hashing every declared output is the bulk of the dirty
-    // check; fan it out across cores before the serial evaluation loop.
-    let spec_output_digests = collect_output_digests(workspace, specs)?;
     for (spec, digests) in specs.iter().zip(spec_output_digests) {
-        current_output_digests.extend(
-            digests
-                .into_iter()
-                .filter_map(|(output, digest)| digest.map(|digest| (output, digest))),
-        );
+        apply_output_digests(&mut current_output_digests, digests);
 
         let key = spec.action_key();
         let needs_build = match state.actions.get(&key) {
@@ -109,53 +97,93 @@ pub(super) fn analyze(
 
 type OutputDigests = Vec<(String, Option<String>)>;
 
-/// Reads and digests every declared output across `specs`, returning one
-/// `(output, Option<digest>)` pair list per spec in input order. The reads
-/// run on a scoped thread pool because they are the bulk of the dirty check.
-fn collect_output_digests(
+// Preserve the old replay order: all recorded outputs first, then each spec's
+// declarations immediately before its dirty check. Missing results never erase
+// a previous digest for the same logical ID (including source/cache collisions).
+fn apply_output_digests(current: &mut BTreeMap<String, String>, digests: OutputDigests) {
+    current.extend(
+        digests
+            .into_iter()
+            .filter_map(|(output, digest)| digest.map(|digest| (output, digest))),
+    );
+}
+
+/// Resolve both recorded (including dynamic/optional) and declared outputs,
+/// deduplicate by physical path, and read each path once on the scoped pool.
+/// The result, including NotFound, lives only for this analyze call. Logical
+/// IDs and replay order are kept separately from the physical-path work list.
+pub(super) fn collect_output_digests(
     workspace: &Workspace,
-    specs: &[crate::plan::BuildSpec],
-) -> io::Result<Vec<OutputDigests>> {
-    let digests_for = |spec: &crate::plan::BuildSpec| {
-        spec.outputs
+    state: &GraphState,
+    build_config: &RustBuildConfig,
+    specs: &[BuildSpec],
+    digest_at_path: impl Fn(&Path) -> io::Result<Option<String>> + Sync,
+) -> io::Result<(OutputDigests, Vec<OutputDigests>)> {
+    let mut paths = Vec::<PathBuf>::new();
+    let mut path_indices = BTreeMap::new();
+    let mut register = |builder: &crate::builder::BuilderDefinition, output: &String| {
+        let path = output_path(workspace, builder, output)?;
+        let index = *path_indices.entry(path.clone()).or_insert_with(|| {
+            let index = paths.len();
+            paths.push(path);
+            index
+        });
+        Ok::<_, io::Error>((output.clone(), index))
+    };
+    let mut recorded = Vec::new();
+    for action in state.actions.values() {
+        if let Some(builder) = build_config.definition(&action.builder) {
+            for output in &action.outputs {
+                recorded.push(register(builder, output)?);
+            }
+        }
+    }
+    let declared = specs
+        .iter()
+        .map(|spec| {
+            spec.outputs
+                .iter()
+                .map(|output| register(&spec.builder, output))
+                .collect::<io::Result<Vec<_>>>()
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    let digests_for = |paths: &[PathBuf]| {
+        paths
             .iter()
-            .map(|output| {
-                output_digest(workspace, &spec.builder, output)
-                    .map(|digest| (output.clone(), digest))
-            })
+            .map(|path| digest_at_path(path))
             .collect::<io::Result<Vec<_>>>()
     };
     let worker_count = thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(4)
-        .min(specs.len().max(1));
-    if worker_count <= 1 {
-        return specs.iter().map(digests_for).collect();
-    }
-    let chunk_size = specs.len().div_ceil(worker_count);
-    let chunks = specs.chunks(chunk_size).collect::<Vec<_>>();
-    thread::scope(|scope| {
-        let handles = chunks
-            .iter()
-            .map(|chunk| {
-                scope.spawn(move || {
-                    chunk
-                        .iter()
-                        .map(digests_for)
-                        .collect::<io::Result<Vec<_>>>()
+        .min(paths.len().max(1));
+    let digests = if worker_count <= 1 {
+        digests_for(&paths)?
+    } else {
+        let chunk_size = paths.len().div_ceil(worker_count);
+        thread::scope(|scope| {
+            let handles = paths
+                .chunks(chunk_size)
+                .map(|chunk| scope.spawn(move || digests_for(chunk)))
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| io::Error::other("output digest thread panicked"))?
                 })
-            })
-            .collect::<Vec<_>>();
-        handles
+                .collect::<io::Result<Vec<_>>>()
+                .map(|nested| nested.into_iter().flatten().collect::<Vec<_>>())
+        })?
+    };
+    let replay = |requests: Vec<(String, usize)>| {
+        requests
             .into_iter()
-            .map(|handle| {
-                handle
-                    .join()
-                    .map_err(|_| io::Error::other("output digest thread panicked"))?
-            })
-            .collect::<io::Result<Vec<_>>>()
-            .map(|nested| nested.into_iter().flatten().collect())
-    })
+            .map(|(output, index)| (output, digests[index].clone()))
+            .collect()
+    };
+    Ok((replay(recorded), declared.into_iter().map(replay).collect()))
 }
 
 pub(super) fn expand_dirty_dependents(
