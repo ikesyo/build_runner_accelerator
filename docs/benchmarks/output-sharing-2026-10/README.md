@@ -57,9 +57,11 @@ Broader compatibility/watch verification is left to CI.
 
 ## Measurement
 
-[benchmark.py](benchmark.py) expands the tracked arbitrary echo-builder fixture
-to 48 inputs of 2 MiB each, producing 48 large outputs and 48 small metadata
-outputs. Untimed stock builds establish SHA-256 references for clean, no-op,
+An experiment-specific local harness expanded the tracked arbitrary echo-builder
+fixture to 48 inputs of 2 MiB each, producing 48 large outputs and 48 small
+metadata outputs. The harness is not retained in the repository; this document
+records the results, conditions and procedure. Untimed stock builds established
+SHA-256 references for clean, no-op,
 one-file and broad actual edits. All **24 timed native runs** matched all
 96 stock outputs. Three repeats alternate lane order, clearing native graphs
 and generated outputs for clean while retaining prepared worker and caches.
@@ -98,14 +100,38 @@ PPid discovery throughout. Initial harness setup fixes and resumed untimed
 preparation do not contribute any reported timing rows. Raw logs, metadata and
 JSONL remain in the disposable local measurement workspace.
 
-Reproduce with a separately built main release binary and a fresh work directory:
+The comparison used the following procedure in disposable stock/native workspaces:
+
+1. Copy the arbitrary-builder fixture's pubspec, lockfile and
+   `lib/arbitrary_builder.dart`, resolving the accelerator dependency to the same
+   package checkout. Enable only `echo_builder`, with `build_to: source`,
+   `generate_for: ["lib/input*.txt"]` and `suffix: " generated"`.
+2. Create `lib/input00.txt` through `lib/input47.txt`, each containing
+   2,097,151 ASCII `a` bytes followed by a newline. Resolve dependencies offline
+   using the same pub cache. Prepare one native AOT worker outside timing.
+3. Build untimed stock references using `dart run build_runner build
+   --delete-conflicting-outputs`. Run clean, no-op, one-file (replace the first
+   byte of input00 with `b`), then broad (make that edit in all 48 inputs).
+   Record SHA-256 hashes of all `.gen.txt` and `.meta.txt` outputs for each case.
+4. Compare the separately built main/candidate release binaries in the same
+   native workspace. For each lane, restore the original input contents, remove
+   generated outputs and `graph-v3.bin`, retain the prepared worker and caches,
+   then time the same four cases. Alternate lane order over three repeats and
+   compare all output hashes with the corresponding stock reference after each
+   run. Source edits and hashing remain outside timing.
+5. Record wall time with a monotonic clock, CPU/single-process peak RSS with
+   `wait4`, and aggregate RSS/PSS with the PPid-based sampling method above.
+
+The timed native invocation had this form for both binaries:
 
 ```sh
-python3 docs/benchmarks/output-sharing-2026-10/benchmark.py \
-  --repo "$PWD" \
-  --baseline /absolute/path/to/main/release/build_runner_accelerator \
-  --candidate "$PWD/rust/target/release/build_runner_accelerator" \
-  --work /absolute/path/to/new-disposable-directory --repeats 3
+PUB_CACHE=/absolute/path/to/shared/pub-cache \
+BUILD_RUNNER_ACCELERATOR_CACHE=/absolute/path/to/shared/accelerator-cache \
+BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH=/absolute/path/to/prepared/dynamic_worker \
+  /absolute/path/to/release/build_runner_accelerator build \
+  --root /absolute/path/to/disposable/native-workspace \
+  --dart /absolute/path/to/dart-sdk/bin/dart --mode rust --jobs 2 \
+  --worker /absolute/path/to/prepared/dynamic_worker
 ```
 
 ## Received-frame sharing candidate
