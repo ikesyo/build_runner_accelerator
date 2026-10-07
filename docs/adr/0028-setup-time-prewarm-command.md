@@ -65,3 +65,13 @@ Two properties make setup-time warming safe to build on:
 - The detached child's lifecycle is intentionally unmanaged: no pidfile,
   no cancellation command. The lock file doubles as the liveness record
   (stale-detection bound: 1h) and the log file as its output.
+- The compile itself is at its floor. `dart compile exe` has no incremental
+  mode and the generated worker is one entrypoint, so nothing inside the
+  compile can be made cheaper at constant output. The measured cold-path
+  budget (compile ≈ 22s of a ~46s cold build) therefore only yields to the
+  two levers this ADR already uses — not paying it (content-keyed cache) and
+  paying it invisibly (setup-time prewarm). Making the cold path faster than
+  that would require a different artifact class (a JIT/kernel worker, which
+  exists as the fallback and trades worker startup speed) or distributing
+  prebuilt artifacts across machines; both are separate durable decisions,
+  not refinements of `prewarm`.
