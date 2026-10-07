@@ -22,6 +22,15 @@ Future<int> runLauncher(List<String> arguments) async {
     return 0;
   }
   if (options.mode == 'dart') {
+    if (_isPrewarmCommand(options.command)) {
+      // Stock build_runner has no caches to warm; a post-`pub get` hook must
+      // not fail when the Rust frontend is deliberately disabled.
+      stderr.writeln(
+        'build_runner_accelerator: --mode dart leaves nothing to prewarm; '
+        'skipping.',
+      );
+      return 0;
+    }
     return processRunner.run(
       options.dartBinary,
       options.dartArguments,
@@ -39,6 +48,13 @@ Future<int> runLauncher(List<String> arguments) async {
     if (options.mode == 'rust') {
       throw StateError('Rust frontend is unavailable: $error');
     }
+    if (_isPrewarmCommand(options.command)) {
+      stderr.writeln(
+        'build_runner_accelerator: Rust frontend unavailable ($error); '
+        'skipping prewarm.',
+      );
+      return 0;
+    }
     stderr.writeln(
       'build_runner_accelerator: Rust frontend unavailable ($error); '
       'using Dart build_runner fallback.',
@@ -55,6 +71,13 @@ Future<int> runLauncher(List<String> arguments) async {
         'Rust frontend binary is unavailable for this platform. '
         'Set BUILD_RUNNER_ACCELERATOR_BIN or install a release artifact.',
       );
+    }
+    if (_isPrewarmCommand(options.command)) {
+      stderr.writeln(
+        'build_runner_accelerator: Rust frontend unavailable; '
+        'skipping prewarm.',
+      );
+      return 0;
     }
     stderr.writeln(
       'build_runner_accelerator: Rust frontend unavailable; '
@@ -90,6 +113,11 @@ Future<int> runLauncher(List<String> arguments) async {
   );
 }
 
+/// `prewarm` (and the `aot-prewarm` alias kept for existing CI tooling) only
+/// warms frontend caches; when no frontend can run there is nothing to do.
+bool _isPrewarmCommand(String command) =>
+    command == 'prewarm' || command == 'aot-prewarm';
+
 /// `watch`/`serve` are long-running commands where startup latency matters,
 /// so the worker starts on the kernel/script path while the AOT binary is
 /// compiled in the background. Every other command is a one-shot where total
@@ -98,7 +126,7 @@ String _defaultWorkerAotPolicy(String command) =>
     const {'watch', 'serve'}.contains(command) ? 'background' : '1';
 
 const launcherHelp =
-    '''Usage: dart run build_runner_accelerator <build|watch> [options]
+    '''Usage: dart run build_runner_accelerator <build|watch|prewarm> [options]
 
 The launcher uses a cached Rust frontend when available and otherwise falls
 back to stock dart build_runner in --mode auto. On a cache miss it downloads
@@ -111,6 +139,7 @@ Launcher options:
   --jobs N               Rust worker count (default: logical CPUs)
   --interval-ms N        Rust watch debounce interval
   --worker VALUE         Rust worker override
+  --background           prewarm only: detach and compile in the background
   --force-aot             Force the AOT worker (stock-compatible)
   --force-jit             Force the non-AOT worker (stock-compatible)
   BUILD_RUNNER_ACCELERATOR_BIN   Use a preinstalled frontend binary

@@ -91,8 +91,13 @@ class LauncherOptions {
         continue;
       }
 
+      // Boolean flags the Rust frontend consumes directly. Keeping them out
+      // of `passthrough` prevents them from reaching stock build_runner.
+      const rustFlagOptions = {'--background'};
       const rustValueOptions = {'--jobs', '--interval-ms', '--worker'};
-      if (rustValueOptions.contains(argument)) {
+      if (rustFlagOptions.contains(argument)) {
+        rustArguments.add(argument);
+      } else if (rustValueOptions.contains(argument)) {
         final value = takeValue(arguments, argument, index);
         index++;
         rustArguments.addAll([argument, value]);
