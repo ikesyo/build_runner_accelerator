@@ -1,10 +1,10 @@
 mod manifest;
 mod model;
-mod validation;
 #[cfg(test)]
 mod tests;
+mod validation;
 
-pub(crate) use manifest::{rust_build_config_from_manifest, BuilderManifestFile};
+pub(crate) use manifest::{BuilderManifestFile, rust_build_config_from_manifest};
 pub(crate) use model::{
     BuildTo, BuilderDefinition, BuilderExtension, BuilderKind, BuilderTrigger, ConfiguredBuilder,
     RustBuildConfig,

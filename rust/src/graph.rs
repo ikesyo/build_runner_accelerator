@@ -1,5 +1,5 @@
 use crate::protocol::GlobRead;
-use crate::snapshot::{glob_asset_key, AssetSnapshot, Snapshot};
+use crate::snapshot::{AssetSnapshot, Snapshot, glob_asset_key};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
@@ -44,10 +44,12 @@ impl GraphState {
     pub fn load(path: &Path) -> io::Result<Self> {
         let contents = match fs::read(path) {
             Ok(contents) => contents,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self {
-                schema_version: GRAPH_SCHEMA_VERSION,
-                ..Self::default()
-            }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    schema_version: GRAPH_SCHEMA_VERSION,
+                    ..Self::default()
+                });
+            }
             Err(error) => return Err(error),
         };
         if contents.len() < GRAPH_HEADER_LENGTH {
@@ -60,14 +62,18 @@ impl GraphState {
             return Err(invalid_graph("graph file has an unknown magic"));
         }
         if contents[GRAPH_MAGIC.len()] != GRAPH_FORMAT_VERSION {
-            return Err(invalid_graph("graph file has an unsupported format version"));
+            return Err(invalid_graph(
+                "graph file has an unsupported format version",
+            ));
         }
 
         let mut length_bytes = [0_u8; 4];
         length_bytes.copy_from_slice(&contents[GRAPH_MAGIC.len() + 1..GRAPH_HEADER_LENGTH]);
         let payload_length = u32::from_be_bytes(length_bytes) as usize;
         if payload_length != contents.len() - GRAPH_HEADER_LENGTH {
-            return Err(invalid_graph("graph payload length does not match file length"));
+            return Err(invalid_graph(
+                "graph payload length does not match file length",
+            ));
         }
 
         let mut decoder = Decoder::new(&contents[GRAPH_HEADER_LENGTH..]);
@@ -105,11 +111,7 @@ impl GraphState {
         fs::rename(temporary, path)
     }
 
-    pub fn update_metadata_if_changed(
-        &mut self,
-        config_digest: &str,
-        snapshot: Snapshot,
-    ) -> bool {
+    pub fn update_metadata_if_changed(&mut self, config_digest: &str, snapshot: Snapshot) -> bool {
         let changed = self.schema_version != GRAPH_SCHEMA_VERSION
             || self.config_digest != config_digest
             || self.assets != snapshot;
@@ -128,10 +130,7 @@ impl GraphState {
     /// something it transitively depends on changed, which is exactly what
     /// expanding `action_entrypoint_deps` per action was checking — once
     /// instead of per action.
-    pub fn dirty_context<'a>(
-        &'a self,
-        current_assets: &'a Snapshot,
-    ) -> DirtyContext<'a> {
+    pub fn dirty_context<'a>(&'a self, current_assets: &'a Snapshot) -> DirtyContext<'a> {
         let mut changed = std::collections::HashSet::new();
         for (asset, entry) in &self.assets {
             let current = current_assets
@@ -175,12 +174,7 @@ impl GraphState {
         current_output_digests: &BTreeMap<String, String>,
     ) -> bool {
         let context = self.dirty_context(current_assets);
-        self.changed_since_previous_with(
-            action,
-            &context,
-            current_assets,
-            current_output_digests,
-        )
+        self.changed_since_previous_with(action, &context, current_assets, current_output_digests)
     }
 
     pub fn changed_since_previous_with(
@@ -190,29 +184,32 @@ impl GraphState {
         current_assets: &Snapshot,
         current_output_digests: &BTreeMap<String, String>,
     ) -> bool {
-        let mut dependencies = Vec::with_capacity(1 + action.reads.len() + action.resolver_reads.len());
+        let mut dependencies =
+            Vec::with_capacity(1 + action.reads.len() + action.resolver_reads.len());
         dependencies.push(action.input.as_str());
         dependencies.extend(action.reads.iter().map(String::as_str));
         dependencies.extend(action.resolver_reads.iter().map(String::as_str));
-        dependencies.into_iter().any(|asset| context.changed.contains(asset))
-        || action
-            .resolver_entrypoints
-            .iter()
-            .any(|entrypoint| context.tainted.contains(entrypoint.as_str()))
-        || action.glob_reads.iter().any(|glob| {
-            let key = glob_asset_key(glob);
-            let previous = self
-                .assets
-                .get(&key)
-                .map(|entry| (entry.exists, entry.digest.as_str()));
-            let current = current_assets
-                .get(&key)
-                .map(|entry| (entry.exists, entry.digest.as_str()));
-            previous != current
-        }) || action
-            .outputs
-            .iter()
-            .any(|output| action.output_digests.get(output) != current_output_digests.get(output))
+        dependencies
+            .into_iter()
+            .any(|asset| context.changed.contains(asset))
+            || action
+                .resolver_entrypoints
+                .iter()
+                .any(|entrypoint| context.tainted.contains(entrypoint.as_str()))
+            || action.glob_reads.iter().any(|glob| {
+                let key = glob_asset_key(glob);
+                let previous = self
+                    .assets
+                    .get(&key)
+                    .map(|entry| (entry.exists, entry.digest.as_str()));
+                let current = current_assets
+                    .get(&key)
+                    .map(|entry| (entry.exists, entry.digest.as_str()));
+                previous != current
+            })
+            || action.outputs.iter().any(|output| {
+                action.output_digests.get(output) != current_output_digests.get(output)
+            })
     }
 
     pub fn update_assets(&mut self, snapshot: Snapshot) {
@@ -257,7 +254,9 @@ impl Encoder {
             .checked_add(bytes.len())
             .ok_or_else(|| invalid_graph("graph payload length overflow"))?;
         if new_length > GRAPH_MAX_BYTES {
-            return Err(invalid_graph("graph payload exceeds the 256 MiB safety limit"));
+            return Err(invalid_graph(
+                "graph payload exceeds the 256 MiB safety limit",
+            ));
         }
         self.bytes.extend_from_slice(bytes);
         Ok(())
@@ -286,8 +285,8 @@ impl Encoder {
 
     fn write_string(&mut self, value: &str) -> io::Result<()> {
         let bytes = value.as_bytes();
-        let length = u32::try_from(bytes.len())
-            .map_err(|_| invalid_graph("graph string is too large"))?;
+        let length =
+            u32::try_from(bytes.len()).map_err(|_| invalid_graph("graph string is too large"))?;
         self.write_u32(length)?;
         self.append(bytes)
     }
@@ -538,7 +537,7 @@ impl<'a> Decoder<'a> {
 mod tests {
     use super::{ActionState, GraphState};
     use crate::protocol::GlobRead;
-    use crate::snapshot::{glob_asset_key, AssetSnapshot, Snapshot};
+    use crate::snapshot::{AssetSnapshot, Snapshot, glob_asset_key};
     use std::collections::BTreeMap;
 
     fn state_with_glob(glob: &GlobRead, digest: &str) -> GraphState {

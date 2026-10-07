@@ -198,31 +198,31 @@ pub(super) fn record_build_result(
     // build_runner permits a normal builder to declare an output mapping and
     // then emit no output for a particular input. Remove outputs recorded by
     // the previous action when that happens.
-    if builder.kind == BuilderKind::Normal || builder.output_is_optional {
-        if let Some(previous) = state.actions.get(&spec.action_key()) {
-            for previous_output in &previous.outputs {
-                if !actual_outputs.contains(previous_output.as_str()) {
-                    pending.deleted_overlay.insert(previous_output.clone());
-                    if builder.build_to == BuildTo::Source {
-                        pending
-                            .resolver
-                            .resolver_deleted
-                            .insert(previous_output.clone());
-                        pending.resolver.resolver_updated.remove(previous_output);
-                    } else {
-                        pending
-                            .resolver
-                            .resolver_cache_deleted
-                            .insert(previous_output.clone());
-                        pending
-                            .resolver
-                            .resolver_cache_updated
-                            .remove(previous_output);
-                    }
+    if (builder.kind == BuilderKind::Normal || builder.output_is_optional)
+        && let Some(previous) = state.actions.get(&spec.action_key())
+    {
+        for previous_output in &previous.outputs {
+            if !actual_outputs.contains(previous_output.as_str()) {
+                pending.deleted_overlay.insert(previous_output.clone());
+                if builder.build_to == BuildTo::Source {
                     pending
-                        .pending_deletions
-                        .push((spec.builder.clone(), previous_output.clone()));
+                        .resolver
+                        .resolver_deleted
+                        .insert(previous_output.clone());
+                    pending.resolver.resolver_updated.remove(previous_output);
+                } else {
+                    pending
+                        .resolver
+                        .resolver_cache_deleted
+                        .insert(previous_output.clone());
+                    pending
+                        .resolver
+                        .resolver_cache_updated
+                        .remove(previous_output);
                 }
+                pending
+                    .pending_deletions
+                    .push((spec.builder.clone(), previous_output.clone()));
             }
         }
     }

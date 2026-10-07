@@ -69,7 +69,7 @@ jobs:
           if [[ '${{ matrix.resolution }}' == 'upgrade' ]]; then
             dart format --output=none --set-exit-if-changed lib bin test tool
           fi
-          dart analyze lib bin test tool
+          dart analyze --fatal-infos lib bin test tool
           # Ensure stock Dart fallback compiles under both dependency solutions.
           dart run build_runner --help
           dart test --compiler=source
@@ -78,7 +78,7 @@ jobs:
         run: dart pub publish --dry-run
 
   rust:
-    name: Rust unit tests
+    name: Rust format, lint, and unit tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -95,9 +95,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
         with:
           toolchain: 1.98.1
-          components: rustfmt
+          components: rustfmt, clippy
       - name: Rust formatting
-        run: rustfmt --edition 2024 --check rust/src/build.rs rust/src/manifest_generator.rs
+        run: cargo fmt --all --manifest-path rust/Cargo.toml -- --check
+      - name: Rust lint
+        run: cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
       - name: Rust unit tests
         run: cargo test --locked --manifest-path rust/Cargo.toml
 

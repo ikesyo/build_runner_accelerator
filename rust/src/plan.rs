@@ -4,7 +4,7 @@ use crate::builder::{
 use crate::digest::digest_bytes;
 use crate::pattern::{expand_capture_template, match_capture_pattern};
 use crate::snapshot::Snapshot;
-use crate::workspace::{matches_glob, Workspace};
+use crate::workspace::{Workspace, matches_glob};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -37,18 +37,7 @@ impl BuildSpec {
     }
 }
 
-pub(crate) fn input_candidates(
-    workspace: &Workspace,
-    snapshot: &Snapshot,
-    builder: &ConfiguredBuilder,
-) -> BTreeSet<String> {
-    input_candidates_with_primary_inputs(workspace, snapshot, builder, &BTreeMap::new())
-}
-
-fn primary_input_for<'a>(
-    asset: &'a str,
-    primary_inputs: &'a BTreeMap<String, String>,
-) -> &'a str {
+fn primary_input_for<'a>(asset: &'a str, primary_inputs: &'a BTreeMap<String, String>) -> &'a str {
     let mut current = asset;
     // A later phase can consume an output produced by an earlier phase. Follow
     // the declared-output chain so targetSources remains anchored to the
@@ -88,16 +77,13 @@ pub(crate) fn input_candidates_with_primary_inputs(
                     .iter()
                     .any(|extension| extension_matches(extension, path))
             };
-            let excluded = builder
-                .excluded_input_suffixes
-                .iter()
-                .any(|suffix| {
-                    if suffix.contains("{{") {
-                        match_capture_pattern(path, suffix, false).is_some()
-                    } else {
-                        path.ends_with(suffix.as_str())
-                    }
-                });
+            let excluded = builder.excluded_input_suffixes.iter().any(|suffix| {
+                if suffix.contains("{{") {
+                    match_capture_pattern(path, suffix, false).is_some()
+                } else {
+                    path.ends_with(suffix.as_str())
+                }
+            });
             let matches_generate_for = builder
                 .generate_for
                 .iter()
@@ -130,21 +116,6 @@ pub(crate) fn input_candidates_with_primary_inputs(
         .collect()
 }
 
-pub(crate) fn build_specs_for_kind(
-    workspace: &Workspace,
-    snapshot: &Snapshot,
-    config: &RustBuildConfig,
-    kind: Option<BuilderKind>,
-) -> io::Result<Vec<BuildSpec>> {
-    build_specs_for_kind_with_primary_inputs(
-        workspace,
-        snapshot,
-        config,
-        kind,
-        &BTreeMap::new(),
-    )
-}
-
 pub(crate) fn build_specs_for_kind_with_primary_inputs(
     workspace: &Workspace,
     snapshot: &Snapshot,
@@ -166,23 +137,6 @@ pub(crate) fn build_specs_for_kind_with_primary_inputs(
 /// snapshot augmented by the previous phase's declared outputs, matching
 /// build_runner's rule that generated assets become visible only after their
 /// phase completes.
-pub(crate) fn build_specs_for_phase(
-    workspace: &Workspace,
-    snapshot: &Snapshot,
-    config: &RustBuildConfig,
-    kind: BuilderKind,
-    phase: u32,
-) -> io::Result<Vec<BuildSpec>> {
-    build_specs_for_phase_with_primary_inputs(
-        workspace,
-        snapshot,
-        config,
-        kind,
-        phase,
-        &BTreeMap::new(),
-    )
-}
-
 pub(crate) fn build_specs_for_phase_with_primary_inputs(
     workspace: &Workspace,
     snapshot: &Snapshot,
@@ -220,12 +174,9 @@ fn build_specs(
         if phase.is_some_and(|expected| builder.phase != expected) {
             continue;
         }
-        for input in input_candidates_with_primary_inputs(
-            workspace,
-            snapshot,
-            builder,
-            primary_inputs,
-        ) {
+        for input in
+            input_candidates_with_primary_inputs(workspace, snapshot, builder, primary_inputs)
+        {
             specs.push(BuildSpec {
                 builder: definition.clone(),
                 target: builder.target.clone(),
@@ -406,7 +357,7 @@ pub(crate) fn output_digest(
 
 #[cfg(test)]
 mod tests {
-    use super::{outputs_for, validate_unique_outputs, BuildSpec};
+    use super::{BuildSpec, outputs_for, validate_unique_outputs};
     use crate::builder::{BuildTo, BuilderDefinition, BuilderExtension, BuilderKind};
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -679,7 +630,10 @@ mod tests {
     #[test]
     fn primary_input_follows_generated_output_chain() {
         let primary_inputs = BTreeMap::from([
-            ("app|lib/model.g.part".to_owned(), "app|lib/model.dart".to_owned()),
+            (
+                "app|lib/model.g.part".to_owned(),
+                "app|lib/model.dart".to_owned(),
+            ),
             (
                 "app|lib/model.g.dart".to_owned(),
                 "app|lib/model.g.part".to_owned(),
@@ -690,6 +644,4 @@ mod tests {
             "app|lib/model.dart"
         );
     }
-
-
 }

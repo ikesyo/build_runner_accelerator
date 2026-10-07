@@ -141,9 +141,7 @@ pub(crate) fn resolve_worker_artifact(
     match prepare_worker_kernel(root, dart_binary, worker_executable) {
         Ok(kernel) => Ok(WorkerArtifact::Kernel(kernel)),
         Err(error) => {
-            eprintln!(
-                "Rust worker kernel cache unavailable; using Dart script ({error})"
-            );
+            eprintln!("Rust worker kernel cache unavailable; using Dart script ({error})");
             Ok(WorkerArtifact::Script)
         }
     }
@@ -366,27 +364,27 @@ impl Drop for BackgroundAotLock {
 /// A relative override resolves against the workspace root so the Rust
 /// frontend and its workers agree even when the launcher runs elsewhere.
 pub(crate) fn shared_cache_root(workspace_root: &Path) -> Option<PathBuf> {
-    if let Ok(configured) = env::var("BUILD_RUNNER_ACCELERATOR_CACHE") {
-        if !configured.is_empty() {
-            let path = PathBuf::from(configured);
-            return Some(if path.is_absolute() {
-                path
-            } else {
-                workspace_root.join(path)
-            });
-        }
+    if let Ok(configured) = env::var("BUILD_RUNNER_ACCELERATOR_CACHE")
+        && !configured.is_empty()
+    {
+        let path = PathBuf::from(configured);
+        return Some(if path.is_absolute() {
+            path
+        } else {
+            workspace_root.join(path)
+        });
     }
     if cfg!(target_os = "windows") {
         for variable in ["LOCALAPPDATA", "USERPROFILE"] {
-            if let Ok(value) = env::var(variable) {
-                if !value.is_empty() {
-                    let root = if variable == "USERPROFILE" {
-                        PathBuf::from(value).join("AppData").join("Local")
-                    } else {
-                        PathBuf::from(value)
-                    };
-                    return Some(root.join("build_runner_accelerator"));
-                }
+            if let Ok(value) = env::var(variable)
+                && !value.is_empty()
+            {
+                let root = if variable == "USERPROFILE" {
+                    PathBuf::from(value).join("AppData").join("Local")
+                } else {
+                    PathBuf::from(value)
+                };
+                return Some(root.join("build_runner_accelerator"));
             }
         }
         return None;
@@ -400,10 +398,10 @@ pub(crate) fn shared_cache_root(workspace_root: &Path) -> Option<PathBuf> {
                 .join("build_runner_accelerator"),
         );
     }
-    if let Ok(xdg) = env::var("XDG_CACHE_HOME") {
-        if !xdg.is_empty() {
-            return Some(PathBuf::from(xdg).join("build_runner_accelerator"));
-        }
+    if let Ok(xdg) = env::var("XDG_CACHE_HOME")
+        && !xdg.is_empty()
+    {
+        return Some(PathBuf::from(xdg).join("build_runner_accelerator"));
     }
     let home = env::var_os("HOME")?;
     Some(
@@ -548,12 +546,10 @@ fn prepare_aot_context(
     // relative to `Platform.resolvedExecutable` (e.g. build_runner's
     // `isFlutter` detection when generating the SDK summary) still work
     // inside the self-contained worker executable.
-    if let (Some(sdk_parent), Some(aot_parent)) =
-        (sdk_root.parent(), aot_sdk_root.parent())
+    if let (Some(sdk_parent), Some(aot_parent)) = (sdk_root.parent(), aot_sdk_root.parent())
+        && sdk_parent.join("pkg").is_dir()
     {
-        if sdk_parent.join("pkg").is_dir() {
-            link_sdk_entry(sdk_parent, aot_parent, "pkg")?;
-        }
+        link_sdk_entry(sdk_parent, aot_parent, "pkg")?;
     }
     let aot_path = aot_bin.join(aot_file_name(&worker_path));
     let depfile_path = PathBuf::from(format!("{}.d", aot_path.display()));
@@ -659,10 +655,10 @@ fn prepare_worker_aot(
     // owns (a spawned background helper); everything else is external.
     let lock_path = aot_compile_lock_path(&context);
     let wait_deadline = Instant::now() + AOT_COMPILE_WAIT_MAX;
-    if let Some(lock_path) = &lock_path {
-        if let Some(aot) = wait_for_aot_winner(&context, lock_path, wait_deadline)? {
-            return Ok(aot);
-        }
+    if let Some(lock_path) = &lock_path
+        && let Some(aot) = wait_for_aot_winner(&context, lock_path, wait_deadline)?
+    {
+        return Ok(aot);
     }
     // The guard keeps the lock file until the fresh artifact is published.
     // A lost race means another compile started between the wait above and
@@ -841,7 +837,7 @@ fn aot_compile_lock_path(context: &AotContext) -> Option<PathBuf> {
 /// Whether this process already owns the workspace compile lock — spawned
 /// background helpers receive the path they own through the environment.
 fn background_aot_lock_owned(lock_path: &Path) -> bool {
-    env::var_os(BACKGROUND_AOT_LOCK_ENV).is_some_and(|owned| PathBuf::from(owned) == lock_path)
+    env::var_os(BACKGROUND_AOT_LOCK_ENV).is_some_and(|owned| owned == lock_path)
 }
 
 /// Wait for another process's compile to publish a usable artifact. Returns
@@ -1097,7 +1093,9 @@ fn dart_sdk_root(dart_binary: &str) -> io::Result<PathBuf> {
 // independent DART_SDK override is used for worker AOT preparation.
 pub(crate) fn dart_sdk_root_for_binary(dart_binary: &str) -> io::Result<PathBuf> {
     let dart_path = if Path::new(dart_binary).is_absolute()
-        || Path::new(dart_binary).parent().is_some_and(|parent| !parent.as_os_str().is_empty())
+        || Path::new(dart_binary)
+            .parent()
+            .is_some_and(|parent| !parent.as_os_str().is_empty())
     {
         PathBuf::from(dart_binary)
     } else {
@@ -1182,10 +1180,10 @@ fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: &str) -> io::Resul
             return Ok(());
         }
         // A concurrent compile can remove or recreate the same link.
-        if let Err(error) = fs::remove_file(&destination) {
-            if error.kind() != io::ErrorKind::NotFound {
-                return Err(error);
-            }
+        if let Err(error) = fs::remove_file(&destination)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            return Err(error);
         }
     } else if destination.exists() {
         return Err(io::Error::other(format!(
@@ -1212,19 +1210,19 @@ fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: &str) -> io::Resul
     if let Err(error) = link_result {
         // A concurrent compile may have created the same link meanwhile;
         // accept it when it resolves to the same SDK entry.
-        if error.kind() == io::ErrorKind::AlreadyExists {
-            if let Ok(existing) = fs::read_link(&destination) {
-                let existing = if existing.is_absolute() {
-                    existing
-                } else {
-                    destination
-                        .parent()
-                        .unwrap_or_else(|| Path::new("."))
-                        .join(existing)
-                };
-                if fs::canonicalize(existing).ok() == fs::canonicalize(&source).ok() {
-                    return Ok(());
-                }
+        if error.kind() == io::ErrorKind::AlreadyExists
+            && let Ok(existing) = fs::read_link(&destination)
+        {
+            let existing = if existing.is_absolute() {
+                existing
+            } else {
+                destination
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join(existing)
+            };
+            if fs::canonicalize(existing).ok() == fs::canonicalize(&source).ok() {
+                return Ok(());
             }
         }
         return Err(error);
@@ -1282,7 +1280,8 @@ fn absolute_worker_path(root: &Path, worker_path: &Path) -> io::Result<PathBuf> 
 }
 
 fn worker_artifact_is_current(artifact: &Path, depfile: &Path, worker: &Path) -> bool {
-    let Ok(artifact_modified) = fs::metadata(artifact).and_then(|metadata| metadata.modified()) else {
+    let Ok(artifact_modified) = fs::metadata(artifact).and_then(|metadata| metadata.modified())
+    else {
         return false;
     };
     let Ok(contents) = fs::read_to_string(depfile) else {
@@ -1324,9 +1323,7 @@ pub(crate) fn parse_depfile_dependencies(contents: &str) -> Option<Vec<PathBuf>>
         logical.push(character);
     }
 
-    let separator = logical
-        .find(": ")
-        .or_else(|| logical.find(':'))?;
+    let separator = logical.find(": ").or_else(|| logical.find(':'))?;
     let dependencies = make_words(&logical[separator + 1..]);
     (!dependencies.is_empty()).then_some(dependencies.into_iter().map(PathBuf::from).collect())
 }
@@ -1381,7 +1378,10 @@ fn remove_if_present(path: &Path) {
 fn kernel_compile_error(worker: &Path, error: io::Error) -> io::Error {
     io::Error::new(
         error.kind(),
-        format!("failed to compile worker kernel for {}: {error}", worker.display()),
+        format!(
+            "failed to compile worker kernel for {}: {error}",
+            worker.display()
+        ),
     )
 }
 
@@ -1395,7 +1395,10 @@ fn kernel_compile_status_error(worker: &Path, status: std::process::ExitStatus) 
 fn aot_compile_error(worker: &Path, error: io::Error) -> io::Error {
     io::Error::new(
         error.kind(),
-        format!("failed to compile worker AOT executable for {}: {error}", worker.display()),
+        format!(
+            "failed to compile worker AOT executable for {}: {error}",
+            worker.display()
+        ),
     )
 }
 
@@ -1509,16 +1512,14 @@ fn sdk_summary_prewarm_enabled(root: &Path) -> bool {
     {
         return false;
     }
-    !root
-        .join(".dart_tool/build_resolvers/sdk.sum")
-        .is_file()
+    !root.join(".dart_tool/build_resolvers/sdk.sum").is_file()
 }
 
 fn prewarm_jobs() -> usize {
-    if let Ok(value) = env::var("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS") {
-        if let Ok(jobs) = value.parse::<usize>() {
-            return jobs;
-        }
+    if let Ok(value) = env::var("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS")
+        && let Ok(jobs) = value.parse::<usize>()
+    {
+        return jobs;
     }
     // The AOT compile is mostly single-threaded; spend about half the
     // machine on prewarm.
@@ -1531,14 +1532,9 @@ fn prewarm_script_path(root: &Path) -> Option<PathBuf> {
     let config_path = root.join(".dart_tool/package_config.json");
     let text = fs::read_to_string(&config_path).ok()?;
     let config: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let package = config
-        .get("packages")?
-        .as_array()?
-        .iter()
-        .find(|package| {
-            package.get("name").and_then(|name| name.as_str())
-                == Some("build_runner_accelerator")
-        })?;
+    let package = config.get("packages")?.as_array()?.iter().find(|package| {
+        package.get("name").and_then(|name| name.as_str()) == Some("build_runner_accelerator")
+    })?;
     let root_uri = package.get("rootUri")?.as_str()?;
     let package_root = resolve_package_root_uri(&config_path, root_uri)?;
     let script = package_root.join("bin/prewarm_analysis.dart");
@@ -1572,14 +1568,14 @@ fn decode_uri_escapes(text: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            if let (Some(high), Some(low)) =
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let (Some(high), Some(low)) =
                 (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
-            {
-                out.push(high * 16 + low);
-                index += 3;
-                continue;
-            }
+        {
+            out.push(high * 16 + low);
+            index += 3;
+            continue;
         }
         out.push(bytes[index]);
         index += 1;
@@ -1725,18 +1721,23 @@ mod tests {
 
     #[test]
     fn pinned_script_worker_stays_current_when_aot_may_finish() {
-        assert!(pinned_worker_artifact_is_current(
-            Path::new("unused"),
-            "unused",
-            "unused.dart",
-            &WorkerArtifact::Script,
-        )
-        .unwrap());
+        assert!(
+            pinned_worker_artifact_is_current(
+                Path::new("unused"),
+                "unused",
+                "unused.dart",
+                &WorkerArtifact::Script,
+            )
+            .unwrap()
+        );
     }
 
     #[test]
     fn background_lock_is_single_flight() {
-        let path = std::env::temp_dir().join(format!("build-runner-accelerator-lock-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "build-runner-accelerator-lock-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_file(&path);
         let gate = Arc::new(Barrier::new(8));
         let handles = (0..8)
@@ -1760,9 +1761,16 @@ mod tests {
 
     #[test]
     fn fresh_background_lock_is_not_stale() {
-        let path = std::env::temp_dir().join(format!("build-runner-accelerator-fresh-lock-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "build-runner-accelerator-fresh-lock-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_file(&path);
-        OpenOptions::new().create_new(true).write(true).open(&path).unwrap();
+        OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
         assert!(!background_aot_lock_is_stale(&path));
         let _ = fs::remove_file(path);
     }
@@ -1818,8 +1826,10 @@ mod tests {
     #[test]
     fn analysis_prewarm_missing_package_config_releases_flag() {
         let _guard = PREWARM_TEST_LOCK.lock().unwrap();
-        let root = std::env::temp_dir()
-            .join(format!("build-runner-accelerator-prewarm-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "build-runner-accelerator-prewarm-{}",
+            std::process::id()
+        ));
         fs::create_dir_all(&root).unwrap();
         assert!(spawn_analysis_prewarm(&root, "dart", "test").is_none());
         assert!(!ANALYSIS_PREWARM_ACTIVE.load(Ordering::SeqCst));

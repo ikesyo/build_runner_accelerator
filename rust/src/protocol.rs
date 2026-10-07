@@ -98,9 +98,8 @@ pub fn write_binary_frame_with_magic<W: Write, T: Serialize>(
             "IPC frame exceeds the 256 MiB safety limit",
         ));
     }
-    let metadata_length = u32::try_from(metadata.len()).map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidData, "IPC metadata is too large")
-    })?;
+    let metadata_length = u32::try_from(metadata.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "IPC metadata is too large"))?;
     let length = u32::try_from(payload_length)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "IPC frame is too large"))?;
     writer.write_all(&length.to_be_bytes())?;
@@ -164,9 +163,9 @@ fn decode_payload(payload: Vec<u8>) -> io::Result<IncomingFrame> {
         magic.copy_from_slice(&payload[..4]);
         let metadata_length = u32::from_be_bytes(payload[4..8].try_into().unwrap()) as usize;
         let metadata_start = 8_usize;
-        let bytes_start = metadata_start
-            .checked_add(metadata_length)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "IPC metadata is too large"))?;
+        let bytes_start = metadata_start.checked_add(metadata_length).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "IPC metadata is too large")
+        })?;
         if bytes_start > payload.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -241,9 +240,9 @@ impl BinaryBuildResultMetadata {
             let length = usize::try_from(output.length).map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidData, "build output is too large")
             })?;
-            let end = cursor
-                .checked_add(length)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "build output overflows"))?;
+            let end = cursor.checked_add(length).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "build output overflows")
+            })?;
             if end > bytes.len() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -373,11 +372,11 @@ pub fn decode_build_batch_result_frame(frame: BinaryFrame) -> io::Result<Decoded
 #[cfg(test)]
 mod tests {
     use super::{
+        BINARY_ASSET_RESPONSE_MAGIC, BINARY_BUILD_RESULT_MAGIC, IncomingFrame, MAX_FRAME_LENGTH,
         decode_build_batch_result_frame, decode_build_result_frame, read_message_with_size,
-        write_binary_frame, write_binary_frame_with_magic, write_frame, IncomingFrame,
-        BINARY_ASSET_RESPONSE_MAGIC, BINARY_BUILD_RESULT_MAGIC, MAX_FRAME_LENGTH,
+        write_binary_frame, write_binary_frame_with_magic, write_frame,
     };
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use std::io::Cursor;
 
     #[test]
@@ -442,13 +441,8 @@ mod tests {
         });
         let raw_bytes = b"payload";
         let mut bytes = Vec::new();
-        write_binary_frame_with_magic(
-            &mut bytes,
-            BINARY_BUILD_RESULT_MAGIC,
-            &metadata,
-            raw_bytes,
-        )
-        .expect("write build result binary frame");
+        write_binary_frame_with_magic(&mut bytes, BINARY_BUILD_RESULT_MAGIC, &metadata, raw_bytes)
+            .expect("write build result binary frame");
 
         let (frame, frame_size) = read_message_with_size(&mut Cursor::new(bytes))
             .unwrap()
@@ -458,7 +452,10 @@ mod tests {
         };
         assert_eq!(frame.magic, *BINARY_BUILD_RESULT_MAGIC);
         assert_eq!(&frame.payload[frame.bytes_start..], raw_bytes);
-        assert_eq!(frame_size, 4 + 4 + 4 + frame.metadata.to_string().len() + raw_bytes.len());
+        assert_eq!(
+            frame_size,
+            4 + 4 + 4 + frame.metadata.to_string().len() + raw_bytes.len()
+        );
 
         let result = decode_build_result_frame(frame).expect("decode build result");
         assert_eq!(result.id, 2);
@@ -505,13 +502,8 @@ mod tests {
         });
         let raw_bytes = b"onefour";
         let mut bytes = Vec::new();
-        write_binary_frame_with_magic(
-            &mut bytes,
-            BINARY_BUILD_RESULT_MAGIC,
-            &metadata,
-            raw_bytes,
-        )
-        .expect("write build batch result binary frame");
+        write_binary_frame_with_magic(&mut bytes, BINARY_BUILD_RESULT_MAGIC, &metadata, raw_bytes)
+            .expect("write build batch result binary frame");
 
         let (frame, _) = read_message_with_size(&mut Cursor::new(bytes))
             .unwrap()

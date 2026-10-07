@@ -71,9 +71,9 @@ pub(super) fn create(
         let mut primary_inputs = BTreeMap::new();
         for phase in normal_phases {
             let phase_specs = build_specs_for_phase_with_primary_inputs(
-                &workspace,
+                workspace,
                 &planning_snapshot,
-                &build_config,
+                build_config,
                 BuilderKind::Normal,
                 phase,
                 &primary_inputs,
@@ -137,9 +137,9 @@ pub(super) fn create(
     // when their final phase starts.
     let post_snapshot = normal_planning_snapshot;
     let post_specs = build_specs_for_kind_with_primary_inputs(
-        &workspace,
+        workspace,
         &post_snapshot,
-        &build_config,
+        build_config,
         Some(BuilderKind::PostProcess),
         &normal_primary_inputs,
     )?;
@@ -154,7 +154,7 @@ pub(super) fn create(
         .collect::<BTreeMap<String, (BuildTo, bool)>>();
     let mut specs = normal_specs;
     specs.extend(post_specs);
-    let visibility = AssetVisibility::from_specs(&specs, &state, &build_config);
+    let visibility = AssetVisibility::from_specs(&specs, state, build_config);
     Ok(PlannedActions {
         specs,
         generated_output_locations,
@@ -192,7 +192,7 @@ pub(super) fn report_metrics(
             ),
         );
         print_plan_spec_metrics("expected", specs, build_config);
-        print_graph_action_metrics(&state);
+        print_graph_action_metrics(state);
     }
 }
 

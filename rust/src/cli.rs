@@ -236,10 +236,10 @@ fn cgroup_dir(
     mountinfo: Option<&str>,
     fallback: &str,
 ) -> Option<std::path::PathBuf> {
-    if let Some(info) = mountinfo {
-        if let Some((root, point)) = cgroup_mount(info, fstype, controller) {
-            return cgroup_dir_for(root, point, path);
-        }
+    if let Some(info) = mountinfo
+        && let Some((root, point)) = cgroup_mount(info, fstype, controller)
+    {
+        return cgroup_dir_for(root, point, path);
     }
     Some(std::path::PathBuf::from(fallback).join(path.trim_start_matches('/')))
 }
@@ -270,10 +270,10 @@ fn cgroup_mount<'a>(
         if fs != fstype {
             continue;
         }
-        if let Some(want) = controller {
-            if !super_options.split(',').any(|opt| opt == want) {
-                continue;
-            }
+        if let Some(want) = controller
+            && !super_options.split(',').any(|opt| opt == want)
+        {
+            continue;
         }
         return Some((root, point));
     }
@@ -323,7 +323,9 @@ fn cgroup_available_bytes(limit: &str, current: &str) -> Option<u64> {
 #[cfg(target_os = "macos")]
 fn available_memory_gib() -> Option<f64> {
     // Invoked by absolute path so a compromised PATH cannot substitute the binary.
-    let output = std::process::Command::new("/usr/bin/vm_stat").output().ok()?;
+    let output = std::process::Command::new("/usr/bin/vm_stat")
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -448,10 +450,7 @@ mod tests {
     fn cgroup_available_bytes_bounds_remaining_headroom() {
         // cgroup v2 "max" and the v1 PAGE_COUNTER_MAX sentinel are unlimited.
         assert_eq!(cgroup_available_bytes("max", "0"), None);
-        assert_eq!(
-            cgroup_available_bytes("9223372036854771712", "0"),
-            None
-        );
+        assert_eq!(cgroup_available_bytes("9223372036854771712", "0"), None);
         // 4 GiB limit with 1.5 GiB used -> 2.5 GiB headroom.
         let gib = 1u64 << 30;
         assert_eq!(

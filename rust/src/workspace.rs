@@ -14,6 +14,8 @@ pub struct WorkspaceReadMetrics {
     pub asset_read_cache_misses: u64,
 }
 
+type FindAssetsCache = BTreeMap<(String, String), Vec<String>>;
+
 #[derive(Debug, Clone)]
 pub struct Workspace {
     pub root: PathBuf,
@@ -21,7 +23,7 @@ pub struct Workspace {
     packages: BTreeMap<String, PathBuf>,
     package_config_identity: String,
     asset_index: Arc<Mutex<BTreeMap<String, Arc<Vec<String>>>>>,
-    find_assets_cache: Arc<Mutex<BTreeMap<(String, String), Vec<String>>>>,
+    find_assets_cache: Arc<Mutex<FindAssetsCache>>,
     asset_read_cache: Arc<Mutex<BTreeMap<String, Arc<Vec<u8>>>>>,
     asset_read_cache_hits: Arc<AtomicU64>,
     asset_read_cache_misses: Arc<AtomicU64>,
@@ -51,7 +53,8 @@ impl Workspace {
         let root_package = package_name(&root.join("pubspec.yaml"))?;
         let package_config_path = root.join(".dart_tool/package_config.json");
         let package_config = fs::read_to_string(&package_config_path)?;
-        let parsed: PackageConfigFile = serde_json::from_str(&package_config).map_err(io::Error::other)?;
+        let parsed: PackageConfigFile =
+            serde_json::from_str(&package_config).map_err(io::Error::other)?;
         let package_config_identity = stable_package_config_identity(&parsed);
         let config_dir = package_config_path
             .parent()
@@ -111,10 +114,7 @@ impl Workspace {
     pub(crate) fn logical_dependency_key(&self, path: &Path) -> Option<String> {
         let path = fs::canonicalize(path).ok()?;
         if let Ok(relative) = path.strip_prefix(&self.root) {
-            return Some(format!(
-                "workspace:{}",
-                normalized_relative_path(relative)
-            ));
+            return Some(format!("workspace:{}", normalized_relative_path(relative)));
         }
 
         let mut best = None;
@@ -126,11 +126,11 @@ impl Workspace {
                 continue;
             };
             let depth = package_root.components().count();
-            let key = format!(
-                "package:{package}:{}",
-                normalized_relative_path(relative)
-            );
-            if best.as_ref().is_none_or(|(best_depth, _)| depth > *best_depth) {
+            let key = format!("package:{package}:{}", normalized_relative_path(relative));
+            if best
+                .as_ref()
+                .is_none_or(|(best_depth, _)| depth > *best_depth)
+            {
                 best = Some((depth, key));
             }
         }
@@ -153,7 +153,12 @@ impl Workspace {
         self.packages
             .get(package)
             .map(PathBuf::as_path)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("unknown package: {package}")))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("unknown package: {package}"),
+                )
+            })
     }
 
     pub fn package_roots(&self) -> Vec<PathBuf> {
@@ -486,7 +491,11 @@ fn lower_bound(values: &[String], target: &str) -> usize {
     low
 }
 
-fn collect_files(root: &Path, current: &Path, result: &mut Vec<(String, PathBuf)>) -> io::Result<()> {
+fn collect_files(
+    root: &Path,
+    current: &Path,
+    result: &mut Vec<(String, PathBuf)>,
+) -> io::Result<()> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
@@ -524,13 +533,20 @@ fn collect_files(root: &Path, current: &Path, result: &mut Vec<(String, PathBuf)
 
 fn split_asset(asset: &str) -> io::Result<(&str, &str)> {
     asset.split_once('|').ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, format!("invalid AssetId: {asset}"))
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid AssetId: {asset}"),
+        )
     })
 }
 
 fn validate_relative_path(path: &str) -> io::Result<()> {
     let path = Path::new(path);
-    if path.is_absolute() || path.components().any(|component| component == std::path::Component::ParentDir) {
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| component == std::path::Component::ParentDir)
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("asset path escapes package: {path:?}"),
@@ -552,9 +568,7 @@ pub fn matches_glob(pattern: &str, path: &str) -> bool {
 }
 
 pub fn glob_literal_prefix(pattern: &str) -> &str {
-    let wildcard = pattern
-        .find(|character| character == '*' || character == '?')
-        .unwrap_or(pattern.len());
+    let wildcard = pattern.find(['*', '?']).unwrap_or(pattern.len());
     &pattern[..wildcard]
 }
 
@@ -783,10 +797,8 @@ mod tests {
         let root = temp.path().join("workspace");
         let sdk = temp.path().join("flutter-sdk");
         fs::create_dir_all(root.join("lib")).expect("create workspace lib");
-        fs::create_dir_all(sdk.join("packages/flutter/lib"))
-            .expect("create Flutter SDK fixture");
-        fs::write(root.join("lib/visible.dart"), "void main() {}")
-            .expect("write visible source");
+        fs::create_dir_all(sdk.join("packages/flutter/lib")).expect("create Flutter SDK fixture");
+        fs::write(root.join("lib/visible.dart"), "void main() {}").expect("write visible source");
         fs::write(sdk.join("packages/flutter/lib/sdk.dart"), "class Sdk {}")
             .expect("write SDK source");
         fs::write(root.join(".gitignore"), "build/\n").expect("write hidden file");
@@ -799,11 +811,8 @@ mod tests {
         {
             fs::create_dir_all(root.join(".fvm/flutter_sdk"))
                 .expect("create fvm SDK fixture directory");
-            fs::write(
-                root.join(".fvm/flutter_sdk/sdk.dart"),
-                "class Sdk {}",
-            )
-            .expect("write hidden SDK source");
+            fs::write(root.join(".fvm/flutter_sdk/sdk.dart"), "class Sdk {}")
+                .expect("write hidden SDK source");
         }
 
         #[cfg(unix)]

@@ -52,6 +52,10 @@ impl WorkerClient {
     /// Runs one action requested by a suspended asset RPC. The Dart worker
     /// receives this as a nested `build` message and returns before the
     /// original asset request is answered.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "IPC operations pass workspace, visibility, and transaction state explicitly"
+    )]
     fn build_lazy(
         &mut self,
         workspace: &Workspace,
@@ -119,6 +123,10 @@ impl WorkerClient {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "IPC operations pass workspace, visibility, and transaction state explicitly"
+    )]
     pub(super) fn build_batch_lazy(
         &mut self,
         workspace: &Workspace,
@@ -214,6 +222,10 @@ impl WorkerClient {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "IPC operations pass workspace, visibility, and transaction state explicitly"
+    )]
     fn handle_lazy_asset_request(
         &mut self,
         workspace: &Workspace,
@@ -247,8 +259,8 @@ impl WorkerClient {
                 );
             }
             "read" | "can_read" => {
-                if let Some(asset) = request.get("asset").and_then(Value::as_str) {
-                    if let Err(error) = self.ensure_optional_output(
+                if let Some(asset) = request.get("asset").and_then(Value::as_str)
+                    && let Err(error) = self.ensure_optional_output(
                         workspace,
                         asset,
                         overlay,
@@ -258,9 +270,9 @@ impl WorkerClient {
                         kind,
                         lazy_specs,
                         lazy,
-                    ) {
-                        return self.send_asset_error(request, &error);
-                    }
+                    )
+                {
+                    return self.send_asset_error(request, &error);
                 }
             }
             "find_assets" => {
@@ -325,6 +337,10 @@ impl WorkerClient {
         }))
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "IPC operations pass workspace, visibility, and transaction state explicitly"
+    )]
     fn ensure_optional_output(
         &mut self,
         workspace: &Workspace,

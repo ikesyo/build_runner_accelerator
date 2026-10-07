@@ -67,10 +67,19 @@ compatibility.
 
 ```bash
 dart pub get
-dart analyze
+dart format --output=none --set-exit-if-changed lib bin test tool
+dart analyze --fatal-infos lib bin test tool
 dart test
-cargo test --manifest-path rust/Cargo.toml
+cargo fmt --all --manifest-path rust/Cargo.toml -- --check
+cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
+cargo test --locked --manifest-path rust/Cargo.toml
 ```
+
+Use the development Dart SDK (currently 3.13.3) for formatting. To apply
+formatting locally, run `dart format lib bin test tool` and
+`cargo fmt --all --manifest-path rust/Cargo.toml`. The pinned Rust toolchain
+includes rustfmt and Clippy. Pull request CI checks all Rust modules and test
+targets, and fails on Clippy warnings or Dart analysis infos.
 
 The default verification loop builds the frontend once and reuses it:
 

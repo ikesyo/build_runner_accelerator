@@ -1,14 +1,14 @@
 use super::asset_rpc::batch_asset_request_context;
 use super::request::{
-    batch_blocked_assets, build_request_kind, json_build_batch_result_frame_size,
-    json_build_result_frame_size, BuildRequest,
+    BuildRequest, batch_blocked_assets, json_build_batch_result_frame_size,
+    json_build_result_frame_size,
 };
 use crate::protocol::{
     BINARY_BUILD_RESULT_MAGIC, BuildResult, IncomingFrame, decode_build_batch_result_frame,
-    decode_build_result_frame, read_message_with_size, write_binary_frame, write_frame,
+    read_message_with_size, write_binary_frame, write_frame,
 };
-use crate::worker_kernel::WorkerArtifact;
 use crate::visibility::AssetVisibility;
+use crate::worker_kernel::WorkerArtifact;
 use crate::workspace::Workspace;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -26,8 +26,7 @@ const SHARED_BLOCKED_ASSETS_CAPABILITY: &str = "shared-blocked-assets-v1";
 
 pub(super) fn is_worker_script(worker_executable: &str) -> bool {
     let path = Path::new(worker_executable);
-    path.is_absolute()
-        || path.extension().and_then(|extension| extension.to_str()) == Some("dart")
+    path.is_absolute() || path.extension().and_then(|extension| extension.to_str()) == Some("dart")
 }
 
 pub struct WorkerClient {
@@ -265,73 +264,6 @@ impl WorkerClient {
         Ok(())
     }
 
-    pub fn build(
-        &mut self,
-        workspace: &Workspace,
-        request: &BuildRequest,
-        overlay: &BTreeMap<String, Vec<u8>>,
-        deleted_overlay: &BTreeSet<String>,
-        visibility: &AssetVisibility,
-    ) -> io::Result<BuildResult> {
-        let started = Instant::now();
-        let id = self.next_id();
-        let blocked_assets = visibility.blocked_assets(
-            request.phase,
-            build_request_kind(request),
-            deleted_overlay,
-        );
-        self.send(&json!({
-            "v": 1,
-            "type": "build",
-            "id": id,
-            "builder": request.builder,
-            "input": request.input,
-            "kind": if request.post_process { "post_process" } else { "normal" },
-            "allowed_outputs": request.outputs,
-            "options": request.options,
-            "phase": request.phase,
-            "instance_key": request.instance_key,
-            "is_root": request.is_root,
-            "blocked_assets": blocked_assets,
-            "triggers": request.triggers,
-        }))?;
-
-        loop {
-            match self.receive()? {
-                IncomingFrame::Json(response) => match response.get("type").and_then(Value::as_str)
-                {
-                    Some("asset_request") => {
-                        self.handle_asset_request(
-                            workspace,
-                            &response,
-                            overlay,
-                            deleted_overlay,
-                            visibility,
-                            request,
-                            id,
-                        )?
-                    }
-                    Some("build_result") => {
-                        return Err(io::Error::other(
-                            "worker sent JSON build result; binary capability is required",
-                        ));
-                    }
-                    Some("error") => return Err(protocol_error("worker error", &response)),
-                    _ => return Err(protocol_error("unexpected worker message", &response)),
-                },
-                IncomingFrame::Binary(frame) => {
-                    let result = decode_build_result_frame(frame)?;
-                    self.record_json_build_result_size(&result)?;
-                    if result.id != id {
-                        return Err(io::Error::other("worker response id mismatch"));
-                    }
-                    self.metrics.build_us += started.elapsed().as_micros() as u64;
-                    return Ok(result);
-                }
-            }
-        }
-    }
-
     pub fn build_batch(
         &mut self,
         workspace: &Workspace,
@@ -523,9 +455,9 @@ pub(super) fn protocol_error(prefix: &str, value: &Value) -> io::Error {
         .unwrap_or_else(|| value.to_string());
     let stack = value.get("stack").and_then(Value::as_str);
     match stack {
-        Some(stack) if !stack.is_empty() => io::Error::other(format!(
-            "{prefix}: {detail}\n{stack}"
-        )),
+        Some(stack) if !stack.is_empty() => {
+            io::Error::other(format!("{prefix}: {detail}\n{stack}"))
+        }
         _ => io::Error::other(format!("{prefix}: {detail}")),
     }
 }

@@ -96,9 +96,7 @@ pub(super) fn run(
         if worker_pool.is_none() {
             worker_pool = owned_pool.as_mut();
         }
-        let active_pool = worker_pool
-            .as_deref_mut()
-            .expect("worker pool was just initialized");
+        let active_pool = worker_pool.expect("worker pool was just initialized");
         let first_package = dirty
             .first()
             .map(|spec| spec.package.clone())

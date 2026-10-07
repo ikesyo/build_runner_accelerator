@@ -36,7 +36,7 @@ pub(super) fn analyze(
     for action in state.actions.values() {
         if let Some(builder) = build_config.definition(&action.builder) {
             for output in &action.outputs {
-                if let Some(digest) = output_digest(&workspace, builder, output)? {
+                if let Some(digest) = output_digest(workspace, builder, output)? {
                     current_output_digests.insert(output.clone(), digest);
                 }
             }
@@ -45,10 +45,10 @@ pub(super) fn analyze(
     let mut dirty = Vec::new();
     let mut dirty_roots = Vec::new();
     let dirty_check_started = Instant::now();
-    let dirty_context = state.dirty_context(&current_snapshot);
+    let dirty_context = state.dirty_context(current_snapshot);
     // Reading and hashing every declared output is the bulk of the dirty
     // check; fan it out across cores before the serial evaluation loop.
-    let spec_output_digests = collect_output_digests(&workspace, &specs)?;
+    let spec_output_digests = collect_output_digests(workspace, specs)?;
     for (spec, digests) in specs.iter().zip(spec_output_digests) {
         current_output_digests.extend(
             digests
@@ -58,11 +58,11 @@ pub(super) fn analyze(
 
         let key = spec.action_key();
         let needs_build = match state.actions.get(&key) {
-            Some(action) if state.is_compatible(&config_digest) => state
+            Some(action) if state.is_compatible(config_digest) => state
                 .changed_since_previous_with(
                     action,
                     &dirty_context,
-                    &current_snapshot,
+                    current_snapshot,
                     &current_output_digests,
                 ),
             _ => true,
@@ -74,7 +74,7 @@ pub(super) fn analyze(
             }
         }
     }
-    expand_dirty_dependents(&mut dirty_roots, &specs, &state);
+    expand_dirty_dependents(&mut dirty_roots, specs, state);
     let mut dirty_keys = dirty
         .iter()
         .map(|spec| spec.action_key())
@@ -107,13 +107,15 @@ pub(super) fn analyze(
     })
 }
 
+type OutputDigests = Vec<(String, Option<String>)>;
+
 /// Reads and digests every declared output across `specs`, returning one
 /// `(output, Option<digest>)` pair list per spec in input order. The reads
 /// run on a scoped thread pool because they are the bulk of the dirty check.
 fn collect_output_digests(
     workspace: &Workspace,
     specs: &[crate::plan::BuildSpec],
-) -> io::Result<Vec<Vec<(String, Option<String>)>>> {
+) -> io::Result<Vec<OutputDigests>> {
     let digests_for = |spec: &crate::plan::BuildSpec| {
         spec.outputs
             .iter()
@@ -263,10 +265,10 @@ pub(super) fn expand_dirty_dependents(
                 }
             }
             for dependent_key in dependent_keys {
-                if dirty_keys.insert(dependent_key.to_owned()) {
-                    if let Some(spec) = specs_by_key.get(dependent_key) {
-                        dirty.push(spec.clone());
-                    }
+                if dirty_keys.insert(dependent_key.to_owned())
+                    && let Some(spec) = specs_by_key.get(dependent_key)
+                {
+                    dirty.push(spec.clone());
                 }
             }
         }

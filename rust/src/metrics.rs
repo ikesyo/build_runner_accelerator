@@ -6,8 +6,8 @@ use crate::worker::PoolMetrics;
 use crate::workspace::WorkspaceReadMetrics;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs;
 use std::fmt::Display;
+use std::fs;
 use std::path::Path;
 
 pub(crate) fn runtime_metrics_enabled() -> bool {
@@ -34,20 +34,14 @@ pub(crate) fn print_plan_stage(stage: &str, details: impl Display) {
 }
 
 fn print_plan_stage_with_rss(stage: &str, rss_kb: u64, details: impl Display) {
-    eprintln!(
-        "Rust plan metrics: stage={stage} rss_kb={rss_kb} {details}"
-    );
+    eprintln!("Rust plan metrics: stage={stage} rss_kb={rss_kb} {details}");
 }
 
 /// Print a compact breakdown without cloning any BuildSpec-owned strings.
 /// This is intentionally called before worker setup: the large-workspace
 /// investigation must still produce useful output when action execution never
 /// starts.
-pub(crate) fn print_plan_spec_metrics(
-    stage: &str,
-    specs: &[BuildSpec],
-    config: &RustBuildConfig,
-) {
+pub(crate) fn print_plan_spec_metrics(stage: &str, specs: &[BuildSpec], config: &RustBuildConfig) {
     let rss_kb = process_rss_kb();
     let mut scopes = BTreeMap::<(&str, &str, &str, u32, bool, bool), usize>::new();
     let mut action_keys = BTreeSet::<(&str, &str, &str)>::new();
@@ -132,7 +126,11 @@ pub(crate) fn print_plan_spec_metrics(
             .unwrap_or(0);
         eprintln!(
             "Rust plan breakdown: stage={stage} package={package} target={target} builder={builder} phase={phase} kind={} optional={is_optional} required_inputs={required_inputs} specs={count}",
-            if is_post_process { "post_process" } else { "normal" },
+            if is_post_process {
+                "post_process"
+            } else {
+                "normal"
+            },
         );
     }
 }

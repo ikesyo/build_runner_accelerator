@@ -60,8 +60,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         eprintln!("Change detected; rebuilding");
         match run_watch_build(options, &mut pool) {
             Ok(true) => {
-                source_post_process_outputs =
-                    load_source_post_process_outputs(&workspace.root);
+                source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
             }
             Ok(false) => source_post_process_outputs.clear(),
             Err(error) => {
@@ -197,25 +196,22 @@ fn is_generated_output(
     let Some(builders) = manifest.get("builders").and_then(|value| value.as_array()) else {
         return false;
     };
-    if builders
-        .iter()
-        .any(|builder| {
-            builder.get("build_to").and_then(|value| value.as_str()) == Some("source")
-                && (builder
-                    .get("output_suffixes")
-                    .and_then(|value| value.as_array())
-                    .is_some_and(|suffixes| {
-                        suffixes
-                            .iter()
-                            .filter_map(|suffix| suffix.as_str())
-                            .any(|suffix| output_pattern_matches(relative, name, suffix))
-                    })
-                    || builder
-                        .get("output_suffix")
-                        .and_then(|value| value.as_str())
-                        .is_some_and(|suffix| output_pattern_matches(relative, name, suffix)))
-        })
-    {
+    if builders.iter().any(|builder| {
+        builder.get("build_to").and_then(|value| value.as_str()) == Some("source")
+            && (builder
+                .get("output_suffixes")
+                .and_then(|value| value.as_array())
+                .is_some_and(|suffixes| {
+                    suffixes
+                        .iter()
+                        .filter_map(|suffix| suffix.as_str())
+                        .any(|suffix| output_pattern_matches(relative, name, suffix))
+                })
+                || builder
+                    .get("output_suffix")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|suffix| output_pattern_matches(relative, name, suffix)))
+    }) {
         return true;
     }
 
@@ -271,9 +267,10 @@ fn is_relevant_event(
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             return false;
         };
-        if components.first().is_some_and(|component| {
-            component.as_os_str().to_str() == Some(".dart_tool")
-        }) {
+        if components
+            .first()
+            .is_some_and(|component| component.as_os_str().to_str() == Some(".dart_tool"))
+        {
             return is_root_package && name == "package_config.json";
         }
         if is_root_package

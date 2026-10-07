@@ -71,11 +71,7 @@ impl AssetVisibility {
     }
 
     pub(crate) fn summary(&self) -> (usize, usize, usize) {
-        let normal_phase_outputs = self
-            .normal_output_phases
-            .values()
-            .map(BTreeSet::len)
-            .sum();
+        let normal_phase_outputs = self.normal_output_phases.values().map(BTreeSet::len).sum();
         (
             self.locations.len(),
             normal_phase_outputs,

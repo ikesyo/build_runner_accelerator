@@ -3,11 +3,11 @@ use super::lazy::LazyBuildState;
 use super::request::BuildRequest;
 use crate::plan::BuildSpec;
 use crate::protocol::BuildResult;
+use crate::visibility::AssetVisibility;
 use crate::worker_kernel::{
     WorkerArtifact, background_worker_aot_if_ready, pinned_worker_artifact_is_current,
     resolve_worker_artifact,
 };
-use crate::visibility::AssetVisibility;
 use crate::workspace::Workspace;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -77,12 +77,8 @@ impl WorkerPool {
         let _wall = crate::wall::Span::new("pool_start");
         let dart_binary = dart_binary.to_owned();
         let worker_executable = worker_executable.to_owned();
-        let worker_artifact = resolve_worker_artifact(
-            root,
-            &dart_binary,
-            &worker_executable,
-            auto_worker_artifact,
-        )?;
+        let worker_artifact =
+            resolve_worker_artifact(root, &dart_binary, &worker_executable, auto_worker_artifact)?;
         let max_jobs = jobs.max(1);
         // Keep the initial pool small. Additional workers are started only when
         // a phase actually has enough independent actions to use them.
@@ -173,12 +169,7 @@ impl WorkerPool {
                 worker.reset()?;
             }
             self.worker_resets += reset_count as u64;
-            self.initialize_pending_workers(
-                root,
-                package,
-                phase_count,
-                requires_optional_builder,
-            )?;
+            self.initialize_pending_workers(root, package, phase_count, requires_optional_builder)?;
             return Ok(());
         }
 
@@ -215,12 +206,7 @@ impl WorkerPool {
             self.restart_workers(root, worker_artifact)?;
         }
         self.initialized_workers = 0;
-        self.initialize_pending_workers(
-            root,
-            package,
-            phase_count,
-            requires_optional_builder,
-        )?;
+        self.initialize_pending_workers(root, package, phase_count, requires_optional_builder)?;
         self.initialized = Some(signature);
         Ok(())
     }
@@ -355,50 +341,50 @@ impl WorkerPool {
         // off while each worker's analysis state is process-local. With the
         // shared on-disk byte store, an independent AnalysisDriver reuses the
         // same cache, so homogeneous batches fan out like any other.
-        if !shared_analysis_cache_enabled() {
-            if let Some(key) = homogeneous_resolver_usage_key(requests) {
-                match self.resolver_usage.get(&key).copied() {
-                    Some(true) => {
-                        self.initialize_pending_workers(&root, &package, phase_count, false)?;
-                        let results = self.workers[0].build_batch(
-                            workspace,
-                            requests,
-                            overlay,
-                            deleted_overlay,
-                            visibility,
-                        )?;
-                        self.record_resolver_usage(requests, &results);
-                        return Ok(results);
-                    }
-                    Some(false) => {}
-                    None if requests.len() > 1 && self.max_jobs > 1 => {
-                        // Keep an unclassified homogeneous batch on one worker:
-                        // Resolver use may depend on the input, so the first
-                        // action cannot safely classify the remaining actions.
-                        self.initialize_pending_workers(&root, &package, phase_count, false)?;
-                        let first_results = self.workers[0].build_batch(
-                            workspace,
-                            &requests[..1],
-                            overlay,
-                            deleted_overlay,
-                            visibility,
-                        )?;
-                        self.record_resolver_usage(&requests[..1], &first_results);
-
-                        let mut results = first_results;
-                        let remaining_results = self.workers[0].build_batch(
-                            workspace,
-                            &requests[1..],
-                            overlay,
-                            deleted_overlay,
-                            visibility,
-                        )?;
-                        self.record_resolver_usage(&requests[1..], &remaining_results);
-                        results.extend(remaining_results);
-                        return Ok(results);
-                    }
-                    None => {}
+        if !shared_analysis_cache_enabled()
+            && let Some(key) = homogeneous_resolver_usage_key(requests)
+        {
+            match self.resolver_usage.get(&key).copied() {
+                Some(true) => {
+                    self.initialize_pending_workers(&root, &package, phase_count, false)?;
+                    let results = self.workers[0].build_batch(
+                        workspace,
+                        requests,
+                        overlay,
+                        deleted_overlay,
+                        visibility,
+                    )?;
+                    self.record_resolver_usage(requests, &results);
+                    return Ok(results);
                 }
+                Some(false) => {}
+                None if requests.len() > 1 && self.max_jobs > 1 => {
+                    // Keep an unclassified homogeneous batch on one worker:
+                    // Resolver use may depend on the input, so the first
+                    // action cannot safely classify the remaining actions.
+                    self.initialize_pending_workers(&root, &package, phase_count, false)?;
+                    let first_results = self.workers[0].build_batch(
+                        workspace,
+                        &requests[..1],
+                        overlay,
+                        deleted_overlay,
+                        visibility,
+                    )?;
+                    self.record_resolver_usage(&requests[..1], &first_results);
+
+                    let mut results = first_results;
+                    let remaining_results = self.workers[0].build_batch(
+                        workspace,
+                        &requests[1..],
+                        overlay,
+                        deleted_overlay,
+                        visibility,
+                    )?;
+                    self.record_resolver_usage(&requests[1..], &remaining_results);
+                    results.extend(remaining_results);
+                    return Ok(results);
+                }
+                None => {}
             }
         }
 
@@ -509,6 +495,10 @@ impl WorkerPool {
     /// Builds a batch on one resident worker with demand-driven optional
     /// actions enabled. Serializing this path keeps the mutable overlay and
     /// recursive lazy-build stack unambiguous.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "IPC operations pass workspace, visibility, and transaction state explicitly"
+    )]
     pub fn build_parallel_lazy(
         &mut self,
         workspace: &Workspace,
@@ -550,6 +540,10 @@ impl WorkerPool {
 
     /// Publishes one phase's committed overlay changes and joins every reset.
     /// A single worker uses memory; missing update values fail before any RPC.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "IPC operations pass workspace, visibility, and transaction state explicitly"
+    )]
     pub fn reset_resolver(
         &mut self,
         root: &Path,
@@ -668,9 +662,7 @@ pub(super) fn homogeneous_resolver_usage_key(
     requests
         .iter()
         .all(|request| {
-            !request.post_process
-                && request.builder == key.0
-                && request.instance_key == key.1
+            !request.post_process && request.builder == key.0 && request.instance_key == key.1
         })
         .then_some(key)
 }
@@ -707,9 +699,7 @@ fn resolver_worker_cap() -> Option<usize> {
         Ok(0) => Some(usize::MAX),
         Ok(cap) => Some(cap),
         Err(_) => {
-            eprintln!(
-                "BUILD_RUNNER_ACCELERATOR_RESOLVER_CAP must be an integer; ignoring {value}"
-            );
+            eprintln!("BUILD_RUNNER_ACCELERATOR_RESOLVER_CAP must be an integer; ignoring {value}");
             None
         }
     }
