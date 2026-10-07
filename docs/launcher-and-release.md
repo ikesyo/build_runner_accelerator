@@ -63,6 +63,46 @@ worker path. Explicit
 `--force-aot` also makes an AOT compilation failure fatal, matching stock
 build_runner's force semantics.
 
+## Setup-time prewarm
+
+The `prewarm` command exists so the one-time worker AOT compile can happen at
+setup time — right after `dart pub get` — instead of inside the first `build`:
+
+```bash
+dart pub get
+dart run build_runner_accelerator prewarm --background
+```
+
+It drives the same manifest-generation, worker-selection, and compile stages
+as a cold `build`, without running build actions, and leaves every populated
+cache where the next `build` finds it. With `--background` the command returns
+immediately: a detached copy (new process group, lowered scheduling priority)
+does the work and logs to
+`.dart_tool/build_runner_accelerator/prewarm.log`. `--background` is accepted
+only with `prewarm`.
+
+A workspace-local single-flight lock
+(`.dart_tool/build_runner_accelerator/.aot-background.lock`) serializes all
+worker AOT compiles: a `prewarm` in flight and a `build` (or a second
+`prewarm`, which exits as a no-op) never run two compiles — the loser waits
+for the winner's atomically published artifact up to a bounded interval and
+then compiles itself. `prewarm` is a setup hook, not a contract: under
+`--mode dart` or when no native frontend can run it reports on stderr and
+exits 0, so a dependency-resolution hook cannot fail for lack of a frontend.
+`--mode rust` keeps strict semantics.
+
+Beyond the AOT compile, `prewarm` also resolves the workspace's sources into
+the shared analyzer byte store (the `analysis prewarm[aot-prewarm]` shards),
+which is what makes the first build's action phase faster — not just the
+compile-free startup. On a large workspace that sweep roughly doubles the
+command's serial time, so `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` opts
+out for foreground or CI runs where it has nothing to hide behind; it stays
+on by default because a detached `prewarm --background` hides the cost
+entirely.
+
+The binary-level `aot-prewarm` name used by earlier CI tooling remains
+accepted as an alias; `prewarm` is canonical.
+
 ## Frontend resolution
 
 Resolution is version-pinned and ordered:

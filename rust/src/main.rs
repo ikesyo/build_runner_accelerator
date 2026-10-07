@@ -42,7 +42,8 @@ fn main() -> io::Result<()> {
             watch::run(&options)
         }
         "aot-cache-key" => frontend::run_aot_cache_key(&options),
-        "aot-prewarm" => frontend::run_aot_prewarm(&options),
+        // `aot-prewarm` remains as the name earlier CI tooling invoked.
+        "prewarm" | "aot-prewarm" => frontend::run_aot_prewarm(&options),
         command => {
             print_usage();
             Err(io::Error::new(
@@ -55,6 +56,6 @@ fn main() -> io::Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: build_runner_accelerator <build|watch|aot-cache-key|aot-prewarm> [--root PATH] [--dart PATH] [--worker PACKAGE:EXECUTABLE] [--jobs N] [--mode auto|rust|dart]"
+        "usage: build_runner_accelerator <build|watch|prewarm|aot-cache-key> [--root PATH] [--dart PATH] [--worker PACKAGE:EXECUTABLE] [--jobs N] [--mode auto|rust|dart] [--background]"
     );
 }

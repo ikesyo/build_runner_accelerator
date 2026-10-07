@@ -125,6 +125,8 @@ jobs:
         run: bash scripts/smoke.sh
       - name: Run generic watch smoke
         run: bash scripts/watch_smoke.sh
+      - name: Run setup-time prewarm correctness
+        run: bash scripts/correctness_prewarm.sh
 
   integration-trigger:
     name: 'Integration: trigger builder'

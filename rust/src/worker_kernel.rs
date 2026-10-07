@@ -11,12 +11,20 @@ use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const AOT_METADATA_VERSION: u32 = 3;
 const AOT_CACHE_KEY_VERSION: &str = "v2";
-const BACKGROUND_AOT_LOCK_ENV: &str = "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_BACKGROUND_LOCK";
+pub(crate) const BACKGROUND_AOT_LOCK_ENV: &str =
+    "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_BACKGROUND_LOCK";
 const BACKGROUND_AOT_LOCK_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+pub(crate) const AOT_COMPILE_LOCK_NAME: &str = ".aot-background.lock";
+/// How long a compiler waits for another process's compile to publish before
+/// starting its own. Compiles are ~30s even on large workspaces, so a
+/// multi-minute bound covers slow machines while keeping a dead lock holder
+/// a bounded stall rather than a hang.
+const AOT_COMPILE_WAIT_MAX: Duration = Duration::from_secs(300);
+const AOT_COMPILE_POLL: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum WorkerArtifact {
@@ -205,9 +213,8 @@ pub(crate) fn early_worker_aot_compile(
         // A panic must also settle the invocation-local readiness marker.
         // Otherwise the Dart generator can wait the full readiness timeout
         // before it falls back to the source probe.
-        let result = catch_worker_aot_panic(|| {
-            prepare_worker_aot(&root, &dart_binary, &worker_executable)
-        });
+        let result =
+            catch_worker_aot_panic(|| prepare_worker_aot(&root, &dart_binary, &worker_executable));
         if let Some(readiness) = readiness {
             let message = match (&result, &source) {
                 (Ok(path), Some(source))
@@ -645,6 +652,47 @@ fn prepare_worker_aot(
         return Ok(aot);
     }
 
+    // Single-flight: one process compiles per workspace at a time. A loser
+    // waits for the winner's published artifact — compiles produce identical
+    // content under the same cache key, so waiting is strictly better than
+    // duplicating them. The env-var path marks a lock this process already
+    // owns (a spawned background helper); everything else is external.
+    let lock_path = aot_compile_lock_path(&context);
+    let wait_deadline = Instant::now() + AOT_COMPILE_WAIT_MAX;
+    if let Some(lock_path) = &lock_path {
+        if let Some(aot) = wait_for_aot_winner(&context, lock_path, wait_deadline)? {
+            return Ok(aot);
+        }
+    }
+    // The guard keeps the lock file until the fresh artifact is published.
+    // A lost race means another compile started between the wait above and
+    // here: wait for it once, then compile anyway — atomic temp-file publish
+    // keeps a duplicate compile safe, just wasteful.
+    let _compile_lock = match &lock_path {
+        Some(lock_path) if !background_aot_lock_owned(lock_path) => {
+            if acquire_background_aot_lock(lock_path)? {
+                Some(BackgroundAotLock {
+                    path: lock_path.clone(),
+                })
+            } else {
+                match wait_for_aot_winner(&context, lock_path, wait_deadline)? {
+                    Some(aot) => return Ok(aot),
+                    None => None,
+                }
+            }
+        }
+        _ => None,
+    };
+
+    // The previous owner may have published and released the lock between
+    // our cache check and acquisition. Recheck before starting a compiler.
+    if let Some(aot) = current_aot_from_context(&context)? {
+        return Ok(aot);
+    }
+    if let Ok(Some(aot)) = restore_shared_aot(&context) {
+        return Ok(aot);
+    }
+
     // Opt-in overlap: the compile is mostly single-threaded, so JIT
     // analysis shards can start filling the shared byte store meanwhile.
     // The shards are killed as soon as the compile ends (see `AnalysisPrewarm`'s
@@ -678,7 +726,11 @@ fn prepare_worker_aot(
     if let Some(parent) = temp_aot.parent() {
         fs::create_dir_all(parent)?;
     }
-    let package_config = context.workspace.root.join(".dart_tool/package_config.json");
+    let package_config = context
+        .workspace
+        .root
+        .join(".dart_tool/package_config.json");
+    let compile_start = Instant::now();
     let status = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "exe"])
         .arg(format!("--packages={}", package_config.display()))
@@ -690,6 +742,12 @@ fn prepare_worker_aot(
         .status()
         .map_err(|error| aot_compile_error(&context.worker_path, error))?;
     drop(analysis_prewarm);
+    if env::var("BUILD_RUNNER_ACCELERATOR_METRICS").as_deref() == Ok("1") {
+        eprintln!(
+            "Rust worker AOT compile: elapsed_us={}",
+            compile_start.elapsed().as_micros()
+        );
+    }
     if !status.success() {
         remove_if_present(&temp_aot);
         remove_if_present(&temp_depfile);
@@ -705,7 +763,10 @@ fn prepare_worker_aot(
         &temp_aot,
         &context.cache_key,
     )?;
-    fs::write(&temp_sdk_metadata, serde_json::to_vec_pretty(&metadata).map_err(io::Error::other)?)?;
+    fs::write(
+        &temp_sdk_metadata,
+        serde_json::to_vec_pretty(&metadata).map_err(io::Error::other)?,
+    )?;
 
     // Publish the dependency list before the executable. If the second rename
     // is interrupted, the old executable is conservatively treated as stale.
@@ -722,11 +783,8 @@ fn spawn_background_worker_aot(
     worker_executable: &str,
     context: &AotContext,
 ) -> io::Result<bool> {
-    let lock_path = context
-        .aot_sdk_root
-        .parent()
-        .ok_or_else(|| io::Error::other("AOT SDK directory has no parent"))?
-        .join(".aot-background.lock");
+    let lock_path = aot_compile_lock_path(context)
+        .ok_or_else(|| io::Error::other("AOT SDK directory has no parent"))?;
     if !acquire_background_aot_lock(&lock_path)? {
         return Ok(false);
     }
@@ -739,7 +797,7 @@ fn spawn_background_worker_aot(
         }
     };
     let result = Command::new(current_exe)
-        .args(["aot-prewarm", "--root"])
+        .args(["prewarm", "--root"])
         .arg(root)
         .args(["--dart"])
         .arg(dart_binary)
@@ -769,7 +827,76 @@ fn spawn_background_worker_aot(
     }
 }
 
-fn acquire_background_aot_lock(path: &Path) -> io::Result<bool> {
+/// Workspace-local single-flight lock shared by every worker AOT compile:
+/// `build`'s synchronous compile, `watch`'s spawned background helper, and
+/// `prewarm` (foreground or detached) all compete on the same file so only
+/// one compile per workspace runs at a time.
+fn aot_compile_lock_path(context: &AotContext) -> Option<PathBuf> {
+    context
+        .aot_sdk_root
+        .parent()
+        .map(|dir| dir.join(AOT_COMPILE_LOCK_NAME))
+}
+
+/// Whether this process already owns the workspace compile lock — spawned
+/// background helpers receive the path they own through the environment.
+fn background_aot_lock_owned(lock_path: &Path) -> bool {
+    env::var_os(BACKGROUND_AOT_LOCK_ENV).is_some_and(|owned| PathBuf::from(owned) == lock_path)
+}
+
+/// Wait for another process's compile to publish a usable artifact. Returns
+/// the artifact path on success, `None` when the lock is already self-owned
+/// or free, when it is abandoned or outlives the wait bound, or when the
+/// winner ended without publishing anything current. A shared-store hit from
+/// a parallel compile in another workspace also satisfies the wait.
+fn wait_for_aot_winner(
+    context: &AotContext,
+    lock_path: &Path,
+    deadline: Instant,
+) -> io::Result<Option<PathBuf>> {
+    if background_aot_lock_owned(lock_path)
+        || !lock_path.is_file()
+        || background_aot_lock_is_stale(lock_path)
+    {
+        return Ok(None);
+    }
+    eprintln!("Rust worker AOT compile is already running; waiting for the published artifact");
+    let wait_start = Instant::now();
+    loop {
+        if let Some(aot) = current_aot_from_context(context)? {
+            if env::var("BUILD_RUNNER_ACCELERATOR_METRICS").as_deref() == Ok("1") {
+                eprintln!(
+                    "Rust worker AOT wait: elapsed_us={}",
+                    wait_start.elapsed().as_micros()
+                );
+            }
+            return Ok(Some(aot));
+        }
+        if !lock_path.is_file() || background_aot_lock_is_stale(lock_path) {
+            // The winner finished (or died). One shared-store probe covers a
+            // parallel compile in another workspace that published our key.
+            if let Ok(Some(aot)) = restore_shared_aot(context) {
+                return Ok(Some(aot));
+            }
+            return Ok(None);
+        }
+        if Instant::now() >= deadline {
+            // A parallel compile in another workspace can still have a usable
+            // slot ready before we fall back to a local compile.
+            if let Ok(Some(aot)) = restore_shared_aot(context) {
+                return Ok(Some(aot));
+            }
+            eprintln!(
+                "Rust worker AOT wait exceeded {}s; compiling locally",
+                AOT_COMPILE_WAIT_MAX.as_secs()
+            );
+            return Ok(None);
+        }
+        thread::sleep(AOT_COMPILE_POLL);
+    }
+}
+
+pub(crate) fn acquire_background_aot_lock(path: &Path) -> io::Result<bool> {
     for attempt in 0..2 {
         match OpenOptions::new().write(true).create_new(true).open(path) {
             Ok(mut file) => {
@@ -800,11 +927,7 @@ fn background_aot_lock_is_stale(path: &Path) -> bool {
         .is_ok_and(|age| age > BACKGROUND_AOT_LOCK_MAX_AGE)
 }
 
-fn aot_cache_key(
-    workspace: &Workspace,
-    worker_path: &Path,
-    sdk_root: &Path,
-) -> io::Result<String> {
+fn aot_cache_key(workspace: &Workspace, worker_path: &Path, sdk_root: &Path) -> io::Result<String> {
     let (sdk_version, allowed_experiments) = aot_sdk_identity(sdk_root)?;
     let manifest = workspace.builder_manifest_fingerprint()?;
     let lock = digest_optional_file(&workspace.root.join("pubspec.lock"))?;
@@ -832,10 +955,7 @@ pub(crate) fn aot_sdk_identity(sdk_root: &Path) -> io::Result<(String, String)> 
             .join("_internal")
             .join("allowed_experiments.json"),
     )?;
-    Ok((
-        digest_bytes(&version),
-        digest_bytes(&allowed_experiments),
-    ))
+    Ok((digest_bytes(&version), digest_bytes(&allowed_experiments)))
 }
 
 fn build_aot_metadata(
@@ -848,28 +968,24 @@ fn build_aot_metadata(
 ) -> io::Result<AotMetadata> {
     let dependencies = parse_depfile_dependencies(&fs::read_to_string(depfile)?)
         .ok_or_else(|| io::Error::other("AOT compiler depfile has no dependencies"))?;
-    let package_config_path = fs::canonicalize(
-        workspace
-            .root
-            .join(".dart_tool/package_config.json"),
-    )?;
+    let package_config_path =
+        fs::canonicalize(workspace.root.join(".dart_tool/package_config.json"))?;
     let canonical_sdk_root = fs::canonicalize(sdk_root)?;
     let mut dependency_digests = BTreeMap::new();
     for dependency in dependencies {
         let dependency = fs::canonicalize(dependency)?;
-        if dependency == package_config_path
-            || dependency
-                .strip_prefix(&canonical_sdk_root)
-                .is_ok()
+        if dependency == package_config_path || dependency.strip_prefix(&canonical_sdk_root).is_ok()
         {
             continue;
         }
-        let key = workspace.logical_dependency_key(&dependency).ok_or_else(|| {
-            io::Error::other(format!(
-                "AOT dependency is outside the workspace/package graph: {}",
-                dependency.display()
-            ))
-        })?;
+        let key = workspace
+            .logical_dependency_key(&dependency)
+            .ok_or_else(|| {
+                io::Error::other(format!(
+                    "AOT dependency is outside the workspace/package graph: {}",
+                    dependency.display()
+                ))
+            })?;
         dependency_digests.insert(key, digest_file(&dependency)?);
     }
     let (sdk_version, allowed_experiments) = aot_sdk_identity(sdk_root)?;
@@ -1065,7 +1181,12 @@ fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: &str) -> io::Resul
         if fs::canonicalize(existing).ok() == fs::canonicalize(&source).ok() {
             return Ok(());
         }
-        fs::remove_file(&destination)?;
+        // A concurrent compile can remove or recreate the same link.
+        if let Err(error) = fs::remove_file(&destination) {
+            if error.kind() != io::ErrorKind::NotFound {
+                return Err(error);
+            }
+        }
     } else if destination.exists() {
         return Err(io::Error::other(format!(
             "AOT SDK path is not a symlink: {}",
@@ -1073,18 +1194,41 @@ fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: &str) -> io::Resul
         )));
     }
 
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&source, &destination)?;
-    #[cfg(windows)]
-    if source.is_dir() {
-        std::os::windows::fs::symlink_dir(&source, &destination)?;
-    } else {
-        std::os::windows::fs::symlink_file(&source, &destination)?;
+    let link_result = (|| -> io::Result<()> {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&source, &destination)?;
+        #[cfg(windows)]
+        if source.is_dir() {
+            std::os::windows::fs::symlink_dir(&source, &destination)?;
+        } else {
+            std::os::windows::fs::symlink_file(&source, &destination)?;
+        }
+        #[cfg(not(any(unix, windows)))]
+        return Err(io::Error::other(
+            "AOT worker SDK layout requires symbolic links on this platform",
+        ));
+        Ok(())
+    })();
+    if let Err(error) = link_result {
+        // A concurrent compile may have created the same link meanwhile;
+        // accept it when it resolves to the same SDK entry.
+        if error.kind() == io::ErrorKind::AlreadyExists {
+            if let Ok(existing) = fs::read_link(&destination) {
+                let existing = if existing.is_absolute() {
+                    existing
+                } else {
+                    destination
+                        .parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .join(existing)
+                };
+                if fs::canonicalize(existing).ok() == fs::canonicalize(&source).ok() {
+                    return Ok(());
+                }
+            }
+        }
+        return Err(error);
     }
-    #[cfg(not(any(unix, windows)))]
-    return Err(io::Error::other(
-        "AOT worker SDK layout requires symbolic links on this platform",
-    ));
     Ok(())
 }
 
@@ -1295,7 +1439,7 @@ impl Drop for AnalysisPrewarm {
     }
 }
 
-fn env_flag_disabled(name: &str) -> bool {
+pub(crate) fn env_flag_disabled(name: &str) -> bool {
     match env::var(name) {
         Ok(value) => matches!(value.to_lowercase().as_str(), "0" | "false" | "off"),
         Err(_) => false,
@@ -1316,6 +1460,15 @@ fn compile_prewarm_enabled() -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+/// Whether `prewarm` should run the whole-workspace analysis shards after the
+/// AOT compile (the `aot-prewarm` window). On by default: the sweep fills the
+/// shared byte store the first real build would otherwise fill lazily inside
+/// worker execution. `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` opts out
+/// for foreground/CI runs where the serial sweep cost has nothing to hide in.
+pub(crate) fn analysis_prewarm_enabled() -> bool {
+    !env_flag_disabled("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM")
 }
 
 /// `BUILD_RUNNER_ACCELERATOR_MANIFEST_PREWARM=1` opts into running the
@@ -1449,11 +1602,7 @@ fn hex_value(byte: u8) -> Option<u8> {
 /// both are enabled.
 static ANALYSIS_PREWARM_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-fn spawn_analysis_prewarm(
-    root: &Path,
-    dart_binary: &str,
-    window: &str,
-) -> Option<AnalysisPrewarm> {
+fn spawn_analysis_prewarm(root: &Path, dart_binary: &str, window: &str) -> Option<AnalysisPrewarm> {
     spawn_analysis_prewarm_options(root, dart_binary, window, None, None)
 }
 
@@ -1531,15 +1680,15 @@ fn spawn_analysis_prewarm_options(
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_background_aot_lock, background_aot_lock_is_stale, catch_worker_aot_panic,
+        ANALYSIS_PREWARM_ACTIVE, WorkerArtifact, acquire_background_aot_lock,
+        analysis_prewarm_enabled, background_aot_lock_is_stale, catch_worker_aot_panic,
         parse_depfile_dependencies, pinned_worker_artifact_is_current, spawn_analysis_prewarm,
-        WorkerArtifact, ANALYSIS_PREWARM_ACTIVE,
     };
     use std::fs::{self, OpenOptions};
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Barrier};
     use std::thread;
-    use std::path::{Path, PathBuf};
 
     #[test]
     fn early_worker_aot_panics_are_caught() {
@@ -1590,14 +1739,16 @@ mod tests {
         let path = std::env::temp_dir().join(format!("build-runner-accelerator-lock-{}", std::process::id()));
         let _ = fs::remove_file(&path);
         let gate = Arc::new(Barrier::new(8));
-        let handles = (0..8).map(|_| {
-            let gate = Arc::clone(&gate);
-            let path = path.clone();
-            thread::spawn(move || {
-                gate.wait();
-                acquire_background_aot_lock(&path).unwrap()
+        let handles = (0..8)
+            .map(|_| {
+                let gate = Arc::clone(&gate);
+                let path = path.clone();
+                thread::spawn(move || {
+                    gate.wait();
+                    acquire_background_aot_lock(&path).unwrap()
+                })
             })
-        }).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
         let owners = handles
             .into_iter()
             .map(|handle| handle.join().unwrap())
@@ -1619,6 +1770,44 @@ mod tests {
     static PREWARM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
+    fn aot_wait_retries_share_the_deadline() {
+        let root = std::env::temp_dir().join(format!(
+            "build-runner-accelerator-wait-deadline-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        fs::write(root.join("pubspec.yaml"), "name: wait_test\n").unwrap();
+        fs::write(
+            root.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[]}"#,
+        )
+        .unwrap();
+        let context = super::AotContext {
+            workspace: crate::workspace::Workspace::load(root.clone()).unwrap(),
+            sdk_root: root.join("sdk"),
+            worker_path: root.join("worker.dart"),
+            cache_key: "wait-deadline-test".to_owned(),
+            aot_sdk_root: root.join("aot-sdk"),
+            aot_path: root.join("aot-sdk/bin/worker"),
+            depfile_path: root.join("aot-sdk/bin/worker.d"),
+            sdk_metadata_path: root.join("aot-sdk/bin/worker.sdk"),
+        };
+        let lock_path = root.join(super::AOT_COMPILE_LOCK_NAME);
+        assert!(acquire_background_aot_lock(&lock_path).unwrap());
+        let deadline = std::time::Instant::now();
+        for _ in 0..2 {
+            assert!(
+                super::wait_for_aot_winner(&context, &lock_path, deadline)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert!(deadline.elapsed() < std::time::Duration::from_secs(1));
+        assert!(lock_path.is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn analysis_prewarm_spawn_is_single_flight() {
         let _guard = PREWARM_TEST_LOCK.lock().unwrap();
         ANALYSIS_PREWARM_ACTIVE.store(true, Ordering::SeqCst);
@@ -1635,5 +1824,26 @@ mod tests {
         assert!(spawn_analysis_prewarm(&root, "dart", "test").is_none());
         assert!(!ANALYSIS_PREWARM_ACTIVE.load(Ordering::SeqCst));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn analysis_prewarm_enabled_follows_env() {
+        let _guard = PREWARM_TEST_LOCK.lock().unwrap();
+        let name = "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM";
+        let saved = std::env::var_os(name);
+        // SAFETY: env mutation is unsafe in edition 2024; PREWARM_TEST_LOCK
+        // serializes every test in this module that touches the environment.
+        unsafe {
+            std::env::remove_var(name);
+            assert!(analysis_prewarm_enabled());
+            std::env::set_var(name, "0");
+            assert!(!analysis_prewarm_enabled());
+            std::env::set_var(name, "off");
+            assert!(!analysis_prewarm_enabled());
+            match saved {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
     }
 }

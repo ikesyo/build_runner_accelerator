@@ -1,15 +1,17 @@
 use crate::builder::{BuilderManifestFile, RustBuildConfig, rust_build_config_from_manifest};
 use crate::cli::{FrontendMode, Options};
 use crate::worker_kernel::{
-    early_worker_aot_compile, early_worker_aot_enabled, manifest_prewarm_enabled,
-    prewarm_worker_aot, start_analysis_prewarm, start_manifest_analysis_prewarm,
+    AOT_COMPILE_LOCK_NAME, BACKGROUND_AOT_LOCK_ENV, acquire_background_aot_lock,
+    analysis_prewarm_enabled, early_worker_aot_compile, early_worker_aot_enabled,
+    manifest_prewarm_enabled, prewarm_worker_aot, start_analysis_prewarm,
+    start_manifest_analysis_prewarm,
     take_background_aot_lock, worker_aot_cache_key,
 };
 use crate::workspace::Workspace;
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
 const MANIFEST_PATH: &str = ".dart_tool/build_runner_accelerator/builder-manifest.json";
@@ -380,16 +382,33 @@ pub(crate) fn run_aot_cache_key(options: &Options) -> io::Result<()> {
 }
 
 pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
+    if options.mode == FrontendMode::Dart {
+        eprintln!("Rust frontend disabled (--mode dart); nothing to prewarm");
+        return Ok(());
+    }
+    if options.background {
+        return run_prewarm_detached(options);
+    }
     let _background_lock = take_background_aot_lock();
-    let workspace = Workspace::load(options.root.clone())?;
-    let build_config = select_frontend(options, &workspace)?.ok_or_else(|| {
-        io::Error::other("AOT prewarm requires a Rust-compatible builder manifest")
-    })?;
+    let workspace = load_prewarm_workspace(options)?;
+    let build_config = match select_frontend(options, &workspace)? {
+        Some(config) => config,
+        // Unreachable under --mode rust (select_frontend already failed); the
+        // stock Dart path has no caches to warm, so skipping is not an error.
+        None => {
+            eprintln!("Rust frontend would not run this workspace; nothing to prewarm");
+            return Ok(());
+        }
+    };
     let worker = worker_executable(options, &build_config)?;
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     // Warm the shared analyzer byte store alongside the worker AOT compile:
     // the JIT prewarm overlaps the compile and continues to completion.
-    let analysis_prewarm = start_analysis_prewarm(&workspace.root, dart_binary);
+    // Opt out with BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0 for serial
+    // foreground/CI runs where the sweep cost has nothing to hide behind.
+    let analysis_prewarm = analysis_prewarm_enabled()
+        .then(|| start_analysis_prewarm(&workspace.root, dart_binary))
+        .flatten();
     let artifact = prewarm_worker_aot(&workspace.root, dart_binary, &worker)?;
     if let Some(analysis_prewarm) = analysis_prewarm {
         analysis_prewarm.wait_for_children();
@@ -398,6 +417,130 @@ pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
     println!("AOT prewarm ready: {}", artifact.display());
     println!("AOT cache key: {cache_key}");
     Ok(())
+}
+
+fn load_prewarm_workspace(options: &Options) -> io::Result<Workspace> {
+    Workspace::load(options.root.clone()).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("cannot load workspace (run dart pub get first): {error}"),
+        )
+    })
+}
+
+/// `prewarm --background`: spawn a detached copy of this binary running the
+/// foreground pipeline and return immediately. The workspace compile lock is
+/// taken here and passed to the child through the environment, which both
+/// makes a second `--background` invocation a no-op and lets concurrent
+/// builds wait for the published artifact instead of recompiling.
+fn run_prewarm_detached(options: &Options) -> io::Result<()> {
+    // Fail fast on an unresolved workspace before touching the lock.
+    // The canonical workspace root must back every path the child recomputes:
+    // the compile-lock comparison in `prepare_worker_aot` is textual.
+    let workspace = load_prewarm_workspace(options)?;
+    let generated_dir = workspace
+        .root
+        .join(".dart_tool")
+        .join("build_runner_accelerator");
+    fs::create_dir_all(&generated_dir)?;
+    let lock_path = generated_dir.join(AOT_COMPILE_LOCK_NAME);
+    if !acquire_background_aot_lock(&lock_path)? {
+        eprintln!("Rust AOT prewarm is already running; nothing to do");
+        return Ok(());
+    }
+    let result = spawn_detached_prewarm(options, &workspace, &generated_dir, &lock_path);
+    if result.is_err() {
+        let _ = fs::remove_file(&lock_path);
+    }
+    result
+}
+
+fn spawn_detached_prewarm(
+    options: &Options,
+    workspace: &Workspace,
+    generated_dir: &Path,
+    lock_path: &Path,
+) -> io::Result<()> {
+    use std::fs::OpenOptions;
+    let log_path = generated_dir.join("prewarm.log");
+    let log_stdout = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)?;
+    let log_stderr = log_stdout.try_clone()?;
+    let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
+    let mode = match options.mode {
+        FrontendMode::Auto => "auto",
+        FrontendMode::Rust => "rust",
+        FrontendMode::Dart => "dart",
+    };
+    let mut command = detached_prewarm_command()?;
+    command
+        .args(["prewarm", "--root"])
+        .arg(&workspace.root)
+        .args(["--dart"])
+        .arg(dart_binary)
+        .args(["--mode", mode])
+        .current_dir(&workspace.root)
+        .env(BACKGROUND_AOT_LOCK_ENV, lock_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_stdout))
+        .stderr(Stdio::from(log_stderr));
+    if let Some(worker) = &options.worker {
+        command.args(["--worker"]).arg(worker);
+    }
+    let child = command.spawn()?;
+    eprintln!(
+        "Rust AOT prewarm running in background (pid {}); log: {}",
+        child.id(),
+        log_path.display()
+    );
+    // The child is reparented when this process exits, so it neither holds
+    // the terminal nor needs a reaper here; it removes the lock on exit.
+    Ok(())
+}
+
+/// Build the detached `prewarm` invocation for this platform: a new process
+/// group so the child survives the terminal, and lowered scheduling priority
+/// so setup-time work stays out of the developer's way.
+#[cfg(unix)]
+fn detached_prewarm_command() -> io::Result<Command> {
+    use std::os::unix::process::CommandExt;
+    unsafe extern "C" {
+        fn nice(increment: i32) -> i32;
+        fn setsid() -> i32;
+    }
+    let mut command = Command::new(std::env::current_exe()?);
+    // SAFETY: pre_exec runs after fork, before exec; these libc calls do not
+    // allocate or acquire Rust locks. setsid detaches the controlling terminal.
+    unsafe {
+        command.pre_exec(|| {
+            if setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            nice(19);
+            Ok(())
+        });
+    }
+    Ok(command)
+}
+
+#[cfg(windows)]
+fn detached_prewarm_command() -> io::Result<Command> {
+    use std::os::windows::process::CommandExt;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | BELOW_NORMAL_PRIORITY_CLASS);
+    Ok(command)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn detached_prewarm_command() -> io::Result<Command> {
+    Ok(Command::new(std::env::current_exe()?))
 }
 
 fn select_dart_fallback(options: &Options, reason: &str) -> io::Result<Option<RustBuildConfig>> {
@@ -428,7 +571,7 @@ pub(crate) fn run_dart_fallback(options: &Options, workspace: &Workspace) -> io:
 
 #[cfg(test)]
 mod tests {
-    use super::{cleanup_stale_worker_readiness_markers, EARLY_WORKER_MARKER_MAX_AGE};
+    use super::{EARLY_WORKER_MARKER_MAX_AGE, cleanup_stale_worker_readiness_markers};
     use std::fs::{self, File, FileTimes};
     use std::time::{Duration, SystemTime};
 

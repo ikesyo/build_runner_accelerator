@@ -28,6 +28,7 @@ pub(crate) struct Options {
     pub(crate) interval_ms: u64,
     pub(crate) jobs: usize,
     pub(crate) mode: FrontendMode,
+    pub(crate) background: bool,
 }
 
 impl Options {
@@ -43,6 +44,7 @@ impl Options {
         // it (including down to 1 on small runners).
         let mut jobs = default_worker_count();
         let mut mode = FrontendMode::Auto;
+        let mut background = false;
         while let Some(argument) = args.next() {
             match argument.as_str() {
                 "--root" => {
@@ -90,13 +92,20 @@ impl Options {
                             .ok_or_else(|| io::Error::other("--mode needs a value"))?,
                     )?;
                 }
+                "--background" => background = true,
                 _ => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
                         format!("unknown argument: {argument}"),
-                    ))
+                    ));
                 }
             }
+        }
+        if background && !matches!(command.as_str(), "prewarm" | "aot-prewarm") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("--background is only supported with prewarm: {command}"),
+            ));
         }
         Ok(Self {
             command,
@@ -106,6 +115,7 @@ impl Options {
             interval_ms,
             jobs,
             mode,
+            background,
         })
     }
 }
@@ -359,6 +369,33 @@ mod tests {
         assert_eq!(FrontendMode::parse("rust").unwrap(), FrontendMode::Rust);
         assert_eq!(FrontendMode::parse("dart").unwrap(), FrontendMode::Dart);
         assert!(FrontendMode::parse("native").is_err());
+    }
+
+    #[test]
+    fn background_is_scoped_to_prewarm() {
+        assert!(
+            super::Options::parse(["prewarm", "--background"].into_iter().map(str::to_owned))
+                .unwrap()
+                .background
+        );
+        assert!(
+            super::Options::parse(
+                ["aot-prewarm", "--background"]
+                    .into_iter()
+                    .map(str::to_owned)
+            )
+            .unwrap()
+            .background
+        );
+        assert!(
+            !super::Options::parse(["prewarm"].into_iter().map(str::to_owned))
+                .unwrap()
+                .background
+        );
+        assert!(
+            super::Options::parse(["build", "--background"].into_iter().map(str::to_owned))
+                .is_err()
+        );
     }
 
     #[test]
