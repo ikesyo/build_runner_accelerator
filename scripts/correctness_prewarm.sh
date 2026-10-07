@@ -56,6 +56,9 @@ fast_bin="$BUILD_RUNNER_ACCELERATOR_BIN"
 
 mkdir -p "$workspace_parent"
 worker_attach "$temporary_dir"
+# worker_attach projects lib/tool only; the analysis sweep resolves its
+# executable from the package's bin directory.
+cp -R "$repo_root/bin" "$temporary_dir/bin"
 
 setup_workspace() {
   local root=$1
@@ -128,6 +131,7 @@ analysis_prewarm_ran=no
 if grep -Fq 'analysis prewarm[aot-prewarm]' "$temporary_dir/prewarm-a2.log"; then
   analysis_prewarm_ran=yes
 fi
+[[ "$analysis_prewarm_ran" == yes ]] || fail 'default prewarm spawned no analysis shards'
 
 # BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0 opts out of the byte-store sweep.
 BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0 \
