@@ -6,6 +6,22 @@ import 'package:crypto/crypto.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('asset MD5 matches concatenation across block boundaries and IDs', () {
+    for (final path in ['lib/a.dart', 'lib/café.dart', 'lib/日本😀.dart']) {
+      final id = AssetId('app', path);
+      for (final length in [0, 1, 55, 56, 63, 64, 65, 127, 128, 1024]) {
+        final bytes = List<int>.generate(length, (index) => index % 256);
+        final content = AssetReadContent(bytes);
+        expect(
+          content.digestFor(id),
+          md5.convert(<int>[...bytes, ...id.toString().codeUnits]),
+          reason: '$id, $length bytes',
+        );
+        expect(content.cachedContentDigest, isNull);
+      }
+    }
+  });
+
   test('digest is bound to owned immutable bytes, not caller buffers', () {
     final id = AssetId('app', 'lib/main.dart');
     final input = utf8.encode('original');

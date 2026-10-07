@@ -268,9 +268,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
 
   @override
   Future<Digest> digest(AssetId id, {bool inArtifactTree = false}) async {
-    _state.observedReads.add(id);
-    final bytes = await readAsBytes(id, inArtifactTree: inArtifactTree);
-    return md5.convert(<int>[...bytes, ...id.toString().codeUnits]);
+    return (await readContent(id)).digestFor(id);
   }
 
   @override
@@ -283,8 +281,8 @@ class RemoteAssetReaderWriter extends ReaderWriter {
     bool inArtifactTree = false,
   }) async => List<int>.from((await readContent(id)).bytes);
 
-  /// Collector-only immutable snapshot. Uses the same visibility and read
-  /// tracking path as builder reads, before exposing bytes or a cached digest.
+  /// Internal immutable snapshot for collectors, decoding and hashing. Uses
+  /// the same visibility and read tracking path as public builder reads.
   Future<AssetReadContent> readContent(AssetId id) async {
     _state.observedReads.add(id);
     final primaryInput = _state.primaryInput;
@@ -345,8 +343,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
     AssetId id, {
     Encoding encoding = utf8,
     bool inArtifactTree = false,
-  }) async =>
-      encoding.decode(await readAsBytes(id, inArtifactTree: inArtifactTree));
+  }) async => encoding.decode((await readContent(id)).bytes);
 
   @override
   Future<void> writeAsBytes(

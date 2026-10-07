@@ -17,6 +17,27 @@ final class AssetReadContent {
   String? get cachedContentDigest => _digest;
 
   String get contentDigest => _digest ??= sha256.convert(bytes).toString();
+
+  /// Uncached build_runner-compatible MD5 of content followed by asset ID.
+  Digest digestFor(AssetId id) {
+    final result = _DigestSink();
+    md5.startChunkedConversion(result)
+      ..add(bytes)
+      // Preserve codeUnits: UTF-8 would change the existing digest input.
+      ..add(id.toString().codeUnits)
+      ..close();
+    return result.value;
+  }
+}
+
+final class _DigestSink implements Sink<Digest> {
+  late Digest value;
+
+  @override
+  void add(Digest data) => value = data;
+
+  @override
+  void close() {}
 }
 
 /// Replacing/removing/clearing bytes also replaces/removes their digest.

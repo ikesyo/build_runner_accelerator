@@ -8,9 +8,101 @@ import 'package:build_runner_accelerator/src/asset_read_cache.dart';
 import 'package:glob/glob.dart';
 import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:build_runner_accelerator/src/remote_build_step.dart';
+import 'package:crypto/crypto.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('string reads preserve encoding, errors and read tracking', () async {
+    final id = AssetId('app', 'lib/text.txt');
+    final cache = AssetReadCache({id: utf8.encode('日本😀')});
+    final io = RemoteAssetReaderWriter(readCache: cache, readableCache: {});
+    expect(await io.readAsString(id, inArtifactTree: true), '日本😀');
+    expect(io.observedReads, {id});
+    cache[id] = [0xe9];
+    expect(await io.readAsString(id, encoding: latin1), 'é');
+    await expectLater(io.readAsString(id), throwsFormatException);
+    expect(
+      await io.readAsString(
+        id,
+        encoding: const Utf8Codec(allowMalformed: true),
+      ),
+      '\uFFFD',
+    );
+  });
+
+  test(
+    'public byte mutation and cache invalidation preserve MD5 and text',
+    () async {
+      final id = AssetId('app', 'lib/café.txt');
+      final original = utf8.encode('original');
+      final cache = AssetReadCache({id: original});
+      final io = RemoteAssetReaderWriter(readCache: cache, readableCache: {});
+      final expected = md5.convert([...original, ...id.toString().codeUnits]);
+      final bytes = await io.readAsBytes(id);
+      bytes[0] = 0;
+      bytes.add(0);
+      expect(await io.readAsString(id), 'original');
+      expect(await io.digest(id, inArtifactTree: true), expected);
+      expect(cache.contentFor(id)!.cachedContentDigest, isNull);
+      for (final invalidate in [() => cache.remove(id), () => cache.clear()]) {
+        invalidate();
+        cache[id] = utf8.encode('replacement');
+        expect(await io.readAsString(id), 'replacement');
+        expect(
+          await io.digest(id),
+          md5.convert([
+            ...utf8.encode('replacement'),
+            ...id.toString().codeUnits,
+          ]),
+        );
+      }
+      expect(io.observedReads, {id});
+    },
+  );
+
+  for (final postProcess in [false, true]) {
+    test(
+      'string and digest reads enforce ${postProcess ? 'post-process input' : 'blocked asset'} visibility',
+      () async {
+        final id = AssetId('app', 'lib/hidden.txt');
+        final io = RemoteAssetReaderWriter(
+          readCache: AssetReadCache({id: utf8.encode('cached')}),
+          readableCache: {id},
+        );
+        io.beginAction(
+          rpc: _rpc(),
+          package: 'app',
+          primaryInput: postProcess ? AssetId('app', 'lib/input.txt') : null,
+          blockedAssets: postProcess ? {} : {id},
+        );
+        try {
+          await expectLater(
+            io.readAsString(id),
+            throwsA(isA<AssetNotFoundException>()),
+          );
+          await expectLater(
+            io.digest(id),
+            throwsA(isA<AssetNotFoundException>()),
+          );
+          expect(io.observedReads, {id});
+          if (postProcess) {
+            final step = RemotePostProcessBuildStep(
+              inputId: AssetId('app', 'lib/input.txt'),
+              io: io,
+              deletePrimaryInput: (_) {},
+            );
+            await expectLater(
+              step.digest(id),
+              throwsA(isA<InvalidInputException>()),
+            );
+          }
+        } finally {
+          io.endAction();
+        }
+      },
+    );
+  }
+
   test('same-action output rewrites never reuse an earlier digest', () async {
     final id = AssetId('app', 'lib/output.dart');
     final io = RemoteAssetReaderWriter(
@@ -27,9 +119,11 @@ void main() {
     );
     try {
       await io.writeAsBytes(id, [1]);
+      expect(await io.digest(id), md5.convert([1, ...id.toString().codeUnits]));
       final first = await io.readContent(id);
       final firstDigest = first.contentDigest;
       await io.writeAsBytes(id, [2]);
+      expect(await io.digest(id), md5.convert([2, ...id.toString().codeUnits]));
       expect((await io.readContent(id)).contentDigest, isNot(firstDigest));
       // Even direct mutation of the output map cannot mutate an old snapshot.
       io.outputs[id]![0] = 3;
