@@ -1,10 +1,12 @@
 use crate::builder::RustBuildConfig;
 use crate::graph::{ActionState, GraphState};
 use crate::metrics::FilesystemMetrics;
-use crate::plan::{BuildSpec, output_digest};
+use crate::plan::{BuildSpec, output_digest, output_path};
 use crate::workspace::Workspace;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io;
+use std::path::Path;
+use std::sync::Mutex;
 use std::thread;
 use std::time::Instant;
 
@@ -31,30 +33,38 @@ pub(super) fn analyze(
     plan: &PlannedActions,
     filesystem_metrics: &mut FilesystemMetrics,
 ) -> io::Result<DirtyPlan> {
+    let dirty_check_started = Instant::now();
     let specs = &plan.specs;
-    let mut current_output_digests = BTreeMap::new();
-    for action in state.actions.values() {
-        if let Some(builder) = build_config.definition(&action.builder) {
-            for output in &action.outputs {
-                if let Some(digest) = output_digest(workspace, builder, output)? {
-                    current_output_digests.insert(output.clone(), digest);
-                }
+    if state.actions.is_empty() {
+        // No recorded action can consume a digest or contribute a dependency
+        // edge: every spec is dirty, and there can be no deleted actions.
+        // Still read/hash outputs once and propagate all I/O errors.
+        check_unrecorded_outputs(workspace, specs, output_digest)?;
+        let mut dirty = Vec::new();
+        let mut lazy_force_keys = BTreeSet::new();
+        for spec in specs {
+            if spec.builder.is_optional {
+                lazy_force_keys.insert(spec.action_key());
+            } else {
+                dirty.push(spec.clone());
             }
         }
+        filesystem_metrics.dirty_check_us = dirty_check_started.elapsed().as_micros();
+        return Ok(DirtyPlan {
+            dirty,
+            lazy_force_keys,
+            deleted_actions: Vec::new(),
+        });
     }
+    let (recorded_output_digests, spec_output_digests) =
+        collect_output_digests(workspace, state, build_config, specs, output_digest)?;
+    let mut current_output_digests = BTreeMap::new();
+    apply_output_digests(&mut current_output_digests, recorded_output_digests);
     let mut dirty = Vec::new();
     let mut dirty_roots = Vec::new();
-    let dirty_check_started = Instant::now();
     let dirty_context = state.dirty_context(current_snapshot);
-    // Reading and hashing every declared output is the bulk of the dirty
-    // check; fan it out across cores before the serial evaluation loop.
-    let spec_output_digests = collect_output_digests(workspace, specs)?;
     for (spec, digests) in specs.iter().zip(spec_output_digests) {
-        current_output_digests.extend(
-            digests
-                .into_iter()
-                .filter_map(|(output, digest)| digest.map(|digest| (output, digest))),
-        );
+        apply_output_digests(&mut current_output_digests, digests);
 
         let key = spec.action_key();
         let needs_build = match state.actions.get(&key) {
@@ -107,43 +117,132 @@ pub(super) fn analyze(
     })
 }
 
-type OutputDigests = Vec<(String, Option<String>)>;
+type OutputDigests<'a> = Vec<(&'a str, Option<String>)>;
 
-/// Reads and digests every declared output across `specs`, returning one
-/// `(output, Option<digest>)` pair list per spec in input order. The reads
-/// run on a scoped thread pool because they are the bulk of the dirty check.
-fn collect_output_digests(
+// Preserve the old replay order: all recorded outputs first, then each spec's
+// declarations immediately before its dirty check. Missing results never erase
+// a previous digest for the same logical ID (including source/cache collisions).
+fn apply_output_digests(current: &mut BTreeMap<String, String>, digests: OutputDigests<'_>) {
+    current.extend(
+        digests
+            .into_iter()
+            .filter_map(|(output, digest)| digest.map(|digest| (output.to_owned(), digest))),
+    );
+}
+
+/// Resolve both recorded (including dynamic/optional) and declared outputs,
+/// deduplicate by physical path, and read each path once on the scoped pool.
+/// The result, including NotFound, lives only for this analyze call. Logical
+/// IDs and replay order are kept separately from the physical-path work list.
+pub(super) fn collect_output_digests<'a>(
     workspace: &Workspace,
-    specs: &[crate::plan::BuildSpec],
-) -> io::Result<Vec<OutputDigests>> {
-    let digests_for = |spec: &crate::plan::BuildSpec| {
-        spec.outputs
-            .iter()
-            .map(|output| {
-                output_digest(workspace, &spec.builder, output)
-                    .map(|digest| (output.clone(), digest))
+    state: &'a GraphState,
+    build_config: &RustBuildConfig,
+    specs: &'a [BuildSpec],
+    digest_at_path: impl Fn(&Path) -> io::Result<Option<String>> + Sync,
+) -> io::Result<(OutputDigests<'a>, Vec<OutputDigests<'a>>)> {
+    let mut requests = Vec::new();
+    for action in state.actions.values() {
+        if let Some(builder) = build_config.definition(&action.builder) {
+            requests.extend(
+                action
+                    .outputs
+                    .iter()
+                    .map(|output| (builder, output.as_str())),
+            );
+        }
+    }
+    let recorded_count = requests.len();
+    for spec in specs {
+        requests.extend(
+            spec.outputs
+                .iter()
+                .map(|output| (spec.builder.as_ref(), output.as_str())),
+        );
+    }
+    // Path resolution was previously parallel with reading. Keep it parallel:
+    // serial resolution/registration especially penalizes clean builds, where
+    // there are no recorded outputs to share with the declarations.
+    let resolved = collect_parallel(&requests, |(builder, output)| {
+        output_path(workspace, builder, output)
+    })?;
+    let mut paths = Vec::<&Path>::new();
+    let mut path_indices = HashMap::with_capacity(resolved.len());
+    let indices = resolved
+        .iter()
+        .map(|path| {
+            let next = paths.len();
+            *path_indices.entry(path.as_path()).or_insert_with(|| {
+                paths.push(path.as_path());
+                next
             })
-            .collect::<io::Result<Vec<_>>>()
-    };
+        })
+        .collect::<Vec<_>>();
+    let digests = collect_parallel(&paths, |path| digest_at_path(path))?;
+    // Borrow logical IDs until a successful digest is applied. In particular,
+    // clean-build misses require no logical-ID or digest string allocations.
+    let mut replay = requests
+        .into_iter()
+        .zip(indices)
+        .map(|((_, output), index)| (output, digests[index].clone()));
+    let recorded = replay.by_ref().take(recorded_count).collect();
+    let declared = specs
+        .iter()
+        .map(|spec| replay.by_ref().take(spec.outputs.len()).collect())
+        .collect();
+    Ok((recorded, declared))
+}
+
+/// With no recorded actions, all declarations are dirty irrespective of their
+/// digests. Deduplicate the reads without building an unused replay table.
+/// Only path registration is locked; path resolution, I/O and hashing run in
+/// parallel. A failing read still fails the whole analysis.
+pub(super) fn check_unrecorded_outputs(
+    workspace: &Workspace,
+    specs: &[BuildSpec],
+    digest_at_path: impl Fn(&Path) -> io::Result<Option<String>> + Sync,
+) -> io::Result<()> {
+    let requests = specs
+        .iter()
+        .flat_map(|spec| {
+            spec.outputs
+                .iter()
+                .map(move |output| (&spec.builder, output))
+        })
+        .collect::<Vec<_>>();
+    let seen = Mutex::new(HashSet::with_capacity(requests.len()));
+    collect_parallel(&requests, |(builder, output)| {
+        let path = output_path(workspace, builder, output)?;
+        let first = seen
+            .lock()
+            .map_err(|_| io::Error::other("output path mutex poisoned"))?
+            .insert(path.clone());
+        if first {
+            digest_at_path(&path)?;
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
+fn collect_parallel<T: Sync, R: Send>(
+    inputs: &[T],
+    operation: impl Fn(&T) -> io::Result<R> + Sync,
+) -> io::Result<Vec<R>> {
     let worker_count = thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(4)
-        .min(specs.len().max(1));
+        .min(inputs.len().max(1));
     if worker_count <= 1 {
-        return specs.iter().map(digests_for).collect();
+        return inputs.iter().map(operation).collect();
     }
-    let chunk_size = specs.len().div_ceil(worker_count);
-    let chunks = specs.chunks(chunk_size).collect::<Vec<_>>();
+    let chunk_size = inputs.len().div_ceil(worker_count);
     thread::scope(|scope| {
-        let handles = chunks
-            .iter()
+        let handles = inputs
+            .chunks(chunk_size)
             .map(|chunk| {
-                scope.spawn(move || {
-                    chunk
-                        .iter()
-                        .map(digests_for)
-                        .collect::<io::Result<Vec<_>>>()
-                })
+                let operation = &operation;
+                scope.spawn(move || chunk.iter().map(operation).collect::<io::Result<Vec<_>>>())
             })
             .collect::<Vec<_>>();
         handles

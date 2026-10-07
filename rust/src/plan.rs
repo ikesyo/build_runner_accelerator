@@ -343,12 +343,9 @@ pub(crate) fn output_path(
     }
 }
 
-pub(crate) fn output_digest(
-    workspace: &Workspace,
-    builder: &BuilderDefinition,
-    asset: &str,
-) -> io::Result<Option<String>> {
-    match fs::read(output_path(workspace, builder, asset)?) {
+/// Digest a resolved output path without changing missing-file/error semantics.
+pub(crate) fn output_digest(path: &std::path::Path) -> io::Result<Option<String>> {
+    match fs::read(path) {
         Ok(bytes) => Ok(Some(digest_bytes(&bytes))),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
