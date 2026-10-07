@@ -35,6 +35,25 @@ dart run build_runner_accelerator build
 dart run build_runner_accelerator watch
 ```
 
+To move the first build's worker AOT compile off the critical path, warm the
+frontend caches right after dependency resolution:
+
+```bash
+dart pub get
+dart run build_runner_accelerator prewarm --background
+```
+
+`prewarm` generates the builder manifest, selects the worker, and compiles its
+AOT artifact into the same caches the first `build` consults — without running
+any build actions. `--background` detaches the work into a low-priority
+process that logs to `.dart_tool/build_runner_accelerator/prewarm.log`; a
+second invocation while one is already running is a no-op, and a concurrent
+`build` waits for the published artifact instead of duplicating the compile.
+Without `--background` the command waits for completion. `prewarm` exits 0
+without doing anything under `--mode dart` or when the native frontend is
+unavailable, so the setup hook never fails for lack of a frontend. (`prewarm`
+accepts the `aot-prewarm` alias used by earlier CI tooling.)
+
 The default `auto` mode downloads and verifies the matching signed native
 frontend on supported Linux, macOS, and Windows platforms. On macOS Intel or
 when native execution is unavailable, it falls back to stock Dart
@@ -209,7 +228,7 @@ path is anchored at the workspace root — then the platform cache directory
 `build_runner_accelerator`. Caching that directory in CI gives every build
 warm-start behavior. Where the caches are cold, the first build still pays the
 synchronous worker AOT compile and the first-touch analysis once per toolchain;
-running `aot-prewarm` ahead of the next build performs the compile and
+running `prewarm` ahead of the next build performs the compile and
 concurrently warms the byte store with JIT analysis shards. When the
 builder manifest has to be (re)generated, the worker AOT compile overlaps
 the manifest's factory probe rather than serializing after it.
@@ -251,7 +270,7 @@ for measurements.
 | `BUILD_RUNNER_ACCELERATOR_MANIFEST_SNAPSHOT=0` | Run the manifest generator from source instead of its cached kernel. |
 | `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0` | Disable the shared analyzer byte store. |
 | `BUILD_RUNNER_ACCELERATOR_ANALYSIS_SINGLE_FLIGHT=1` | Opt in to experimental cold-analysis ownership. Disabled by default; shared caching remains enabled. |
-| `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` | Disable the analysis shards spawned by `aot-prewarm`. |
+| `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` | Disable the analysis shards spawned by `prewarm`. |
 | `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_JOBS=<n>` | Override the prewarm shard count (default: half of available CPUs). |
 | `BUILD_RUNNER_ACCELERATOR_COMPILE_PREWARM=1` | Opt-in: overlap the synchronous worker AOT compile with JIT analysis shards that start filling the byte store (useful on slower machines where the compile window is long). |
 | `BUILD_RUNNER_ACCELERATOR_MANIFEST_PREWARM=1` | Opt-in: also run the analysis shards across the whole manifest-generation window (kernel compile, early catalog, AOT compile, probe); killed before workers spawn. Off by default — the kernel-compile segment does not pay (ADR 0017). |
