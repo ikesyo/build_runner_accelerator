@@ -33,7 +33,8 @@ Two properties make setup-time warming safe to build on:
   generation, worker selection, AOT compile, analysis shards — so it cannot
   drift from what `build` warms.
 - `prewarm --background` detaches: the launcher-side invocation returns
-  immediately while a copy of the binary (new process group, lowered
+  immediately while a copy of the binary (new session on Unix, new process
+  group on Windows, lowered
   scheduling priority — `nice` on Unix, `BELOW_NORMAL_PRIORITY_CLASS` on
   Windows) runs the foreground pipeline with output to
   `.dart_tool/build_runner_accelerator/prewarm.log`.

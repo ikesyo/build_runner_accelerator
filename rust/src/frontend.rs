@@ -509,13 +509,16 @@ fn detached_prewarm_command() -> io::Result<Command> {
     use std::os::unix::process::CommandExt;
     unsafe extern "C" {
         fn nice(increment: i32) -> i32;
+        fn setsid() -> i32;
     }
     let mut command = Command::new(std::env::current_exe()?);
-    command.process_group(0);
-    // SAFETY: pre_exec runs after fork, before exec; `nice` is a plain libc
-    // call with no allocation or locking, which is async-signal-safe here.
+    // SAFETY: pre_exec runs after fork, before exec; these libc calls do not
+    // allocate or acquire Rust locks. setsid detaches the controlling terminal.
     unsafe {
         command.pre_exec(|| {
+            if setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
             nice(19);
             Ok(())
         });
@@ -537,7 +540,7 @@ fn detached_prewarm_command() -> io::Result<Command> {
 
 #[cfg(not(any(unix, windows)))]
 fn detached_prewarm_command() -> io::Result<Command> {
-    Command::new(std::env::current_exe()?)
+    Ok(Command::new(std::env::current_exe()?))
 }
 
 fn select_dart_fallback(options: &Options, reason: &str) -> io::Result<Option<RustBuildConfig>> {
@@ -568,7 +571,7 @@ pub(crate) fn run_dart_fallback(options: &Options, workspace: &Workspace) -> io:
 
 #[cfg(test)]
 mod tests {
-    use super::{cleanup_stale_worker_readiness_markers, EARLY_WORKER_MARKER_MAX_AGE};
+    use super::{EARLY_WORKER_MARKER_MAX_AGE, cleanup_stale_worker_readiness_markers};
     use std::fs::{self, File, FileTimes};
     use std::time::{Duration, SystemTime};
 

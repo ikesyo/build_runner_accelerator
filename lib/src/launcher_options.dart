@@ -114,6 +114,11 @@ class LauncherOptions {
       }
     }
 
+    if (rustArguments.contains('--background') &&
+        !const {'prewarm', 'aot-prewarm'}.contains(command)) {
+      throw FormatException('--background is only supported with prewarm');
+    }
+
     if (!dartBinaryExplicit) dartBinary = _defaultDartBinary();
 
     if (forceAot && forceJit) {

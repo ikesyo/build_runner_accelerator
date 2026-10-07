@@ -88,6 +88,21 @@ aot_artifact() {
   [[ -x "$aot_path" ]] && [[ -f "$aot_path.d" ]] && [[ -f "$aot_path.sdk" ]]
 }
 
+wait_for_background() {
+  local root=$1
+  local generated_dir="$root/.dart_tool/build_runner_accelerator"
+  local waited=0
+  # The ready line precedes the lock guard's drop. Wait for both so that
+  # clearing caches or removing the temporary workspace cannot race the child.
+  until [[ -f "$generated_dir/prewarm.log" ]] &&
+      grep -Fq 'AOT prewarm ready:' "$generated_dir/prewarm.log" &&
+      [[ ! -f "$generated_dir/.aot-background.lock" ]]; do
+    waited=$((waited + 1))
+    (( waited < 240 )) || fail 'background prewarm did not finish in time'
+    sleep 0.5
+  done
+}
+
 setup_workspace "$workspace_a"
 setup_workspace "$workspace_b"
 
@@ -99,6 +114,8 @@ grep -Fq 'AOT prewarm ready:' "$temporary_dir/prewarm-a.log" ||
 aot_artifact "$workspace_a" || fail 'foreground prewarm published no AOT artifact'
 [[ -f "$workspace_a/.dart_tool/build_runner_accelerator/builder-manifest.json" ]] ||
   fail 'prewarm produced no builder manifest'
+[[ ! -f "$workspace_a/lib/model_01.g.dart" ]] ||
+  fail 'prewarm ran build actions'
 
 # A second foreground prewarm must reuse the published artifact, not
 # recompile.
@@ -137,12 +154,7 @@ grep -Fq 'already running' "$temporary_dir/bg2.log" ||
 # Wait for the detached child to finish (bounded): the completion line is
 # logged after the artifact is published, so poll on it (the artifact alone
 # appears first and loses the race).
-waited=0
-until [[ -f "$prewarm_log_file" ]] && grep -Fq 'AOT prewarm ready:' "$prewarm_log_file"; do
-  waited=$((waited + 1))
-  (( waited < 240 )) || fail 'background prewarm did not finish in time'
-  sleep 0.5
-done
+wait_for_background "$workspace_b"
 aot_artifact "$workspace_b" ||
   fail 'background prewarm published no AOT artifact'
 
@@ -158,6 +170,7 @@ run_runner "$workspace_b" "$temporary_dir/bg3.log" prewarm --background ||
 # wait for the published artifact or reuse it — never a second compile.
 run_runner "$workspace_b" "$temporary_dir/build-b.log" build ||
   fail 'build concurrent with background prewarm failed'
+wait_for_background "$workspace_b"
 [[ -f "$workspace_b/lib/model_01.g.dart" ]] || fail 'concurrent build produced no output'
 # The detached child's output goes to prewarm.log, not the launcher log.
 compiles=$(( $(grep -Fhc 'Rust worker AOT compile: elapsed_us=' "$prewarm_log_file" || true) +
@@ -168,6 +181,15 @@ wait_marker=no
 if grep -Fq 'waiting for the published artifact' "$temporary_dir/build-b.log"; then
   wait_marker=yes
 fi
+
+# Check every generated output against stock build_runner after warming.
+(cd "$workspace_a" && PUB_CACHE="$pub_cache" "$dart_bin" \
+  --suppress-analytics run build_runner build --delete-conflicting-outputs) \
+  >"$temporary_dir/stock.log" 2>&1 || fail 'stock reference build failed'
+for reference in "$workspace_a/lib"/*.g.dart; do
+  cmp "$reference" "$workspace_b/lib/$(basename "$reference")" ||
+    fail 'post-prewarm output differs from stock'
+done
 
 # --- Mode contract ----------------------------------------------------------
 "$fast_bin" prewarm --root "$workspace_b" --dart "$dart_bin" --mode dart \

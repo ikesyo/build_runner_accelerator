@@ -658,8 +658,9 @@ fn prepare_worker_aot(
     // duplicating them. The env-var path marks a lock this process already
     // owns (a spawned background helper); everything else is external.
     let lock_path = aot_compile_lock_path(&context);
+    let wait_deadline = Instant::now() + AOT_COMPILE_WAIT_MAX;
     if let Some(lock_path) = &lock_path {
-        if let Some(aot) = wait_for_aot_winner(&context, lock_path)? {
+        if let Some(aot) = wait_for_aot_winner(&context, lock_path, wait_deadline)? {
             return Ok(aot);
         }
     }
@@ -674,7 +675,7 @@ fn prepare_worker_aot(
                     path: lock_path.clone(),
                 })
             } else {
-                match wait_for_aot_winner(&context, lock_path)? {
+                match wait_for_aot_winner(&context, lock_path, wait_deadline)? {
                     Some(aot) => return Ok(aot),
                     None => None,
                 }
@@ -682,6 +683,15 @@ fn prepare_worker_aot(
         }
         _ => None,
     };
+
+    // The previous owner may have published and released the lock between
+    // our cache check and acquisition. Recheck before starting a compiler.
+    if let Some(aot) = current_aot_from_context(&context)? {
+        return Ok(aot);
+    }
+    if let Ok(Some(aot)) = restore_shared_aot(&context) {
+        return Ok(aot);
+    }
 
     // Opt-in overlap: the compile is mostly single-threaded, so JIT
     // analysis shards can start filling the shared byte store meanwhile.
@@ -839,7 +849,11 @@ fn background_aot_lock_owned(lock_path: &Path) -> bool {
 /// or free, when it is abandoned or outlives the wait bound, or when the
 /// winner ended without publishing anything current. A shared-store hit from
 /// a parallel compile in another workspace also satisfies the wait.
-fn wait_for_aot_winner(context: &AotContext, lock_path: &Path) -> io::Result<Option<PathBuf>> {
+fn wait_for_aot_winner(
+    context: &AotContext,
+    lock_path: &Path,
+    deadline: Instant,
+) -> io::Result<Option<PathBuf>> {
     if background_aot_lock_owned(lock_path)
         || !lock_path.is_file()
         || background_aot_lock_is_stale(lock_path)
@@ -848,7 +862,6 @@ fn wait_for_aot_winner(context: &AotContext, lock_path: &Path) -> io::Result<Opt
     }
     eprintln!("Rust worker AOT compile is already running; waiting for the published artifact");
     let wait_start = Instant::now();
-    let deadline = wait_start + AOT_COMPILE_WAIT_MAX;
     loop {
         if let Some(aot) = current_aot_from_context(context)? {
             if env::var("BUILD_RUNNER_ACCELERATOR_METRICS").as_deref() == Ok("1") {
@@ -1726,14 +1739,16 @@ mod tests {
         let path = std::env::temp_dir().join(format!("build-runner-accelerator-lock-{}", std::process::id()));
         let _ = fs::remove_file(&path);
         let gate = Arc::new(Barrier::new(8));
-        let handles = (0..8).map(|_| {
-            let gate = Arc::clone(&gate);
-            let path = path.clone();
-            thread::spawn(move || {
-                gate.wait();
-                acquire_background_aot_lock(&path).unwrap()
+        let handles = (0..8)
+            .map(|_| {
+                let gate = Arc::clone(&gate);
+                let path = path.clone();
+                thread::spawn(move || {
+                    gate.wait();
+                    acquire_background_aot_lock(&path).unwrap()
+                })
             })
-        }).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
         let owners = handles
             .into_iter()
             .map(|handle| handle.join().unwrap())
@@ -1753,6 +1768,44 @@ mod tests {
     }
 
     static PREWARM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn aot_wait_retries_share_the_deadline() {
+        let root = std::env::temp_dir().join(format!(
+            "build-runner-accelerator-wait-deadline-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        fs::write(root.join("pubspec.yaml"), "name: wait_test\n").unwrap();
+        fs::write(
+            root.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[]}"#,
+        )
+        .unwrap();
+        let context = super::AotContext {
+            workspace: crate::workspace::Workspace::load(root.clone()).unwrap(),
+            sdk_root: root.join("sdk"),
+            worker_path: root.join("worker.dart"),
+            cache_key: "wait-deadline-test".to_owned(),
+            aot_sdk_root: root.join("aot-sdk"),
+            aot_path: root.join("aot-sdk/bin/worker"),
+            depfile_path: root.join("aot-sdk/bin/worker.d"),
+            sdk_metadata_path: root.join("aot-sdk/bin/worker.sdk"),
+        };
+        let lock_path = root.join(super::AOT_COMPILE_LOCK_NAME);
+        assert!(acquire_background_aot_lock(&lock_path).unwrap());
+        let deadline = std::time::Instant::now();
+        for _ in 0..2 {
+            assert!(
+                super::wait_for_aot_winner(&context, &lock_path, deadline)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert!(deadline.elapsed() < std::time::Duration::from_secs(1));
+        assert!(lock_path.is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn analysis_prewarm_spawn_is_single_flight() {
