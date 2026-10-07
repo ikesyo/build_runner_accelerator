@@ -132,6 +132,10 @@ wait_for_file "$aot_path" 1200 || fail 'background AOT compile did not publish a
 
 # A failed helper must remove its lock and leave the foreground build on the
 # script path. Removing the failed cache then exercises the retry path.
+# Input-only edits do not invalidate the compiled worker: force a miss in
+# both cache layers so this case actually starts the failing compiler.
+rm -f -- "$aot_path" "$aot_path.d" "$aot_path.sdk"
+remove_tree "$BUILD_RUNNER_ACCELERATOR_CACHE"
 rm -f -- "$script_started" "$compile_started"
 touch "$fail_compile"
 printf '\n// background AOT failure probe\n' >>"$rust_dir/lib/model_01.dart"
@@ -157,6 +161,7 @@ else
 fi
 rm -f -- "$fail_compile" "$compile_started" "$script_started"
 rm -f -- "$aot_path" "$aot_path.d" "$aot_path.sdk"
+remove_tree "$BUILD_RUNNER_ACCELERATOR_CACHE"
 printf '\n// background AOT retry probe\n' >>"$rust_dir/lib/model_01.dart"
 BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background DART_SDK="$dart_sdk" \
   BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" worker_run_frontend \
