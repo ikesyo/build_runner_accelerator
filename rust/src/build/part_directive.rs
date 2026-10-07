@@ -2,6 +2,7 @@ use crate::plan::BuildSpec;
 use crate::protocol::BuildResult;
 use crate::workspace::Workspace;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 pub(super) fn part_directive_filter_disabled() -> bool {
     std::env::var("BUILD_RUNNER_ACCELERATOR_PART_FILTER").is_ok_and(|value| value == "0")
@@ -15,7 +16,7 @@ pub(super) fn part_directive_filter_disabled() -> bool {
 /// or unterminated URIs — keeps the action.
 pub(super) fn part_directive_skips(
     workspace: &Workspace,
-    overlay: &BTreeMap<String, Vec<u8>>,
+    overlay: &BTreeMap<String, Arc<[u8]>>,
     spec: &BuildSpec,
 ) -> bool {
     let Some(suffix) = spec.part_directive_suffix.as_deref() else {
@@ -32,14 +33,18 @@ pub(super) fn part_directive_skips(
         .and_then(|name| name.strip_suffix(".dart"));
     let Some(stem) = stem else { return false };
     let expected = format!("{stem}{suffix}");
+    let disk_bytes;
     let bytes = match overlay.get(&spec.input) {
-        Some(bytes) => bytes.clone(),
-        None => match workspace.read_asset_or_cache_shared(&spec.input) {
-            Ok(bytes) => bytes.as_ref().clone(),
-            Err(_) => return false,
-        },
+        Some(bytes) => bytes.as_ref(),
+        None => {
+            disk_bytes = match workspace.read_asset_or_cache_shared(&spec.input) {
+                Ok(bytes) => bytes,
+                Err(_) => return false,
+            };
+            disk_bytes.as_slice()
+        }
     };
-    let Ok(source) = std::str::from_utf8(&bytes) else {
+    let Ok(source) = std::str::from_utf8(bytes) else {
         return false;
     };
     !declares_part_directive(source, &expected)

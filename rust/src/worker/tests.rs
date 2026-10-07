@@ -10,6 +10,7 @@ use super::request::{BuildRequest, batch_blocked_assets};
 use crate::visibility::AssetVisibility;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 fn build_request(phase: u32, post_process: bool) -> BuildRequest {
     BuildRequest {
@@ -185,7 +186,10 @@ fn memory_transport_rejects_missing_source_and_cache_updates() {
     let cache = "app|lib/generated.part".to_string();
     let sources = BTreeSet::from([source.clone()]);
     let caches = BTreeSet::from([cache.clone()]);
-    let mut overlay = BTreeMap::from([(source.clone(), vec![1]), (cache.clone(), Vec::new())]);
+    let mut overlay = BTreeMap::from([
+        (source.clone(), Arc::<[u8]>::from([1])),
+        (cache.clone(), Arc::from([])),
+    ]);
     assert!(validate_memory_overlay(&overlay, &sources, &caches).is_ok());
     for asset in [&source, &cache] {
         let bytes = overlay.remove(asset).unwrap();

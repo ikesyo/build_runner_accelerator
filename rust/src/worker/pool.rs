@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::thread;
 
 pub struct WorkerPool {
@@ -316,7 +317,7 @@ impl WorkerPool {
         &mut self,
         workspace: &Workspace,
         requests: &[BuildRequest],
-        overlay: &BTreeMap<String, Vec<u8>>,
+        overlay: &BTreeMap<String, Arc<[u8]>>,
         deleted_overlay: &BTreeSet<String>,
         visibility: &AssetVisibility,
     ) -> io::Result<Vec<BuildResult>> {
@@ -427,7 +428,7 @@ impl WorkerPool {
         &mut self,
         workspace: &Workspace,
         requests: &[BuildRequest],
-        overlay: &BTreeMap<String, Vec<u8>>,
+        overlay: &BTreeMap<String, Arc<[u8]>>,
         deleted_overlay: &BTreeSet<String>,
         visibility: &AssetVisibility,
         worker_limit: usize,
@@ -503,7 +504,7 @@ impl WorkerPool {
         &mut self,
         workspace: &Workspace,
         requests: &[BuildRequest],
-        overlay: &mut BTreeMap<String, Vec<u8>>,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
         deleted_overlay: &mut BTreeSet<String>,
         visibility: &AssetVisibility,
         lazy_specs: &BTreeMap<String, BuildSpec>,
@@ -547,7 +548,7 @@ impl WorkerPool {
     pub fn reset_resolver(
         &mut self,
         root: &Path,
-        overlay: &BTreeMap<String, Vec<u8>>,
+        overlay: &BTreeMap<String, Arc<[u8]>>,
         updated_sources: BTreeSet<String>,
         deleted_sources: BTreeSet<String>,
         updated_cache: BTreeSet<String>,
@@ -637,7 +638,7 @@ impl WorkerPool {
 /// Null transport is safe only when every updated value belongs to the
 /// current overlay; otherwise a worker could retain an older produced value.
 pub(super) fn validate_memory_overlay(
-    overlay: &BTreeMap<String, Vec<u8>>,
+    overlay: &BTreeMap<String, Arc<[u8]>>,
     updated_sources: &BTreeSet<String>,
     updated_cache: &BTreeSet<String>,
 ) -> io::Result<()> {

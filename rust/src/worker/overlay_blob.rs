@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -17,7 +18,7 @@ impl OverlayBlob {
     /// Publication follows successful writes/flush/close; dropping removes it.
     pub fn create(
         root: &Path,
-        overlay: &BTreeMap<String, Vec<u8>>,
+        overlay: &BTreeMap<String, Arc<[u8]>>,
         updated: &BTreeSet<String>,
     ) -> io::Result<Self> {
         Self::create_with(root, overlay, updated, |file, bytes| file.write_all(bytes))
@@ -25,7 +26,7 @@ impl OverlayBlob {
     /// Allows injected write failures while preserving partial-file cleanup.
     fn create_with(
         root: &Path,
-        overlay: &BTreeMap<String, Vec<u8>>,
+        overlay: &BTreeMap<String, Arc<[u8]>>,
         updated: &BTreeSet<String>,
         mut write: impl FnMut(&mut fs::File, &[u8]) -> io::Result<()>,
     ) -> io::Result<Self> {
@@ -93,7 +94,10 @@ mod tests {
         let a = "app|lib/a.dart".to_string();
         let b = "app|lib/b.part".to_string();
         let updated = BTreeSet::from([a.clone(), b.clone()]);
-        let mut overlay = BTreeMap::from([(a.clone(), vec![1, 2]), (b.clone(), vec![3])]);
+        let mut overlay = BTreeMap::from([
+            (a.clone(), Arc::<[u8]>::from([1, 2])),
+            (b.clone(), Arc::from([3])),
+        ]);
         let first = OverlayBlob::create(&root, &overlay, &updated).unwrap();
         assert_eq!(fs::read(&first.path).unwrap(), [1, 2, 3]);
         assert_eq!(first.metadata["index"][&b]["offset"], 2);
@@ -101,7 +105,7 @@ mod tests {
         let second = OverlayBlob::create(&root, &overlay, &updated).unwrap();
         assert!(second.metadata["index"].get(&a).is_none());
         assert_eq!(fs::read(&first.path).unwrap(), [1, 2, 3]); // immutable
-        overlay.insert(a.clone(), vec![9]);
+        overlay.insert(a.clone(), Arc::from([9]));
         let third = OverlayBlob::create(&root, &overlay, &updated).unwrap();
         assert_eq!(fs::read(&third.path).unwrap(), [9, 3]);
         let empty = OverlayBlob::create(&root, &overlay, &BTreeSet::new()).unwrap();
@@ -119,7 +123,7 @@ mod tests {
     #[test]
     fn incomplete_write_cleans_up_and_recovers() {
         let root = root();
-        let overlay = BTreeMap::from([("app|a".into(), vec![1, 2, 3])]);
+        let overlay = BTreeMap::from([("app|a".into(), Arc::<[u8]>::from([1, 2, 3]))]);
         let updated = overlay.keys().cloned().collect();
         let failed = OverlayBlob::create_with(&root, &overlay, &updated, |file, bytes| {
             file.write_all(&bytes[..1])?;

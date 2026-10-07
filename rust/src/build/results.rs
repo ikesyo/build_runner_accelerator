@@ -6,6 +6,7 @@ use crate::protocol::BuildResult;
 use crate::workspace::Workspace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
+use std::sync::Arc;
 
 use super::transaction::PendingTransaction;
 
@@ -165,7 +166,7 @@ pub(super) fn record_build_result(
         }
         pending
             .overlay
-            .insert(generated.asset.clone(), generated.bytes.clone());
+            .insert(generated.asset.clone(), Arc::clone(&generated.bytes));
         pending.deleted_overlay.remove(&generated.asset);
         if builder.build_to == BuildTo::Source {
             pending
@@ -186,7 +187,7 @@ pub(super) fn record_build_result(
         pending.pending_outputs.push((
             spec.builder.clone(),
             generated.asset.clone(),
-            generated.bytes.clone(),
+            Arc::clone(&generated.bytes),
         ));
     }
     let mut output_digests = BTreeMap::new();

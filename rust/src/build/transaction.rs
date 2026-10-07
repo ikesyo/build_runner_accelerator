@@ -32,9 +32,11 @@ impl ResolverChanges {
 }
 
 pub(super) struct PendingTransaction {
-    pub(super) overlay: BTreeMap<String, Vec<u8>>,
+    // Immutable output allocations are shared with pending_outputs (and lazy
+    // results); deleting an overlay entry only releases that entry's reference.
+    pub(super) overlay: BTreeMap<String, Arc<[u8]>>,
     pub(super) deleted_overlay: BTreeSet<String>,
-    pub(super) pending_outputs: Vec<(Arc<BuilderDefinition>, String, Vec<u8>)>,
+    pub(super) pending_outputs: Vec<(Arc<BuilderDefinition>, String, Arc<[u8]>)>,
     pub(super) pending_deletions: Vec<(Arc<BuilderDefinition>, String)>,
     pub(super) pending_actions: Vec<(String, ActionState)>,
     pub(super) deleted_actions: Vec<(String, ActionState)>,

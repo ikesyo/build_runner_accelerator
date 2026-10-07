@@ -21,7 +21,7 @@ impl WorkerClient {
         &mut self,
         workspace: &Workspace,
         request: &Value,
-        overlay: &BTreeMap<String, Vec<u8>>,
+        overlay: &BTreeMap<String, Arc<[u8]>>,
         deleted_overlay: &BTreeSet<String>,
         visibility: &AssetVisibility,
         active_request: &BuildRequest,
@@ -59,7 +59,7 @@ impl WorkerClient {
                     ))
                 } else {
                     if let Some(bytes) = overlay.get(asset) {
-                        Ok(ReadResult::Bytes(Arc::new(bytes.clone())))
+                        Ok(ReadResult::Bytes(Arc::clone(bytes)))
                     } else {
                         asset_disk_path(workspace, asset, visibility).map(ReadResult::Path)
                     }
@@ -77,7 +77,7 @@ impl WorkerClient {
                                 "encoding": "raw",
                                 "length": bytes.len(),
                             }),
-                            bytes.as_slice(),
+                            bytes.as_ref(),
                         );
                         self.metrics.asset_rpc_us += started.elapsed().as_micros() as u64;
                         return result;
@@ -274,7 +274,7 @@ fn append_overlay_bytes(payload: &mut Vec<u8>, bytes: &[u8], limit: usize) -> bo
 fn asset_exists(
     workspace: &Workspace,
     asset: &str,
-    overlay: &BTreeMap<String, Vec<u8>>,
+    overlay: &BTreeMap<String, Arc<[u8]>>,
     visibility: &AssetVisibility,
 ) -> io::Result<bool> {
     if overlay.contains_key(asset) {
@@ -388,7 +388,7 @@ pub(super) fn validate_asset_request_context(
 
 enum ReadResult {
     /// Bytes held only in the in-memory overlay; still sent as a binary frame.
-    Bytes(Arc<Vec<u8>>),
+    Bytes(Arc<[u8]>),
     /// Current bytes live at this absolute filesystem path; the worker reads
     /// them directly.
     Path(PathBuf),
