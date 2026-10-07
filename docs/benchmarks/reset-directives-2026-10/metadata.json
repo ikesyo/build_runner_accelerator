@@ -1,0 +1,75 @@
+{
+  "baseline_main": "1d536c4a19a8cd6c1d4d0f4c96ae4e3b7692b4c0",
+  "analyzer": "14.3.0",
+  "sdk": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+  "rust": "1.98.1",
+  "host": "Linux x86_64, 2 CPU quota, 8 GiB limit, warm overlay filesystem page cache",
+  "frontend_sha256": "d482b381ac6b509997397460af4ba8b48a5dcb971fb4e46825ad574c568bef0a",
+  "worker_sha256": {
+    "baseline": "dc5668b7695debdc9940855b0b20ad8d41c09a170a26f80c63d1de2fabf72f11",
+    "candidate": "73ac1a7437f540ac02c3b53252634d236220c4fd9353410dbd2ca55d1c78c0a8"
+  },
+  "inputs_sha256": "3cdbe78eaa210e835988d03bed81762e10597e50556cb7f5805473b2e3720045",
+  "inputs_hash_format": "SHA256 of compact sorted JSON mapping relative input paths to their SHA256 digests",
+  "stock_reference_sha256": "a84b0cf931fee3e8d48508e7fce2ace7346bc226c30b5590b24946db2e09bbed",
+  "worker_policy": "explicit corresponding prepared AOT; excludes compilation/validation",
+  "cold": "clear byte_store/dep_parse; retain prepared AOT/SDK summaries",
+  "regen": "remove workspace accelerator state and all source outputs; retain shared caches",
+  "runs": {
+    "version-speed": {
+      "jobs": [
+        2,
+        4
+      ],
+      "repeats": 3,
+      "wall": false,
+      "metrics": false,
+      "prepared_wall": false,
+      "unique": true
+    },
+    "version-wall": {
+      "jobs": [
+        2,
+        4
+      ],
+      "repeats": 3,
+      "wall": true,
+      "metrics": false,
+      "prepared_wall": false,
+      "unique": true
+    },
+    "version-warm-wall": {
+      "jobs": [
+        2,
+        4
+      ],
+      "repeats": 3,
+      "wall": true,
+      "metrics": false,
+      "prepared_wall": true,
+      "unique": true
+    },
+    "version-detail": {
+      "jobs": [
+        2,
+        4
+      ],
+      "repeats": 1,
+      "wall": true,
+      "metrics": true,
+      "prepared_wall": false,
+      "unique": true
+    },
+    "version-warm-detail": {
+      "jobs": [
+        2,
+        4
+      ],
+      "repeats": 1,
+      "wall": true,
+      "metrics": true,
+      "prepared_wall": true,
+      "unique": true
+    }
+  }
+}

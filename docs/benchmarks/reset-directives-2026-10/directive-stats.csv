@@ -1,0 +1,9 @@
+experiment,jobs,lane,resets,graph_clears,updated,deleted,compare_us,comparisons,dep_lookup_us,dep_lookups,graph_end_us,old_bytes,old_cache_lookup_us,old_cache_misses,old_content_compare_us,old_decode_us,old_exists_checks,old_exists_us,old_extract_requests,old_extracts,old_lookup_us,old_read_us,old_reads,old_same_content_reuses,old_scan_us,repeated_content_extracts,updated_bytes,updated_content_compare_us,updated_decode_us,updated_extract_requests,updated_extracts,updated_scan_us
+version-detail,2,baseline,10,0,640,2124,0,0,259,384,17,0,156,640,0,0,640,4307,0,0,645,0,0,0,0,0,17709876,0,6770,640,640,99143
+version-detail,2,candidate,10,0,640,2124,0,0,471,384,19,0,164,640,0,0,640,6939,0,0,435,0,0,0,0,0,17709876,143,11035,640,640,78714
+version-detail,4,baseline,20,0,1280,4248,0,0,2526,768,45,0,485,1280,0,0,1280,24659,0,0,5661,0,0,0,0,0,35419752,0,63792,1280,1280,482918
+version-detail,4,candidate,20,0,1280,4248,0,0,676,768,46,0,342,1280,0,0,1280,58353,0,0,1587,0,0,0,0,0,35419752,529,80121,1280,1280,414704
+version-warm-detail,2,baseline,10,0,640,2124,219,384,0,0,20,17504844,146,640,0,6211,640,5113,384,384,439,27511,384,0,109029,384,17709876,0,12546,640,640,87321
+version-warm-detail,2,candidate,10,0,640,2124,332,384,0,0,17,17504844,2025,640,1719,14833,640,3829,384,0,1652,15542,384,384,0,384,17709876,130,8189,640,640,94753
+version-warm-detail,4,baseline,20,0,1280,4248,1356,768,0,0,62,35009688,425,1280,0,23217,1280,18635,768,768,2998,68961,768,0,408636,768,35419752,0,30632,1280,1280,364460
+version-warm-detail,4,candidate,20,0,1280,4248,506,768,0,0,37,35009688,495,1280,6659,68647,1280,13270,768,0,1113,61601,768,768,0,768,35419752,334,36976,1280,1280,385319

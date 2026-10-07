@@ -19,6 +19,7 @@ import 'package:build_runner/src/build_plan/build_inputs.dart' show BuildInputs;
 
 import 'asset_read_cache.dart';
 import 'overlay_blob.dart';
+import 'reset_directives.dart';
 import 'current_build_runtime.dart';
 import 'protocol.dart';
 import 'remote_build_step.dart';
@@ -215,6 +216,7 @@ class _WorkerRuntime {
   /// clear.
   final Map<String, Set<String>> _committedDartDirectives =
       <String, Set<String>>{};
+  final _resetDirectiveContents = <String>{};
   final Map<String, Builder> builders = <String, Builder>{};
   final Map<String, PostProcessBuilder> postProcessBuilders =
       <String, PostProcessBuilder>{};
@@ -321,6 +323,74 @@ class _WorkerRuntime {
       return;
     }
     mark('overlay_read');
+    final directiveTimer = _metricsEnabled ? resetTimer : null;
+    final directiveStats = <String, int>{};
+    int tick() => directiveTimer?.elapsedMicroseconds ?? 0;
+    void count(String name, [int amount = 1]) {
+      if (directiveTimer != null) {
+        directiveStats.update(
+          name,
+          (value) => value + amount,
+          ifAbsent: () => amount,
+        );
+      }
+    }
+
+    void timed(String name, int start) => count(name, tick() - start);
+    ResetDirectiveContent extract(
+      AssetContent content,
+      String lane, {
+      ResetDirectiveContent? equivalent,
+    }) {
+      if (directiveTimer == null) {
+        final text = content.stringValue();
+        return equivalent?.reuse(text) ?? ResetDirectiveContent(text);
+      }
+      final start = tick();
+      final text = content.stringValue();
+      timed('${lane}_decode_us', start);
+      count('${lane}_bytes', content.bytes.length);
+      count('${lane}_extract_requests');
+      if (!_resetDirectiveContents.add(text))
+        count('repeated_content_extracts');
+      final compareStart = tick();
+      final reused = equivalent?.reuse(text);
+      timed('${lane}_content_compare_us', compareStart);
+      if (reused != null) {
+        count('${lane}_same_content_reuses');
+        return reused;
+      }
+      count('${lane}_extracts');
+      final scanStart = tick();
+      final result = ResetDirectiveContent(text);
+      timed('${lane}_scan_us', scanStart);
+      return result;
+    }
+
+    Set<String>? onDisk(AssetId id, ResetDirectiveContent current) {
+      final start = tick();
+      final package = packageConfig.packages
+          .where((p) => p.name == id.package && p.root.isScheme('file'))
+          .firstOrNull;
+      timed('old_lookup_us', start);
+      if (package == null) return null;
+      final existsStart = tick();
+      final file = File.fromUri(package.root.resolve(id.path));
+      final exists = file.existsSync();
+      count('old_exists_checks');
+      timed('old_exists_us', existsStart);
+      if (!exists) return null;
+      final readStart = tick();
+      final bytes = file.readAsBytesSync();
+      count('old_reads');
+      timed('old_read_us', readStart);
+      return extract(
+        AssetContent.bytes(bytes),
+        'old',
+        equivalent: current,
+      ).directives;
+    }
+
     for (final id in updatedSources.followedBy(updatedCache)) {
       if (producedOutputs.containsKey(id)) continue;
       _replaceResolver();
@@ -341,10 +411,19 @@ class _WorkerRuntime {
         continue;
       }
       final key = '${id.package}|${id.path}';
-      final directives = _dartDirectives(producedOutputs[id]);
-      final previous = _committedDartDirectives[key] ?? _directivesOnDisk(id);
+      final current = extract(producedOutputs[id]!, 'updated');
+      final directives = current.directives;
+      final oldCacheStart = tick();
+      final cached = _committedDartDirectives[key];
+      timed('old_cache_lookup_us', oldCacheStart);
+      count(cached == null ? 'old_cache_misses' : 'old_cache_hits');
+      final previous = cached ?? onDisk(id, current);
       if (previous != null) {
-        if (!_sameDirectives(previous, directives)) {
+        final compareStart = tick();
+        final same = _sameDirectives(previous, directives);
+        timed('compare_us', compareStart);
+        count('comparisons');
+        if (!same) {
           dartGraphChanged = true;
         }
       } else if (directives.isNotEmpty) {
@@ -352,8 +431,11 @@ class _WorkerRuntime {
         // while still missing may hold a stale empty-deps entry. Entries
         // with an expiry reload on the next read on their own; only a
         // permanent (`fixed`) entry leaves the graph stale.
+        final depStart = tick();
+        count('dep_lookups');
         depGraph ??= resolver.phasedAssetDeps();
         final recorded = depGraph.assetDeps[id];
+        timed('dep_lookup_us', depStart);
         if (recorded != null &&
             recorded.expiresAfter == null &&
             recorded.values.last.value.deps.isEmpty) {
@@ -365,7 +447,9 @@ class _WorkerRuntime {
     for (final id in deletedSources.followedBy(deletedCache)) {
       _committedDartDirectives.remove('${id.package}|${id.path}');
     }
+    final endStart = tick();
     resolver.reset(clearGraph: dartGraphChanged);
+    timed('graph_end_us', endStart);
     mark('directives_and_graph');
     _buildStarted = false;
     await _startBuild(
@@ -382,7 +466,7 @@ class _WorkerRuntime {
     mark('analyzer_start');
     if (resetTimer != null) {
       stderr.writeln(
-        'BRA_RESET_TRACE ${jsonEncode({'pid': pid, 'updated': updatedSources.length + updatedCache.length, 'deleted': deletedSources.length + deletedCache.length, 'graph_cleared': dartGraphChanged, 'elapsed_us': stages})}',
+        'BRA_RESET_TRACE ${jsonEncode({'pid': pid, 'updated': updatedSources.length + updatedCache.length, 'deleted': deletedSources.length + deletedCache.length, 'graph_cleared': dartGraphChanged, 'elapsed_us': stages, 'directive_stats': directiveStats})}',
       );
     }
   }
@@ -408,39 +492,12 @@ class _WorkerRuntime {
     resolverDependencyCache.clear();
     producedOutputs.clear();
     _committedDartDirectives.clear();
+    _resetDirectiveContents.clear();
     sentDepGraphValues.clear();
     batchResolverEntrypoints.clear();
     builders.clear();
     postProcessBuilders.clear();
     _lastDepDrainPhase = -1;
-  }
-
-  static final RegExp _dartDirectivePattern = RegExp(
-    r'''^\s*(?:import|export|part(?:\s+of)?|library)\s[^;]*;''',
-    multiLine: true,
-  );
-
-  /// Directive set of [id]'s pre-build version on disk, or null when it did
-  /// not exist. Source outputs stay in the overlay until the final commit,
-  /// so the on-disk file is still the pre-build content during a reset.
-  Set<String>? _directivesOnDisk(AssetId id) {
-    for (final package in packageConfig.packages) {
-      if (package.name != id.package || !package.root.isScheme('file')) {
-        continue;
-      }
-      final file = File.fromUri(package.root.resolve(id.path));
-      if (!file.existsSync()) return null;
-      return _dartDirectives(AssetContent.bytes(file.readAsBytesSync()));
-    }
-    return null;
-  }
-
-  static Set<String> _dartDirectives(AssetContent? content) {
-    if (content == null) return const <String>{};
-    return _dartDirectivePattern
-        .allMatches(content.stringValue())
-        .map((match) => match.group(0)!.trim())
-        .toSet();
   }
 
   static bool _sameDirectives(Set<String> a, Set<String> b) =>
