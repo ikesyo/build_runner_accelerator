@@ -8,13 +8,23 @@ successful digests in the original recorded-action order followed by each spec
 immediately before its dirty check. Missing results do not erase earlier
 logical-ID values. Hashing and non-NotFound I/O errors are unchanged.
 
+When the graph has no recorded actions, every spec is already dirty and there
+are no dependency/deletion decisions to make. This route resolves and checks
+outputs in parallel, using a call-local physical-path set whose lock covers only
+registration; it still reads/hashes once and propagates errors, then returns
+required dirty specs and optional force keys without unused digest replay or
+graph indexes. With recorded actions, path resolution and unique-path reads
+both run on the scoped pool; a hash index borrows resolved paths and logical IDs
+instead of copying them during registration.
+
 ## Conditions and commands
 
 Linux, 3 available CPUs, Rust 1.98.1 release, Dart 3.13.3, jobs 1.
 A disposable copy of `fixtures/json_serializable_500_app` supplied 500 inputs,
 500 cache parts and 500 source outputs. Both lanes used the same package lock,
 SDK, pub cache, fixture/cache paths and explicitly prepared AOT worker.
-Three repeats alternated lane order. SDK summaries and OS page cache stayed
+Diagnostics used three repeats. Uninstrumented wall timing used two batches
+of three repeats, alternating lane order within each. SDK summaries and OS page cache stayed
 warm; cold cleared graph/output and analyzer byte-store/directive caches;
 warm-clean cleared graph/output while retaining analyzer caches.
 One-file/broad renamed `value` to `valueEdited`/`valueBroad`, changing output bytes.
@@ -31,6 +41,10 @@ PUB_CACHE="$PUB_CACHE" python3 scripts/benchmark_cold_build.py \
   --results "$RESULTS" --worker "$AOT_WORKER" \
   --jobs 1 --repeats 3 --stock-check
 ```
+
+These measurements supersede the first PR revision (`dadabe2`), which added
+1.5–1.9 ms to clean dirty checks. The wall command was run twice with separate
+results directories; all six samples are retained below.
 
 The actual repeated comparisons reused the stock hashes from the initial stock
 run rather than recompiling stock. All 1,000 outputs matched stock and the other
@@ -50,11 +64,11 @@ Counters and timer were absent from the separate process-wall comparison.
 
 | Case | Read attempts main → candidate | Hashes main → candidate | Bytes read/hashed main → candidate | Full analyze median ms main → candidate |
 | --- | ---: | ---: | ---: | ---: |
-| Cold clean | 1,000 → 1,000 | 0 → 0 | 0 → 0 | 6.386 → 7.855 |
-| Warm clean | 1,000 → 1,000 | 0 → 0 | 0 → 0 | 6.438 → 8.354 |
-| No-op | 2,000 → 1,000 | 2,000 → 1,000 | 978,000 → 489,000 | 10.668 → 10.164 |
-| One-file | 2,000 → 1,000 | 2,000 → 1,000 | 978,000 → 489,000 | 10.526 → 10.035 |
-| Broad | 2,000 → 1,000 | 2,000 → 1,000 | 978,108 → 489,054 | 14.135 → 13.788 |
+| Cold clean | 1,000 → 1,000 | 0 → 0 | 0 → 0 | 6.845 → 2.684 |
+| Warm clean | 1,000 → 1,000 | 0 → 0 | 0 → 0 | 6.018 → 2.391 |
+| No-op | 2,000 → 1,000 | 2,000 → 1,000 | 978,000 → 489,000 | 10.112 → 7.833 |
+| One-file | 2,000 → 1,000 | 2,000 → 1,000 | 978,000 → 489,000 | 10.372 → 8.195 |
+| Broad | 2,000 → 1,000 | 2,000 → 1,000 | 978,108 → 489,054 | 13.263 → 11.141 |
 
 The production `dirty_check_us` now starts before collection, covering recorded
 and declared output work. Its endpoint still precedes deleted-action collection;
@@ -65,24 +79,28 @@ it is not directly comparable with the baseline metric's narrower interval.
 Direct native frontend timing includes process startup, manifest/graph/snapshot
 work, dirty checks, needed worker execution and commit. It excludes the Dart
 launcher, dependency resolution and AOT preparation. Values are medians with
-min–max ranges, milliseconds, from the uninstrumented three-repeat run.
+min–max ranges, milliseconds, from all six uninstrumented samples.
 
 | Case | Main | Candidate |
 | --- | ---: | ---: |
-| Cold clean | 1,579.8 (1,499.8–1,608.1) | 1,564.6 (1,537.7–1,609.6) |
-| Warm clean | 1,318.9 (1,304.5–1,345.2) | 1,291.4 (1,268.6–1,371.7) |
-| No-op | 34.9 (34.1–37.5) | 35.3 (33.6–35.7) |
-| One-file | 140.5 (140.0–147.1) | 141.7 (139.2–142.1) |
-| Broad | 1,539.4 (1,496.2–1,564.0) | 1,597.8 (1,474.4–1,691.1) |
+| Cold clean | 1,470.4 (1,398.5–1,591.8) | 1,521.7 (1,393.2–1,565.5) |
+| Warm clean | 1,351.1 (1,176.6–1,372.9) | 1,329.0 (1,176.7–1,381.7) |
+| No-op | 35.3 (32.3–42.1) | 32.3 (31.7–35.9) |
+| One-file | 139.0 (134.4–169.1) | 135.1 (129.5–139.5) |
+| Broad | 1,606.4 (1,528.9–1,840.3) | 1,633.7 (1,505.0–1,681.9) |
 
-Reads/hashed bytes halve for overlapping outputs. Dirty medians improve about
-0.5 ms for no-op/one-file, while path registration adds 1.5–1.9 ms to clean dirty
-checks. No clear whole-process speedup is established by these three samples;
-broad's higher median is within the overlapping observed ranges.
+Reads/hashed bytes still halve for overlapping outputs. Clean dirty medians
+are now 2.4–2.7 ms versus main's 6.0–6.8 ms, removing the first revision's clean
+penalty. No-op/one-file dirty medians improve about 2.2 ms. Whole-process
+medians improve for warm clean/no-op/one-file; cold clean and broad medians are
+higher but have overlapping ranges. The initial broad wall batch showed a
+higher candidate median; the additional batch reversed that direction. The
+six samples do not establish a reliable whole-build speedup or slowdown.
 
 Local verification: cargo fmt check; Clippy all targets/features with warnings
 denied; build tests (7), graph tests (8), plan tests (8); stock comparison above.
 The added tests cover overlap, recorded-only/declared-only outputs, aliases with
 identical resolved paths, source/cache collisions, missing/edited/deleted files,
-next-pass refresh, optional outputs, deletion planning, and I/O errors.
+next-pass refresh, optional outputs, deletion planning, and I/O errors, including
+fresh-graph alias deduplication and required/optional dirty results.
 Broader lifecycle/watch/compatibility suites remain for CI.

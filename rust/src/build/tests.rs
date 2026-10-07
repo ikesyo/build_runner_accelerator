@@ -490,19 +490,13 @@ fn dirty_outputs_read_each_physical_path_once_per_pass() -> io::Result<()> {
     assert!(reads.lock().unwrap().values().all(|count| *count == 1));
     assert_eq!(
         recorded[0],
-        (
-            shared.into(),
-            Some(crate::digest::digest_bytes(b"source bytes"))
-        )
+        (shared, Some(crate::digest::digest_bytes(b"source bytes")))
     );
-    assert_eq!(recorded[1], (missing.into(), None));
+    assert_eq!(recorded[1], (missing, None));
     assert_eq!(recorded[2].0, recorded_only);
     assert_eq!(
         recorded[3],
-        (
-            shared.into(),
-            Some(crate::digest::digest_bytes(b"cache bytes"))
-        )
+        (shared, Some(crate::digest::digest_bytes(b"cache bytes")))
     );
     assert_eq!(declared[0][0], recorded[0]);
     assert_eq!(declared[0][1], recorded[1]);
@@ -529,11 +523,30 @@ fn dirty_outputs_read_each_physical_path_once_per_pass() -> io::Result<()> {
     );
     assert_eq!(recorded[3].1, None);
     assert_eq!(declared[1][0].1, None);
+    // A fresh graph must still deduplicate aliases and overlapping declarations.
+    let empty_state = GraphState::default();
+    reads.lock().unwrap().clear();
+    let (recorded, declared) =
+        collect_output_digests(&workspace, &empty_state, &config, &specs, |path| {
+            *reads.lock().unwrap().entry(path.to_owned()).or_default() += 1;
+            output_digest(path)
+        })?;
+    assert!(recorded.is_empty());
+    assert_eq!(reads.lock().unwrap().len(), 4);
+    assert!(reads.lock().unwrap().values().all(|count| *count == 1));
+    assert_eq!(declared[3][0].1, declared[0][0].1);
+    reads.lock().unwrap().clear();
+    super::dirty::check_unrecorded_outputs(&workspace, &specs, |path| {
+        *reads.lock().unwrap().entry(path.to_owned()).or_default() += 1;
+        output_digest(path)
+    })?;
+    assert_eq!(reads.lock().unwrap().len(), 4);
+    assert!(reads.lock().unwrap().values().all(|count| *count == 1));
     let (recorded, declared) =
         collect_output_digests(&workspace, &state, &config, &[], output_digest)?;
     assert_eq!(recorded.len(), 4);
     assert!(declared.is_empty());
-    let empty = collect_output_digests(&workspace, &GraphState::default(), &config, &[], |_| {
+    let empty = collect_output_digests(&workspace, &empty_state, &config, &[], |_| {
         panic!("empty output set must not read")
     })?;
     assert!(empty.0.is_empty() && empty.1.is_empty());
@@ -562,6 +575,9 @@ fn dirty_outputs_propagate_non_not_found_errors() -> io::Result<()> {
         output_digest,
     )
     .unwrap_err();
+    assert_ne!(error.kind(), io::ErrorKind::NotFound);
+    let error =
+        super::dirty::check_unrecorded_outputs(&workspace, &specs, output_digest).unwrap_err();
     assert_ne!(error.kind(), io::ErrorKind::NotFound);
     // Also exercise a deterministic permission error independent of runner UID.
     let error = collect_output_digests(&workspace, &GraphState::default(), &config, &specs, |_| {
@@ -695,5 +711,28 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
         result.lazy_force_keys,
         BTreeSet::from([optional_spec.action_key()])
     );
+    let fresh = analyze(
+        &workspace,
+        &GraphState::default(),
+        &config,
+        "config",
+        &snapshot,
+        &plan,
+        &mut FilesystemMetrics::default(),
+    )?;
+    assert_eq!(
+        fresh
+            .dirty
+            .iter()
+            .map(BuildSpec::action_key)
+            .collect::<Vec<_>>(),
+        vec![source_spec.action_key(), cache_spec.action_key()]
+    );
+    assert_eq!(
+        fresh.lazy_force_keys,
+        BTreeSet::from([optional_spec.action_key()])
+    );
+    assert!(fresh.deleted_actions.is_empty());
+
     Ok(())
 }
