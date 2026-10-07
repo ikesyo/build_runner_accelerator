@@ -16,6 +16,7 @@ use std::env;
 use std::io::{self, BufReader, BufWriter};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::Arc;
 use std::time::Instant;
 
 const BINARY_READ_CAPABILITY: &str = "asset-rpc-binary-read-v1";
@@ -268,7 +269,7 @@ impl WorkerClient {
         &mut self,
         workspace: &Workspace,
         requests: &[BuildRequest],
-        overlay: &BTreeMap<String, Vec<u8>>,
+        overlay: &BTreeMap<String, Arc<[u8]>>,
         deleted_overlay: &BTreeSet<String>,
         visibility: &AssetVisibility,
     ) -> io::Result<Vec<BuildResult>> {

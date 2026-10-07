@@ -314,7 +314,7 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
     transaction.pending_outputs.push((
         builder.definition.clone(),
         output.clone(),
-        new_bytes.clone(),
+        new_bytes.clone().into(),
     ));
     transaction
         .pending_actions
@@ -343,5 +343,54 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
     assert!(!state.actions.contains_key(&old_spec.action_key()));
     assert_eq!(state.actions.get(&new_spec.action_key()), Some(&new_action));
     assert_eq!(GraphState::load(&state_path)?, state);
+    Ok(())
+}
+
+#[test]
+fn output_registration_shares_buffers_and_releases_aborted_transaction() -> io::Result<()> {
+    use super::results::record_build_result;
+    use super::transaction::PendingTransaction;
+    use crate::protocol::BuildResult;
+
+    let temporary = TemporaryWorkspace::new()?;
+    let workspace = Workspace::load(temporary.0.clone())?;
+    let builder = configured_builder("producer", "app:default", 0, 0);
+    let asset = "app|lib/input.out";
+    let spec = build_spec(&builder, "app|lib/input.txt", &[asset]);
+    fs::write(temporary.0.join("lib/input.txt"), b"input")?;
+    fs::write(temporary.0.join("lib/input.out"), b"committed")?;
+    let state = GraphState::default();
+    // Also cover an empty output and the pre-existing overlay reference held
+    // by a demand-built optional result before ordinary result registration.
+    for bytes in [vec![], vec![0, 255, 1, 128]] {
+        for optional in [false, true] {
+            let result: BuildResult = serde_json::from_value(serde_json::json!({
+                "type": "build_result", "id": 1, "status": "success",
+                "outputs": [{"asset": asset, "bytes": bytes}],
+                "resolver_used": false,
+            }))?;
+            let weak = Arc::downgrade(&result.outputs[0].bytes);
+            let mut pending = PendingTransaction::new(&[], &state, Vec::new());
+            if optional {
+                pending
+                    .overlay
+                    .insert(asset.into(), Arc::clone(&result.outputs[0].bytes));
+            }
+            record_build_result(&workspace, &state, &spec, result, &mut pending)?;
+            let overlay = &pending.overlay[asset];
+            let commit_bytes = &pending.pending_outputs[0].2;
+            assert!(Arc::ptr_eq(overlay, commit_bytes));
+            assert_eq!(Arc::strong_count(overlay), 2);
+            assert_eq!(overlay.as_ref(), bytes);
+            assert_eq!(fs::read(temporary.0.join("lib/input.out"))?, b"committed");
+            // A later action failure aborts the pending transaction. Removing
+            // visibility must leave the bytes available for commit until then.
+            pending.overlay.remove(asset);
+            assert_eq!(pending.pending_outputs[0].2.as_ref(), bytes);
+            drop(pending);
+            assert!(weak.upgrade().is_none());
+            assert_eq!(fs::read(temporary.0.join("lib/input.out"))?, b"committed");
+        }
+    }
     Ok(())
 }

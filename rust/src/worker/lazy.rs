@@ -12,6 +12,7 @@ use crate::workspace::{Workspace, glob_candidates, matches_glob};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// A successful optional action that was requested while another action was
@@ -60,7 +61,7 @@ impl WorkerClient {
         &mut self,
         workspace: &Workspace,
         request: &BuildRequest,
-        overlay: &mut BTreeMap<String, Vec<u8>>,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
         deleted_overlay: &mut BTreeSet<String>,
         visibility: &AssetVisibility,
         lazy_specs: &BTreeMap<String, BuildSpec>,
@@ -131,7 +132,7 @@ impl WorkerClient {
         &mut self,
         workspace: &Workspace,
         requests: &[BuildRequest],
-        overlay: &mut BTreeMap<String, Vec<u8>>,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
         deleted_overlay: &mut BTreeSet<String>,
         visibility: &AssetVisibility,
         lazy_specs: &BTreeMap<String, BuildSpec>,
@@ -230,7 +231,7 @@ impl WorkerClient {
         &mut self,
         workspace: &Workspace,
         request: &Value,
-        overlay: &mut BTreeMap<String, Vec<u8>>,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
         deleted_overlay: &mut BTreeSet<String>,
         visibility: &AssetVisibility,
         active_request: &BuildRequest,
@@ -345,7 +346,7 @@ impl WorkerClient {
         &mut self,
         workspace: &Workspace,
         asset: &str,
-        overlay: &mut BTreeMap<String, Vec<u8>>,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
         deleted_overlay: &mut BTreeSet<String>,
         visibility: &AssetVisibility,
         phase: u32,
@@ -422,7 +423,7 @@ impl WorkerClient {
                     spec.builder.id, generated.asset
                 )));
             }
-            overlay.insert(generated.asset.clone(), generated.bytes.clone());
+            overlay.insert(generated.asset.clone(), Arc::clone(&generated.bytes));
             deleted_overlay.remove(&generated.asset);
         }
         let actual_outputs = result

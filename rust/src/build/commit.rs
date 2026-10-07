@@ -77,6 +77,9 @@ pub(super) fn commit(
         transaction,
     } = inputs;
 
+    // No phase or asset RPC can read the overlay once all actions have succeeded.
+    // Release its references so committing each output can free its buffer.
+    drop(transaction.overlay);
     let outputs = crate::wall::Span::new("output_commit");
     // Commit only after every dirty action succeeded. Cache-built part files
     // are kept below .dart_tool and are visible to later phases through the

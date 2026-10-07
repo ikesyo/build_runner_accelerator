@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{self, Read, Write};
+use std::sync::Arc;
 
 pub const BINARY_ASSET_RESPONSE_MAGIC: &[u8; 4] = b"BRAB";
 pub const BINARY_BUILD_RESULT_MAGIC: &[u8; 4] = b"BRAR";
@@ -9,7 +10,7 @@ pub const MAX_FRAME_LENGTH: usize = 256 * 1024 * 1024;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildOutput {
     pub asset: String,
-    pub bytes: Vec<u8>,
+    pub bytes: Arc<[u8]>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -251,7 +252,8 @@ impl BinaryBuildResultMetadata {
             }
             outputs.push(BuildOutput {
                 asset: output.asset,
-                bytes: bytes[*cursor..end].to_vec(),
+                // Keep one copy per output; do not retain the entire received frame.
+                bytes: Arc::from(&bytes[*cursor..end]),
             });
             *cursor = end;
         }
@@ -460,7 +462,7 @@ mod tests {
         let result = decode_build_result_frame(frame).expect("decode build result");
         assert_eq!(result.id, 2);
         assert_eq!(result.outputs[0].asset, "app|lib/model.g.dart");
-        assert_eq!(result.outputs[0].bytes, raw_bytes);
+        assert_eq!(result.outputs[0].bytes.as_ref(), raw_bytes);
         assert!(result.resolver_used);
     }
 
@@ -516,8 +518,8 @@ mod tests {
         assert_eq!(decoded.results.len(), 2);
         assert!(!decoded.results[0].resolver_used);
         assert!(!decoded.results[1].resolver_used);
-        assert_eq!(decoded.results[0].outputs[0].bytes, b"one");
-        assert_eq!(decoded.results[1].outputs[0].bytes, b"four");
+        assert_eq!(decoded.results[0].outputs[0].bytes.as_ref(), b"one");
+        assert_eq!(decoded.results[1].outputs[0].bytes.as_ref(), b"four");
     }
 
     #[test]
