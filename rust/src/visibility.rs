@@ -33,12 +33,12 @@ impl AssetVisibility {
             for output in &spec.outputs {
                 visibility
                     .locations
-                    .insert(output.clone(), spec.builder.build_to);
-                match spec.builder.kind {
+                    .insert(output.clone(), spec.instance.builder.build_to);
+                match spec.instance.builder.kind {
                     BuilderKind::Normal => {
                         visibility
                             .normal_output_phases
-                            .entry(spec.phase)
+                            .entry(spec.instance.phase)
                             .or_default()
                             .insert(output.clone());
                     }
@@ -129,43 +129,45 @@ mod tests {
         BuildTo, BuilderDefinition, BuilderExtension, BuilderKind, RustBuildConfig,
     };
     use crate::graph::GraphState;
-    use crate::plan::BuildSpec;
+    use crate::plan::{BuildAction, BuildSpec, BuilderInstance};
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
 
     fn spec(id: &str, phase: u32, build_to: BuildTo, output: &str) -> BuildSpec {
-        BuildSpec {
-            builder: Arc::new(BuilderDefinition {
-                id: id.to_owned(),
-                kind: BuilderKind::Normal,
-                extensions: vec![BuilderExtension {
-                    input_suffix: ".txt".to_owned(),
-                    input_is_exact: false,
-                    input_is_capture: false,
-                    input_is_all: false,
-                    input_is_anchored: false,
-                    output_suffixes: vec![".out".to_owned()],
-                }],
-                post_process_input_extensions: Vec::new(),
-                build_to,
+        Arc::new(BuildAction {
+            instance: Arc::new(BuilderInstance {
+                builder: Arc::new(BuilderDefinition {
+                    id: id.to_owned(),
+                    kind: BuilderKind::Normal,
+                    extensions: vec![BuilderExtension {
+                        input_suffix: ".txt".to_owned(),
+                        input_is_exact: false,
+                        input_is_capture: false,
+                        input_is_all: false,
+                        input_is_anchored: false,
+                        output_suffixes: vec![".out".to_owned()],
+                    }],
+                    post_process_input_extensions: Vec::new(),
+                    build_to,
+                    phase,
+                    is_optional: false,
+                    output_is_optional: false,
+                    required_input_suffixes: Vec::new(),
+                    excluded_input_suffixes: Vec::new(),
+                    applies_builder: None,
+                    triggers: Vec::new(),
+                }),
+                target: "app:app".to_owned(),
+                package: "app".to_owned(),
+                is_root: true,
                 phase,
-                is_optional: false,
-                output_is_optional: false,
-                required_input_suffixes: Vec::new(),
-                excluded_input_suffixes: Vec::new(),
-                applies_builder: None,
-                triggers: Vec::new(),
+                instance_key: id.to_owned(),
+                options: BTreeMap::new(),
+                part_directive_suffix: None,
             }),
-            target: "app:app".to_owned(),
-            package: "app".to_owned(),
-            is_root: true,
-            phase,
-            instance_key: id.to_owned(),
             input: "app|lib/input.txt".to_owned(),
             outputs: vec![output.to_owned()],
-            options: BTreeMap::new(),
-            part_directive_suffix: None,
-        }
+        })
     }
 
     #[test]

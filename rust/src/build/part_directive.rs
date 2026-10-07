@@ -19,7 +19,7 @@ pub(super) fn part_directive_skips(
     overlay: &BTreeMap<String, Arc<[u8]>>,
     spec: &BuildSpec,
 ) -> bool {
-    let Some(suffix) = spec.part_directive_suffix.as_deref() else {
+    let Some(suffix) = spec.instance.part_directive_suffix.as_deref() else {
         return false;
     };
     let input_path = spec

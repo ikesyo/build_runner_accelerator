@@ -43,7 +43,7 @@ pub(super) fn analyze(
         let mut dirty = Vec::new();
         let mut lazy_force_keys = BTreeSet::new();
         for spec in specs {
-            if spec.builder.is_optional {
+            if spec.instance.builder.is_optional {
                 lazy_force_keys.insert(spec.action_key());
             } else {
                 dirty.push(spec.clone());
@@ -79,7 +79,7 @@ pub(super) fn analyze(
         };
         if needs_build {
             dirty_roots.push(spec.clone());
-            if !spec.builder.is_optional {
+            if !spec.instance.builder.is_optional {
                 dirty.push(spec.clone());
             }
         }
@@ -92,7 +92,7 @@ pub(super) fn analyze(
     let mut lazy_force_keys = BTreeSet::new();
     for spec in dirty_roots {
         let key = spec.action_key();
-        if spec.builder.is_optional {
+        if spec.instance.builder.is_optional {
             lazy_force_keys.insert(key);
         } else if dirty_keys.insert(key) {
             dirty.push(spec);
@@ -157,7 +157,7 @@ pub(super) fn collect_output_digests<'a>(
         requests.extend(
             spec.outputs
                 .iter()
-                .map(|output| (spec.builder.as_ref(), output.as_str())),
+                .map(|output| (spec.instance.builder.as_ref(), output.as_str())),
         );
     }
     // Path resolution was previously parallel with reading. Keep it parallel:
@@ -207,7 +207,7 @@ pub(super) fn check_unrecorded_outputs(
         .flat_map(|spec| {
             spec.outputs
                 .iter()
-                .map(move |output| (&spec.builder, output))
+                .map(move |output| (&spec.instance.builder, output))
         })
         .collect::<Vec<_>>();
     let seen = Mutex::new(HashSet::with_capacity(requests.len()));
@@ -264,7 +264,7 @@ pub(super) fn expand_dirty_dependents(
 ) {
     let specs_by_key = specs
         .iter()
-        .map(|spec| (spec.action_key(), spec.clone()))
+        .map(|spec| (spec.action_key(), spec))
         .collect::<BTreeMap<_, _>>();
     let mut dependents_by_asset = BTreeMap::<&str, Vec<&str>>::new();
     let mut actions_by_entrypoint = BTreeMap::<&str, Vec<&str>>::new();
@@ -367,7 +367,7 @@ pub(super) fn expand_dirty_dependents(
                 if dirty_keys.insert(dependent_key.to_owned())
                     && let Some(spec) = specs_by_key.get(dependent_key)
                 {
-                    dirty.push(spec.clone());
+                    dirty.push((*spec).clone());
                 }
             }
         }
