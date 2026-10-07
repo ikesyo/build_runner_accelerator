@@ -1,13 +1,13 @@
 use super::manifest::{
     BuilderManifestDefinition, BuilderManifestExtension, BuilderManifestRuntime,
 };
-use super::model::{
-    BuildTo, BuilderDefinition, BuilderExtension, BuilderKind, BuilderTrigger,
-};
+use super::model::{BuildTo, BuilderDefinition, BuilderExtension, BuilderKind, BuilderTrigger};
 use crate::pattern::{capture_names, validate_capture_output};
 use std::io;
 
-pub(super) fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io::Result<BuilderDefinition> {
+pub(super) fn dynamic_builder_definition(
+    entry: BuilderManifestDefinition,
+) -> io::Result<BuilderDefinition> {
     let kind = match entry.kind.as_str() {
         "normal" => BuilderKind::Normal,
         "post_process" => BuilderKind::PostProcess,
@@ -101,10 +101,10 @@ pub(super) fn dynamic_builder_definition(entry: BuilderManifestDefinition) -> io
     };
     let manifest_extensions = if entry.extensions.is_empty() {
         let mut output_suffixes = entry.output_suffixes.clone();
-        if output_suffixes.is_empty() {
-            if let Some(output_suffix) = &entry.output_suffix {
-                output_suffixes.push(output_suffix.clone());
-            }
+        if output_suffixes.is_empty()
+            && let Some(output_suffix) = &entry.output_suffix
+        {
+            output_suffixes.push(output_suffix.clone());
         }
         vec![BuilderManifestExtension {
             input_suffix: entry.input_suffix.clone(),
@@ -278,10 +278,12 @@ fn valid_annotation_trigger(value: &str) -> bool {
         && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
+type RuntimeMapping = (Option<Vec<BuilderExtension>>, Option<Vec<String>>);
+
 pub(super) fn runtime_mapping_from_manifest(
     entry: &BuilderManifestDefinition,
     mapping: BuilderManifestRuntime,
-) -> io::Result<(Option<Vec<BuilderExtension>>, Option<Vec<String>>)> {
+) -> io::Result<RuntimeMapping> {
     let invalid = |message: &str| {
         io::Error::new(
             io::ErrorKind::InvalidData,

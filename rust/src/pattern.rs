@@ -196,14 +196,9 @@ fn match_parts(
                     continue;
                 }
                 values.push(path[position..end].to_owned());
-                if let Some(result) = match_parts(
-                    path,
-                    parts,
-                    part_index + 1,
-                    end,
-                    boundaries,
-                    values,
-                ) {
+                if let Some(result) =
+                    match_parts(path, parts, part_index + 1, end, boundaries, values)
+                {
                     return Some(result);
                 }
                 values.pop();
@@ -237,19 +232,12 @@ mod tests {
     #[test]
     fn named_captures_expand_in_output_order() {
         let names = capture_names("{{dir}}/{{file}}.dart").unwrap();
-        let matched = match_capture_pattern(
-            "somewhere/nested/file.dart",
-            "{{dir}}/{{file}}.dart",
-            false,
-        )
-        .unwrap();
+        let matched =
+            match_capture_pattern("somewhere/nested/file.dart", "{{dir}}/{{file}}.dart", false)
+                .unwrap();
         assert_eq!(
-            expand_capture_template(
-                "{{dir}}/generated/{{file}}.g.dart",
-                &names,
-                &matched.values,
-            )
-            .unwrap(),
+            expand_capture_template("{{dir}}/generated/{{file}}.g.dart", &names, &matched.values,)
+                .unwrap(),
             "somewhere/nested/generated/file.g.dart"
         );
     }
@@ -257,10 +245,6 @@ mod tests {
     #[test]
     fn capture_metadata_accepts_anchored_builder_mapping() {
         let names = capture_names("lib/assets/{{dir}}/{{file}}.txt").unwrap();
-        validate_capture_output(
-            &names,
-            "lib/generated/{{dir}}/{{file}}.dart",
-        )
-        .unwrap();
+        validate_capture_output(&names, "lib/generated/{{dir}}/{{file}}.dart").unwrap();
     }
 }

@@ -13,6 +13,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 impl WorkerClient {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "IPC operations pass workspace, visibility, and transaction state explicitly"
+    )]
     pub(super) fn handle_asset_request(
         &mut self,
         workspace: &Workspace,
@@ -194,12 +198,12 @@ impl WorkerClient {
                     assets.push(asset);
                 }
                 for asset in glob_candidates(overlay, package, pattern) {
-                    if !visibility.is_blocked(asset, phase, kind, deleted_overlay) {
-                        if let Some((asset_package, asset_path)) = asset.split_once('|') {
-                            if asset_package == package && matches_glob(pattern, asset_path) {
-                                assets.push(asset.clone());
-                            }
-                        }
+                    if !visibility.is_blocked(asset, phase, kind, deleted_overlay)
+                        && let Some((asset_package, asset_path)) = asset.split_once('|')
+                        && asset_package == package
+                        && matches_glob(pattern, asset_path)
+                    {
+                        assets.push(asset.clone());
                     }
                 }
                 assets.sort();
@@ -265,61 +269,6 @@ fn append_overlay_bytes(payload: &mut Vec<u8>, bytes: &[u8], limit: usize) -> bo
     }
     payload.extend_from_slice(bytes);
     true
-}
-
-#[cfg(test)]
-mod batch_response_tests {
-    use super::*;
-
-    #[test]
-    fn overlay_batch_stops_before_allocating_or_copying_past_the_limit() {
-        let mut payload = Vec::new();
-        assert!(append_overlay_bytes(&mut payload, &[1, 2], 4));
-        assert!(append_overlay_bytes(&mut payload, &[3, 4], 4));
-        let capacity = payload.capacity();
-        for bytes in [&[5][..], &[5, 6, 7, 8, 9][..]] {
-            assert!(!append_overlay_bytes(&mut payload, bytes, 4));
-            assert_eq!(payload, [1, 2, 3, 4]);
-            assert_eq!(payload.capacity(), capacity);
-        }
-        let mut empty = Vec::new();
-        assert!(!append_overlay_bytes(&mut empty, &[1, 2, 3, 4, 5], 4));
-        assert!(empty.is_empty());
-        assert_eq!(empty.capacity(), 0);
-    }
-
-    #[test]
-    fn resolve_assets_checks_metadata_and_binary_overhead_at_the_limit() {
-        let response = json!({"v": 1, "type": "asset_response", "id": 7, "ok": true,
-            "assets": [{"status": "path", "path": "/app/lib/a.dart"}]});
-        let metadata_length = serde_json::to_vec(&response).unwrap().len();
-        for payload_length in [0, 32] {
-            let length = metadata_length + payload_length + if payload_length == 0 { 0 } else { 8 };
-            assert_eq!(
-                bounded_resolve_assets_response(response.clone(), payload_length, length).unwrap(),
-                response
-            );
-            let declined =
-                bounded_resolve_assets_response(response.clone(), payload_length, length - 1)
-                    .unwrap();
-            assert_eq!(declined["ok"], false);
-            assert_eq!(declined["id"], 7);
-            assert_eq!(declined["type"], "asset_response");
-            assert!(declined.get("assets").is_none());
-        }
-    }
-
-    #[test]
-    fn resolve_assets_declines_oversized_overlay_without_allocating_it() {
-        let response = json!({"id": 9, "ok": true, "encoding": "raw"});
-        for payload_length in [MAX_FRAME_LENGTH, usize::MAX] {
-            let declined =
-                bounded_resolve_assets_response(response.clone(), payload_length, MAX_FRAME_LENGTH)
-                    .unwrap();
-            assert_eq!(declined["ok"], false);
-            assert_eq!(declined["id"], 9);
-        }
-    }
 }
 
 fn asset_exists(
@@ -487,4 +436,59 @@ pub(super) fn missing_asset_response(id: u64, asset: &str) -> Value {
         "ok": false,
         "error": format!("asset not found: {asset}"),
     })
+}
+
+#[cfg(test)]
+mod batch_response_tests {
+    use super::*;
+
+    #[test]
+    fn overlay_batch_stops_before_allocating_or_copying_past_the_limit() {
+        let mut payload = Vec::new();
+        assert!(append_overlay_bytes(&mut payload, &[1, 2], 4));
+        assert!(append_overlay_bytes(&mut payload, &[3, 4], 4));
+        let capacity = payload.capacity();
+        for bytes in [&[5][..], &[5, 6, 7, 8, 9][..]] {
+            assert!(!append_overlay_bytes(&mut payload, bytes, 4));
+            assert_eq!(payload, [1, 2, 3, 4]);
+            assert_eq!(payload.capacity(), capacity);
+        }
+        let mut empty = Vec::new();
+        assert!(!append_overlay_bytes(&mut empty, &[1, 2, 3, 4, 5], 4));
+        assert!(empty.is_empty());
+        assert_eq!(empty.capacity(), 0);
+    }
+
+    #[test]
+    fn resolve_assets_checks_metadata_and_binary_overhead_at_the_limit() {
+        let response = json!({"v": 1, "type": "asset_response", "id": 7, "ok": true,
+            "assets": [{"status": "path", "path": "/app/lib/a.dart"}]});
+        let metadata_length = serde_json::to_vec(&response).unwrap().len();
+        for payload_length in [0, 32] {
+            let length = metadata_length + payload_length + if payload_length == 0 { 0 } else { 8 };
+            assert_eq!(
+                bounded_resolve_assets_response(response.clone(), payload_length, length).unwrap(),
+                response
+            );
+            let declined =
+                bounded_resolve_assets_response(response.clone(), payload_length, length - 1)
+                    .unwrap();
+            assert_eq!(declined["ok"], false);
+            assert_eq!(declined["id"], 7);
+            assert_eq!(declined["type"], "asset_response");
+            assert!(declined.get("assets").is_none());
+        }
+    }
+
+    #[test]
+    fn resolve_assets_declines_oversized_overlay_without_allocating_it() {
+        let response = json!({"id": 9, "ok": true, "encoding": "raw"});
+        for payload_length in [MAX_FRAME_LENGTH, usize::MAX] {
+            let declined =
+                bounded_resolve_assets_response(response.clone(), payload_length, MAX_FRAME_LENGTH)
+                    .unwrap();
+            assert_eq!(declined["ok"], false);
+            assert_eq!(declined["id"], 9);
+        }
+    }
 }

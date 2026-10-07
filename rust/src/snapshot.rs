@@ -25,10 +25,7 @@ pub fn glob_digest(matches: &[String]) -> String {
     digest_bytes(matches.join(" ").as_bytes())
 }
 
-pub fn scan_packages(
-    workspace: &Workspace,
-    packages: &BTreeSet<String>,
-) -> io::Result<Snapshot> {
+pub fn scan_packages(workspace: &Workspace, packages: &BTreeSet<String>) -> io::Result<Snapshot> {
     let mut snapshot = Snapshot::new();
     for package in packages {
         for (asset, path) in workspace.list_package_assets(package)? {

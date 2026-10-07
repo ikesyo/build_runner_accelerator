@@ -4,8 +4,7 @@ use crate::worker_kernel::{
     AOT_COMPILE_LOCK_NAME, BACKGROUND_AOT_LOCK_ENV, acquire_background_aot_lock,
     analysis_prewarm_enabled, early_worker_aot_compile, early_worker_aot_enabled,
     manifest_prewarm_enabled, prewarm_worker_aot, start_analysis_prewarm,
-    start_manifest_analysis_prewarm,
-    take_background_aot_lock, worker_aot_cache_key,
+    start_manifest_analysis_prewarm, take_background_aot_lock, worker_aot_cache_key,
 };
 use crate::workspace::Workspace;
 use std::fs;
@@ -229,13 +228,13 @@ fn generate_manifest(
                 _ => {
                     eprintln!("Rust early catalog unavailable; using full generator");
                     // A helper may have emitted a partial or outdated entrypoint.
-                    if let Err(error) = fs::remove_file(worker_entrypoint) {
-                        if error.kind() != io::ErrorKind::NotFound {
-                            early_compile_ready = false;
-                            eprintln!(
-                                "Rust early catalog cleanup failed; disabling early AOT ({error})"
-                            );
-                        }
+                    if let Err(error) = fs::remove_file(worker_entrypoint)
+                        && error.kind() != io::ErrorKind::NotFound
+                    {
+                        early_compile_ready = false;
+                        eprintln!(
+                            "Rust early catalog cleanup failed; disabling early AOT ({error})"
+                        );
                     }
                 }
             }
@@ -250,10 +249,10 @@ fn generate_manifest(
         ))
         .arg(artifact);
     command.env_remove("BUILD_RUNNER_ACCELERATOR_MANIFEST_WORKER_AOT");
-    if let Some(path) = &readiness {
-        if early_compile_ready {
-            command.env("BUILD_RUNNER_ACCELERATOR_MANIFEST_WORKER_AOT", path);
-        }
+    if let Some(path) = &readiness
+        && early_compile_ready
+    {
+        command.env("BUILD_RUNNER_ACCELERATOR_MANIFEST_WORKER_AOT", path);
     }
     let child_result = command
         .arg("--root")

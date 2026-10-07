@@ -75,8 +75,7 @@ pub(crate) struct ConfiguredBuilder {
 
 impl ConfiguredBuilder {
     pub(crate) fn effective_definition(&self) -> Arc<BuilderDefinition> {
-        if self.runtime_extensions.is_none()
-            && self.runtime_post_process_input_extensions.is_none()
+        if self.runtime_extensions.is_none() && self.runtime_post_process_input_extensions.is_none()
         {
             return self.definition.clone();
         }

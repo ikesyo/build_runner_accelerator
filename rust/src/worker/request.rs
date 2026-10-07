@@ -34,18 +34,15 @@ pub(super) fn batch_blocked_assets(
     let Some(first) = requests.first() else {
         return Ok(Vec::new());
     };
-    if requests.iter().any(|request| {
-        request.phase != first.phase || request.post_process != first.post_process
-    }) {
+    if requests
+        .iter()
+        .any(|request| request.phase != first.phase || request.post_process != first.post_process)
+    {
         return Err(io::Error::other(
             "build batch requests must share phase and builder kind",
         ));
     }
-    Ok(visibility.blocked_assets(
-        first.phase,
-        build_request_kind(first),
-        deleted_overlay,
-    ))
+    Ok(visibility.blocked_assets(first.phase, build_request_kind(first), deleted_overlay))
 }
 
 fn json_build_result_value(result: &BuildResult) -> io::Result<Value> {
