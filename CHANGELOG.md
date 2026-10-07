@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.10.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.9.0...v0.10.0) - 2026-10-07
+
+- perf: avoid copying cached bytes during phased dependency reads by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/87
+- Add frontend wall timeline diagnostics by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/89
+- Investigate phase reset synchronization and retain targeted wall diagnostics by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/91
+- Use immutable per-reset blobs for overlay transport by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/92
+- fix: preserve analyzer compatibility with stock build_runner by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/94
+- perf: reuse reset directives for identical pre-build content by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/93
+
 ## [v0.9.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.8.0...v0.9.0) - 2026-10-04
 
 - perf: reduce resolver startup with cached directives, batched reads, and packed stores by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/73
