@@ -1426,7 +1426,7 @@ impl Drop for AnalysisPrewarm {
     }
 }
 
-fn env_flag_disabled(name: &str) -> bool {
+pub(crate) fn env_flag_disabled(name: &str) -> bool {
     match env::var(name) {
         Ok(value) => matches!(value.to_lowercase().as_str(), "0" | "false" | "off"),
         Err(_) => false,
@@ -1447,6 +1447,15 @@ fn compile_prewarm_enabled() -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+/// Whether `prewarm` should run the whole-workspace analysis shards after the
+/// AOT compile (the `aot-prewarm` window). On by default: the sweep fills the
+/// shared byte store the first real build would otherwise fill lazily inside
+/// worker execution. `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` opts out
+/// for foreground/CI runs where the serial sweep cost has nothing to hide in.
+pub(crate) fn analysis_prewarm_enabled() -> bool {
+    !env_flag_disabled("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM")
 }
 
 /// `BUILD_RUNNER_ACCELERATOR_MANIFEST_PREWARM=1` opts into running the
@@ -1659,8 +1668,8 @@ fn spawn_analysis_prewarm_options(
 mod tests {
     use super::{
         ANALYSIS_PREWARM_ACTIVE, WorkerArtifact, acquire_background_aot_lock,
-        background_aot_lock_is_stale, catch_worker_aot_panic, parse_depfile_dependencies,
-        pinned_worker_artifact_is_current, spawn_analysis_prewarm,
+        analysis_prewarm_enabled, background_aot_lock_is_stale, catch_worker_aot_panic,
+        parse_depfile_dependencies, pinned_worker_artifact_is_current, spawn_analysis_prewarm,
     };
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
@@ -1762,5 +1771,26 @@ mod tests {
         assert!(spawn_analysis_prewarm(&root, "dart", "test").is_none());
         assert!(!ANALYSIS_PREWARM_ACTIVE.load(Ordering::SeqCst));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn analysis_prewarm_enabled_follows_env() {
+        let _guard = PREWARM_TEST_LOCK.lock().unwrap();
+        let name = "BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM";
+        let saved = std::env::var_os(name);
+        // SAFETY: env mutation is unsafe in edition 2024; PREWARM_TEST_LOCK
+        // serializes every test in this module that touches the environment.
+        unsafe {
+            std::env::remove_var(name);
+            assert!(analysis_prewarm_enabled());
+            std::env::set_var(name, "0");
+            assert!(!analysis_prewarm_enabled());
+            std::env::set_var(name, "off");
+            assert!(!analysis_prewarm_enabled());
+            match saved {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
     }
 }

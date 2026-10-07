@@ -91,6 +91,15 @@ then compiles itself. `prewarm` is a setup hook, not a contract: under
 exits 0, so a dependency-resolution hook cannot fail for lack of a frontend.
 `--mode rust` keeps strict semantics.
 
+Beyond the AOT compile, `prewarm` also resolves the workspace's sources into
+the shared analyzer byte store (the `analysis prewarm[aot-prewarm]` shards),
+which is what makes the first build's action phase faster — not just the
+compile-free startup. On a large workspace that sweep roughly doubles the
+command's serial time, so `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` opts
+out for foreground or CI runs where it has nothing to hide behind; it stays
+on by default because a detached `prewarm --background` hides the cost
+entirely.
+
 The binary-level `aot-prewarm` name used by earlier CI tooling remains
 accepted as an alias; `prewarm` is canonical.
 

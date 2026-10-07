@@ -107,6 +107,18 @@ run_runner "$workspace_a" "$temporary_dir/prewarm-a2.log" prewarm ||
 if grep -Fq 'Rust worker AOT compile: elapsed_us=' "$temporary_dir/prewarm-a2.log"; then
   fail 'warm prewarm rerun recompiled the worker'
 fi
+analysis_prewarm_ran=no
+if grep -Fq 'analysis prewarm[aot-prewarm]' "$temporary_dir/prewarm-a2.log"; then
+  analysis_prewarm_ran=yes
+fi
+
+# BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0 opts out of the byte-store sweep.
+BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0 \
+  run_runner "$workspace_a" "$temporary_dir/prewarm-a3.log" prewarm ||
+  fail 'prewarm with analysis prewarm disabled failed'
+if grep -Fq 'analysis prewarm[aot-prewarm]' "$temporary_dir/prewarm-a3.log"; then
+  fail 'ANALYSIS_PREWARM=0 still spawned analysis shards'
+fi
 
 # --- --background detaches, idempotent, and logs to prewarm.log -----------
 run_runner "$workspace_b" "$temporary_dir/bg1.log" prewarm --background ||
@@ -122,17 +134,17 @@ run_runner "$workspace_b" "$temporary_dir/bg2.log" prewarm --background ||
 grep -Fq 'already running' "$temporary_dir/bg2.log" ||
   fail 'second background prewarm was not recognized as a no-op'
 
-# Wait for the detached child to finish (bounded): the artifact is published.
+# Wait for the detached child to finish (bounded): the completion line is
+# logged after the artifact is published, so poll on it (the artifact alone
+# appears first and loses the race).
 waited=0
-until aot_artifact "$workspace_b"; do
+until [[ -f "$prewarm_log_file" ]] && grep -Fq 'AOT prewarm ready:' "$prewarm_log_file"; do
   waited=$((waited + 1))
   (( waited < 240 )) || fail 'background prewarm did not finish in time'
   sleep 0.5
 done
 aot_artifact "$workspace_b" ||
   fail 'background prewarm published no AOT artifact'
-grep -Fq 'AOT prewarm ready:' "$prewarm_log_file" ||
-  fail 'background prewarm log missing completion line'
 
 # --- Concurrent build shares the in-flight compile ------------------------
 rm -rf -- "$workspace_b/.dart_tool/build_runner_accelerator/aot-sdk" \
@@ -193,5 +205,5 @@ fi
 grep -Fq 'nothing to prewarm' "$temporary_dir/launcher-dart.log" ||
   fail 'dart launcher prewarm --mode dart printed no skip notice'
 
-printf 'prewarm: foreground=yes background=yes idempotent=yes single-flight=yes waited=%s dart-noop=yes launcher=yes\n' \
-  "$wait_marker"
+printf 'prewarm: foreground=yes background=yes idempotent=yes single-flight=yes waited=%s dart-noop=yes launcher=yes analysis-prewarm=%s analysis-opt-out=yes\n' \
+  "$wait_marker" "$analysis_prewarm_ran"

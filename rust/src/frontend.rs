@@ -2,8 +2,9 @@ use crate::builder::{BuilderManifestFile, RustBuildConfig, rust_build_config_fro
 use crate::cli::{FrontendMode, Options};
 use crate::worker_kernel::{
     AOT_COMPILE_LOCK_NAME, BACKGROUND_AOT_LOCK_ENV, acquire_background_aot_lock,
-    early_worker_aot_compile, early_worker_aot_enabled, manifest_prewarm_enabled,
-    prewarm_worker_aot, start_analysis_prewarm, start_manifest_analysis_prewarm,
+    analysis_prewarm_enabled, early_worker_aot_compile, early_worker_aot_enabled,
+    manifest_prewarm_enabled, prewarm_worker_aot, start_analysis_prewarm,
+    start_manifest_analysis_prewarm,
     take_background_aot_lock, worker_aot_cache_key,
 };
 use crate::workspace::Workspace;
@@ -403,7 +404,11 @@ pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     // Warm the shared analyzer byte store alongside the worker AOT compile:
     // the JIT prewarm overlaps the compile and continues to completion.
-    let analysis_prewarm = start_analysis_prewarm(&workspace.root, dart_binary);
+    // Opt out with BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0 for serial
+    // foreground/CI runs where the sweep cost has nothing to hide behind.
+    let analysis_prewarm = analysis_prewarm_enabled()
+        .then(|| start_analysis_prewarm(&workspace.root, dart_binary))
+        .flatten();
     let artifact = prewarm_worker_aot(&workspace.root, dart_binary, &worker)?;
     if let Some(analysis_prewarm) = analysis_prewarm {
         analysis_prewarm.wait_for_children();
