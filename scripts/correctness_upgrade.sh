@@ -97,9 +97,45 @@ printf '{}' > "$state/graph-v3.bin"
 BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0 native_build per-key
 compare
 [[ -d "$temporary_dir/cache/byte_store/per-key-v1" ]]
+# Fail mismatched custom workers before any output/graph can be committed.
+cp "$state/graph-v3.bin" "$temporary_dir/graph.before"
+printf '\n// force worker validation\n' >> "$native/lib/model.dart"
+for problem in wrong-version missing-version wrong-protocol missing-capability; do
+  python3 - "$temporary_dir/custom.dart" "$problem" <<'PY_WORKER'
+from pathlib import Path
+import sys
+path, problem = sys.argv[1:]
+version = "'accelerator_version': buildRunnerAcceleratorVersion,"
+if problem == 'wrong-version': version = "'accelerator_version': '0.0.0',"
+if problem == 'missing-version': version = ''
+wire = 2 if problem == 'wrong-protocol' else 1
+capabilities = ['asset-rpc-binary-read-v1', 'build-result-binary-v1', 'shared-blocked-assets-v1', 'reset-overlay-blob-v1']
+if problem == 'missing-capability': capabilities.remove('reset-overlay-blob-v1')
+Path(path).write_text("""import 'dart:io';
+import 'package:build_runner_accelerator/src/protocol.dart';
+import 'package:build_runner_accelerator/src/frontend_binary_resolver.dart' show buildRunnerAcceleratorVersion;
+Future<void> main() async {
+  final request = await FrameReader(stdin).next();
+  await FrameWriter(stdout).send({
+""" + f"'v': {wire}, 'type': 'initialized', 'id': request!['id'], {version} 'capabilities': {capabilities}" + """});
+}
+""")
+PY_WORKER
+  if VERIFY_COMMAND_LOG="$temporary_dir/$problem.log" VERIFY_WORKSPACE="$native" worker_run_frontend build --root "$native" --dart "$dart_bin" --mode rust --worker "$temporary_dir/custom.dart"; then
+    printf 'upgrade: invalid custom worker accepted: %s\n' "$problem" >&2; exit 1
+  fi
+  case "$problem" in
+    wrong-version|missing-version) grep -Fq 'accelerator_version mismatch' "$temporary_dir/$problem.log" ;;
+    wrong-protocol) grep -Fq 'unsupported or missing IPC protocol version' "$temporary_dir/$problem.log" ;;
+    missing-capability) grep -Fq 'reset-overlay-blob-v1' "$temporary_dir/$problem.log" ;;
+  esac
+  compare
+  cmp "$temporary_dir/graph.before" "$state/graph-v3.bin"
+done
+cp "$stock/lib/model.dart" "$native/lib/model.dart"
 # CLI alias removal must also be explicit on the native parser.
 if VERIFY_COMMAND_LOG="$temporary_dir/alias.log" VERIFY_WORKSPACE="$native" worker_run_frontend aot-prewarm --root "$native" --mode dart; then
   printf 'upgrade: old alias unexpectedly succeeded\n' >&2; exit 1
 fi
 grep -Fq 'aot-prewarm was removed; use prewarm' "$temporary_dir/alias.log"
-printf 'upgrade: PASS old-state/clean/noop/incremental/per-key stock bytes preserved\n'
+printf 'upgrade: PASS old-state/clean/noop/incremental/per-key/worker-validation stock bytes preserved\n'

@@ -213,13 +213,7 @@ impl Options {
         }
         matches!(
             self.command.as_str(),
-            "build"
-                | "watch"
-                | "prewarm"
-                | "aot-cache-key"
-                | "--help"
-                | "-h"
-                | "--version"
+            "build" | "watch" | "prewarm" | "aot-cache-key" | "--help" | "-h" | "--version"
         ) && self.stock_arguments.iter().all(|arg| {
             matches!(arg.as_str(), "--force-aot" | "--force-jit")
                 || (matches!(self.command.as_str(), "build" | "watch")

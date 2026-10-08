@@ -100,3 +100,5 @@ actions still replace outputs and handle their ordinary stale-output lifecycle.
 
 See [ADR 0030](adr/0030-one-zero-contract-and-disposable-state.md) for the boundary
 and [protocol/v1.md](../protocol/v1.md) for required message fields.
+
+The implementation inventory is in [the compatibility audit](compatibility-audit-1.0.md).
