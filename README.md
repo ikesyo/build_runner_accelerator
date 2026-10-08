@@ -158,12 +158,15 @@ An advanced user may compile the launcher with `dart compile exe`; that form is
 supported as a compatibility path for release-cache misses, but it is not the
 normal installation or benchmark path.
 
-## 1.0 contract and migration
+## Compatibility cleanup during 0.x development
 
-The stable CLI, diagnostic/experimental/internal environment classification,
-custom-worker version requirement and safe recovery steps are documented in
-[the 0.x → 1.0 migration guide](docs/migration-1.0.md). Manifest, graph, worker
-AOT and analysis cache formats are disposable internal state; upgrades may
+Development continues on the 0.x release line. This cleanup removes obsolete
+compatibility paths as preparation for an eventual 1.0; it does not select the
+next release version or finalize the 1.0 API. The current public CLI,
+diagnostic/experimental/internal environment classification, custom-worker
+version requirement and safe recovery steps are documented in
+[the compatibility cleanup guide](docs/compatibility-cleanup.md). Manifest,
+graph, worker AOT and analysis cache formats are disposable internal state; upgrades may
 invalidate and regenerate them. Cache compatibility cleanup does not delete
 user sources or existing generated source files. Stock build_runner and the
 auto/rust/dart mode contracts remain the compatibility reference.

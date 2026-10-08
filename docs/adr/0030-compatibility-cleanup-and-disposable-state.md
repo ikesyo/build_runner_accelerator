@@ -1,19 +1,30 @@
-# ADR 0030: 1.0 contracts and disposable accelerator state
+# ADR 0030: Compatibility cleanup during 0.x and disposable state
 
 - Status: Accepted
 - Date: 2026-10-08
 - Amends ADRs 0001–0004, 0024, 0026, 0028 and 0029.
+
+## Context
+
+Development continues through 0.x releases. Before an eventual 1.0, remove
+obsolete accelerator compatibility paths and clarify which interfaces are
+public and which state can be regenerated. This decision records the current
+cleanup; it does not select the next release version, set a 1.0 schedule, or
+finalize the 1.0 API. Further compatibility decisions may follow during 0.x.
 
 ## Decision
 
 Stock build_runner configuration, BuilderOptions, expected-output mapping,
 resolver visibility, resource lifetime and transactional output behavior remain
 our compatibility reference. The auto/rust/dart selection policy is unchanged.
-Compatibility with accelerator 0.x commands and internal storage is not required.
+Remove the specific obsolete accelerator aliases, message defaults and storage
+readers identified in this audit. Retaining every interface or internal format
+from earlier 0.x releases is not a requirement for this cleanup.
 
 The supported CLI and environment classifications are listed in
-[the migration guide](../migration-1.0.md). Remove the `aot-prewarm` alias at both
-launcher and native parser boundaries, including Dart mode; use `prewarm`.
+[the cleanup/update guide](../compatibility-cleanup.md). Remove the
+`aot-prewarm` alias at both launcher and native parser boundaries, including
+Dart mode; use `prewarm`.
 Keep diagnostic cache-disable switches and the per-key store alternative:
 these isolate publication/index failures without deleting generated outputs.
 Keep opt-in analysis experiments disabled by default. Internal transport and
@@ -33,7 +44,7 @@ Manifest, graph, generator/probe cache, worker AOT/kernel, SDK summary and
 analysis cache formats are not stable API. Identity validation, format versions
 and content digests may invalidate them on updates. Recovery recomputes state;
 there is no guarantee to migrate a previous release's entries. The per-key
-analysis alternative uses a new namespace to avoid reusing 0.x state.
+analysis alternative uses a new namespace to avoid reusing earlier 0.x state.
 
 ## Worker and IPC boundary
 
@@ -62,7 +73,8 @@ binary capabilities and reset overlay validation are retained. See
 
 ## Consequences and validation
 
-Updating from 0.x may incur a cold build; no cache migration is promised.
+Updating a workspace from an earlier 0.x release may incur a cold build;
+no cache migration is promised.
 A custom worker must be rebuilt against the selected package. Old CLI calls
 fail explicitly with a replacement command. Historical changelogs, measurements
 and prior ADR evidence remain history; this decision supersedes their contract
@@ -70,5 +82,6 @@ claims where indicated.
 
 Tests cover current producers, missing fields/version identities, obsolete
 manifest mappings, invalid graph recovery, cache isolation, and stock output
-comparisons after regeneration. Release version bumps remain tagpr's task; this
-change defines the 1.0 boundary without publishing a 1.0 release.
+comparisons after regeneration. Release version bumps remain tagpr's task.
+This cleanup applies to the continuing 0.x development line; the eventual 1.0
+API and release timing remain separate decisions.

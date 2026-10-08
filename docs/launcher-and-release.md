@@ -233,9 +233,11 @@ worker before the first dirty build. Direct binary selection through
 `BUILD_RUNNER_ACCELERATOR_BIN` remains available for benchmarking, offline
 environments, and CI images that preinstall the frontend.
 
-## 1.0 compatibility boundary
+## Compatibility cleanup during 0.x
 
-See [the migration guide](migration-1.0.md) for stable CLI/environment contracts
-and internal state recovery. `aot-prewarm` is removed. Custom workers must match
-the package/native version exactly and pass version/capability validation.
+This cleanup prepares for an eventual 1.0 while development continues through
+0.x releases. It does not select the next release version or finalize the
+1.0 API. See [the cleanup/update guide](compatibility-cleanup.md) for the current
+CLI/environment classification and internal state recovery. `aot-prewarm` is
+removed. Custom workers must match the package/native version exactly and pass version/capability validation.
 Storage formats are regenerated on invalidation and are not stable API.
