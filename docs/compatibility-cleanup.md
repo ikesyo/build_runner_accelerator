@@ -43,8 +43,8 @@ potentially different BuilderOptions configuration.
 ## Environment classification
 
 Names below have the `BUILD_RUNNER_ACCELERATOR_` prefix. Existing switches are
-retained for diagnosis, recovery or explicitly opt-in experiments; none is
-removed in this cleanup. Unknown environment names are ignored, not promised
+retained for diagnosis, recovery or explicitly opt-in experiments, except
+`PACKED_STORE`, which is removed. Unknown environment names are ignored, not promised
 as extension points. Platform cache selection also honors LOCALAPPDATA,
 XDG_CACHE_HOME and the platform home/cache conventions.
 
@@ -52,7 +52,7 @@ XDG_CACHE_HOME and the platform home/cache conventions.
 | --- | --- | --- |
 | Public, intended to remain supported | `BIN`, `CACHE`, `RELEASE_BASE_URL`, `WORKER_AOT` | Preinstalled frontend, cache root, signed HTTPS release mirror and worker compilation policy. |
 | Diagnostic, supported but output/schema not stable | `DEBUG`, `METRICS`, `ANALYSIS_TRACE`, `WALL_TRACE`, `PLAN_ONLY` | Error stack, worker metrics, analysis details, frontend timing, and non-building plan inspection. Trace needs METRICS; PLAN_ONLY exits before executing actions. |
-| Diagnostic recovery controls | `BYTE_STORE`, `DEP_CACHE`, `PACKED_STORE`, `DEP_PREFETCH`, `MANIFEST_SNAPSHOT`, `EARLY_CATALOG`, `PART_FILTER`, `SDK_SUMMARY_PREWARM`, `ANALYSIS_PREWARM` | Set `0` to disable the corresponding optimization; PACKED_STORE=0 selects a separate per-key store. BYTE_STORE also accepts false/off. |
+| Diagnostic recovery controls | `BYTE_STORE`, `DEP_CACHE`, `DEP_PREFETCH`, `MANIFEST_SNAPSHOT`, `EARLY_CATALOG`, `PART_FILTER`, `SDK_SUMMARY_PREWARM`, `ANALYSIS_PREWARM` | Set `0` to disable the corresponding optimization; BYTE_STORE=0 disables shared analyzer storage; DEP_CACHE=0 disables directive caches. BYTE_STORE also accepts false/off. |
 | Experimental, opt-in | `ANALYSIS_SINGLE_FLIGHT`, `COMPILE_PREWARM`, `MANIFEST_PREWARM` | Set `1` to enable; disabled by default, may change or be removed in a later release. |
 | Experimental tuning | `ANALYSIS_PREWARM_JOBS`, `ANALYSIS_PREWARM_DIRS`, `RESOLVER_CAP` | Prewarm shard count/directories and resolver concurrency cap; no stable performance guarantee. |
 | Internal | `WORKER_KERNEL`, `WORKER_AOT_PATH`, `WORKER_AOT_BACKGROUND_LOCK`, `MANIFEST_WORKER_AOT`, `SUPERVISED` | Artifact overrides and subprocess coordination; no public compatibility guarantee. Do not set in normal CI. |
@@ -69,6 +69,11 @@ not the project-facing launcher option API.
 The classification describes the current support intent during 0.x development;
 it does not freeze the eventual 1.0 interface.
 
+`BUILD_RUNNER_ACCELERATOR_PACKED_STORE` is removed and ignored, including the
+old value `0`; neither store can select a per-key layout. Remove it from scripts
+and CI. To bypass caching, use `BYTE_STORE=0` and/or `DEP_CACHE=0`, or use a fresh
+`CACHE` directory to isolate on-disk state.
+
 ## Regenerated internal state
 
 Manifest v9 contains explicit `extensions` mappings or post-process
@@ -82,9 +87,12 @@ diagnosed and rebuilt from empty, causing actions to run again. Old filenames
 outside the current graph path are ignored. Worker AOT, kernels, probe results
 and SDK/analyzer caches are selected only when their format and content/SDK/
 dependency identity checks pass; misses regenerate them. Analysis packs continue
-to ignore earlier formats with no migration. The diagnostic per-key analyzer
-namespace is now `byte_store/per-key-v1/<fingerprint>` and directive cache
-namespace is `dep_parse/per-key-v1-<sdk>`; their old directories remain on disk.
+to ignore earlier formats with no migration. Both the analyzer byte store and
+directive-dependency cache are packed-only under `byte_store/v2/<fingerprint>`
+and `dep_parse/v3-<sdk>`. Their per-key readers/writers and analyzer per-key
+readiness scan are removed. Earlier per-key directories, including
+`byte_store/per-key-v1`, `dep_parse/v1-<sdk>` and `dep_parse/per-key-v1-<sdk>`,
+are ignored and remain on disk.
 There is no promise that every cache is cleared on every version update.
 
 The first build may regenerate the manifest/graph, compile the worker/generator
@@ -102,7 +110,8 @@ actions still replace outputs and handle their ordinary stale-output lifecycle.
    invocation/environment.
 3. Retry `build --mode rust --force-jit` to get a strict diagnostic without AOT.
    Disable BYTE_STORE/DEP_CACHE or use a fresh CACHE directory to isolate shared
-   analysis state. `PACKED_STORE=0` is another publication/index diagnostic.
+   analysis state. `BYTE_STORE=0` uses memory-only analyzer storage;
+   `DEP_CACHE=0` parses directives without shared dependency caching.
 4. If needed, rename `.dart_tool/build_runner_accelerator` to a backup directory
    and rerun `build`. This retains user sources and generated source files;
    artifact-tree intermediates are rebuilt. Preserve the backup until the

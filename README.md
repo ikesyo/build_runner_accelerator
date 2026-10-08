@@ -302,9 +302,12 @@ and validates only the values actually used. Repeated writes of the same key and
 bytes do not grow either file. Writers publish data before index entries and
 repair incomplete tails under the append lock. Cache entries are not fsynced;
 missing or corrupt entries are recomputed. Earlier packed and per-key formats
-are ignored, with no migration. `BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0` retains
-the separate per-key implementation. The first build after updating rebuilds
-the shared caches from empty. Older cache directories remain on disk.
+are ignored, with no migration. Both shared stores are packed-only;
+`BUILD_RUNNER_ACCELERATOR_PACKED_STORE` is removed and ignored. For diagnosis,
+use `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0`,
+`BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0`, or a fresh cache directory. The first
+build after updating may regenerate shared caches. Older directories remain
+on disk without being migrated or deleted.
 
 The pack has no compaction yet, and stale fingerprint directories are not
 garbage-collected. Reclaim space by removing caches for toolchains you no longer

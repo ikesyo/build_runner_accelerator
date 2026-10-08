@@ -56,7 +56,7 @@ for entry in manifest['builders'] + manifest['definitions']:
 path.write_text(json.dumps(manifest))
 (state/'graph-v3.bin').write_text('{"schema_version":1,"actions":{}}')
 # These earlier shared namespaces must remain untouched and unselected.
-for name in ['byte_store/old-fingerprint/ab/ab.linked', 'dep_parse/v1-old/key.json', 'dep_parse/v2-old/store.bin']:
+for name in ['byte_store/old-fingerprint/ab/ab.linked', 'byte_store/per-key-v1/old-fingerprint/ab/ab.linked', 'dep_parse/v1-old/key.json', 'dep_parse/per-key-v1-old/key.json', 'dep_parse/v2-old/store.bin']:
     path = cache/name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b'old-cache-sentinel')
@@ -74,7 +74,7 @@ assert manifest['version'] == 9
 assert all('input_suffix' not in b and 'output_suffixes' not in b for b in manifest['builders'] + manifest['definitions'])
 assert (state/'graph-v3.bin').read_bytes().startswith(b'BRAG')
 assert (state/'user-sentinel').read_text() == 'keep'
-for name in ['byte_store/old-fingerprint/ab/ab.linked', 'dep_parse/v1-old/key.json', 'dep_parse/v2-old/store.bin']:
+for name in ['byte_store/old-fingerprint/ab/ab.linked', 'byte_store/per-key-v1/old-fingerprint/ab/ab.linked', 'dep_parse/v1-old/key.json', 'dep_parse/per-key-v1-old/key.json', 'dep_parse/v2-old/store.bin']:
     assert (cache/name).read_bytes() == b'old-cache-sentinel'
 assert list((cache/'byte_store'/'v2').rglob('*.index'))
 PY
@@ -92,11 +92,33 @@ PY_EDIT
 stock_build
 native_build incremental
 compare
-# The retained diagnostic alternative rebuilds in a separate namespace.
+# The retired environment variable is ignored; both stores remain packed.
 printf '{}' > "$state/graph-v3.bin"
-BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0 native_build per-key
+BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0 native_build retired-packed-switch
 compare
-[[ -d "$temporary_dir/cache/byte_store/per-key-v1" ]]
+python3 - "$temporary_dir/cache" <<'PY_PACKED'
+from pathlib import Path
+import sys
+cache = Path(sys.argv[1])
+assert list((cache/'byte_store'/'v2').rglob('*.index'))
+old = cache/'byte_store'/'per-key-v1'/'old-fingerprint'/'ab'/'ab.linked'
+assert list((cache/'byte_store'/'per-key-v1').rglob('*.linked')) == [old]
+assert old.read_bytes() == b'old-cache-sentinel'
+root = cache/'dep_parse'
+assert list(root.glob('v3-*/store.bin'))
+assert not list(root.glob('per-key-v1-*/store.bin'))
+assert sorted(str(p.relative_to(root)) for p in root.rglob('*.json')) == [
+    'per-key-v1-old/key.json', 'v1-old/key.json',
+]
+PY_PACKED
+# Cache-free analysis and directive parsing are the retained recovery path.
+printf '{}' > "$state/graph-v3.bin"
+BUILD_RUNNER_ACCELERATOR_CACHE="$temporary_dir/uncached" \
+  BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0 BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0 \
+  native_build uncached-analysis
+compare
+[[ ! -e "$temporary_dir/uncached/byte_store" ]]
+[[ ! -e "$temporary_dir/uncached/dep_parse" ]]
 # Inject invalid test workers via the internal override; do not commit state.
 cp "$state/graph-v3.bin" "$temporary_dir/graph.before"
 printf '\n// force worker validation\n' >> "$native/lib/model.dart"
@@ -138,4 +160,4 @@ if VERIFY_COMMAND_LOG="$temporary_dir/alias.log" VERIFY_WORKSPACE="$native" work
   printf 'upgrade: old alias unexpectedly succeeded\n' >&2; exit 1
 fi
 grep -Fq 'aot-prewarm was removed; use prewarm' "$temporary_dir/alias.log"
-printf 'upgrade: PASS old-state/clean/noop/incremental/per-key/worker-validation stock bytes preserved\n'
+printf 'upgrade: PASS old-state/clean/noop/incremental/retired-packed-switch/uncached-analysis/worker-validation stock bytes preserved\n'

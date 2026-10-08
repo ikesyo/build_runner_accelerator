@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-08
-- Amends ADRs 0001–0004, 0024, 0026, 0028 and 0029.
+- Amends ADRs 0001–0004, 0021, 0022, 0024, 0026, 0028 and 0029.
 
 ## Context
 
@@ -25,8 +25,14 @@ The supported CLI and environment classifications are listed in
 [the cleanup/update guide](../compatibility-cleanup.md). Remove the
 `aot-prewarm` alias at both launcher and native parser boundaries, including
 Dart mode; use `prewarm`.
-Keep diagnostic cache-disable switches and the per-key store alternative:
-these isolate publication/index failures without deleting generated outputs.
+Keep diagnostic cache-disable switches, but remove both per-key storage
+alternatives: analyzer FileByteStore selection/readiness scanning and
+AssetDepsCache JSON read/write/filename-key encoding. Shared analyzer and
+directive caches always use packed storage. Remove PACKED_STORE; old values
+are ignored like other unknown environment names. BYTE_STORE=0, DEP_CACHE=0
+and a fresh CACHE directory provide diagnosis/recovery, and corrupt entries
+remain misses. The extra storage implementations are not needed for these
+recovery paths. Old per-key directories remain untouched and are never selected.
 Keep opt-in analysis experiments disabled by default. Internal transport and
 artifact overrides are development mechanisms, not stable user API.
 
@@ -43,8 +49,8 @@ the selected namespace remains untouched.
 Manifest, graph, generator/probe cache, worker AOT/kernel, SDK summary and
 analysis cache formats are not stable API. Identity validation, format versions
 and content digests may invalidate them on updates. Recovery recomputes state;
-there is no guarantee to migrate a previous release's entries. The per-key
-analysis alternative uses a new namespace to avoid reusing earlier 0.x state.
+there is no guarantee to migrate a previous release's entries. Removing the
+per-key alternatives leaves their earlier 0.x directories unused.
 
 ## Worker and IPC boundary
 
