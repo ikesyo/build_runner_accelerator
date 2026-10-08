@@ -283,16 +283,20 @@ Design details are recorded in [ADRs 0009–0013](docs/adr/README.md).
 
 ## Current compatibility and limitations
 
-The 0.2.x package line supports Dart `>=3.11.0 <4.0.0`. The core build stack
+The current release line supports Dart `>=3.11.0 <4.0.0`. The core build stack
 is intentionally bounded to the versions exercised by CI:
 
 | Dependency | Supported range |
 | --- | --- |
-| `analyzer` | `>=13.3.0 <14.5.0` |
+| `analyzer` | `>=13.3.0 <15.0.0` |
 | `build` | `>=4.0.9 <5.0.0` |
 | `build_config` | `>=1.3.2 <1.4.0` |
-| `build_runner` | `>=2.16.1 <2.17.0` |
+| `build_runner` | `>=2.16.2 <2.17.0` |
 | `package_config` | `>=2.2.0 <4.0.0` |
+
+build_runner 2.16.2 requires analyzer 14.3.0 or newer, making 14.3.0 the
+effective analyzer minimum. The build_runner lower bound excludes 2.16.1's
+stock resolver, which is incompatible with analyzer 14.5.0.
 
 The release workflow checks both the minimum dependency solution and the current solution. Older
 Dart SDKs and `build_runner` versions are not supported by this release line;
@@ -308,7 +312,7 @@ demand-driven `is_optional` builders and ordinary Builders using
 official all-asset semantics, including extensionless inputs, regular mapping
 union, target/`generate_for` filtering, and source/cache visibility. The
 tracked fixtures are pinned to the
-`build_runner 2.16.1` compatibility window:
+`build_runner 2.16.2` compatibility window:
 
 | Fixture | Generator versions |
 | --- | --- |

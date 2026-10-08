@@ -19,12 +19,11 @@ environment:
 dependencies:
   # Keep the worker on the tested build_runner/analyzer compatibility window.
   archive: ^4.0.7
-  # build_runner 2.16.1 uses a setter removed in analyzer 14.5.0.
-  # Reopen this window after a compatible build_runner release is validated.
-  analyzer: ">=13.3.0 <14.5.0"
+  analyzer: ">=13.3.0 <15.0.0"
   build: ">=4.0.9 <5.0.0"
   build_config: ">=1.3.2 <1.4.0"
-  build_runner: ">=2.16.1 <2.17.0"
+  # 2.16.2 fixes stock resolver compatibility with analyzer 14.5.0.
+  build_runner: ">=2.16.2 <2.17.0"
   built_collection: ^5.1.1
   built_value: ^8.10.1
   crypto: ^3.0.6

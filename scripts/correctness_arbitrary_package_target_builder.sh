@@ -96,7 +96,7 @@ write_package_pubspec() {
     '    path: packages/dependency_builder_package' \
     '' \
     'dev_dependencies:' \
-    '  build_runner: 2.16.1' \
+    '  build_runner: 2.16.2' \
     '  build_runner_accelerator:' \
     '    path: ../..' >"$directory/pubspec.yaml"
 }
