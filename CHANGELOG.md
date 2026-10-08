@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.11.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.10.0...v0.11.0) - 2026-10-08
+
+- feat: add setup-time prewarm with background AOT compilation by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/95
+- chore: format Rust code and enforce lint checks in CI by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/97
+- perf: avoid byte copies in Dart asset decoding and digesting by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/98
+- perf: share immutable generated output buffers across transactions by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/99
+- Deduplicate dirty output reads by resolved physical path by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/100
+- Reduce Rust action planning retention with shared instances and specs by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/101
+
 ## [v0.10.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.9.0...v0.10.0) - 2026-10-07
 
 - perf: avoid copying cached bytes during phased dependency reads by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/87
