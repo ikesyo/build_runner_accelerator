@@ -13,9 +13,7 @@ pub(crate) struct BuilderManifestFile {
     pub(crate) fingerprint: String,
     pub(crate) worker_entrypoint: String,
     pub(crate) trigger_digest: String,
-    #[serde(default)]
     pub(crate) builders: Vec<BuilderManifestDefinition>,
-    #[serde(default)]
     pub(crate) definitions: Vec<BuilderManifestDefinition>,
 }
 
@@ -52,25 +50,16 @@ pub(crate) struct BuilderManifestDefinition {
     pub(crate) runtime_mapping: Option<BuilderManifestRuntime>,
     pub(crate) build_to: String,
     pub(crate) phase: u32,
-    #[serde(default)]
     pub(crate) is_optional: bool,
-    #[serde(default)]
     pub(crate) output_is_optional: bool,
-    #[serde(default)]
     pub(crate) required_input_suffixes: Vec<String>,
-    #[serde(default)]
     pub(crate) excluded_input_suffixes: Vec<String>,
     #[serde(default)]
     pub(crate) applies_builder: Option<String>,
-    #[serde(default)]
     pub(crate) generate_for: Vec<String>,
-    #[serde(default)]
     pub(crate) generate_for_exclude: Vec<String>,
-    #[serde(default)]
     pub(crate) target_sources: Vec<String>,
-    #[serde(default)]
     pub(crate) target_sources_exclude: Vec<String>,
-    #[serde(default)]
     pub(crate) options: BTreeMap<String, Value>,
     #[serde(default)]
     pub(crate) target: String,
@@ -79,8 +68,7 @@ pub(crate) struct BuilderManifestDefinition {
     #[serde(default)]
     pub(crate) is_root: Option<bool>,
     #[serde(default)]
-    pub(crate) target_order: u32,
-    #[serde(default)]
+    pub(crate) target_order: Option<u32>,
     pub(crate) triggers: Vec<BuilderTrigger>,
     #[serde(default)]
     pub(crate) part_directive_suffix: Option<String>,
@@ -179,7 +167,12 @@ pub(crate) fn rust_build_config_from_manifest(
                     "configured builder requires is_root",
                 )
             })?,
-            target_order: entry.target_order,
+            target_order: entry.target_order.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "configured builder requires target_order",
+                )
+            })?,
             phase: entry.phase,
             excluded_input_suffixes: entry.excluded_input_suffixes,
             generate_for: entry.generate_for,

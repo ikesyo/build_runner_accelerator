@@ -50,8 +50,8 @@ process that logs to `.dart_tool/build_runner_accelerator/prewarm.log`; a
 second invocation while one is already running is a no-op, and a concurrent
 `build` waits for the published artifact instead of duplicating the compile.
 Without `--background` the command waits for completion. `prewarm` exits 0
-without doing anything under `--mode dart` or when the native frontend is
-unavailable, so the setup hook never fails for lack of a frontend. The old `aot-prewarm` alias is removed; use `prewarm`.
+without doing anything under `--mode dart` or in `auto` mode when the native
+frontend is unavailable, so the setup hook never fails for lack of a frontend. The old `aot-prewarm` alias is removed; use `prewarm`.
 
 The default `auto` mode downloads and verifies the matching signed native
 frontend on supported Linux, macOS, and Windows platforms. On macOS Intel or

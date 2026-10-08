@@ -22,7 +22,8 @@ artifact overrides are development mechanisms, not stable user API.
 Manifest v9 drops flattened mappings and their reader. Only explicit extensions
 or post-process input_extensions describe mappings. A cached manifest that
 cannot be parsed or validated is regenerated. Required mapping fields and the
-configured package-root bit are not inferred from older messages. An invalid
+configured package-root/order bits and explicit options/filter/optional metadata
+are not inferred from older messages. An invalid
 or obsolete graph is diagnosed and rebuilt from empty; filesystem IO errors
 remain errors. No migration path deletes user sources or existing outputs.
 Only normal successful action commit may replace outputs. Old storage outside

@@ -7,7 +7,7 @@ import 'package:test/test.dart';
 
 void main() {
   test(
-    'preserves persisted namespaces across chunk and SHA block boundaries',
+    'fingerprint is deterministic across chunk and SHA block boundaries',
     () {
       for (final length in [0, 1, 55, 56, 63, 64, 65, 127, 128, 129, 4096]) {
         final bytes = Uint8List.fromList([

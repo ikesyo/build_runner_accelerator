@@ -252,6 +252,7 @@ void main() {
     }
     for (final change in [
       {'v': 2},
+      {'v': 1.0},
       {'accelerator_version': '0.0.0'},
       {'phase_count': 0},
       {'phase_count': 1.5},

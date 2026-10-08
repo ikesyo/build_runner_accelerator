@@ -292,7 +292,7 @@ class WorkerBuildTrigger {
 }
 
 void validateProtocolVersion(JsonMap message) {
-  if (message['v'] != 1) {
+  if (message['v'] is! int || message['v'] != 1) {
     throw const FormatException('unsupported or missing IPC protocol version');
   }
 }

@@ -15,7 +15,7 @@ pub type Snapshot = BTreeMap<String, AssetSnapshot>;
 /// A stable internal snapshot key for a `findAssets` query.
 ///
 /// This is intentionally not an `AssetId`: build_runner represents globs as
-/// graph nodes, while this PoC stores the node alongside ordinary asset
+/// graph nodes, while the accelerator stores the node alongside ordinary asset
 /// snapshots.
 pub fn glob_asset_key(glob: &GlobRead) -> String {
     format!("__glob__|{}|{}", glob.package, glob.pattern)

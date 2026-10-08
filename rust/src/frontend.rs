@@ -650,6 +650,92 @@ mod tests {
     }
 
     #[test]
+    fn obsolete_or_incomplete_manifest_and_missing_local_worker_are_cache_misses() {
+        let root = std::env::temp_dir().join(format!(
+            "accelerator-manifest-contract-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("manifest.json");
+        let local = root.join("local.dart");
+        let stale = root.join("stale.dart");
+        fs::write(&local, "local worker").unwrap();
+        fs::write(&stale, "stale worker").unwrap();
+        let mut valid = serde_json::json!({
+            "version": 9, "fingerprint": "same", "trigger_digest": "stock", "worker_entrypoint": stale,
+            "definitions": [{"id": "app:copy", "kind": "normal", "extensions": [{"input_suffix": ".txt", "input_match": "suffix", "input_anchored": false, "output_suffixes": [".out"]}], "build_to": "source", "phase": 0}],
+            "builders": [{"id": "app:copy", "kind": "normal", "build_to": "source", "phase": 0, "target": "app:app", "package": "app", "is_root": true, "generate_for": ["**"]}]
+        });
+        for field in ["builders", "definitions"] {
+            for entry in valid[field].as_array_mut().unwrap() {
+                let object = entry.as_object_mut().unwrap();
+                for name in [
+                    "required_input_suffixes",
+                    "excluded_input_suffixes",
+                    "generate_for",
+                    "generate_for_exclude",
+                    "target_sources",
+                    "target_sources_exclude",
+                    "triggers",
+                ] {
+                    object.entry(name).or_insert_with(|| serde_json::json!([]));
+                }
+                object.insert("options".into(), serde_json::json!({}));
+                object.insert("is_optional".into(), serde_json::json!(false));
+                object.insert("output_is_optional".into(), serde_json::json!(false));
+            }
+        }
+        valid["builders"][0]["target_order"] = serde_json::json!(0);
+        fs::write(&path, valid.to_string()).unwrap();
+        let hit = super::read_manifest(&path, "same", &local)
+            .unwrap()
+            .unwrap();
+        assert_eq!(hit.worker_entrypoint, local.to_string_lossy());
+        for field in [
+            "is_root",
+            "kind",
+            "options",
+            "target_order",
+            "target_sources",
+            "generate_for_exclude",
+            "triggers",
+        ] {
+            let mut missing = valid.clone();
+            missing["builders"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            fs::write(&path, missing.to_string()).unwrap();
+            assert!(
+                super::read_manifest(&path, "same", &local)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let mut old = valid.clone();
+        old["version"] = serde_json::json!(8);
+        fs::write(&path, old.to_string()).unwrap();
+        assert!(
+            super::read_manifest(&path, "same", &local)
+                .unwrap()
+                .is_none()
+        );
+        fs::write(&path, valid.to_string()).unwrap();
+        fs::remove_file(&local).unwrap();
+        assert!(
+            super::read_manifest(&path, "same", &local)
+                .unwrap()
+                .is_none()
+        );
+        assert!(stale.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn cleanup_removes_only_old_readiness_files() {
         let root = std::env::temp_dir().join(format!(
             "early-worker-readiness-cleanup-{}-{}",

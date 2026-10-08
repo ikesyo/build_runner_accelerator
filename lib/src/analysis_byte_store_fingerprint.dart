@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
-/// Keeps the existing byte-store namespace without copying the SDK summary
+/// Computes the toolchain fingerprint without copying the SDK summary
 /// into a boxed integer list. Chunk boundaries do not enter the digest.
 String analysisByteStoreFingerprint(
   Uint8List sdkSummaryBytes, {

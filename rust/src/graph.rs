@@ -719,6 +719,39 @@ mod tests {
     }
 
     #[test]
+    fn old_binary_format_and_schema_are_discarded_without_removing_files() {
+        let root =
+            std::env::temp_dir().join(format!("accelerator-old-graph-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("graph.bin");
+        let source = root.join("source.dart");
+        let output = root.join("source.g.dart");
+        std::fs::write(&source, b"user source").unwrap();
+        std::fs::write(&output, b"existing output").unwrap();
+        for (format, schema) in [
+            (2, super::GRAPH_SCHEMA_VERSION),
+            (super::GRAPH_FORMAT_VERSION, 1),
+        ] {
+            let mut bytes = super::GRAPH_MAGIC.to_vec();
+            bytes.push(format);
+            bytes.extend_from_slice(&4_u32.to_be_bytes());
+            bytes.extend_from_slice(&schema.to_be_bytes());
+            std::fs::write(&path, &bytes).unwrap();
+            let state = GraphState::load(&path).unwrap();
+            assert!(state.actions.is_empty());
+            assert_eq!(state.schema_version, super::GRAPH_SCHEMA_VERSION);
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+            assert_eq!(std::fs::read(&source).unwrap(), b"user source");
+            assert_eq!(std::fs::read(&output).unwrap(), b"existing output");
+        }
+        assert!(
+            GraphState::load(&root).is_err(),
+            "filesystem IO errors stay explicit"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn graph_requires_binary_header() {
         let unique = format!(
             "build-runner-accelerator-invalid-{}-{}.bin",

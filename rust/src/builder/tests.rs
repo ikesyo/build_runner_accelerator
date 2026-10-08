@@ -11,6 +11,16 @@ fn dynamic_manifest_preserves_builder_phase_order() {
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
+                "target_order": 0,
                 "id": "example:phase-two",
                 "kind": "normal",
                 "extensions": [{
@@ -27,6 +37,16 @@ fn dynamic_manifest_preserves_builder_phase_order() {
                 "generate_for": ["lib/**/*.txt"]
             },
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
+                "target_order": 0,
                 "id": "example:phase-one",
                 "kind": "normal",
                 "extensions": [{
@@ -45,6 +65,16 @@ fn dynamic_manifest_preserves_builder_phase_order() {
         ],
         "definitions": [
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:phase-two",
                 "kind": "normal",
                 "extensions": [{
@@ -57,6 +87,16 @@ fn dynamic_manifest_preserves_builder_phase_order() {
                 "phase": 1
             },
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:phase-one",
                 "kind": "normal",
                 "extensions": [{
@@ -98,6 +138,15 @@ fn configured_phase_is_the_global_worker_phase() {
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:phase-one",
                 "kind": "normal",
                 "extensions": [{
@@ -115,6 +164,15 @@ fn configured_phase_is_the_global_worker_phase() {
                 "generate_for": ["lib/**/*.txt"]
             },
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:phase-two",
                 "kind": "normal",
                 "extensions": [{
@@ -134,6 +192,16 @@ fn configured_phase_is_the_global_worker_phase() {
         ],
         "definitions": [
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:phase-one",
                 "kind": "normal",
                 "extensions": [{
@@ -146,6 +214,16 @@ fn configured_phase_is_the_global_worker_phase() {
                 "phase": 0
             },
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:phase-two",
                 "kind": "normal",
                 "extensions": [{
@@ -174,6 +252,15 @@ fn dynamic_manifest_preserves_configured_input_exclusions() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -191,6 +278,15 @@ fn dynamic_manifest_preserves_configured_input_exclusions() {
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -221,6 +317,16 @@ fn dynamic_manifest_preserves_multiple_outputs() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -237,6 +343,16 @@ fn dynamic_manifest_preserves_multiple_outputs() {
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -265,6 +381,15 @@ fn dynamic_manifest_preserves_all_required_input_suffixes() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -282,6 +407,15 @@ fn dynamic_manifest_preserves_all_required_input_suffixes() {
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -311,6 +445,15 @@ fn dynamic_manifest_preserves_optional_builder_flag() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:optional",
             "kind": "normal",
             "extensions": [{
@@ -328,6 +471,15 @@ fn dynamic_manifest_preserves_optional_builder_flag() {
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "output_is_optional": false,
             "id": "example:optional",
             "kind": "normal",
             "extensions": [{
@@ -355,6 +507,15 @@ fn dynamic_manifest_preserves_trigger_metadata_and_digest() {
         "trigger_digest": "trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:trigger",
             "kind": "normal",
             "extensions": [{
@@ -375,6 +536,15 @@ fn dynamic_manifest_preserves_trigger_metadata_and_digest() {
             ]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:trigger",
             "kind": "normal",
             "extensions": [{
@@ -417,6 +587,16 @@ fn dynamic_manifest_rejects_unsupported_trigger_kind() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:trigger",
             "kind": "normal",
             "extensions": [{
@@ -433,6 +613,15 @@ fn dynamic_manifest_rejects_unsupported_trigger_kind() {
             "generate_for": ["lib/**/*.dart"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:trigger",
             "kind": "normal",
             "extensions": [{
@@ -459,6 +648,16 @@ fn dynamic_manifest_accepts_multiple_extension_mappings() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [
@@ -483,6 +682,16 @@ fn dynamic_manifest_accepts_multiple_extension_mappings() {
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [
@@ -521,6 +730,16 @@ fn dynamic_manifest_accepts_all_input_mapping() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:all",
             "kind": "normal",
             "extensions": [{
@@ -537,6 +756,16 @@ fn dynamic_manifest_accepts_all_input_mapping() {
             "generate_for": ["**"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:all",
             "kind": "normal",
             "extensions": [{
@@ -566,6 +795,16 @@ fn dynamic_manifest_rejects_non_empty_all_input_metadata() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:all",
             "kind": "normal",
             "extensions": [{
@@ -582,6 +821,16 @@ fn dynamic_manifest_rejects_non_empty_all_input_metadata() {
             "generate_for": ["**"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:all",
             "kind": "normal",
             "extensions": [{
@@ -611,6 +860,16 @@ fn dynamic_manifest_accepts_post_process_definition() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".gen.txt"],
@@ -622,6 +881,16 @@ fn dynamic_manifest_accepts_post_process_definition() {
             "generate_for": ["lib/**/*.gen.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".gen.txt"],
@@ -649,6 +918,16 @@ fn dynamic_manifest_accepts_source_post_process_definition() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".gen.txt"],
@@ -660,6 +939,16 @@ fn dynamic_manifest_accepts_source_post_process_definition() {
             "generate_for": ["lib/**/*.gen.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".gen.txt"],
@@ -681,6 +970,16 @@ fn singular_output_field_is_accepted_during_manifest_transition() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -697,6 +996,16 @@ fn singular_output_field_is_accepted_during_manifest_transition() {
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -725,6 +1034,16 @@ fn dynamic_manifest_accepts_capture_mapping() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:capture",
             "kind": "normal",
             "extensions": [{
@@ -741,6 +1060,16 @@ fn dynamic_manifest_accepts_capture_mapping() {
             "generate_for": ["lib/assets/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:capture",
             "kind": "normal",
             "extensions": [{
@@ -766,6 +1095,16 @@ fn dynamic_manifest_preserves_per_application_runtime_mapping() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -790,6 +1129,16 @@ fn dynamic_manifest_preserves_per_application_runtime_mapping() {
             }
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -819,6 +1168,8 @@ fn dynamic_manifest_preserves_per_application_runtime_mapping() {
 #[test]
 fn dynamic_manifest_rejects_unsupported_version() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
+        "builders": [],
+        "definitions": [],
         "version": 7,
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
@@ -833,6 +1184,8 @@ fn dynamic_manifest_rejects_unsupported_version() {
 #[test]
 fn dynamic_manifest_rejects_missing_worker_entrypoint() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
+        "builders": [],
+        "definitions": [],
         "version": 9,
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
@@ -850,12 +1203,23 @@ fn dynamic_manifest_rejects_missing_worker_entrypoint() {
 #[test]
 fn dynamic_manifest_rejects_duplicate_definitions() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
+        "builders": [],
         "version": 9,
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "definitions": [
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:builder",
                 "kind": "normal",
                 "extensions": [{
@@ -868,6 +1232,16 @@ fn dynamic_manifest_rejects_duplicate_definitions() {
                 "phase": 0
             },
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:builder",
                 "kind": "normal",
                 "extensions": [{
@@ -898,6 +1272,16 @@ fn dynamic_manifest_rejects_configured_builder_without_definition() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:configured",
             "kind": "normal",
             "extensions": [{
@@ -914,6 +1298,16 @@ fn dynamic_manifest_rejects_configured_builder_without_definition() {
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:other",
             "kind": "normal",
             "extensions": [{
@@ -943,6 +1337,17 @@ fn dynamic_manifest_rejects_configured_builder_without_generate_for() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -957,6 +1362,16 @@ fn dynamic_manifest_rejects_configured_builder_without_generate_for() {
             "package": "example"
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -986,6 +1401,16 @@ fn dynamic_manifest_rejects_configured_builder_without_target_scope() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -1002,6 +1427,16 @@ fn dynamic_manifest_rejects_configured_builder_without_target_scope() {
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -1031,6 +1466,16 @@ fn dynamic_manifest_rejects_invalid_input_match() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -1047,6 +1492,16 @@ fn dynamic_manifest_rejects_invalid_input_match() {
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -1076,6 +1531,16 @@ fn dynamic_manifest_rejects_invalid_capture_output() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:capture",
             "kind": "normal",
             "extensions": [{
@@ -1092,6 +1557,16 @@ fn dynamic_manifest_rejects_invalid_capture_output() {
             "generate_for": ["lib/assets/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:capture",
             "kind": "normal",
             "extensions": [{
@@ -1122,6 +1597,15 @@ fn dynamic_manifest_rejects_post_process_triggers() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".generated"],
@@ -1134,6 +1618,15 @@ fn dynamic_manifest_rejects_post_process_triggers() {
             "triggers": [{"kind": "import", "value": "example/marker.dart"}]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".generated"],
@@ -1159,6 +1652,16 @@ fn dynamic_manifest_rejects_mismatched_normal_runtime_mapping() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -1176,6 +1679,16 @@ fn dynamic_manifest_rejects_mismatched_normal_runtime_mapping() {
             "runtime_mapping": {"input_extensions": [".runtime.dart"]}
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
             "kind": "normal",
             "extensions": [{
@@ -1205,6 +1718,16 @@ fn dynamic_manifest_preserves_post_process_runtime_mapping() {
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".static"],
@@ -1217,6 +1740,16 @@ fn dynamic_manifest_preserves_post_process_runtime_mapping() {
             "runtime_mapping": {"input_extensions": [".runtime"]}
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".static"],
@@ -1243,9 +1776,20 @@ fn dynamic_manifest_preserves_post_process_runtime_mapping() {
 #[test]
 fn flattened_manifest_is_rejected_without_guessing_extensions() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
+        "builders": [],
         "version": 9, "fingerprint": "x", "trigger_digest": "digest", "worker_entrypoint": "worker.dart",
         "trigger_digest": "stock-trigger-digest",
-        "definitions": [{"id": "app:copy", "kind": "normal", "input_suffix": ".txt", "output_suffix": ".out", "phase": 0, "build_to": "source"}]
+        "definitions": [{
+        "required_input_suffixes": [],
+        "excluded_input_suffixes": [],
+        "generate_for": [],
+        "generate_for_exclude": [],
+        "target_sources": [],
+        "target_sources_exclude": [],
+        "triggers": [],
+        "options": {},
+        "is_optional": false,
+        "output_is_optional": false,"id": "app:copy", "kind": "normal", "input_suffix": ".txt", "output_suffix": ".out", "phase": 0, "build_to": "source"}]
     })).unwrap();
     assert!(rust_build_config_from_manifest(manifest).is_err());
 }
@@ -1254,8 +1798,28 @@ fn configured_manifest_requires_root_bit() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
         "version": 9, "fingerprint": "x", "trigger_digest": "digest", "worker_entrypoint": "worker.dart",
         "trigger_digest": "stock-trigger-digest",
-        "definitions": [{"id": "app:copy", "kind": "normal", "extensions": [{"input_suffix": ".txt", "input_match": "suffix", "input_anchored": false, "output_suffixes": [".out"]}], "phase": 0, "build_to": "source"}],
-        "builders": [{"id": "app:copy", "kind": "normal", "phase": 0, "build_to": "source", "target": "app:app", "package": "app", "generate_for": ["**"]}]
+        "definitions": [{
+        "required_input_suffixes": [],
+        "excluded_input_suffixes": [],
+        "generate_for": [],
+        "generate_for_exclude": [],
+        "target_sources": [],
+        "target_sources_exclude": [],
+        "triggers": [],
+        "options": {},
+        "is_optional": false,
+        "output_is_optional": false,"id": "app:copy", "kind": "normal", "extensions": [{"input_suffix": ".txt", "input_match": "suffix", "input_anchored": false, "output_suffixes": [".out"]}], "phase": 0, "build_to": "source"}],
+        "builders": [{
+        "required_input_suffixes": [],
+        "excluded_input_suffixes": [],
+        "generate_for_exclude": [],
+        "target_sources": [],
+        "target_sources_exclude": [],
+        "triggers": [],
+        "options": {},
+        "is_optional": false,
+        "output_is_optional": false,
+        "target_order": 0,"id": "app:copy", "kind": "normal", "phase": 0, "build_to": "source", "target": "app:app", "package": "app", "generate_for": ["**"]}]
     })).unwrap();
     let error = rust_build_config_from_manifest(manifest).unwrap_err();
     assert!(error.to_string().contains("is_root"));
