@@ -27,8 +27,10 @@ separate layers. The AOT options below select the generated Dart worker; they
 do not compile the launcher itself.
 
 The launcher consumes `--mode`, `--root`, `--dart`, `--force-aot`, and
-`--force-jit`. Native frontend options such as `--jobs`, `--interval-ms`, and
-`--worker` are passed to the native frontend. The compile-mode options use the
+`--force-jit`. Native frontend options such as `--jobs` and `--interval-ms`
+are passed to the native frontend. The internal `--worker` artifact override
+is also forwarded for repository tests, benchmarks and diagnostics; it is not
+a supported third-party extension API. The compile-mode options use the
 stock build_runner names, are mutually exclusive, and are retained when the
 stock Dart path is selected. Other arguments are retained for the stock Dart
 path.
@@ -239,5 +241,8 @@ This cleanup prepares for an eventual 1.0 while development continues through
 0.x releases. It does not select the next release version or finalize the
 1.0 API. See [the cleanup/update guide](compatibility-cleanup.md) for the current
 CLI/environment classification and internal state recovery. `aot-prewarm` is
-removed. Custom workers must match the package/native version exactly and pass version/capability validation.
+removed. The generated Dart worker is an internal package component and must
+match the package/native version exactly and pass version/capability validation.
+Internal worker overrides pass the same checks; no third-party worker API is
+promised.
 Storage formats are regenerated on invalidation and are not stable API.

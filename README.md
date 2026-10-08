@@ -107,9 +107,11 @@ when the stock path is preferred.
 | `dart` | Always run stock Dart `build_runner`. |
 
 Useful accelerator options are `--root`, `--dart`, `--jobs`,
-`--interval-ms`, `--worker`, and prewarm-only `--background`. They never
+`--interval-ms`, and prewarm-only `--background`. They never
 reach stock. `--force-aot` and `--force-jit` are mutually exclusive and work
 in native build/watch and stock fallback, including manifest-time fallback.
+`--worker` is an internal worker-artifact override for repository tests,
+benchmarks and diagnostics; it is not a supported third-party extension API.
 
 | Command / option | Native status | auto / dart behavior |
 | --- | --- | --- |
@@ -163,8 +165,8 @@ normal installation or benchmark path.
 Development continues on the 0.x release line. This cleanup removes obsolete
 compatibility paths as preparation for an eventual 1.0; it does not select the
 next release version or finalize the 1.0 API. The current public CLI,
-diagnostic/experimental/internal environment classification, custom-worker
-version requirement and safe recovery steps are documented in
+diagnostic/experimental/internal environment classification, package/frontend/worker
+version validation and safe recovery steps are documented in
 [the compatibility cleanup guide](docs/compatibility-cleanup.md). Manifest,
 graph, worker AOT and analysis cache formats are disposable internal state; upgrades may
 invalidate and regenerate them. Cache compatibility cleanup does not delete

@@ -599,8 +599,8 @@ class RpcSession {
       ...parameters,
       'build_id': buildId,
       // Rust applies the same phase-aware logical view as the Dart adapter.
-      // Keeping these on every asset request also protects custom workers
-      // which do not consume the build request's blocked_assets hint.
+      // Each asset request carries the context Rust needs to enforce
+      // visibility independently of the worker-side blocked_assets hint.
       'phase': phase,
       'kind': postProcess ? 'post_process' : 'normal',
     });

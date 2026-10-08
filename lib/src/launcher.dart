@@ -166,7 +166,7 @@ Launcher options:
   --dart PATH            Dart executable used by the frontend/fallback
   --jobs N               Rust worker count (default: logical CPUs)
   --interval-ms N        Rust watch debounce interval
-  --worker VALUE         Rust worker override
+  --worker VALUE         Internal worker artifact override (tests/diagnostics)
   --background           prewarm only: detach and compile in the background
   --force-aot             Force the AOT worker (stock-compatible)
   --force-jit             Force the non-AOT worker (stock-compatible)

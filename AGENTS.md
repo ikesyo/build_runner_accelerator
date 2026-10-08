@@ -38,8 +38,9 @@ Read these files before making a non-trivial change:
   do not reintroduce JSON fallback without a new ADR.
 - The default path is manifest-first: a workspace-specific worker catalog is
   generated from official build-runner configuration. Unsupported builder
-  shapes remain on the conservative Dart fallback. Custom workers must accept
-  the same manifest builder IDs and IPC contract.
+  shapes remain on the conservative Dart fallback. The Dart worker is an
+  internal package component, not a third-party extension API. Internal worker
+  overrides used by tests and diagnostics must satisfy the same IPC checks.
 
 ## Builder additions
 

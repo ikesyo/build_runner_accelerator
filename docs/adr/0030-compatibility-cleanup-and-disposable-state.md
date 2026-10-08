@@ -48,9 +48,15 @@ analysis alternative uses a new namespace to avoid reusing earlier 0.x state.
 
 ## Worker and IPC boundary
 
-Custom workers, package runtime and native frontend must have exactly the same
-accelerator package version. `initialize` and `initialized` exchange the
-required `accelerator_version`, compared with the runtime package constant and
+The workspace-specific Dart worker is an internal package component, generated
+by the package. Third-party worker implementations are not a supported
+extension point. Keep `--worker` as an internal artifact override for repository
+tests, benchmarks and diagnostics, without a public compatibility guarantee.
+
+The generated worker, package runtime and native frontend must have exactly the
+same accelerator package version. Internal worker overrides pass the same
+checks to catch stale artifacts and malformed test messages. `initialize` and
+`initialized` exchange the required `accelerator_version`, compared with the runtime package constant and
 native Cargo package version. Initialization reply IDs must match. Release
 artifact metadata continues to validate the frontend distribution separately.
 Capabilities remain mandatory; matching versions do not establish message
@@ -60,8 +66,9 @@ Retain wire protocol v1: frame layout, binary encoding, operations and visibilit
 semantics are unchanged. This is a release-coupled protocol, not an independently
 versioned cross-release API. The new handshake deliberately rejects older v1
 workers lacking version identity, even when they advertise capabilities.
-A future incompatible frame layout or independently supported worker release
-would require a new protocol decision and number.
+A future incompatible frame layout would require a new protocol decision and
+number. These checks protect internal package communication; they do not
+establish a third-party integration contract.
 
 All current producers send build kind, allowed_outputs, options, phase,
 instance_key, is_root and triggers and initialize phase_count. Make these
@@ -75,7 +82,8 @@ binary capabilities and reset overlay validation are retained. See
 
 Updating a workspace from an earlier 0.x release may incur a cold build;
 no cache migration is promised.
-A custom worker must be rebuilt against the selected package. Old CLI calls
+The package regenerates its worker as needed; internal artifact overrides must
+be refreshed or removed when updating. Old CLI calls
 fail explicitly with a replacement command. Historical changelogs, measurements
 and prior ADR evidence remain history; this decision supersedes their contract
 claims where indicated.

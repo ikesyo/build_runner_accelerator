@@ -98,6 +98,6 @@ fn main() -> io::Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: build_runner_accelerator <build|watch|prewarm|aot-cache-key> [--root PATH] [--dart PATH] [--worker PACKAGE:EXECUTABLE] [--jobs N] [--mode auto|rust|dart] [--background] [--force-aot|--force-jit] [--delete-conflicting-outputs|-d]\nUnsupported stock commands/options: auto/dart forward unchanged; rust rejects. --build-filter uses stock. -- stops accelerator option parsing."
+        "usage: build_runner_accelerator <build|watch|prewarm|aot-cache-key> [--root PATH] [--dart PATH] [--worker PACKAGE:EXECUTABLE] [--jobs N] [--mode auto|rust|dart] [--background] [--force-aot|--force-jit] [--delete-conflicting-outputs|-d]\n--worker is an internal artifact override for tests/diagnostics, not a third-party extension API.\nUnsupported stock commands/options: auto/dart forward unchanged; rust rejects. --build-filter uses stock. -- stops accelerator option parsing."
     );
 }

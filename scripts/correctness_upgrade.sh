@@ -97,11 +97,11 @@ printf '{}' > "$state/graph-v3.bin"
 BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0 native_build per-key
 compare
 [[ -d "$temporary_dir/cache/byte_store/per-key-v1" ]]
-# Fail mismatched custom workers before any output/graph can be committed.
+# Inject invalid test workers via the internal override; do not commit state.
 cp "$state/graph-v3.bin" "$temporary_dir/graph.before"
 printf '\n// force worker validation\n' >> "$native/lib/model.dart"
 for problem in wrong-version missing-version wrong-protocol missing-capability; do
-  python3 - "$temporary_dir/custom.dart" "$problem" <<'PY_WORKER'
+  python3 - "$temporary_dir/test-worker.dart" "$problem" <<'PY_WORKER'
 from pathlib import Path
 import sys
 path, problem = sys.argv[1:]
@@ -121,8 +121,8 @@ Future<void> main() async {
 }
 """)
 PY_WORKER
-  if VERIFY_COMMAND_LOG="$temporary_dir/$problem.log" VERIFY_WORKSPACE="$native" worker_run_frontend build --root "$native" --dart "$dart_bin" --mode rust --worker "$temporary_dir/custom.dart"; then
-    printf 'upgrade: invalid custom worker accepted: %s\n' "$problem" >&2; exit 1
+  if VERIFY_COMMAND_LOG="$temporary_dir/$problem.log" VERIFY_WORKSPACE="$native" worker_run_frontend build --root "$native" --dart "$dart_bin" --mode rust --worker "$temporary_dir/test-worker.dart"; then
+    printf 'upgrade: invalid test worker accepted: %s\n' "$problem" >&2; exit 1
   fi
   case "$problem" in
     wrong-version|missing-version) grep -Fq 'accelerator_version mismatch' "$temporary_dir/$problem.log" ;;
