@@ -44,6 +44,7 @@ boundary rather than restoring commit-level history.
 | [0026](0026-byte-store-publication-index.md) | Persistent metadata publication index and lazy payload validation |
 | [0027](0027-reset-overlay-blob-transport.md) | Immutable per-reset overlay blob transport |
 | [0028](0028-setup-time-prewarm-command.md) | Setup-time `prewarm` command and single-flight worker AOT compiles |
+| [0029](0029-build-runner-2-16-2-compatibility.md) | build_runner 2.16.2 and analyzer 14.5 compatibility window |
 
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for

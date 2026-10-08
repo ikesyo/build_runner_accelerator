@@ -385,7 +385,7 @@ jobs:
           lines = [
               "# Current build_runner baseline benchmark",
               "",
-              "Environment: Dart 3.13.3, Rust 1.98.1, build_runner 2.16.1, "
+              "Environment: Dart 3.13.3, Rust 1.98.1, build_runner 2.16.2, "
               "json_serializable 6.14.1, json_annotation 4.12.0",
               "Fixture: current_json_app (10 inputs); 5 repeats per case",
               "Accelerator: project-facing Dart launcher with release native frontend",

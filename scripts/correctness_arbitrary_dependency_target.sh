@@ -91,7 +91,7 @@ dependencies:
     path: packages/dependency_target_package
 
 dev_dependencies:
-  build_runner: 2.16.1
+  build_runner: 2.16.2
   build_runner_accelerator:
     path: ../..
 EOF
