@@ -1,6 +1,7 @@
 use super::client::{WorkerClient, WorkerClientMetrics};
 use super::lazy::LazyBuildState;
 use super::request::BuildRequest;
+use crate::builder::BuildTo;
 use crate::plan::BuildSpec;
 use crate::protocol::BuildResult;
 use crate::visibility::AssetVisibility;
@@ -348,6 +349,7 @@ impl WorkerPool {
             match self.resolver_usage.get(&key).copied() {
                 Some(true) => {
                     self.initialize_pending_workers(&root, &package, phase_count, false)?;
+                    self.report_phase_workers(requests, 1);
                     let results = self.workers[0].build_batch(
                         workspace,
                         requests,
@@ -364,6 +366,7 @@ impl WorkerPool {
                     // Resolver use may depend on the input, so the first
                     // action cannot safely classify the remaining actions.
                     self.initialize_pending_workers(&root, &package, phase_count, false)?;
+                    self.report_phase_workers(requests, 1);
                     let first_results = self.workers[0].build_batch(
                         workspace,
                         &requests[..1],
@@ -389,8 +392,6 @@ impl WorkerPool {
             }
         }
 
-        self.prepare_for_requests(&root, requests.len())?;
-        self.initialize_pending_workers(&root, &package, phase_count, false)?;
         // Resolver-backed batches share the on-disk byte store, so extra
         // workers mostly duplicate each other's analysis warm-up instead of
         // splitting useful work. Roughly half the pool is the measured sweet
@@ -405,13 +406,18 @@ impl WorkerPool {
                 .map(|key| self.resolver_usage.get(&key).copied().unwrap_or(true))
                 .unwrap_or(false)
         {
-            match resolver_worker_cap() {
-                Some(cap) => cap.clamp(1, self.max_jobs),
-                None => self.max_jobs.div_ceil(2).max(2.min(self.max_jobs)),
-            }
+            resolver_worker_limit(self.max_jobs, resolver_worker_cap())
         } else {
             usize::MAX
         };
+        let worker_count = target_worker_count(self.max_jobs, requests.len()).min(worker_limit);
+        self.prepare_phase_workers(
+            workspace,
+            worker_count,
+            overlay,
+            deleted_overlay,
+            visibility,
+        )?;
         let results = self.build_parallel_on_current_workers(
             workspace,
             requests,
@@ -422,6 +428,75 @@ impl WorkerPool {
         )?;
         self.record_resolver_usage(requests, &results);
         Ok(results)
+    }
+
+    /// A late worker has no produced-output memory and missed earlier resets.
+    /// Publish the current transaction view before its first action, using the
+    /// existing blob transport even if only one worker is joining. Replaying
+    /// old deltas would require retaining obsolete bytes and deletion history.
+    fn prepare_phase_workers(
+        &mut self,
+        workspace: &Workspace,
+        worker_count: usize,
+        overlay: &BTreeMap<String, Arc<[u8]>>,
+        deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
+    ) -> io::Result<()> {
+        self.prepare_for_requests(&workspace.root, worker_count)?;
+        let first_pending = self.initialized_workers;
+        let (root, package, _, phase_count, requires_optional_builder) =
+            self.initialized.clone().ok_or_else(|| {
+                io::Error::other("worker pool must be initialized before building")
+            })?;
+        self.initialize_pending_workers(&root, &package, phase_count, requires_optional_builder)?;
+        if first_pending == self.workers.len() || (overlay.is_empty() && deleted_overlay.is_empty())
+        {
+            return Ok(());
+        }
+        // A failed publication/reset must not mark a late worker ready. Retry
+        // initialization on the next attempt, discarding any partial snapshot.
+        self.initialized_workers = first_pending;
+        let _wall = crate::wall::Span::new("pool_sync_pending");
+        let (updated_sources, updated_cache) = partition_phase_assets(overlay.keys(), visibility);
+        let (deleted_sources, deleted_cache) =
+            partition_phase_assets(deleted_overlay.iter(), visibility);
+        let updated_assets = overlay.keys().cloned().collect();
+        let blob = super::overlay_blob::OverlayBlob::create(&root, overlay, &updated_assets)?;
+        let updated_sources = json!(updated_sources);
+        let updated_cache = json!(updated_cache);
+        let deleted_sources = json!(deleted_sources);
+        let deleted_cache = json!(deleted_cache);
+        // Join before dispatch and retain the blob until every response arrives.
+        thread::scope(|scope| {
+            let handles = self
+                .workers
+                .iter_mut()
+                .skip(first_pending)
+                .map(|worker| {
+                    scope.spawn(|| {
+                        worker.reset_resolver(
+                            &updated_sources,
+                            &deleted_sources,
+                            &updated_cache,
+                            &deleted_cache,
+                            true,
+                            &blob.metadata,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| io::Error::other("worker thread panicked"))?
+                })
+                .collect::<io::Result<Vec<_>>>()
+        })?;
+        self.resolver_resets += (self.workers.len() - first_pending) as u64;
+        self.initialized_workers = self.workers.len();
+        Ok(())
     }
 
     fn build_parallel_on_current_workers(
@@ -437,6 +512,8 @@ impl WorkerPool {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
+        let worker_count = self.workers.len().min(requests.len()).min(worker_limit);
+        self.report_phase_workers(requests, worker_count);
         if self.workers.len() == 1 || worker_limit == 1 {
             return self.workers[0].build_batch(
                 workspace,
@@ -447,7 +524,6 @@ impl WorkerPool {
             );
         }
 
-        let worker_count = self.workers.len().min(requests.len()).min(worker_limit);
         let ranges = balanced_request_ranges(requests.len(), worker_count);
         let batches = ranges
             .iter()
@@ -493,6 +569,19 @@ impl WorkerPool {
         }
     }
 
+    fn report_phase_workers(&self, requests: &[BuildRequest], worker_count: usize) {
+        if crate::metrics::runtime_metrics_enabled() {
+            eprintln!(
+                "Rust phase workers: phase={} builder={} requests={} used={} resident={}",
+                requests[0].phase,
+                requests[0].builder,
+                requests.len(),
+                worker_count,
+                self.workers.len()
+            );
+        }
+    }
+
     /// Builds a batch on one resident worker with demand-driven optional
     /// actions enabled. Serializing this path keeps the mutable overlay and
     /// recursive lazy-build stack unambiguous.
@@ -528,6 +617,7 @@ impl WorkerPool {
             .map(|(_, _, _, phase_count, _)| *phase_count)
             .unwrap_or(1);
         self.initialize_pending_workers(&root, &package, phase_count, true)?;
+        self.report_phase_workers(requests, 1);
         self.workers[0].build_batch_lazy(
             workspace,
             requests,
@@ -635,6 +725,18 @@ impl WorkerPool {
     }
 }
 
+/// Generated cache assets need the same Analyzer notification as source assets.
+/// Assets removed from the current plan can lack a location; the source list
+/// still invalidates them in Dart, where both lists are applied together.
+fn partition_phase_assets<'a>(
+    assets: impl Iterator<Item = &'a String>,
+    visibility: &AssetVisibility,
+) -> (BTreeSet<String>, BTreeSet<String>) {
+    assets
+        .cloned()
+        .partition(|asset| visibility.location(asset) != Some(BuildTo::Cache))
+}
+
 /// Null transport is safe only when every updated value belongs to the
 /// current overlay; otherwise a worker could retain an older produced value.
 pub(super) fn validate_memory_overlay(
@@ -706,6 +808,13 @@ fn resolver_worker_cap() -> Option<usize> {
     }
 }
 
+pub(super) fn resolver_worker_limit(max_jobs: usize, cap: Option<usize>) -> usize {
+    match cap {
+        Some(cap) => cap.clamp(1, max_jobs),
+        None => max_jobs.div_ceil(2).max(2.min(max_jobs)),
+    }
+}
+
 pub(super) fn target_worker_count(max_jobs: usize, request_count: usize) -> usize {
     max_jobs.max(1).min(request_count.max(1))
 }
@@ -731,5 +840,161 @@ pub(super) fn balanced_request_ranges(
 impl Drop for WorkerPool {
     fn drop(&mut self) {
         self.workers.clear();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod startup_tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn late_workers_join_with_a_snapshot_and_failed_sync_is_retryable() {
+        let root = env::temp_dir().join(format!("bra-pool-growth-{}", std::process::id()));
+        fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        fs::write(root.join("pubspec.yaml"), "name: app\n").unwrap();
+        fs::write(
+            root.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[]}"#,
+        )
+        .unwrap();
+        let executable = root.join("mock-worker");
+        fs::write(
+            &executable,
+            include_str!("../../../scripts/fixtures/phase_worker_reset_mock.py"),
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let workspace = Workspace::load(root.clone()).unwrap();
+        let manifest = serde_json::from_value(json!({
+            "version": 8, "fingerprint": "config", "worker_entrypoint": "mock.dart",
+            "definitions": [{"id": "app:cache", "input_suffix": ".txt",
+                "output_suffixes": [".dart"], "build_to": "cache", "phase": 0}]
+        }))
+        .unwrap();
+        let config = crate::builder::rust_build_config_from_manifest(manifest).unwrap();
+        let state = crate::graph::GraphState {
+            actions: BTreeMap::from([(
+                "cache".to_owned(),
+                crate::graph::ActionState {
+                    builder: "app:cache".to_owned(),
+                    outputs: vec![
+                        "app|lib/cache.dart".to_owned(),
+                        "app|lib/deleted-cache.dart".to_owned(),
+                    ],
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        let visibility = AssetVisibility::from_specs(&[], &state, &config);
+        let overlay = BTreeMap::from([
+            (
+                "app|lib/generated.dart".to_owned(),
+                Arc::<[u8]>::from(&b"current"[..]),
+            ),
+            (
+                "app|lib/cache.dart".to_owned(),
+                Arc::<[u8]>::from(&b"cache"[..]),
+            ),
+        ]);
+        let deleted = BTreeSet::from([
+            "app|lib/deleted.dart".to_owned(),
+            "app|lib/deleted-cache.dart".to_owned(),
+        ]);
+        let mut pool =
+            WorkerPool::start(&root, executable.to_str().unwrap(), "mock.dart", 4, false).unwrap();
+        pool.initialize(&root, "app", "config", 3, false).unwrap();
+        pool.prepare_phase_workers(
+            &workspace,
+            2,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &visibility,
+        )
+        .unwrap();
+        let original_pids = fs::read_to_string(root.join("requests.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["pid"]
+                    .as_u64()
+                    .unwrap()
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(original_pids.len(), 2);
+        let (updated_sources, updated_cache) = partition_phase_assets(overlay.keys(), &visibility);
+        let (deleted_sources, deleted_cache) = partition_phase_assets(deleted.iter(), &visibility);
+        pool.reset_resolver(
+            &root,
+            &overlay,
+            updated_sources,
+            deleted_sources,
+            updated_cache,
+            deleted_cache,
+            true,
+        )
+        .unwrap();
+        fs::write(root.join("requests.jsonl"), "").unwrap();
+        fs::write(root.join("fail-reset"), "").unwrap();
+        assert!(
+            pool.prepare_phase_workers(&workspace, 4, &overlay, &deleted, &visibility)
+                .is_err()
+        );
+        assert_eq!(pool.initialized_workers, 2);
+        fs::remove_file(root.join("fail-reset")).unwrap();
+        pool.prepare_phase_workers(&workspace, 4, &overlay, &deleted, &visibility)
+            .unwrap();
+        assert_eq!(pool.initialized_workers, 4);
+        assert_eq!(pool.worker_starts, 4);
+        let messages = fs::read_to_string(root.join("requests.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        for message in messages
+            .iter()
+            .filter(|message| message["type"] == "reset_resolver")
+        {
+            assert!(!original_pids.contains(&message["pid"].as_u64().unwrap()));
+            assert_eq!(
+                message["contents"]["app|lib/generated.dart"],
+                json!(b"current")
+            );
+            assert_eq!(message["deleted_sources"], json!(["app|lib/deleted.dart"]));
+            assert_eq!(
+                message["updated_sources"],
+                json!(["app|lib/generated.dart"])
+            );
+            assert_eq!(message["updated_cache"], json!(["app|lib/cache.dart"]));
+            assert_eq!(
+                message["deleted_cache"],
+                json!(["app|lib/deleted-cache.dart"])
+            );
+            assert_eq!(message["contents"]["app|lib/cache.dart"], json!(b"cache"));
+            assert!(message["contents"].get("app|lib/deleted.dart").is_none());
+            assert!(
+                message["contents"]
+                    .get("app|lib/deleted-cache.dart")
+                    .is_none()
+            );
+            assert!(!Path::new(message["overlay_blob"]["path"].as_str().unwrap()).exists());
+        }
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| message["type"] == "reset_resolver")
+                .count(),
+            4
+        );
+        pool.prepare_phase_workers(&workspace, 1, &overlay, &deleted, &visibility)
+            .unwrap();
+        assert_eq!(pool.workers.len(), 4);
+        pool.initialize(&root, "app", "config", 3, false).unwrap();
+        assert_eq!(pool.worker_starts, 4);
+        assert_eq!(pool.worker_resets, 4);
+        drop(pool);
+        fs::remove_dir_all(root).unwrap();
     }
 }

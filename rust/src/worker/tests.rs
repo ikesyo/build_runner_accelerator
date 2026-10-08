@@ -4,7 +4,7 @@ use super::asset_rpc::{
 use super::client::{has_capability, is_worker_script, require_overlay_blob_capability};
 use super::pool::{
     balanced_request_ranges, homogeneous_resolver_usage_key, remember_resolver_usage,
-    target_worker_count, validate_memory_overlay,
+    resolver_worker_limit, target_worker_count, validate_memory_overlay,
 };
 use super::request::{BuildRequest, batch_blocked_assets};
 use crate::visibility::AssetVisibility;
@@ -33,6 +33,24 @@ fn worker_count_follows_available_requests() {
     assert_eq!(target_worker_count(4, 3), 3);
     assert_eq!(target_worker_count(4, 8), 4);
     assert_eq!(target_worker_count(1, 8), 1);
+}
+
+#[test]
+fn resolver_cap_limits_startup_before_a_later_wider_phase() {
+    for (jobs, default) in [(1, 1), (2, 2), (4, 2)] {
+        for (cap, expected) in [
+            (None, default),
+            (Some(1), 1),
+            (Some(2), jobs.min(2)),
+            (Some(usize::MAX), jobs),
+        ] {
+            let limit = resolver_worker_limit(jobs, cap);
+            assert_eq!(target_worker_count(jobs, 8).min(limit), expected);
+            assert_eq!(target_worker_count(jobs, 1).min(limit), 1);
+            // A subsequent unrestricted phase can extend the resident pool.
+            assert_eq!(target_worker_count(jobs, 8), jobs);
+        }
+    }
 }
 
 #[test]
