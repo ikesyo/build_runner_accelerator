@@ -12,28 +12,38 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-#[derive(Clone)]
-pub(crate) struct BuildSpec {
+/// An immutable action shared by the plan, dirty sets and optional-output index.
+/// Handles survive vector reordering without relying on an index. All owners
+/// are local to one build transaction; resident workers never retain a plan.
+pub(crate) type BuildSpec = Arc<BuildAction>;
+
+pub(crate) struct BuildAction {
+    pub(crate) instance: Arc<BuilderInstance>,
+    pub(crate) input: String,
+    pub(crate) outputs: Vec<String>,
+}
+
+/// Resolved metadata for exactly one configured builder entry, not a factory.
+/// Created once per entry during planning, with no global or watch cache.
+pub(crate) struct BuilderInstance {
     pub(crate) builder: Arc<BuilderDefinition>,
     pub(crate) target: String,
     pub(crate) package: String,
     pub(crate) is_root: bool,
     pub(crate) phase: u32,
     pub(crate) instance_key: String,
-    pub(crate) input: String,
-    pub(crate) outputs: Vec<String>,
     pub(crate) options: BTreeMap<String, Value>,
-    /// `part` directive suffix the input must declare before this builder can
-    /// emit anything; copied from the configured builder's manifest flag.
+    /// `part` directive suffix required by this configured builder.
     pub(crate) part_directive_suffix: Option<String>,
 }
 
-impl BuildSpec {
-    /// The graph identity includes the configured builder instance. A single
-    /// builder factory may be applied to multiple targets/phases, and those
-    /// actions must never overwrite one another in the persisted graph.
+impl BuildAction {
+    /// Preserve the graph identity of the configured target/phase/package.
     pub(crate) fn action_key(&self) -> String {
-        format!("{}|{}|{}", self.target, self.instance_key, self.input)
+        format!(
+            "{}|{}|{}",
+            self.instance.target, self.instance.instance_key, self.input
+        )
     }
 }
 
@@ -174,28 +184,35 @@ fn build_specs(
         if phase.is_some_and(|expected| builder.phase != expected) {
             continue;
         }
-        for input in
-            input_candidates_with_primary_inputs(workspace, snapshot, builder, primary_inputs)
-        {
-            specs.push(BuildSpec {
-                builder: definition.clone(),
-                target: builder.target.clone(),
-                package: builder.package.clone(),
-                is_root: builder.is_root,
-                phase: config.global_phase(builder),
-                instance_key: format!(
-                    "{}|{}|{}|{}",
-                    builder.target, definition.id, builder.phase, builder.package
-                ),
-                part_directive_suffix: builder.part_directive_suffix.clone(),
-                input: input.clone(),
-                outputs: if definition.kind == BuilderKind::PostProcess {
-                    Vec::new()
-                } else {
-                    outputs_for(&definition, &input)?
-                },
-                options: builder.options.clone(),
-            });
+        let inputs =
+            input_candidates_with_primary_inputs(workspace, snapshot, builder, primary_inputs);
+        if inputs.is_empty() {
+            continue;
+        }
+        let instance = Arc::new(BuilderInstance {
+            builder: definition.clone(),
+            target: builder.target.clone(),
+            package: builder.package.clone(),
+            is_root: builder.is_root,
+            phase: config.global_phase(builder),
+            instance_key: format!(
+                "{}|{}|{}|{}",
+                builder.target, definition.id, builder.phase, builder.package
+            ),
+            part_directive_suffix: builder.part_directive_suffix.clone(),
+            options: builder.options.clone(),
+        });
+        for input in inputs {
+            let outputs = if definition.kind == BuilderKind::PostProcess {
+                Vec::new()
+            } else {
+                outputs_for(&definition, &input)?
+            };
+            specs.push(Arc::new(BuildAction {
+                instance: instance.clone(),
+                input,
+                outputs,
+            }));
         }
     }
     validate_unique_outputs(&specs)?;
@@ -354,7 +371,7 @@ pub(crate) fn output_digest(path: &std::path::Path) -> io::Result<Option<String>
 
 #[cfg(test)]
 mod tests {
-    use super::{BuildSpec, outputs_for, validate_unique_outputs};
+    use super::{BuildAction, BuilderInstance, outputs_for, validate_unique_outputs};
     use crate::builder::{BuildTo, BuilderDefinition, BuilderExtension, BuilderKind};
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -518,30 +535,34 @@ mod tests {
             ..(*first).clone()
         });
         let specs = vec![
-            BuildSpec {
-                builder: first,
-                target: "app:app".to_owned(),
-                package: "app".to_owned(),
-                is_root: true,
-                phase: 0,
-                instance_key: "first".to_owned(),
+            Arc::new(BuildAction {
+                instance: Arc::new(BuilderInstance {
+                    builder: first,
+                    target: "app:app".to_owned(),
+                    package: "app".to_owned(),
+                    is_root: true,
+                    phase: 0,
+                    instance_key: "first".to_owned(),
+                    options: BTreeMap::new(),
+                    part_directive_suffix: None,
+                }),
                 input: "app|lib/input.txt".to_owned(),
                 outputs: vec!["app|lib/generated.txt".to_owned()],
-                options: BTreeMap::new(),
-                part_directive_suffix: None,
-            },
-            BuildSpec {
-                builder: second,
-                target: "app:app".to_owned(),
-                package: "app".to_owned(),
-                is_root: true,
-                phase: 0,
-                instance_key: "second".to_owned(),
+            }),
+            Arc::new(BuildAction {
+                instance: Arc::new(BuilderInstance {
+                    builder: second,
+                    target: "app:app".to_owned(),
+                    package: "app".to_owned(),
+                    is_root: true,
+                    phase: 0,
+                    instance_key: "second".to_owned(),
+                    options: BTreeMap::new(),
+                    part_directive_suffix: None,
+                }),
                 input: "app|lib/input.txt".to_owned(),
                 outputs: vec!["app|lib/generated.txt".to_owned()],
-                options: BTreeMap::new(),
-                part_directive_suffix: None,
-            },
+            }),
         ];
         let error = validate_unique_outputs(&specs).unwrap_err();
         assert!(error.to_string().contains("builder outputs collide"));

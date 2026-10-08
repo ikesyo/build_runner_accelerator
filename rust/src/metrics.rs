@@ -57,33 +57,33 @@ pub(crate) fn print_plan_spec_metrics(stage: &str, specs: &[BuildSpec], config: 
     let mut duplicate_builder_inputs = 0;
 
     for spec in specs {
-        let is_post_process = spec.builder.kind == BuilderKind::PostProcess;
+        let is_post_process = spec.instance.builder.kind == BuilderKind::PostProcess;
         if is_post_process {
             post_process_specs += 1;
         } else {
             normal_specs += 1;
         }
-        if spec.builder.is_optional {
+        if spec.instance.builder.is_optional {
             optional_specs += 1;
         }
-        if !spec.builder.required_input_suffixes.is_empty() {
+        if !spec.instance.builder.required_input_suffixes.is_empty() {
             required_input_specs += 1;
-            required_input_definitions.insert(spec.builder.id.as_str());
+            required_input_definitions.insert(spec.instance.builder.id.as_str());
         }
         output_edges += spec.outputs.len();
         outputs.extend(spec.outputs.iter().map(String::as_str));
 
         let action_key = (
-            spec.target.as_str(),
-            spec.instance_key.as_str(),
+            spec.instance.target.as_str(),
+            spec.instance.instance_key.as_str(),
             spec.input.as_str(),
         );
         if !action_keys.insert(action_key) {
             duplicate_action_keys += 1;
         }
         let builder_input = (
-            spec.builder.id.as_str(),
-            spec.package.as_str(),
+            spec.instance.builder.id.as_str(),
+            spec.instance.package.as_str(),
             spec.input.as_str(),
         );
         if !builder_inputs.insert(builder_input) {
@@ -91,12 +91,12 @@ pub(crate) fn print_plan_spec_metrics(stage: &str, specs: &[BuildSpec], config: 
         }
 
         let scope = (
-            spec.package.as_str(),
-            spec.target.as_str(),
-            spec.builder.id.as_str(),
-            spec.phase,
+            spec.instance.package.as_str(),
+            spec.instance.target.as_str(),
+            spec.instance.builder.id.as_str(),
+            spec.instance.phase,
             is_post_process,
-            spec.builder.is_optional,
+            spec.instance.builder.is_optional,
         );
         *scopes.entry(scope).or_default() += 1;
     }

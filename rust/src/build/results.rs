@@ -35,7 +35,7 @@ pub(super) fn record_missing_primary_input(
     for output in outputs_to_delete {
         pending.deleted_overlay.insert(output.clone());
         pending.overlay.remove(&output);
-        if spec.builder.build_to == BuildTo::Source {
+        if spec.instance.builder.build_to == BuildTo::Source {
             pending.resolver.resolver_deleted.insert(output.clone());
             pending.resolver.resolver_updated.remove(&output);
         } else {
@@ -45,16 +45,16 @@ pub(super) fn record_missing_primary_input(
                 .insert(output.clone());
             pending.resolver.resolver_cache_updated.remove(&output);
         }
-        if workspace.asset_exists_at(&output, spec.builder.build_to)? {
+        if workspace.asset_exists_at(&output, spec.instance.builder.build_to)? {
             pending
                 .pending_deletions
-                .push((spec.builder.clone(), output));
+                .push((spec.instance.builder.clone(), output));
         }
     }
     pending.pending_actions.push((
         key,
         ActionState {
-            builder: spec.builder.id.to_owned(),
+            builder: spec.instance.builder.id.to_owned(),
             input: spec.input.clone(),
             reads: Vec::new(),
             resolver_reads: Vec::new(),
@@ -75,7 +75,7 @@ pub(super) fn record_build_result(
     result: BuildResult,
     pending: &mut PendingTransaction,
 ) -> io::Result<()> {
-    let builder = spec.builder.as_ref();
+    let builder = spec.instance.builder.as_ref();
     if result.status != "success" && result.status != "not_triggered" {
         return Err(io::Error::other(
             result.error.unwrap_or_else(|| "Builder failed".to_owned()),
@@ -84,7 +84,7 @@ pub(super) fn record_build_result(
     if result.status == "not_triggered" && builder.kind != BuilderKind::Normal {
         return Err(io::Error::other(format!(
             "trigger skip is only supported for normal builders: {}",
-            spec.builder.id
+            spec.instance.builder.id
         )));
     }
     for diagnostic in &result.diagnostics {
@@ -101,7 +101,7 @@ pub(super) fn record_build_result(
             if deleted != &spec.input {
                 return Err(io::Error::other(format!(
                     "post-process builder {} deleted an asset other than its primary input: {}",
-                    spec.builder.id, deleted
+                    spec.instance.builder.id, deleted
                 )));
             }
             pending.deleted_overlay.insert(deleted.clone());
@@ -118,7 +118,7 @@ pub(super) fn record_build_result(
             }
             pending
                 .pending_deletions
-                .push((spec.builder.clone(), deleted.clone()));
+                .push((spec.instance.builder.clone(), deleted.clone()));
         }
     }
 
@@ -127,7 +127,7 @@ pub(super) fn record_build_result(
         if builder.kind == BuilderKind::Normal && !allowed.contains(&generated.asset) {
             return Err(io::Error::other(format!(
                 "unexpected output from {}: {}",
-                spec.builder.id, generated.asset
+                spec.instance.builder.id, generated.asset
             )));
         }
         if builder.kind == BuilderKind::PostProcess {
@@ -137,7 +137,7 @@ pub(super) fn record_build_result(
                     generated.asset
                 ))
             })?;
-            if package != spec.package
+            if package != spec.instance.package
                 || path.is_empty()
                 || path.starts_with('/')
                 || path.contains("..")
@@ -145,7 +145,7 @@ pub(super) fn record_build_result(
             {
                 return Err(io::Error::other(format!(
                     "invalid post-process output from {}: {}",
-                    spec.builder.id, generated.asset
+                    spec.instance.builder.id, generated.asset
                 )));
             }
             let previous_outputs = state
@@ -185,7 +185,7 @@ pub(super) fn record_build_result(
                 .remove(&generated.asset);
         }
         pending.pending_outputs.push((
-            spec.builder.clone(),
+            spec.instance.builder.clone(),
             generated.asset.clone(),
             Arc::clone(&generated.bytes),
         ));
@@ -223,7 +223,7 @@ pub(super) fn record_build_result(
                 }
                 pending
                     .pending_deletions
-                    .push((spec.builder.clone(), previous_output.clone()));
+                    .push((spec.instance.builder.clone(), previous_output.clone()));
             }
         }
     }
@@ -249,7 +249,7 @@ pub(super) fn record_build_result(
             if workspace.asset_exists_at(expected, builder.build_to)? {
                 pending
                     .pending_deletions
-                    .push((spec.builder.clone(), expected.clone()));
+                    .push((spec.instance.builder.clone(), expected.clone()));
             }
         }
     }
@@ -259,7 +259,7 @@ pub(super) fn record_build_result(
     pending.pending_actions.push((
         spec.action_key(),
         ActionState {
-            builder: spec.builder.id.to_owned(),
+            builder: spec.instance.builder.id.to_owned(),
             input: spec.input.clone(),
             reads: result.reads,
             resolver_reads: result.resolver_reads,

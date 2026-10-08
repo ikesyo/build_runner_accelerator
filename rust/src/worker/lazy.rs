@@ -360,7 +360,7 @@ impl WorkerClient {
         }
         let Some(spec) = lazy_specs
             .get(asset)
-            .filter(|spec| spec.builder.kind == BuilderKind::Normal)
+            .filter(|spec| spec.instance.builder.kind == BuilderKind::Normal)
             .cloned()
         else {
             return Ok(());
@@ -380,15 +380,15 @@ impl WorkerClient {
             overlay.remove(output);
         }
         let request = BuildRequest {
-            builder: spec.builder.id.clone(),
+            builder: spec.instance.builder.id.clone(),
             input: spec.input.clone(),
             outputs: spec.outputs.clone(),
-            options: spec.options.clone(),
-            phase: spec.phase,
-            instance_key: spec.instance_key.clone(),
-            is_root: spec.is_root,
+            options: spec.instance.options.clone(),
+            phase: spec.instance.phase,
+            instance_key: spec.instance.instance_key.clone(),
+            is_root: spec.instance.is_root,
             post_process: false,
-            triggers: spec.builder.triggers.clone(),
+            triggers: spec.instance.builder.triggers.clone(),
         };
         let result = self.build_lazy(
             workspace,
@@ -420,7 +420,7 @@ impl WorkerClient {
             if !allowed.contains(&generated.asset) {
                 return Err(io::Error::other(format!(
                     "unexpected output from optional builder {}: {}",
-                    spec.builder.id, generated.asset
+                    spec.instance.builder.id, generated.asset
                 )));
             }
             overlay.insert(generated.asset.clone(), Arc::clone(&generated.bytes));

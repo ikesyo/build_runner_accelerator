@@ -61,15 +61,7 @@ pub(super) fn run(
     let setup = crate::wall::Span::new("transaction_setup");
     let expected_outputs = plan.expected_outputs();
     let mut transaction = PendingTransaction::new(&dirty, state, deleted_actions);
-    let lazy_specs_by_output = specs
-        .iter()
-        .filter(|spec| spec.builder.is_optional && spec.builder.kind == BuilderKind::Normal)
-        .flat_map(|spec| {
-            spec.outputs
-                .iter()
-                .map(|output| (output.clone(), spec.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
+    let lazy_specs_by_output = optional_specs_by_output(specs);
     let lazy_demand_possible = !lazy_force_keys.is_empty() && !lazy_specs_by_output.is_empty();
     // The optional-builder capability flag is part of the pool signature, so
     // derive it from the plan rather than the dirty set: an optional spec
@@ -99,7 +91,7 @@ pub(super) fn run(
         let active_pool = worker_pool.expect("worker pool was just initialized");
         let first_package = dirty
             .first()
-            .map(|spec| spec.package.clone())
+            .map(|spec| spec.instance.package.clone())
             .expect("dirty actions have a package");
         active_pool.initialize(
             &workspace.root,
@@ -130,7 +122,8 @@ pub(super) fn run(
             let phase_specs = dirty
                 .iter()
                 .filter(|spec| {
-                    spec.target == configured_builder.target && spec.builder.id == builder.id
+                    spec.instance.target == configured_builder.target
+                        && spec.instance.builder.id == builder.id
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -193,15 +186,15 @@ pub(super) fn run(
             let requests = runnable_phase_specs
                 .iter()
                 .map(|spec| BuildRequest {
-                    builder: spec.builder.id.to_owned(),
+                    builder: spec.instance.builder.id.to_owned(),
                     input: spec.input.clone(),
                     outputs: spec.outputs.clone(),
-                    options: spec.options.clone(),
-                    phase: spec.phase,
-                    instance_key: spec.instance_key.clone(),
+                    options: spec.instance.options.clone(),
+                    phase: spec.instance.phase,
+                    instance_key: spec.instance.instance_key.clone(),
                     is_root: configured_builder.is_root,
                     post_process: builder.kind == BuilderKind::PostProcess,
-                    triggers: spec.builder.triggers.clone(),
+                    triggers: spec.instance.builder.triggers.clone(),
                 })
                 .collect::<Vec<_>>();
             drop(assemble);
@@ -272,7 +265,7 @@ pub(super) fn run(
             let lazy_results = lazy_state.take_results();
             let lazy_source_output = lazy_results
                 .iter()
-                .any(|lazy_result| lazy_result.spec.builder.build_to == BuildTo::Source);
+                .any(|lazy_result| lazy_result.spec.instance.builder.build_to == BuildTo::Source);
             for lazy_result in lazy_results {
                 record_build_result(
                     workspace,
@@ -308,6 +301,21 @@ pub(super) fn run(
         pool_metrics,
         part_filtered_actions,
     })
+}
+
+/// Every declared optional output points to the same immutable action handle.
+pub(super) fn optional_specs_by_output(specs: &[BuildSpec]) -> BTreeMap<String, BuildSpec> {
+    specs
+        .iter()
+        .filter(|spec| {
+            spec.instance.builder.is_optional && spec.instance.builder.kind == BuilderKind::Normal
+        })
+        .flat_map(|spec| {
+            spec.outputs
+                .iter()
+                .map(|output| (output.clone(), spec.clone()))
+        })
+        .collect()
 }
 
 /// Return the order in which configured builders may observe each other's

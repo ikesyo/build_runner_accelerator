@@ -3,7 +3,7 @@ use super::execution::execution_order;
 use super::part_directive::declares_part_directive;
 use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder, RustBuildConfig};
 use crate::graph::{ActionState, GraphState};
-use crate::plan::BuildSpec;
+use crate::plan::{BuildAction, BuildSpec, BuilderInstance};
 use crate::workspace::Workspace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -46,21 +46,23 @@ fn configured_builder(id: &str, target: &str, target_order: u32, phase: u32) -> 
 }
 
 fn build_spec(builder: &ConfiguredBuilder, input: &str, outputs: &[&str]) -> BuildSpec {
-    BuildSpec {
-        builder: builder.definition.clone(),
-        target: builder.target.clone(),
-        package: builder.package.clone(),
-        is_root: builder.is_root,
-        phase: builder.phase,
-        instance_key: format!(
-            "{}|{}|{}|{}",
-            builder.target, builder.definition.id, builder.phase, builder.package
-        ),
+    Arc::new(BuildAction {
+        instance: Arc::new(BuilderInstance {
+            builder: builder.definition.clone(),
+            target: builder.target.clone(),
+            package: builder.package.clone(),
+            is_root: builder.is_root,
+            phase: builder.phase,
+            instance_key: format!(
+                "{}|{}|{}|{}",
+                builder.target, builder.definition.id, builder.phase, builder.package
+            ),
+            options: builder.options.clone(),
+            part_directive_suffix: None,
+        }),
         input: input.to_owned(),
         outputs: outputs.iter().map(|output| (*output).to_owned()).collect(),
-        options: builder.options.clone(),
-        part_directive_suffix: None,
-    }
+    })
 }
 
 #[test]
@@ -94,7 +96,7 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
             (
                 producer.action_key(),
                 ActionState {
-                    builder: producer.builder.id.clone(),
+                    builder: producer.instance.builder.id.clone(),
                     input: producer.input.clone(),
                     status: "not_triggered".to_owned(),
                     ..ActionState::default()
@@ -103,7 +105,7 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
             (
                 consumer.action_key(),
                 ActionState {
-                    builder: consumer.builder.id.clone(),
+                    builder: consumer.instance.builder.id.clone(),
                     input: consumer.input.clone(),
                     status: "skipped_missing_input".to_owned(),
                     ..ActionState::default()
@@ -117,7 +119,10 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
     expand_dirty_dependents(&mut dirty, &[producer.clone(), consumer.clone()], &state);
 
     assert_eq!(
-        dirty.iter().map(BuildSpec::action_key).collect::<Vec<_>>(),
+        dirty
+            .iter()
+            .map(|spec| spec.action_key())
+            .collect::<Vec<_>>(),
         vec![producer.action_key(), consumer.action_key()]
     );
 
@@ -136,7 +141,10 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
         &successful_empty_state,
     );
     assert_eq!(
-        dirty.iter().map(BuildSpec::action_key).collect::<Vec<_>>(),
+        dirty
+            .iter()
+            .map(|spec| spec.action_key())
+            .collect::<Vec<_>>(),
         vec![producer.action_key(), consumer.action_key()]
     );
 }
@@ -610,7 +618,7 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
     let optional_spec = build_spec(&optional, "app|lib/optional", &[]);
     let deleted_spec = build_spec(&source, "app|lib/deleted", &[]);
     let action = |spec: &BuildSpec, output: &str, bytes: &[u8]| ActionState {
-        builder: spec.builder.id.clone(),
+        builder: spec.instance.builder.id.clone(),
         input: spec.input.clone(),
         outputs: vec![output.into()],
         output_digests: BTreeMap::from([(output.into(), digest_bytes(bytes))]),
@@ -686,7 +694,7 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
         result
             .dirty
             .iter()
-            .map(BuildSpec::action_key)
+            .map(|spec| spec.action_key())
             .collect::<Vec<_>>(),
         vec![source_spec.action_key()]
     );
@@ -703,7 +711,7 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
         result
             .dirty
             .iter()
-            .map(BuildSpec::action_key)
+            .map(|spec| spec.action_key())
             .collect::<Vec<_>>(),
         vec![cache_spec.action_key()]
     );
@@ -724,7 +732,7 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
         fresh
             .dirty
             .iter()
-            .map(BuildSpec::action_key)
+            .map(|spec| spec.action_key())
             .collect::<Vec<_>>(),
         vec![source_spec.action_key(), cache_spec.action_key()]
     );
@@ -734,5 +742,221 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
     );
     assert!(fresh.deleted_actions.is_empty());
 
+    Ok(())
+}
+
+// Shared fixture for identity/lifetime checks and the isolated planning benchmark.
+fn planning_fixture(
+    inputs: usize,
+) -> io::Result<(
+    TemporaryWorkspace,
+    Workspace,
+    RustBuildConfig,
+    crate::snapshot::Snapshot,
+)> {
+    use crate::builder::BuilderExtension;
+    use crate::snapshot::AssetSnapshot;
+    let temporary = TemporaryWorkspace::new()?;
+    let workspace = Workspace::load(temporary.0.clone())?;
+    let mut builders = Vec::new();
+    let factory = configured_builder("app:factory", "app:first", 0, 0).definition;
+    for (target, phase, suffix, optional) in [
+        ("app:first", 0, ".first", false),
+        ("app:second", 1, ".second", false),
+        ("app:second", 2, ".third", false),
+        ("app:optional", 0, ".optional", true),
+    ] {
+        let mut builder = configured_builder(&factory.id, target, phase, phase);
+        builder.definition = if optional {
+            Arc::new(BuilderDefinition {
+                id: "app:optional".into(),
+                is_optional: true,
+                ..(*factory).clone()
+            })
+        } else {
+            factory.clone()
+        };
+        builder.runtime_extensions = Some(vec![BuilderExtension {
+            input_suffix: ".txt".into(),
+            input_is_exact: false,
+            input_is_capture: false,
+            input_is_all: false,
+            input_is_anchored: false,
+            output_suffixes: vec![format!("{suffix}.one"), format!("{suffix}.two")],
+        }]);
+        builder.options.insert(
+            "label".into(),
+            serde_json::json!({"target": target, "phase": phase, "payload": "x".repeat(1024)}),
+        );
+        builder.part_directive_suffix = Some(format!("{suffix}.dart"));
+        builders.push(builder);
+    }
+    let config = dirty_test_config(&builders);
+    let snapshot = (0..inputs)
+        .map(|i| {
+            (
+                format!("app|lib/input_{i:05}.txt"),
+                AssetSnapshot {
+                    exists: true,
+                    digest: "source".into(),
+                    size: 6,
+                },
+            )
+        })
+        .collect();
+    Ok((temporary, workspace, config, snapshot))
+}
+
+#[test]
+fn planned_actions_share_only_their_configured_instance_and_release_with_the_build()
+-> io::Result<()> {
+    use super::{dirty, execution, planning};
+    use crate::metrics::FilesystemMetrics;
+    let (_temporary, workspace, config, snapshot) = planning_fixture(2)?;
+    let state = GraphState::default();
+    let plan = planning::create(&workspace, &state, &config, &snapshot)?;
+    assert_eq!(plan.specs.len(), 8);
+    // Phase-first planning, then configured-entry and sorted input order.
+    let expected = [
+        ("app:first", 0, "app:factory", ".first"),
+        ("app:optional", 0, "app:optional", ".optional"),
+        ("app:second", 1, "app:factory", ".second"),
+        ("app:second", 2, "app:factory", ".third"),
+    ];
+    for (group, (target, phase, factory, suffix)) in
+        plan.specs.as_chunks::<2>().0.iter().zip(expected)
+    {
+        assert!(Arc::ptr_eq(&group[0].instance, &group[1].instance));
+        assert!(!Arc::ptr_eq(&group[0], &group[1]));
+        for (i, spec) in group.iter().enumerate() {
+            assert_eq!(
+                spec.action_key(),
+                format!("{target}|{target}|{factory}|{phase}|app|app|lib/input_{i:05}.txt")
+            );
+            assert_eq!(spec.instance.options["label"]["target"], target);
+            assert_eq!(spec.instance.options["label"]["phase"], phase);
+            assert_eq!(spec.instance.phase, phase);
+            assert_eq!(spec.instance.package, "app");
+            assert!(spec.instance.is_root);
+            assert_eq!(
+                spec.outputs,
+                vec![
+                    format!("app|lib/input_{i:05}{suffix}.one"),
+                    format!("app|lib/input_{i:05}{suffix}.two"),
+                ]
+            );
+            assert_eq!(
+                spec.instance.part_directive_suffix.as_deref(),
+                Some(format!("{suffix}.dart").as_str())
+            );
+        }
+    }
+    for (i, left) in plan.specs.as_chunks::<2>().0.iter().enumerate() {
+        for right in plan.specs.as_chunks::<2>().0.iter().skip(i + 1) {
+            assert!(!Arc::ptr_eq(&left[0].instance, &right[0].instance));
+        }
+    }
+    let dirty = dirty::analyze(
+        &workspace,
+        &state,
+        &config,
+        "config",
+        &snapshot,
+        &plan,
+        &mut FilesystemMetrics::default(),
+    )?;
+    assert_eq!(dirty.dirty.len(), 6);
+    assert_eq!(dirty.lazy_force_keys.len(), 2);
+    for spec in &dirty.dirty {
+        assert!(plan.specs.iter().any(|planned| Arc::ptr_eq(planned, spec)));
+    }
+    let index = execution::optional_specs_by_output(&plan.specs);
+    assert_eq!(index.len(), 4);
+    let optional = &plan.specs[2];
+    for output in &optional.outputs {
+        assert!(Arc::ptr_eq(optional, &index[output]));
+    }
+    let action_weak = Arc::downgrade(optional);
+    let instance_weak = Arc::downgrade(&optional.instance);
+    let ordinary_weak = Arc::downgrade(&plan.specs[0]);
+    drop(plan);
+    assert!(action_weak.upgrade().is_some());
+    assert!(ordinary_weak.upgrade().is_some());
+    drop(index);
+    drop(dirty);
+    assert!(action_weak.upgrade().is_none());
+    assert!(instance_weak.upgrade().is_none());
+    assert!(ordinary_weak.upgrade().is_none());
+    Ok(())
+}
+
+#[test]
+#[ignore = "isolated comparison; set PLAN_BENCH_INPUTS and optionally PLAN_BENCH_DUMP"]
+fn planning_retention_benchmark() -> io::Result<()> {
+    use super::{dirty, execution, planning};
+    use crate::metrics::FilesystemMetrics;
+    use std::io::Write;
+    use std::time::Instant;
+    let inputs = std::env::var("PLAN_BENCH_INPUTS")
+        .unwrap_or_else(|_| "5000".into())
+        .parse::<usize>()
+        .unwrap();
+    let (_temporary, workspace, config, snapshot) = planning_fixture(inputs)?;
+    let state = GraphState::default();
+    let started = Instant::now();
+    let plan = planning::create(&workspace, &state, &config, &snapshot)?;
+    let planning_us = started.elapsed().as_micros();
+    let dirty = dirty::analyze(
+        &workspace,
+        &state,
+        &config,
+        "config",
+        &snapshot,
+        &plan,
+        &mut FilesystemMetrics::default(),
+    )?;
+    let index = execution::optional_specs_by_output(&plan.specs);
+    let retained_us = started.elapsed().as_micros();
+    assert_eq!(plan.specs.len(), inputs * 4);
+    assert_eq!(dirty.dirty.len(), inputs * 3);
+    assert_eq!(index.len(), inputs * 2);
+    eprintln!(
+        "planning_retention actions={} planning_us={planning_us} planning_dirty_index_us={retained_us}",
+        plan.specs.len()
+    );
+    if let Ok(path) = std::env::var("PLAN_BENCH_DUMP") {
+        let mut dump = std::io::BufWriter::new(fs::File::create(path)?);
+        for spec in &plan.specs {
+            serde_json::to_writer(
+                &mut dump,
+                &serde_json::json!({
+                    "key": spec.action_key(), "input": spec.input, "outputs": spec.outputs,
+                    "target": spec.instance.target, "package": spec.instance.package,
+                    "phase": spec.instance.phase, "instance": spec.instance.instance_key,
+                    "options": spec.instance.options, "is_root": spec.instance.is_root,
+                    "part_suffix": spec.instance.part_directive_suffix,
+                }),
+            )?;
+            writeln!(dump)?;
+        }
+        serde_json::to_writer(
+            &mut dump,
+            &dirty
+                .dirty
+                .iter()
+                .map(|s| s.action_key())
+                .collect::<Vec<_>>(),
+        )?;
+        writeln!(dump)?;
+        serde_json::to_writer(&mut dump, &dirty.lazy_force_keys)?;
+        writeln!(dump)?;
+        serde_json::to_writer(
+            &mut dump,
+            &index
+                .iter()
+                .map(|(output, s)| (output, s.action_key()))
+                .collect::<Vec<_>>(),
+        )?;
+    }
     Ok(())
 }

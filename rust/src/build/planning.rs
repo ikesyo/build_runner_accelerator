@@ -146,10 +146,15 @@ pub(super) fn create(
     let generated_output_locations = normal_specs
         .iter()
         .flat_map(|spec| {
-            spec.outputs
-                .iter()
-                .cloned()
-                .map(|output| (output, (spec.builder.build_to, spec.builder.is_optional)))
+            spec.outputs.iter().cloned().map(|output| {
+                (
+                    output,
+                    (
+                        spec.instance.builder.build_to,
+                        spec.instance.builder.is_optional,
+                    ),
+                )
+            })
         })
         .collect::<BTreeMap<String, (BuildTo, bool)>>();
     let mut specs = normal_specs;
@@ -172,7 +177,7 @@ pub(super) fn report_metrics(
     if plan_metrics_enabled() {
         let normal_specs = specs
             .iter()
-            .filter(|spec| spec.builder.kind == BuilderKind::Normal)
+            .filter(|spec| spec.instance.builder.kind == BuilderKind::Normal)
             .count();
         let (visible_outputs, normal_phase_outputs, post_process_outputs) = visibility.summary();
         print_plan_stage(
