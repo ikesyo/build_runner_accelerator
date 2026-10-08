@@ -107,7 +107,7 @@ coverage is exercised without expanding the required pull-request checks.
 
 Run `bash scripts/correctness_cli.sh` when changing CLI routing, fallback,
 compile flags, conflict handling or process lifecycle. It compares stock/native
-output bytes and watches actual edits, including launcher-only Ctrl-C and
+output bytes and watches actual edits, including launcher-only Ctrl-C/SIGHUP and
 subprocess cleanup using Linux `/proc`. It is also part of the full `core`
 suite. Windows process
 supervision has a cross-compilation check; console/job behavior needs Windows

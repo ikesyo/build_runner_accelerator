@@ -104,7 +104,11 @@ class LauncherProcessRunner {
     Stopwatch? shutdown;
     Timer? shutdownTimer;
     if (!Platform.isWindows) {
-      for (final signal in [ProcessSignal.sigint, ProcessSignal.sigterm]) {
+      for (final signal in [
+        ProcessSignal.sigint,
+        ProcessSignal.sigterm,
+        ProcessSignal.sighup,
+      ]) {
         subscriptions.add(
           signal.watch().listen((_) {
             interrupted ??= signal;

@@ -109,36 +109,41 @@ def live(pid):
         return False
 
 
-def watch(args, root, reference, env=ENV, compiler_marker=None):
+def watch(args, root, reference, env=ENV, compiler_marker=None,
+          stop_signal=signal.SIGINT, edit=None):
     log = root / 'watch.log'
     with log.open('w') as stream:
         proc = subprocess.Popen(args, cwd=root, env=env, stdout=stream, stderr=stream,
                                 start_new_session=True)
+        children = set()
         try:
             deadline = time.monotonic() + 90
             while (not (root / 'lib/a.final').exists() or files(root) != reference or
                    not any(marker in log.read_text() for marker in
                            ('Watching ', 'Built with build_runner'))):
                 assert proc.poll() is None, log.read_text()
-                assert time.monotonic() < deadline, log.read_text()
+                assert time.monotonic() < deadline, f'{log.read_text()}\nexpected={reference!r}\nactual={files(root)!r}'
                 time.sleep(.1)
             if compiler_marker is not None:
                 while not compiler_marker.exists():
                     assert proc.poll() is None, log.read_text()
                     assert time.monotonic() < deadline, log.read_text()
                     time.sleep(.1)
+            completion_markers = ('Build completed (Rust frontend)', 'Built with build_runner')
+            completed = sum(log.read_text().count(marker) for marker in completion_markers)
             # Every invocation edits after watch is ready, with distinct bytes.
-            edit = 'watch background edit' if compiler_marker else 'watch edit'
+            edit = edit or ('watch background edit' if compiler_marker else f'watch edit {stop_signal.name}')
             (root / 'lib/a.txt').write_text(edit + '\n')
             deadline = time.monotonic() + 90
-            while (root / 'lib/a.final').read_text() != edit + '\n.copy\n.final\n':
+            while ((root / 'lib/a.final').read_text() != edit + '\n.copy\n.final\n' or
+                   sum(log.read_text().count(marker) for marker in completion_markers) <= completed):
                 assert proc.poll() is None, log.read_text()
                 assert time.monotonic() < deadline, log.read_text()
                 time.sleep(.1)
-            # Send Ctrl-C to the launcher only, not the terminal process group.
+            # Interrupt/hang up the parent only, not its terminal process group.
             children = descendants(proc.pid)
-            proc.send_signal(signal.SIGINT)
-            assert proc.wait(timeout=15) == 130, log.read_text()
+            proc.send_signal(stop_signal)
+            assert proc.wait(timeout=15) == 128 + stop_signal, log.read_text()
             # The supervisor owns another group. Check all descendants have gone.
             deadline = time.monotonic() + 5
             while any(live(pid) for pid in children):
@@ -147,7 +152,7 @@ def watch(args, root, reference, env=ENV, compiler_marker=None):
             return files(root)
         finally:
             if proc.poll() is None:
-                children = descendants(proc.pid)
+                children |= descendants(proc.pid)
                 proc.send_signal(signal.SIGINT)
                 try:
                     proc.wait(timeout=10)
@@ -161,6 +166,14 @@ def watch(args, root, reference, env=ENV, compiler_marker=None):
                             pass
                     os.killpg(proc.pid, signal.SIGKILL)
                     proc.wait()
+            # A hangup regression may exit the parent before its children. Keep
+            # failed probes from leaving those already-observed orphans running.
+            for pid in children:
+                if live(pid):
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
 
 def main():
@@ -238,8 +251,11 @@ def main():
         compiled_launcher = base / 'launcher'
         run([DART, '--suppress-analytics', 'compile', 'exe',
              str(REPO / 'bin/build_runner_accelerator.dart'), '-o', str(compiled_launcher)], REPO)
+        aot_root = base / 'aot-root'
+        aot_root.mkdir()
         run([str(compiled_launcher), 'build', '--mode=dart', '--dart', str(fake_dart),
-             '--root', str(base), '--force-jit', '-d'], base, expected=23)
+             '--root', str(aot_root), '--force-jit', '-d'], aot_root, expected=23)
+        assert not (aot_root / '.dart_tool').exists()
         assert json.loads(capture.read_text()) == ['run', 'build_runner', 'build', '--force-jit', '-d']
         # Direct native CLI routes stock without loading a workspace at all.
         for command, arguments in [('clean', []), ('build', ['--unknown']),
@@ -252,8 +268,18 @@ def main():
         # Native watch and early CLI fallback watch both stop on launcher Ctrl-C.
         reference = files(native)
         assert watch(launcher(native, 'rust', 'watch', ['--force-jit', '-d']), native, reference)
-        assert watch(launcher(stock, 'auto', 'watch', ['--force-jit', '--build-filter=lib/a.final']),
+        assert watch(launcher(stock, 'auto', 'watch', ['--force-jit', '--verbose-durations']),
                      stock, reference) == files(native)
+        # Terminal/SSH hangup must reach both isolated subprocess topologies.
+        reference = files(native)
+        assert watch(launcher(native, 'rust', 'watch', ['--force-jit']), native,
+                     reference, stop_signal=signal.SIGHUP)
+        assert watch(launcher(stock, 'auto', 'watch', ['--force-jit', '--verbose-durations']),
+                     stock, reference, stop_signal=signal.SIGHUP) == files(native)
+        assert watch([str(NATIVE), 'watch', '--mode=rust', '--root', str(native),
+                      '--dart', DART, '--jobs=1', '--force-jit'], native, files(native),
+                     stop_signal=signal.SIGHUP, edit='direct native hangup edit')
+        print('cli-compatibility: SIGHUP cleanup/status passed for native/stock/direct-native', flush=True)
         # A real internal prewarm helper starts a deliberately stalled compiler
         # with its own child. All three must die when only the launcher gets SIGINT.
         compiler_marker = base / 'compiler-started'
@@ -284,7 +310,7 @@ def main():
         assert watch([*LAUNCHER, 'watch', '--mode=rust', '--root', str(native),
                       '--dart', str(compiler), '--jobs=1'], native, files(native),
                      env=background_env, compiler_marker=compiler_marker)
-    print('cli-compatibility: PASS conflicts/no-op/incremental/dependencies/filter/fallback/status/watch/Ctrl-C')
+    print('cli-compatibility: PASS conflicts/no-op/incremental/dependencies/filter/fallback/status/watch/Ctrl-C/SIGHUP')
 
 
 if __name__ == '__main__':

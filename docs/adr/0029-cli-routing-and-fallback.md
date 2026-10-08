@@ -37,7 +37,7 @@ The native addition in this change is acceptance of the retired deletion flag
 and its alias for build/watch, with precisely its stock non-operational meaning.
 No invocation auto-adds the flag. Build filters remain unsupported: correct
 implementation requires demand-driven dependency builders, multiple/package/asset
-filters, preserving previously built unrelated outputs and incremental/watch
+filters, matching stock's output retention/deletion and incremental/watch
 behavior. Merely filtering Rust actions or accepting a string is insufficient.
 Release, config, define, output, workspace, logging, and output-preservation
 options likewise remain on stock. The README table is the public scope.
@@ -52,14 +52,19 @@ creates a session and execs the selected Dart command. This preserves its PID,
 argument vector, stdio and status while allowing launcher-only Ctrl-C to reach
 the inner stock build process. Shutdown is bounded to five seconds.
 
-Unix native invocations supervise a subprocess group. Ctrl-C/termination
-forward to all children with a bounded five-second grace period and cleanup;
-Ctrl-C returns 130. Internal AOT helpers inherit the same supervisor context;
-only explicit detached prewarm starts a separate session. Successful exits allow intentional
+Unix native invocations supervise a subprocess group. Ctrl-C, termination,
+and terminal/SSH hangup (SIGHUP) forward to all children with a bounded
+five-second grace period and cleanup. Ctrl-C returns 130; SIGHUP returns 129.
+Internal AOT helpers inherit the same supervisor context; only explicit detached
+prewarm starts a separate session. Successful exits allow intentional
 background AOT compilation to finish; cancellation and failures clean the whole
 internal subtree. Windows uses a kill-on-close job for native subprocess-tree
 cleanup and forwards console interruption to the child group. Platform execution still
-requires Windows CI validation.
+requires Windows CI validation. Detached Windows prewarm first requests job
+breakaway; ERROR_ACCESS_DENIED retries with the same detachment/group/priority
+flags in the inherited job. Other errors propagate. Successful supervisor exit
+clears its kill-on-close limit; an enclosing job may still stop the background
+process when that job closes.
 
 ## Consequences and validation
 
@@ -74,5 +79,6 @@ separators, compile flags and malformed accelerator inputs.
 `scripts/correctness_cli.sh` compares stock/native conflict handling with flag
 omission, long spelling and alias, chained builders, zero-output deletion,
 no-op, incremental and watch; it also checks early/manifest fallback, unknown
-options, stock help/errors, exit codes and Ctrl-C. Existing full compatibility
-fixtures cover deletion, rename, failure, optional builders and watch.
+options, stock help/errors, exit codes, Ctrl-C and SIGHUP subtree cleanup.
+Existing full compatibility fixtures cover deletion, rename, failure, optional
+builders and watch.

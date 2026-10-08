@@ -25,6 +25,7 @@ pub(crate) fn supervise() -> std::io::Result<Option<i32>> {
     }
     // Signal handlers only store an atomic; all subprocess work runs here.
     unsafe {
+        signal(1, received as *const () as usize);
         signal(2, received as *const () as usize);
         signal(15, received as *const () as usize);
     }

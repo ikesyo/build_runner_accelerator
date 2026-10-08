@@ -120,7 +120,7 @@ in native build/watch and stock fallback, including manifest-time fallback.
 | `clean`, `serve`, `run`, `test`, `stop`, `daemon`, `help` | Fallback | Stock, without native download or manifest generation |
 | `--force-aot`, `--force-jit` | Supported | Retained for stock |
 | `--delete-conflicting-outputs`, `-d` | Accepted as retired compatibility flags | No effect in build_runner 2.16.2; never auto-added |
-| `--build-filter`, build directories | Fallback | Stock owns filtering, dependency demand, and output retention |
+| `--build-filter`, build directories | Fallback | Stock owns filtering, dependency demand, and output retention/deletion |
 | `--output` / `-o`, `--config` / `-c`, `--define`, `--release` / `-r`, `--no-release`, `--workspace` | Fallback | Stock |
 | `--keep-modified-outputs`, `--only-check`, `--symlink`, `--no-symlink` | Fallback | Stock |
 | `--verbose` / `-v`, `--verbose-durations` | Fallback | Stock logging |
@@ -142,8 +142,9 @@ Output conflicts are handled by the frontend's normal output lifecycle;
 Native commits only after all actions succeed, including deletion of declared
 outputs that were not emitted. Stock and native use separate graph caches;
 `clean` cleans stock caches, and does not delete accelerator caches.
-For Unix build/watch, Ctrl-C is forwarded to the selected process and native
-subprocess group, with bounded cleanup and exit status 130.
+For Unix build/watch, Ctrl-C and terminal/SSH hangup (SIGHUP) are forwarded to
+the selected subprocess group with bounded cleanup. Their exit statuses are
+130 and 129 respectively.
 See [the CLI ADR](docs/adr/0029-cli-routing-and-fallback.md) and
 [launcher contract](docs/launcher-and-release.md) for the compatibility boundary.
 

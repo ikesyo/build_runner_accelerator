@@ -490,7 +490,7 @@ fn spawn_detached_prewarm(
     if let Some(worker) = &options.worker {
         command.args(["--worker"]).arg(worker);
     }
-    let child = command.spawn()?;
+    let child = spawn_detached_prewarm_child(&mut command)?;
     eprintln!(
         "Rust AOT prewarm running in background (pid {}); log: {}",
         child.id(),
@@ -528,19 +528,44 @@ fn detached_prewarm_command() -> io::Result<Command> {
 
 #[cfg(windows)]
 fn detached_prewarm_command() -> io::Result<Command> {
+    Ok(Command::new(std::env::current_exe()?))
+}
+
+/// Preserve detachment and priority when an enclosing Windows job disallows
+/// breakaway. The supervisor clears kill-on-close after successful prewarm setup.
+#[cfg(windows)]
+fn spawn_detached_prewarm_child(command: &mut Command) -> io::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
-    let mut command = Command::new(std::env::current_exe()?);
-    command.creation_flags(
-        DETACHED_PROCESS
-            | CREATE_NEW_PROCESS_GROUP
-            | BELOW_NORMAL_PRIORITY_CLASS
-            | CREATE_BREAKAWAY_FROM_JOB,
-    );
-    Ok(command)
+    let detached_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | BELOW_NORMAL_PRIORITY_CLASS;
+    spawn_with_breakaway_retry(|breakaway| {
+        command.creation_flags(
+            detached_flags
+                | if breakaway {
+                    CREATE_BREAKAWAY_FROM_JOB
+                } else {
+                    0
+                },
+        );
+        command.spawn()
+    })
+}
+
+#[cfg(not(windows))]
+fn spawn_detached_prewarm_child(command: &mut Command) -> io::Result<std::process::Child> {
+    command.spawn()
+}
+
+/// Retry only Windows ERROR_ACCESS_DENIED; other spawn errors keep their cause.
+#[cfg(any(windows, test))]
+fn spawn_with_breakaway_retry<T>(mut spawn: impl FnMut(bool) -> io::Result<T>) -> io::Result<T> {
+    match spawn(true) {
+        Err(error) if error.raw_os_error() == Some(5) => spawn(false),
+        result => result,
+    }
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -587,6 +612,42 @@ mod tests {
     use super::{EARLY_WORKER_MARKER_MAX_AGE, cleanup_stale_worker_readiness_markers};
     use std::fs::{self, File, FileTimes};
     use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn breakaway_retry_is_scoped_to_access_denied() {
+        for error in [None, Some(5), Some(2), Some(87)] {
+            let mut attempts = Vec::new();
+            let result = super::spawn_with_breakaway_retry(|breakaway| {
+                attempts.push(breakaway);
+                if breakaway && let Some(code) = error {
+                    return Err(std::io::Error::from_raw_os_error(code));
+                }
+                Ok(23)
+            });
+            if error == Some(5) {
+                assert_eq!(attempts, [true, false]);
+                assert_eq!(result.unwrap(), 23);
+            } else {
+                assert_eq!(attempts, [true]);
+                assert_eq!(result.as_ref().err().and_then(|e| e.raw_os_error()), error);
+            }
+        }
+    }
+
+    #[test]
+    fn breakaway_retry_propagates_the_second_spawn_error() {
+        let mut attempts = Vec::new();
+        let result = super::spawn_with_breakaway_retry::<()>(|breakaway| {
+            attempts.push(breakaway);
+            Err(std::io::Error::from_raw_os_error(if breakaway {
+                5
+            } else {
+                2
+            }))
+        });
+        assert_eq!(attempts, [true, false]);
+        assert_eq!(result.unwrap_err().raw_os_error(), Some(2));
+    }
 
     #[test]
     fn cleanup_removes_only_old_readiness_files() {

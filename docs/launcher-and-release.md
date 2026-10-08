@@ -61,12 +61,15 @@ the inner stock build process. Shutdown is bounded to five seconds.
 On Unix the native process supervises a separate process group containing its
 workers, generator, probes and compilers. Launcher signals are forwarded to the
 selected child; native forwards them to the whole group, waits up to five
-seconds, and kills remaining members. Ctrl-C returns 130. Internal AOT helpers
+seconds, and kills remaining members. Ctrl-C returns 130; terminal/SSH hangup
+(SIGHUP) is forwarded in both native and stock paths and returns 129. Internal AOT helpers
 share the supervisor context; an intentional background compile can finish
 after a successful build, but is cleaned up on interruption or failure. Detached prewarm has its own session and intentionally survives
 the setup hook. Windows native execution uses a kill-on-close job and forwards
 console interruption to the child group; the Windows execution path requires CI
-validation on that platform.
+validation on that platform. Detached Windows prewarm retries without job
+breakaway only for ERROR_ACCESS_DENIED. It then remains subject to any enclosing
+job's lifetime, while the accelerator job permits it to survive successful setup.
 
 Mode behavior is part of the release contract:
 
