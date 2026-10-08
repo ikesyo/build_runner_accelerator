@@ -283,7 +283,7 @@ Design details are recorded in [ADRs 0009–0013](docs/adr/README.md).
 
 ## Current compatibility and limitations
 
-The 0.2.x package line supports Dart `>=3.11.0 <4.0.0`. The core build stack
+The current release line supports Dart `>=3.11.0 <4.0.0`. The core build stack
 is intentionally bounded to the versions exercised by CI:
 
 | Dependency | Supported range |

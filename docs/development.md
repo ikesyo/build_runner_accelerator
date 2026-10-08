@@ -24,7 +24,7 @@ export CARGO_HOME=/absolute/path/to/cargo-home
 
 AOT-specific scripts that inspect SDK files also accept `DART_SDK`.
 
-The 0.1.x package line supports Dart `>=3.11.0 <4.0.0`. Its tested core build
+The current release line supports Dart `>=3.11.0 <4.0.0`. Its tested core build
 stack is bounded as follows:
 
 - `analyzer >=13.3.0 <15.0.0`

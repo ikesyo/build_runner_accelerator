@@ -19,14 +19,21 @@ to that release without a separate compatibility implementation.
 
 ## Decision
 
-The 0.1.x package line supports Dart `>=3.11.0 <4.0.0` and uses this tested
+The current release line supports Dart `>=3.11.0 <4.0.0` and uses this tested
 core dependency window:
 
 - `analyzer >=13.3.0 <15.0.0`
 - `build >=4.0.9 <5.0.0`
 - `build_config >=1.3.2 <1.4.0`
-- `build_runner >=2.16.1 <2.17.0`
+- `build_runner >=2.16.2 <2.17.0`
 - `package_config >=2.2.0 <4.0.0`
+
+As of 2026-10-08, build_runner 2.16.2 fixes the stock resolver
+incompatibility with analyzer 14.5.0. The temporary analyzer cap below 14.5.0
+is removed, and the build_runner minimum is raised to 2.16.2 to exclude
+incompatible older-runner resolutions. Its analyzer dependency makes 14.3.0
+the effective minimum of the combined solution. This updates the tested
+window under the existing compatibility policy.
 
 The remaining direct dependencies retain caret constraints within their current
 major versions. CI validates two resolution points:
@@ -42,7 +49,7 @@ version contract.
 
 ## Consequences
 
-Users on Dart versions before 3.11 cannot use the 0.1.x package line. In
+Users on Dart versions before 3.11 cannot use the current release line. In
 exchange, package resolution is broad across the currently compatible
 `analyzer`, `build`, `build_config`, and `package_config` releases while
 preventing unverified `build_runner` minor releases from entering the worker.
