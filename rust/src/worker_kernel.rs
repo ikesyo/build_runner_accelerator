@@ -248,12 +248,12 @@ pub(crate) fn early_worker_aot_enabled() -> bool {
 
 /// Spawn JIT `AnalysisDriver` processes that resolve the workspace package's
 /// sources into the shared byte store, priming both cold-start caches in one
-/// `aot-prewarm` step. The caller joins with [`AnalysisPrewarm::wait_for_children`];
+/// `prewarm` step. The caller joins with [`AnalysisPrewarm::wait_for_children`];
 /// `None` means the shared byte store is disabled, the accelerator package
 /// cannot be located, the workspace has no package config yet, or another
 /// prewarm window already owns the shards.
 pub(crate) fn start_analysis_prewarm(root: &Path, dart_binary: &str) -> Option<AnalysisPrewarm> {
-    spawn_analysis_prewarm(root, dart_binary, "aot-prewarm")
+    spawn_analysis_prewarm(root, dart_binary, "prewarm")
 }
 
 /// Same spawner bound to the manifest-generation window: the shards fill the
@@ -1410,7 +1410,7 @@ fn aot_compile_status_error(worker: &Path, status: std::process::ExitStatus) -> 
     ))
 }
 
-/// JIT analyzer prewarm spawned by `aot-prewarm` to fill the shared byte
+/// JIT analyzer prewarm spawned by `prewarm` to fill the shared byte
 /// store.
 ///
 /// `bin/prewarm_analysis.dart` resolves workspace sources through a plain Dart
@@ -1467,7 +1467,7 @@ fn compile_prewarm_enabled() -> bool {
 }
 
 /// Whether `prewarm` should run the whole-workspace analysis shards after the
-/// AOT compile (the `aot-prewarm` window). On by default: the sweep fills the
+/// AOT compile (the `prewarm` window). On by default: the sweep fills the
 /// shared byte store the first real build would otherwise fill lazily inside
 /// worker execution. `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` opts out
 /// for foreground/CI runs where the serial sweep cost has nothing to hide in.

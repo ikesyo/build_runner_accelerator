@@ -12,7 +12,6 @@ pub(crate) struct BuilderManifestFile {
     pub(crate) version: u32,
     pub(crate) fingerprint: String,
     pub(crate) worker_entrypoint: String,
-    #[serde(default)]
     pub(crate) trigger_digest: String,
     #[serde(default)]
     pub(crate) builders: Vec<BuilderManifestDefinition>,
@@ -22,13 +21,9 @@ pub(crate) struct BuilderManifestFile {
 
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct BuilderManifestExtension {
-    #[serde(default)]
     pub(crate) input_suffix: String,
-    #[serde(default = "default_input_match")]
     pub(crate) input_match: String,
-    #[serde(default)]
     pub(crate) input_anchored: bool,
-    #[serde(default)]
     pub(crate) output_suffixes: Vec<String>,
 }
 
@@ -43,20 +38,7 @@ pub(crate) struct BuilderManifestRuntime {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct BuilderManifestDefinition {
     pub(crate) id: String,
-    #[serde(default = "default_builder_kind")]
     pub(crate) kind: String,
-    #[serde(default)]
-    pub(crate) input_suffix: String,
-    #[serde(default = "default_input_match")]
-    pub(crate) input_match: String,
-    #[serde(default)]
-    pub(crate) input_anchored: bool,
-    #[serde(default)]
-    pub(crate) output_suffixes: Vec<String>,
-    // Read the flattened fields for compatibility with the v4-shaped v5
-    // payload. New manifests use extensions.
-    #[serde(default)]
-    pub(crate) output_suffix: Option<String>,
     #[serde(default)]
     pub(crate) extensions: Vec<BuilderManifestExtension>,
     #[serde(default)]
@@ -95,7 +77,7 @@ pub(crate) struct BuilderManifestDefinition {
     #[serde(default)]
     pub(crate) package: String,
     #[serde(default)]
-    pub(crate) is_root: bool,
+    pub(crate) is_root: Option<bool>,
     #[serde(default)]
     pub(crate) target_order: u32,
     #[serde(default)]
@@ -107,7 +89,7 @@ pub(crate) struct BuilderManifestDefinition {
 pub(crate) fn rust_build_config_from_manifest(
     manifest: BuilderManifestFile,
 ) -> io::Result<RustBuildConfig> {
-    if manifest.version != 8 {
+    if manifest.version != 9 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unsupported builder manifest version: {}", manifest.version),
@@ -191,7 +173,12 @@ pub(crate) fn rust_build_config_from_manifest(
             definition,
             target: entry.target,
             package: entry.package,
-            is_root: entry.is_root,
+            is_root: entry.is_root.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "configured builder requires is_root",
+                )
+            })?,
             target_order: entry.target_order,
             phase: entry.phase,
             excluded_input_suffixes: entry.excluded_input_suffixes,
@@ -221,12 +208,4 @@ pub(crate) fn rust_build_config_from_manifest(
         trigger_digest: Some(manifest.trigger_digest),
         definitions,
     })
-}
-
-fn default_input_match() -> String {
-    "suffix".to_owned()
-}
-
-fn default_builder_kind() -> String {
-    "normal".to_owned()
 }

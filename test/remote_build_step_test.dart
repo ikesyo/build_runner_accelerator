@@ -166,6 +166,7 @@ void main() {
       final response = utf8.encode(
         jsonEncode({
           'id': 1000,
+          'v': 1,
           'type': 'asset_response',
           'ok': true,
           'assets': [id.toString()],

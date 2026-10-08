@@ -6,6 +6,14 @@ import 'package:build_runner_accelerator/src/launcher_options.dart'
 import 'package:test/test.dart';
 
 void main() {
+  test('removed alias fails in every mode', () {
+    for (final mode in ['auto', 'rust', 'dart']) {
+      expect(
+        () => LauncherOptions.parse(['aot-prewarm', '--mode', mode]),
+        throwsFormatException,
+      );
+    }
+  });
   test('background is rejected outside prewarm in every frontend mode', () {
     for (final mode in ['auto', 'rust', 'dart']) {
       for (final command in ['build', 'watch', 'clean']) {
@@ -15,7 +23,7 @@ void main() {
           throwsFormatException,
         );
       }
-      for (final command in ['prewarm', 'aot-prewarm']) {
+      for (final command in ['prewarm']) {
         final options = LauncherOptions.parse([
           command,
           '--mode',

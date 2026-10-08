@@ -24,7 +24,7 @@ import 'indexed_blob_store.dart';
 /// accelerator cache directory (`v3-<sdk>/store.bin`), read through an in-memory
 /// offset index — one metadata scan per worker instead of ~900 individual file
 /// opens during the dep walk. With
-/// `BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0` the legacy layout is used: small
+/// `BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0` the diagnostic per-key layout is used: small
 /// JSON files, one per key. Both layouts are namespaced by the running SDK
 /// version because directive parsing is grammar-dependent. Because the key
 /// binds the exact content, a stale entry can never be selected: any content
@@ -35,7 +35,7 @@ import 'indexed_blob_store.dart';
 final class AssetDepsCache {
   AssetDepsCache._(this._dir, this._packed);
 
-  static const _version = 'v1';
+  static const _version = 'per-key-v1';
   static const _packedVersion = 'v3';
 
   /// The shared process-wide cache, or `null` when disabled.
@@ -88,7 +88,7 @@ final class AssetDepsCache {
   /// shares the same key space.
   String keyForDigest(AssetId id, String contentDigest) {
     final key = '$id\n$contentDigest';
-    // The legacy layout uses keys as filenames. Asset IDs contain slashes
+    // The per-key layout uses keys as filenames. Asset IDs contain slashes
     // (and a Windows-invalid pipe), so encode the short digest key there.
     return _packed == null ? sha256.convert(utf8.encode(key)).toString() : key;
   }

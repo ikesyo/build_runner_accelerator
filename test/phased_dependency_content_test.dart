@@ -265,6 +265,7 @@ void main() {
 RpcSession _rpc({bool missing = false}) {
   final response = utf8.encode(
     jsonEncode({
+      'v': 1,
       'type': 'asset_response',
       'id': 1000,
       'ok': true,

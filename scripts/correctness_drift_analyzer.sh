@@ -139,7 +139,7 @@ if modular["build_to"] != "source":
     raise AssertionError(f"modular build_to is not source: {modular}")
 if modular["required_input_suffixes"] != [".drift.drift_module.json"]:
     raise AssertionError(f"unexpected modular required inputs: {modular}")
-if set(modular["output_suffixes"]) != {".drift.dart"}:
+if {suffix for extension in modular["extensions"] for suffix in extension["output_suffixes"]} != {".drift.dart"}:
     raise AssertionError(f"unexpected modular outputs: {modular}")
 modular_extensions = {
     extension["input_suffix"]: extension["output_suffixes"]
@@ -155,7 +155,7 @@ analyzer = by_id["drift_dev:analyzer#factory1"]
 if not {
     ".dart.drift_module.json",
     ".drift.drift_module.json",
-}.issubset(set(analyzer["output_suffixes"])):
+}.issubset({suffix for extension in analyzer["extensions"] for suffix in extension["output_suffixes"]}):
     raise AssertionError(f"analyzer does not publish both module artifacts: {analyzer}")
 PY
 }

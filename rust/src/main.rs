@@ -47,7 +47,7 @@ fn main() -> io::Result<()> {
                 options.command, options.stock_arguments
             )));
         }
-        if matches!(options.command.as_str(), "prewarm" | "aot-prewarm") {
+        if options.command == "prewarm" {
             if !options.native_supported() {
                 return Err(io::Error::other("prewarm does not accept stock arguments"));
             }
@@ -85,8 +85,7 @@ fn main() -> io::Result<()> {
             watch::run(&options)
         }
         "aot-cache-key" => frontend::run_aot_cache_key(&options),
-        // `aot-prewarm` remains as the name earlier CI tooling invoked.
-        "prewarm" | "aot-prewarm" => frontend::run_aot_prewarm(&options),
+        "prewarm" => frontend::run_aot_prewarm(&options),
         command => {
             print_usage();
             Err(io::Error::new(

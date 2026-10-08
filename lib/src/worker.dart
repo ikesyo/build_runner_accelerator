@@ -1,3 +1,4 @@
+import 'frontend_binary_resolver.dart' show buildRunnerAcceleratorVersion;
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -90,6 +91,12 @@ Future<void> runWorker({
         final message = WorkerMessage.decode(rawMessage);
         switch (message) {
           case WorkerInitializeMessage initialize:
+            if (Directory(initialize.root).resolveSymbolicLinksSync() !=
+                Directory.current.resolveSymbolicLinksSync()) {
+              throw StateError(
+                'initialize root does not match worker workspace',
+              );
+            }
             await runtime.startBuild(
               initialize.package,
               phaseCount: initialize.phaseCount,
@@ -97,6 +104,7 @@ Future<void> runWorker({
             await writer.send(<String, dynamic>{
               'v': 1,
               'type': 'initialized',
+              'accelerator_version': buildRunnerAcceleratorVersion,
               'id': initialize.id,
               'capabilities': <String>[
                 ...catalog.keys,
@@ -701,6 +709,7 @@ Future<void> _handleNestedBuild(
       'deleted': <String>[],
       'reads': <String>[],
       'resolver_reads': <String>[],
+      'resolver_entrypoints': <String>[],
       'resolver_used': false,
       'glob_reads': <dynamic>[],
       'diagnostics': <dynamic>[],
@@ -1046,8 +1055,4 @@ Map<String, List<String>> _resolverDepGraphJson(
   return result;
 }
 
-String _instanceKey(WorkerBuildRequest request) {
-  final explicit = request.instanceKey;
-  if (explicit != null) return explicit;
-  return '${request.kind}|${request.builder}|${jsonEncode(request.options)}';
-}
+String _instanceKey(WorkerBuildRequest request) => request.instanceKey;

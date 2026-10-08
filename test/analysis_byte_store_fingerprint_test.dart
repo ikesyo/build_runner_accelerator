@@ -23,7 +23,7 @@ void main() {
             'file:///cache/analyzer-14.3.0/',
             'file:///解析/',
           ]) {
-            // The exact old on-disk namespace is a compatibility requirement.
+            // Keep fingerprint determinism covered independently of the disposable namespace.
             final old = sha256
                 .convert([
                   ...bytes,

@@ -18,11 +18,11 @@ final class PackedAnalysisByteStore implements ByteStore {
 
   bool get hasLinkedEntries => _store.containsKeySuffix('.linked');
 
-  static bool hasLegacyLinkedEntries(String dir) {
-    final legacy = FileByteStore(dir);
-    return _findLegacyFiles(
+  static bool hasPerKeyLinkedEntries(String dir) {
+    final perKey = FileByteStore(dir);
+    return _findPerKeyFiles(
       dir,
-    ).keys.any((key) => key.endsWith('.linked') && legacy.get(key) != null);
+    ).keys.any((key) => key.endsWith('.linked') && perKey.get(key) != null);
   }
 
   @override
@@ -40,7 +40,7 @@ final class PackedAnalysisByteStore implements ByteStore {
   void close() => _store.close();
 
   /// Used only by the per-key opt-out store's readiness check.
-  static Map<String, File> _findLegacyFiles(String dir) {
+  static Map<String, File> _findPerKeyFiles(String dir) {
     final files = <String, File>{};
     final shardPattern = RegExp(r'^[a-z0-9_]{2}$');
     final keyPattern = RegExp(r'^[a-z0-9_][a-z0-9_][a-z0-9._]{1,98}$');

@@ -36,13 +36,13 @@ void main() {
     expect(reader.get('cd456.linked'), value);
   });
 
-  test('legacy readiness requires a checksum-valid linked entry', () {
+  test('per-key readiness requires a checksum-valid linked entry', () {
     seed('ab123.unlinked2');
     final linked = seed('cd456.linked');
     linked.writeAsStringSync('corrupt');
-    expect(PackedAnalysisByteStore.hasLegacyLinkedEntries(dir.path), isFalse);
+    expect(PackedAnalysisByteStore.hasPerKeyLinkedEntries(dir.path), isFalse);
     seed('cd456.linked');
-    expect(PackedAnalysisByteStore.hasLegacyLinkedEntries(dir.path), isTrue);
+    expect(PackedAnalysisByteStore.hasPerKeyLinkedEntries(dir.path), isTrue);
   });
 
   test('earlier formats are ignored without migration', () {

@@ -93,16 +93,16 @@ fn read_manifest(
         Ok(manifest) => manifest,
         Err(_) => return Ok(None),
     };
-    if manifest.version != 8 || manifest.fingerprint != fingerprint {
+    if manifest.version != 9 || manifest.fingerprint != fingerprint {
         return Ok(None);
     }
-    let manifest_worker_exists = Path::new(&manifest.worker_entrypoint).is_file();
-    if expected_worker_entrypoint.is_file() {
-        // The generated manifest historically stored an absolute path. Rebase
-        // it to the current workspace so the manifest and AOT cache can move
-        // between CI runners/workspaces together.
-        manifest.worker_entrypoint = expected_worker_entrypoint.to_string_lossy().into_owned();
-    } else if !manifest_worker_exists {
+    if !expected_worker_entrypoint.is_file() {
+        return Ok(None);
+    }
+    // Rebase a restored cache to this workspace. Never run a worker from a
+    // stale absolute manifest path when the local generated worker is missing.
+    manifest.worker_entrypoint = expected_worker_entrypoint.to_string_lossy().into_owned();
+    if rust_build_config_from_manifest(manifest.clone()).is_err() {
         return Ok(None);
     }
     Ok(Some(manifest))

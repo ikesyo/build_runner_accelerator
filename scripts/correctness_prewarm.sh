@@ -128,7 +128,7 @@ if grep -Fq 'Rust worker AOT compile: elapsed_us=' "$temporary_dir/prewarm-a2.lo
   fail 'warm prewarm rerun recompiled the worker'
 fi
 analysis_prewarm_ran=no
-if grep -Fq 'analysis prewarm[aot-prewarm]' "$temporary_dir/prewarm-a2.log"; then
+if grep -Fq 'analysis prewarm[prewarm]' "$temporary_dir/prewarm-a2.log"; then
   analysis_prewarm_ran=yes
 fi
 [[ "$analysis_prewarm_ran" == yes ]] || fail 'default prewarm spawned no analysis shards'
@@ -137,7 +137,7 @@ fi
 BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0 \
   run_runner "$workspace_a" "$temporary_dir/prewarm-a3.log" prewarm ||
   fail 'prewarm with analysis prewarm disabled failed'
-if grep -Fq 'analysis prewarm[aot-prewarm]' "$temporary_dir/prewarm-a3.log"; then
+if grep -Fq 'analysis prewarm[prewarm]' "$temporary_dir/prewarm-a3.log"; then
   fail 'ANALYSIS_PREWARM=0 still spawned analysis shards'
 fi
 

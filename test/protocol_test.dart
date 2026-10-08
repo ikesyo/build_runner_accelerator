@@ -1,10 +1,14 @@
 import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:test/test.dart';
+import 'dart:io';
+import 'package:build_runner_accelerator/src/frontend_binary_resolver.dart'
+    show buildRunnerAcceleratorVersion;
 
 void main() {
   group('WorkerMessage.decode', () {
     test('decodes cache deltas on clean resolver resets', () {
       final message = WorkerMessage.decode(<String, dynamic>{
+        'v': 1,
         'type': 'reset_resolver',
         'id': 4,
         'updated_sources': <dynamic>['app|lib/generated.dart'],
@@ -29,6 +33,7 @@ void main() {
     test('rejects resolver resets with omitted deltas', () {
       expect(
         () => WorkerMessage.decode(<String, dynamic>{
+          'v': 1,
           'type': 'reset_resolver',
           'id': 5,
           'incremental': false,
@@ -40,6 +45,7 @@ void main() {
     test('requires the resolver reset mode', () {
       expect(
         () => WorkerMessage.decode(<String, dynamic>{
+          'v': 1,
           'type': 'reset_resolver',
           'id': 6,
           'updated_sources': <dynamic>[],
@@ -55,6 +61,7 @@ void main() {
       'requires explicit overlay transport and preserves its descriptor',
       () {
         final message = <String, dynamic>{
+          'v': 1,
           'type': 'reset_resolver',
           'id': 8,
           'updated_sources': ['app|lib/a.dart'],
@@ -80,6 +87,7 @@ void main() {
 
     test('rejects non-object overlay transport and non-string keys', () {
       final message = <String, dynamic>{
+        'v': 1,
         'type': 'reset_resolver',
         'id': 9,
         'updated_sources': <String>[],
@@ -103,10 +111,14 @@ void main() {
 
     test('decodes initialize messages into typed values', () {
       final message = WorkerMessage.decode(<String, dynamic>{
+        'v': 1,
         'type': 'initialize',
         'id': 7,
         'package': 'app',
+        'root': Directory.current.absolute.path,
+        'resolver_mode': 'dart_local',
         'phase_count': 3,
+        'accelerator_version': buildRunnerAcceleratorVersion,
       });
 
       expect(message, isA<WorkerInitializeMessage>());
@@ -118,6 +130,7 @@ void main() {
 
     test('decodes build messages and normalizes optional fields once', () {
       final message = WorkerMessage.decode(<String, dynamic>{
+        'v': 1,
         'type': 'build',
         'id': 12,
         'builder': 'app|copy',
@@ -156,6 +169,7 @@ void main() {
 
     test('decodes build batches into typed child requests', () {
       final message = WorkerMessage.decode(<String, dynamic>{
+        'v': 1,
         'type': 'build_batch',
         'id': 20,
         'blocked_assets': <dynamic>['app|lib/blocked.dart'],
@@ -164,12 +178,25 @@ void main() {
             'id': 21,
             'builder': 'app|one',
             'input': 'app|lib/one.dart',
+            'kind': 'normal',
+            'phase': 0,
+            'instance_key': 'one',
+            'is_root': true,
+            'options': <String, dynamic>{},
+            'allowed_outputs': <String>[],
+            'triggers': <dynamic>[],
           },
           <String, dynamic>{
             'id': 22,
             'builder': 'app|two',
             'input': 'app|lib/two.dart',
-            'kind': 'post_process',
+            'kind': 'normal',
+            'phase': 0,
+            'instance_key': 'two',
+            'is_root': false,
+            'options': <String, dynamic>{},
+            'allowed_outputs': <String>[],
+            'triggers': <dynamic>[],
           },
         ],
       });
@@ -184,12 +211,13 @@ void main() {
       expect(batch.requests[0].blockedAssets, ['app|lib/blocked.dart']);
       expect(batch.requests[0].blockedAssets, same(batch.blockedAssets));
       expect(batch.requests[1].id, 22);
-      expect(batch.requests[1].isPostProcess, isTrue);
+      expect(batch.requests[1].isPostProcess, isFalse);
       expect(batch.requests[1].blockedAssets, same(batch.blockedAssets));
     });
 
     test('retains unsupported messages for the worker error response', () {
       final message = WorkerMessage.decode(<String, dynamic>{
+        'v': 1,
         'type': 'future_message',
         'id': 30,
       });
@@ -201,6 +229,86 @@ void main() {
     });
   });
 
+  test('requires matching initialize version and valid phase count', () {
+    final valid = <String, dynamic>{
+      'v': 1,
+      'type': 'initialize',
+      'id': 1,
+      'package': 'app',
+      'root': Directory.current.absolute.path,
+      'resolver_mode': 'dart_local',
+      'phase_count': 1,
+      'accelerator_version': buildRunnerAcceleratorVersion,
+    };
+    for (final field in [
+      'v',
+      'phase_count',
+      'accelerator_version',
+      'root',
+      'resolver_mode',
+    ]) {
+      final missing = {...valid}..remove(field);
+      expect(() => WorkerMessage.decode(missing), throwsFormatException);
+    }
+    for (final change in [
+      {'v': 2},
+      {'accelerator_version': '0.0.0'},
+      {'phase_count': 0},
+      {'phase_count': 1.5},
+    ]) {
+      expect(
+        () => WorkerMessage.decode({...valid, ...change}),
+        throwsFormatException,
+      );
+    }
+  });
+  test('build requires current fields instead of legacy defaults', () {
+    final valid = <String, dynamic>{
+      'v': 1,
+      'type': 'build',
+      'id': 1,
+      'builder': 'app|copy',
+      'input': 'app|lib/a.dart',
+      'phase': 0,
+      'kind': 'normal',
+      'instance_key': 'copy',
+      'is_root': false,
+      'options': <String, dynamic>{},
+      'allowed_outputs': <String>[],
+      'blocked_assets': <String>[],
+      'triggers': <dynamic>[],
+    };
+    expect(WorkerMessage.decode(valid), isA<WorkerBuildMessage>());
+    for (final field in [
+      'phase',
+      'kind',
+      'instance_key',
+      'is_root',
+      'options',
+      'allowed_outputs',
+      'blocked_assets',
+      'triggers',
+    ]) {
+      final missing = {...valid}..remove(field);
+      expect(
+        () => WorkerMessage.decode(missing),
+        throwsFormatException,
+        reason: field,
+      );
+    }
+    for (final change in [
+      {'is_root': 'true'},
+      {'phase': 0.5},
+      {'phase': -1},
+      {'instance_key': ''},
+      {'kind': 'unknown'},
+    ]) {
+      expect(
+        () => WorkerMessage.decode({...valid, ...change}),
+        throwsFormatException,
+      );
+    }
+  });
   group('WorkerBuildRequest.fromJson', () {
     test('rejects malformed fields at the protocol boundary', () {
       expect(
@@ -237,6 +345,7 @@ void main() {
     test('requires blocked_assets for direct build messages', () {
       expect(
         () => WorkerMessage.decode(<String, dynamic>{
+          'v': 1,
           'type': 'build',
           'id': 1,
           'builder': 'app|copy',

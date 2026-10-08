@@ -132,10 +132,9 @@ Future<int> runLauncher(List<String> arguments) async {
   );
 }
 
-/// `prewarm` (and the `aot-prewarm` alias kept for existing CI tooling) only
+/// `prewarm` only
 /// warms frontend caches; when no frontend can run there is nothing to do.
-bool _isPrewarmCommand(String command) =>
-    command == 'prewarm' || command == 'aot-prewarm';
+bool _isPrewarmCommand(String command) => command == 'prewarm';
 
 /// `watch`/`serve` are long-running commands where startup latency matters,
 /// so the worker starts on the kernel/script path while the AOT binary is
@@ -151,7 +150,7 @@ The launcher uses a cached Rust frontend when available and otherwise falls
 back to stock dart build_runner in --mode auto. On a cache miss it downloads
 and verifies the matching signed release artifact.
 
-Native commands: build, watch, prewarm (aot-prewarm alias), aot-cache-key.
+Native commands: build, watch, prewarm, aot-cache-key.
 Other stock commands (clean, serve, run, test, stop) and unsupported options
 use stock in auto/dart; rust reports an error before downloading a frontend.
 Stock --build-filter, --output, --config, --define, --release, --workspace,

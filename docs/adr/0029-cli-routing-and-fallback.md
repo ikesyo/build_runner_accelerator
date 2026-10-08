@@ -1,5 +1,8 @@
 # 0029: CLI capability routing and lossless stock fallback
 
+The accelerator 0.x alias contract below is superseded by
+[ADR 0030](0030-one-zero-contract-and-disposable-state.md); use `prewarm`.
+
 Status: Accepted
 
 ## Context

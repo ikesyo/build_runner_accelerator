@@ -51,8 +51,7 @@ second invocation while one is already running is a no-op, and a concurrent
 `build` waits for the published artifact instead of duplicating the compile.
 Without `--background` the command waits for completion. `prewarm` exits 0
 without doing anything under `--mode dart` or when the native frontend is
-unavailable, so the setup hook never fails for lack of a frontend. (`prewarm`
-accepts the `aot-prewarm` alias used by earlier CI tooling.)
+unavailable, so the setup hook never fails for lack of a frontend. The old `aot-prewarm` alias is removed; use `prewarm`.
 
 The default `auto` mode downloads and verifies the matching signed native
 frontend on supported Linux, macOS, and Windows platforms. On macOS Intel or
@@ -115,7 +114,7 @@ in native build/watch and stock fallback, including manifest-time fallback.
 | Command / option | Native status | auto / dart behavior |
 | --- | --- | --- |
 | `build`, `watch` | Supported for the documented manifest subset | Native in auto; stock in dart |
-| `prewarm`, `aot-prewarm` | Supported, no build actions | Skip when no native frontend; dart skips |
+| `prewarm` | Supported, no build actions | Skip when no native frontend; dart skips |
 | `aot-cache-key` | Native utility | Requires native; no stock equivalent |
 | `clean`, `serve`, `run`, `test`, `stop`, `daemon`, `help` | Fallback | Stock, without native download or manifest generation |
 | `--force-aot`, `--force-jit` | Supported | Retained for stock |
@@ -158,6 +157,16 @@ the launcher itself. The package does not distribute an AOT-compiled launcher.
 An advanced user may compile the launcher with `dart compile exe`; that form is
 supported as a compatibility path for release-cache misses, but it is not the
 normal installation or benchmark path.
+
+## 1.0 contract and migration
+
+The stable CLI, diagnostic/experimental/internal environment classification,
+custom-worker version requirement and safe recovery steps are documented in
+[the 0.x → 1.0 migration guide](docs/migration-1.0.md). Manifest, graph, worker
+AOT and analysis cache formats are disposable internal state; upgrades may
+invalidate and regenerate them. Cache compatibility cleanup does not delete
+user sources or existing generated source files. Stock build_runner and the
+auto/rust/dart mode contracts remain the compatibility reference.
 
 ## Architecture
 

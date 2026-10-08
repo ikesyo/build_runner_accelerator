@@ -196,26 +196,19 @@ struct BinaryBuildOutput {
 
 #[derive(Debug, Deserialize)]
 struct BinaryBuildResultMetadata {
+    v: u32,
     #[serde(rename = "type")]
     message_type: String,
     id: u64,
     status: String,
-    #[serde(default)]
     encoding: Option<String>,
-    #[serde(default)]
     outputs: Vec<BinaryBuildOutput>,
-    #[serde(default)]
     deleted: Vec<String>,
-    #[serde(default)]
     reads: Vec<String>,
-    #[serde(default)]
     resolver_reads: Vec<String>,
-    #[serde(default)]
     resolver_entrypoints: Vec<String>,
     resolver_used: bool,
-    #[serde(default)]
     glob_reads: Vec<GlobRead>,
-    #[serde(default)]
     diagnostics: Vec<Diagnostic>,
     #[serde(default)]
     error: Option<String>,
@@ -223,6 +216,12 @@ struct BinaryBuildResultMetadata {
 
 impl BinaryBuildResultMetadata {
     fn decode(self, bytes: &[u8], cursor: &mut usize) -> io::Result<BuildResult> {
+        if self.v != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported build result protocol version",
+            ));
+        }
         if self.message_type != "build_result" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -313,7 +312,6 @@ struct BinaryBuildBatchResultMetadata {
     /// Direct resolver dependency edges the worker's shared loader holds.
     /// Batch-level because every action's result expands through the same
     /// graph, like stock's `previousLibraryCycleGraphLoader`.
-    #[serde(default)]
     dep_graph: std::collections::BTreeMap<String, Vec<String>>,
 }
 
@@ -437,6 +435,8 @@ mod tests {
             "outputs": [{"asset": "app|lib/model.g.dart", "length": 7}],
             "reads": [],
             "resolver_reads": [],
+                    "resolver_entrypoints": [],
+                    "deleted": [],
             "resolver_used": true,
             "glob_reads": [],
             "diagnostics": []
@@ -473,6 +473,7 @@ mod tests {
             "type": "build_batch_result",
             "id": 7,
             "encoding": "raw",
+            "dep_graph": {},
             "results": [
                 {
                     "v": 1,
@@ -483,6 +484,8 @@ mod tests {
                     "outputs": [{"asset": "app|a.g.dart", "length": 3}],
                     "reads": [],
                     "resolver_reads": [],
+                    "resolver_entrypoints": [],
+                    "deleted": [],
                     "resolver_used": false,
                     "glob_reads": [],
                     "diagnostics": []
@@ -496,6 +499,8 @@ mod tests {
                     "outputs": [{"asset": "app|b.g.dart", "length": 4}],
                     "reads": [],
                     "resolver_reads": [],
+                    "resolver_entrypoints": [],
+                    "deleted": [],
                     "resolver_used": false,
                     "glob_reads": [],
                     "diagnostics": []
@@ -520,6 +525,42 @@ mod tests {
         assert!(!decoded.results[1].resolver_used);
         assert_eq!(decoded.results[0].outputs[0].bytes.as_ref(), b"one");
         assert_eq!(decoded.results[1].outputs[0].bytes.as_ref(), b"four");
+    }
+
+    #[test]
+    fn missing_result_dependencies_and_wrong_versions_fail_explicitly() {
+        let valid = json!({"v": 1, "type": "build_result", "id": 1, "status": "success", "encoding": "raw", "outputs": [], "deleted": [], "reads": [], "resolver_reads": [], "resolver_entrypoints": [], "resolver_used": false, "glob_reads": [], "diagnostics": []});
+        let decode = |metadata: Value| {
+            let mut bytes = Vec::new();
+            write_binary_frame_with_magic(&mut bytes, BINARY_BUILD_RESULT_MAGIC, &metadata, b"")
+                .unwrap();
+            let (IncomingFrame::Binary(frame), _) = read_message_with_size(&mut Cursor::new(bytes))
+                .unwrap()
+                .unwrap()
+            else {
+                panic!("binary frame")
+            };
+            decode_build_result_frame(frame)
+        };
+        assert!(decode(valid.clone()).is_ok());
+        for field in [
+            "v",
+            "outputs",
+            "deleted",
+            "reads",
+            "resolver_reads",
+            "resolver_entrypoints",
+            "resolver_used",
+            "glob_reads",
+            "diagnostics",
+        ] {
+            let mut missing = valid.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(decode(missing).is_err(), "missing {field}");
+        }
+        let mut mismatch = valid;
+        mismatch["v"] = json!(2);
+        assert!(decode(mismatch).is_err());
     }
 
     #[test]

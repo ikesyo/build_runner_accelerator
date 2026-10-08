@@ -98,8 +98,12 @@ void main() {
         'output_suffixes': <String>['.g.dart'],
       },
     ]);
-    expect(json['input_suffix'], '.dart');
-    expect(json['output_suffixes'], <String>['.g.dart']);
+    expect(json, isNot(contains('input_suffix')));
+    expect((json['extensions'] as List).single['input_suffix'], '.dart');
+    expect(json, isNot(contains('output_suffixes')));
+    expect((json['extensions'] as List).single['output_suffixes'], <String>[
+      '.g.dart',
+    ]);
     expect(json['phase'], 2);
     expect(json['target_order'], 1);
   });

@@ -1,6 +1,4 @@
-use super::manifest::{
-    BuilderManifestDefinition, BuilderManifestExtension, BuilderManifestRuntime,
-};
+use super::manifest::{BuilderManifestDefinition, BuilderManifestRuntime};
 use super::model::{BuildTo, BuilderDefinition, BuilderExtension, BuilderKind, BuilderTrigger};
 use crate::pattern::{capture_names, validate_capture_output};
 use std::io;
@@ -99,22 +97,7 @@ pub(super) fn dynamic_builder_definition(
             || value.contains('[')
             || value.contains(']')
     };
-    let manifest_extensions = if entry.extensions.is_empty() {
-        let mut output_suffixes = entry.output_suffixes.clone();
-        if output_suffixes.is_empty()
-            && let Some(output_suffix) = &entry.output_suffix
-        {
-            output_suffixes.push(output_suffix.clone());
-        }
-        vec![BuilderManifestExtension {
-            input_suffix: entry.input_suffix.clone(),
-            input_match: entry.input_match.clone(),
-            input_anchored: entry.input_anchored,
-            output_suffixes,
-        }]
-    } else {
-        entry.extensions
-    };
+    let manifest_extensions = entry.extensions;
     if manifest_extensions.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -300,9 +283,6 @@ pub(super) fn runtime_mapping_from_manifest(
                 .ok_or_else(|| invalid("normal builders require extensions"))?;
             let mut runtime_entry = entry.clone();
             runtime_entry.extensions = extensions;
-            runtime_entry.input_suffix.clear();
-            runtime_entry.output_suffixes.clear();
-            runtime_entry.output_suffix = None;
             runtime_entry.runtime_mapping = None;
             let runtime = dynamic_builder_definition(runtime_entry)?;
             Ok((Some(runtime.extensions), None))

@@ -47,7 +47,7 @@ void main() {
     });
   });
 
-  test('empty trigger digest stays compatible with existing manifests', () {
+  test('empty trigger digest matches stock build_runner', () {
     expect(manifestTriggerData({'root': config({})}), {
       'digest': '99914b932bd37a50b983c5e7c90ae93b',
       'triggers': {},

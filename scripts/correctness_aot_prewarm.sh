@@ -85,7 +85,7 @@ setup_workspace "$workspace_b"
 key_a=$(DART_BIN="$dart_bin" BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" \
   "$script_dir/aot_cache_key.sh" "$workspace_a") || fail 'cache key generation failed'
 [[ "$key_a" == build-runner-accelerator-aot-* ]] || fail 'cache key helper returned no key'
-run_runner "$workspace_a" "$prewarm_log" aot-prewarm || fail 'AOT prewarm failed'
+run_runner "$workspace_a" "$prewarm_log" prewarm || fail 'AOT prewarm failed'
 
 generated_dir="$workspace_a/.dart_tool/build_runner_accelerator"
 aot_root="$generated_dir/aot-sdk"

@@ -42,6 +42,22 @@ pub struct GraphState {
 
 impl GraphState {
     pub fn load(path: &Path) -> io::Result<Self> {
+        match Self::load_checked(path) {
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                eprintln!(
+                    "build_runner_accelerator: invalidating graph {}: {error}",
+                    path.display()
+                );
+                Ok(Self {
+                    schema_version: GRAPH_SCHEMA_VERSION,
+                    ..Self::default()
+                })
+            }
+            result => result,
+        }
+    }
+
+    fn load_checked(path: &Path) -> io::Result<Self> {
         let contents = match fs::read(path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -79,6 +95,9 @@ impl GraphState {
         let mut decoder = Decoder::new(&contents[GRAPH_HEADER_LENGTH..]);
         let schema_version = decoder.read_u32()?;
         if schema_version != GRAPH_SCHEMA_VERSION {
+            eprintln!(
+                "build_runner_accelerator: invalidating graph schema {schema_version}; expected {GRAPH_SCHEMA_VERSION}"
+            );
             // Payloads from another schema version are not decodable:
             // rebuild from a clean graph instead of failing the build.
             return Ok(Self {
@@ -712,8 +731,11 @@ mod tests {
         let path = std::env::temp_dir().join(unique);
         std::fs::write(&path, b"{}\n").expect("write invalid graph");
 
-        let error = GraphState::load(&path).expect_err("invalid graph should fail");
+        let error = GraphState::load_checked(&path).expect_err("invalid graph should fail");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        let recovered = GraphState::load(&path).expect("regenerate invalid graph");
+        assert!(recovered.actions.is_empty());
+        assert!(path.exists());
 
         std::fs::remove_file(path).expect("remove invalid graph");
     }

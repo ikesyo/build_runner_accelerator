@@ -173,6 +173,7 @@ impl WorkerClient {
         self.send(&json!({
             "v": 1,
             "type": "initialize",
+            "accelerator_version": env!("CARGO_PKG_VERSION"),
             "id": id,
             "root": root,
             "package": package,
@@ -183,6 +184,7 @@ impl WorkerClient {
         if response.get("type").and_then(Value::as_str) != Some("initialized") {
             return Err(protocol_error("worker initialization failed", &response));
         }
+        validate_initialized(&response, id)?;
         if !has_capability(&response, BINARY_READ_CAPABILITY) {
             return Err(io::Error::other(format!(
                 "worker does not support required capability: {BINARY_READ_CAPABILITY}"
@@ -387,6 +389,16 @@ impl WorkerClient {
         let _receive = self.wall_span("receive_frame", None);
         let (message, frame_size) = read_message_with_size(&mut self.output)?
             .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "Dart worker exited"))?;
+        let metadata = match &message {
+            IncomingFrame::Json(value) => value,
+            IncomingFrame::Binary(frame) => &frame.metadata,
+        };
+        if metadata.get("v").and_then(Value::as_u64) != Some(1) {
+            return Err(protocol_error(
+                "unsupported or missing IPC protocol version",
+                metadata,
+            ));
+        }
         self.metrics.ipc_frames_received += 1;
         self.metrics.ipc_bytes_received += frame_size as u64;
         if matches!(
@@ -482,5 +494,40 @@ pub(super) fn require_overlay_blob_capability(response: &Value) -> io::Result<()
         Err(io::Error::other(format!(
             "worker does not support required capability: {OVERLAY_BLOB_CAPABILITY}"
         )))
+    }
+}
+
+fn validate_initialized(response: &Value, id: u64) -> io::Result<()> {
+    if response.get("id").and_then(Value::as_u64) != Some(id) {
+        return Err(protocol_error(
+            "worker initialization id mismatch",
+            response,
+        ));
+    }
+    if response.get("accelerator_version").and_then(Value::as_str)
+        != Some(env!("CARGO_PKG_VERSION"))
+    {
+        return Err(protocol_error(
+            "worker accelerator_version mismatch",
+            response,
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+    #[test]
+    fn initialization_requires_matching_version_and_id() {
+        let valid = json!({"id": 1, "accelerator_version": env!("CARGO_PKG_VERSION")});
+        assert!(validate_initialized(&valid, 1).is_ok());
+        for invalid in [
+            json!({"id": 1}),
+            json!({"id": 1, "accelerator_version": "0.0.0"}),
+            json!({"id": 2, "accelerator_version": env!("CARGO_PKG_VERSION")}),
+        ] {
+            assert!(validate_initialized(&invalid, 1).is_err());
+        }
     }
 }

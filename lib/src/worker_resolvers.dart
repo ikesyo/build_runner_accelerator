@@ -341,7 +341,7 @@ ByteStore sharedAnalysisByteStore(
   final dir = p.joinAll([
     acceleratorCacheDirectory(),
     'byte_store',
-    if (Platform.environment[_packedStoreEnv] != '0') 'v2',
+    Platform.environment[_packedStoreEnv] != '0' ? 'v2' : 'per-key-v1',
     fingerprint,
   ]);
   // Neither on-disk store creates the directory itself; without it the writes
@@ -366,7 +366,7 @@ ByteStore sharedAnalysisByteStore(
         p.join(dir, '.analysis-startup.lock'),
         isWarm: disk is PackedAnalysisByteStore
             ? () => disk.hasLinkedEntries
-            : () => PackedAnalysisByteStore.hasLegacyLinkedEntries(dir),
+            : () => PackedAnalysisByteStore.hasPerKeyLinkedEntries(dir),
       );
     }
     return result;

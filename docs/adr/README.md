@@ -46,6 +46,7 @@ boundary rather than restoring commit-level history.
 | [0028](0028-setup-time-prewarm-command.md) | Setup-time `prewarm` command and single-flight worker AOT compiles |
 
 | [0029](0029-cli-routing-and-fallback.md) | CLI capability routing, lossless stock fallback and process lifecycle |
+| [0030](0030-one-zero-contract-and-disposable-state.md) | 1.0 public contracts, release-coupled workers and disposable internal state |
 
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for
