@@ -162,7 +162,7 @@ mod tests {
                 is_root: true,
                 phase,
                 instance_key: id.to_owned(),
-                options: BTreeMap::new(),
+                options: serde_json::Map::new(),
                 part_directive_suffix: None,
             }),
             input: "app|lib/input.txt".to_owned(),

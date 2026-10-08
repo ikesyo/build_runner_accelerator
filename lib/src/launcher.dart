@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'frontend_binary_resolver.dart';
 import 'launcher_options.dart';
+import 'manifest/settings.dart';
 import 'launcher_process.dart';
 import 'process_group.dart';
 
@@ -28,7 +29,22 @@ Future<int> runLauncher(List<String> arguments) async {
     stdout.writeln(buildRunnerAcceleratorVersion);
     return 0;
   }
-  if (options.mode == 'dart' || options.nativeUnsupported) {
+  var unsupportedReason = options.nativeUnsupported
+      ? 'unsupported native CLI'
+      : null;
+  if (unsupportedReason == null && options.mode != 'dart') {
+    final config = BuildSettings.parse(
+      options.dartArguments.skip(3).toList(),
+    ).config;
+    if (config != null &&
+        !File('${options.root}/build.$config.yaml').existsSync()) {
+      unsupportedReason = 'configuration file not found: build.$config.yaml';
+      if (options.mode == 'rust' || options.command == 'aot-cache-key') {
+        throw StateError(unsupportedReason);
+      }
+    }
+  }
+  if (options.mode == 'dart' || unsupportedReason != null) {
     if (options.command == 'aot-cache-key') {
       throw FormatException('aot-cache-key requires a native frontend');
     }
@@ -36,14 +52,14 @@ Future<int> runLauncher(List<String> arguments) async {
       // Stock build_runner has no caches to warm; a post-`pub get` hook must
       // not fail when the Rust frontend is deliberately disabled.
       stderr.writeln(
-        'build_runner_accelerator: --mode dart leaves nothing to prewarm; '
+        'build_runner_accelerator: ${unsupportedReason ?? '--mode dart'} leaves nothing to prewarm; '
         'skipping.',
       );
       return 0;
     }
-    if (options.nativeUnsupported && options.mode == 'auto') {
+    if (unsupportedReason != null && options.mode == 'auto') {
       stderr.writeln(
-        'build_runner_accelerator: unsupported native CLI; '
+        'build_runner_accelerator: $unsupportedReason; '
         'using Dart build_runner fallback.',
       );
     }
@@ -153,10 +169,13 @@ and verifies the matching signed release artifact.
 Native commands: build, watch, prewarm, aot-cache-key.
 Other stock commands (clean, serve, run, test, stop) and unsupported options
 use stock in auto/dart; rust reports an error before downloading a frontend.
-Stock --build-filter, --output, --config, --define, --release, --workspace,
+Stock --build-filter, --output, --workspace,
 --keep-modified-outputs, --only-check and logging options use fallback.
 --delete-conflicting-outputs / -d are accepted by native build/watch as retired
 stock compatibility flags: they have no effect. They are never auto-added.
+Config/define/release apply to native build/watch/prewarm for supported manifests.
+Define duplicates are errors. Compact short options and config paths use stock.
+Watch application/output topology changes use stock (auto) or error (rust).
 -- ends accelerator option parsing and is retained for stock.
 Command --help uses stock help (auto/dart); leading --help is launcher help.
 
@@ -168,6 +187,10 @@ Launcher options:
   --interval-ms N        Rust watch debounce interval
   --worker VALUE         Internal worker artifact override (tests/diagnostics)
   --background           prewarm only: detach and compile in the background
+  --define BUILDER=OPTION=VALUE  Override builder options (JSON or exact string)
+  --release, -r          Use release options (default: development)
+  --no-release           Use development options; last release flag wins
+  --config NAME, -c NAME Use build.NAME.yaml; last config wins
   --force-aot             Force the AOT worker (stock-compatible)
   --force-jit             Force the non-AOT worker (stock-compatible)
   BUILD_RUNNER_ACCELERATOR_BIN   Use a preinstalled frontend binary

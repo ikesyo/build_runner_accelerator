@@ -25,7 +25,23 @@ pub(crate) fn select_frontend(
         return Ok(None);
     }
 
-    let fingerprint = workspace.builder_manifest_fingerprint()?;
+    if let Some(name) = crate::cli::BuildSettings::parse(&options.stock_arguments)?.config
+        && !workspace.root.join(format!("build.{name}.yaml")).is_file()
+    {
+        return select_dart_fallback(
+            options,
+            &format!("configuration file not found: build.{name}.yaml"),
+        );
+    }
+    let fingerprint = match settings_fingerprint(options, workspace) {
+        Ok(fingerprint) => fingerprint,
+        Err(error) => {
+            return select_dart_fallback(
+                options,
+                &format!("cannot read configuration inputs: {error}"),
+            );
+        }
+    };
     let manifest_path = workspace.root.join(MANIFEST_PATH);
     let worker_entrypoint = workspace.root.join(WORKER_ENTRYPOINT_PATH);
     let manifest = match read_manifest(&manifest_path, &fingerprint, &worker_entrypoint)? {
@@ -48,7 +64,15 @@ pub(crate) fn select_frontend(
                         &format!("dynamic builder manifest generation failed: {error}"),
                     );
                 }
-                let refreshed = workspace.builder_manifest_fingerprint()?;
+                let refreshed = match settings_fingerprint(options, workspace) {
+                    Ok(fingerprint) => fingerprint,
+                    Err(error) => {
+                        return select_dart_fallback(
+                            options,
+                            &format!("cannot read configuration inputs: {error}"),
+                        );
+                    }
+                };
                 if refreshed == manifest_fingerprint {
                     break;
                 }
@@ -66,10 +90,6 @@ pub(crate) fn select_frontend(
         }
     };
 
-    if manifest.builders.is_empty() {
-        return select_dart_fallback(options, "no builders are configured in the target graph");
-    }
-
     match rust_build_config_from_manifest(manifest) {
         Ok(config) => Ok(Some(config)),
         Err(error) => select_dart_fallback(
@@ -77,6 +97,41 @@ pub(crate) fn select_frontend(
             &format!("dynamic builder manifest is outside the supported subset: {error}"),
         ),
     }
+}
+
+/// Settings are runtime inputs to both probing and action graph reuse. File
+/// names, absent selected configs, and every override are part of the identity.
+fn settings_fingerprint(options: &Options, workspace: &Workspace) -> io::Result<String> {
+    let mut bytes = b"native-settings-v1\0".to_vec();
+    bytes.extend_from_slice(workspace.builder_manifest_fingerprint()?.as_bytes());
+    bytes.extend_from_slice(
+        &serde_json::to_vec(&options.stock_arguments).map_err(io::Error::other)?,
+    );
+    let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
+    let mut paths = std::collections::BTreeSet::new();
+    for entry in fs::read_dir(&workspace.root)? {
+        let entry = entry?;
+        if entry.path().is_file() && entry.file_name().to_string_lossy().ends_with(".build.yaml") {
+            paths.insert(entry.path());
+        }
+    }
+    if let Some(config) = settings.config {
+        paths.insert(workspace.root.join(format!("build.{config}.yaml")));
+    }
+    for path in paths {
+        bytes.extend_from_slice(path.file_name().unwrap().to_string_lossy().as_bytes());
+        bytes.push(0);
+        match fs::read(path) {
+            Ok(content) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&content);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => bytes.push(0),
+            Err(error) => return Err(error),
+        }
+        bytes.push(0xff);
+    }
+    Ok(crate::digest::digest_bytes(&bytes))
 }
 
 fn read_manifest(
@@ -117,6 +172,8 @@ fn generate_manifest(
 ) -> io::Result<()> {
     let _wall = crate::wall::Span::new("manifest_generate");
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
+    let settings_json =
+        serde_json::to_string(&options.stock_arguments).map_err(io::Error::other)?;
     // Fill the shared analyzer byte store while this window is otherwise
     // CPU-idle on the Rust side: generator kernel compile/load, the early
     // catalog helper, the overlapped worker AOT compile and the factory
@@ -204,6 +261,7 @@ fn generate_manifest(
                 .arg(&helper)
                 .arg(&workspace.root)
                 .arg(worker_entrypoint)
+                .arg(&settings_json)
                 .current_dir(&workspace.root)
                 .status();
             match result {
@@ -263,6 +321,8 @@ fn generate_manifest(
         .arg(worker_entrypoint)
         .arg("--fingerprint")
         .arg(fingerprint)
+        .arg("--settings-json")
+        .arg(&settings_json)
         .current_dir(&workspace.root)
         .spawn();
     let status = match child_result {
@@ -487,6 +547,11 @@ fn spawn_detached_prewarm(
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_stdout))
         .stderr(Stdio::from(log_stderr));
+    let invocation = [vec!["prewarm".to_owned()], options.stock_arguments.clone()].concat();
+    command.arg("--stock-arguments-json").arg(
+        serde_json::json!({"arguments": options.stock_arguments, "invocation": invocation})
+            .to_string(),
+    );
     if let Some(worker) = &options.worker {
         command.args(["--worker"]).arg(worker);
     }

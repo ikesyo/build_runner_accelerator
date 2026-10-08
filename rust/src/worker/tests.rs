@@ -17,7 +17,7 @@ fn build_request(phase: u32, post_process: bool) -> BuildRequest {
         builder: "example:builder".to_owned(),
         input: "example|lib/input.txt".to_owned(),
         outputs: Vec::new(),
-        options: BTreeMap::new(),
+        options: serde_json::Map::new(),
         phase,
         instance_key: "example".to_owned(),
         is_root: true,

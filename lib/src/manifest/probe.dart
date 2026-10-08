@@ -28,8 +28,9 @@ class ManifestTriggers {
 /// The source helper preserves internal worker overrides and non-AOT paths.
 Future<ManifestTriggers> loadManifestTriggers(
   String root,
-  String workerEntrypoint,
-) async {
+  String workerEntrypoint, {
+  String? configKey,
+}) async {
   final temporary = await Directory.systemTemp.createTemp('manifest-triggers-');
   // A timed-out worker may survive termination. Never share its output path
   // with the source retry, or accept a response after a timeout.
@@ -62,6 +63,7 @@ Future<ManifestTriggers> loadManifestTriggers(
             '--manifest-triggers',
             root,
             workerResult.path,
+            jsonEncode(configKey),
           ], workerResult);
           usedWorker = parsed != null;
           return parsed;
@@ -82,6 +84,7 @@ Future<ManifestTriggers> loadManifestTriggers(
           helper.toFilePath(),
           root,
           sourceResult.path,
+          jsonEncode(configKey),
         ], sourceResult);
       },
     );

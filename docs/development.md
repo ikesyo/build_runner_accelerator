@@ -101,6 +101,9 @@ baseline job. It checks obsolete/corrupt state, cache-disable recovery, retired
 interfaces and stock output equivalence. Benchmark scheduling lives in the
 [benchmark workflow](../.github/workflows/benchmark-current.yml).
 
+The native settings CI job compares stock/native configuration, output lifecycle,
+watch, JIT/AOT/prewarm and fallback.
+
 Run `bash scripts/correctness_cli.sh` when changing CLI routing, fallback,
 compile flags, conflict handling or process lifecycle. It compares stock/native
 output bytes and watches actual edits, including launcher-only Ctrl-C/SIGHUP and
@@ -114,6 +117,7 @@ builder behavior:
 
 ```bash
 bash scripts/watch_smoke.sh
+bash scripts/correctness_settings.sh
 bash scripts/benchmark_matrix.sh
 BUILDERS=optional bash scripts/benchmark_matrix.sh
 ```

@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:convert';
 
+import 'manifest/settings.dart';
+
 /// The small set of launcher options that must be consumed before invoking
 /// either the Rust frontend or stock build_runner.
 class LauncherOptions {
@@ -194,27 +196,23 @@ class LauncherOptions {
         command,
         ...passthrough.skip(commandPosition),
       ]);
-    final nativeUnsupported =
+    var nativeUnsupported =
         commandPosition != 0 ||
         !const {
           'build',
           'watch',
           'prewarm',
           'aot-cache-key',
-        }.contains(command) ||
-        passthrough.any(
-          (argument) => !const {
-            '--force-aot',
-            '--force-jit',
-            '--delete-conflicting-outputs',
-            '-d',
-          }.contains(argument),
-        ) ||
-        (!const {'build', 'watch'}.contains(command) &&
-            passthrough.any(
-              (argument) =>
-                  argument != '--force-aot' && argument != '--force-jit',
-            ));
+        }.contains(command);
+    try {
+      final settings = BuildSettings.parse(passthrough);
+      if (!const {'build', 'watch'}.contains(command) &&
+          settings.deletionFlag) {
+        nativeUnsupported = true;
+      }
+    } on FormatException {
+      nativeUnsupported = true;
+    }
     if (nativeUnsupported && command == 'prewarm') {
       throw FormatException('prewarm does not accept stock arguments');
     }

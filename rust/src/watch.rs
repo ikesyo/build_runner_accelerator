@@ -1,5 +1,6 @@
 use crate::build;
-use crate::cli::Options;
+use crate::builder::ConfiguredBuilder;
+use crate::cli::{FrontendMode, Options};
 use crate::frontend::{run_dart_fallback, select_frontend, worker_executable};
 use crate::graph::GraphState;
 use crate::pattern::match_capture_pattern;
@@ -15,16 +16,19 @@ use std::time::{Duration, Instant};
 
 pub(crate) fn run(options: &Options) -> io::Result<()> {
     let mut pool = None;
+    let mut pool_signature = None;
+    let mut pool_shape = None;
     let mut source_post_process_outputs = BTreeSet::new();
 
-    let initial_native_build = match run_watch_build(options, &mut pool) {
-        Ok(native_build) => native_build,
-        Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
-        Err(error) => {
-            eprintln!("initial watch build failed: {error}");
-            false
-        }
-    };
+    let initial_native_build =
+        match run_watch_build(options, &mut pool, &mut pool_signature, &mut pool_shape) {
+            Ok(native_build) => native_build,
+            Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
+            Err(error) => {
+                eprintln!("initial watch build failed: {error}");
+                false
+            }
+        };
 
     let workspace = Workspace::load(options.root.clone())?;
     if initial_native_build {
@@ -59,7 +63,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         }
 
         eprintln!("Change detected; rebuilding");
-        match run_watch_build(options, &mut pool) {
+        match run_watch_build(options, &mut pool, &mut pool_signature, &mut pool_shape) {
             Ok(true) => {
                 source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
             }
@@ -72,7 +76,12 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     }
 }
 
-fn run_watch_build(options: &Options, pool: &mut Option<WorkerPool>) -> io::Result<bool> {
+fn run_watch_build(
+    options: &Options,
+    pool: &mut Option<WorkerPool>,
+    pool_signature: &mut Option<String>,
+    pool_shape: &mut Option<Vec<ConfiguredBuilder>>,
+) -> io::Result<bool> {
     let workspace = Workspace::load(options.root.clone())?;
     let Some(build_config) = select_frontend(options, &workspace)? else {
         pool.take();
@@ -80,6 +89,40 @@ fn run_watch_build(options: &Options, pool: &mut Option<WorkerPool>) -> io::Resu
         return Ok(false);
     };
 
+    // Stock 2.16.2 reloads the plan in watch, but changing application/output
+    // topology does not behave like a fresh build. Do not partially emulate
+    // that transition: hand the complete watch invocation to stock instead.
+    let shape: Vec<_> = build_config
+        .builders
+        .iter()
+        .cloned()
+        .map(|mut builder| {
+            builder.options.clear();
+            // Trigger updates retain the existing native watch contract.
+            std::sync::Arc::make_mut(&mut builder.definition)
+                .triggers
+                .clear();
+            builder
+        })
+        .collect();
+    if pool_shape
+        .as_ref()
+        .is_some_and(|previous| previous != &shape)
+    {
+        pool.take();
+        let reason = "watch configuration changed builder applications or output topology";
+        if options.mode == FrontendMode::Rust {
+            return Err(io::Error::new(io::ErrorKind::Unsupported, reason));
+        }
+        eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
+        run_dart_fallback(options)?;
+        return Ok(false);
+    }
+    *pool_shape = Some(shape);
+    if *pool_signature != build_config.manifest_signature {
+        pool.take();
+        *pool_signature = build_config.manifest_signature.clone();
+    }
     if pool.is_none() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
         let worker_command = worker_executable(options, &build_config)?;

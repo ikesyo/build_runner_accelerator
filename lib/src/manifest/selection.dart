@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:build_config/build_config.dart';
 
 import 'model.dart';
@@ -11,9 +13,16 @@ Map<String, SelectedBuilder> selectApplications({
   required BuildConfig rootConfig,
   required List<TargetInfo> orderedTargets,
   required Map<String, DefinitionInfo> definitions,
+  bool release = false,
+  Map<String, Map<String, dynamic>> overrides = const {},
 }) {
   final selected = <String, SelectedBuilder>{};
   final disabled = <String>{};
+  for (final key in overrides.keys) {
+    if (!definitions.containsKey(key)) {
+      stderr.writeln('Ignoring options overrides for unknown builder `$key`.');
+    }
+  }
 
   void select(
     String key, {
@@ -52,13 +61,16 @@ Map<String, SelectedBuilder> selectApplications({
     final global = rootConfig.globalOptions[key];
     final mergedOptions = <String, dynamic>{
       ...definition.defaults.options,
-      ...definition.defaults.devOptions,
+      ...(release
+          ? definition.defaults.releaseOptions
+          : definition.defaults.devOptions),
     };
     if (options != null) mergedOptions.addAll(options);
     if (global != null) {
       mergedOptions.addAll(global.options);
-      mergedOptions.addAll(global.devOptions);
+      mergedOptions.addAll(release ? global.releaseOptions : global.devOptions);
     }
+    mergedOptions.addAll(overrides[key] ?? const {});
     selected[selectedKey] = SelectedBuilder(
       definition,
       target,
@@ -96,7 +108,7 @@ Map<String, SelectedBuilder> selectApplications({
         generateFor: entry.value.generateFor,
         options: <String, dynamic>{
           ...entry.value.options,
-          ...entry.value.devOptions,
+          ...(release ? entry.value.releaseOptions : entry.value.devOptions),
         },
         explicit: true,
       );

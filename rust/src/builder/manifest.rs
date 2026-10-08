@@ -60,7 +60,7 @@ pub(crate) struct BuilderManifestDefinition {
     pub(crate) generate_for_exclude: Vec<String>,
     pub(crate) target_sources: Vec<String>,
     pub(crate) target_sources_exclude: Vec<String>,
-    pub(crate) options: BTreeMap<String, Value>,
+    pub(crate) options: serde_json::Map<String, Value>,
     #[serde(default)]
     pub(crate) target: String,
     #[serde(default)]

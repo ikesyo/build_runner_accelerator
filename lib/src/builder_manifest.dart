@@ -12,6 +12,7 @@ import 'manifest/catalog.dart';
 import 'manifest/package_graph.dart';
 import 'manifest/probe.dart';
 import 'manifest/selection.dart';
+import 'manifest/settings.dart';
 
 Future<void> generateBuilderManifest(List<String> arguments) async {
   final metrics =
@@ -30,7 +31,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
 
   final options = _Arguments.parse(arguments);
   final root = Directory(options.root).absolute.path;
-  final inputs = await _loadInputs(root);
+  final inputs = await _loadInputs(root, options.settings);
   reportStage('load-inputs');
   final resolved = _resolveTargetsAndDefinitions(inputs);
   final selection = _ApplicationSelection(
@@ -39,6 +40,8 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       rootConfig: resolved.rootConfig,
       orderedTargets: resolved.orderedTargets,
       definitions: resolved.definitions,
+      release: options.settings.release,
+      overrides: options.settings.overrides(inputs.packageGraph.root.name),
     ),
   );
   reportStage('select-builders');
@@ -54,7 +57,11 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     );
   }
   reportStage('entrypoint');
-  final triggers = await loadManifestTriggers(root, options.workerEntrypoint);
+  final triggers = await loadManifestTriggers(
+    root,
+    options.workerEntrypoint,
+    configKey: options.settings.config,
+  );
   reportStage('triggers');
   final runtimeMappings = await _probeRuntimeMappings(
     root,
@@ -71,10 +78,15 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
 }
 
 class _LoadedInputs {
-  const _LoadedInputs({required this.packageGraph, required this.configs});
+  const _LoadedInputs({
+    required this.packageGraph,
+    required this.configs,
+    required this.definitionConfigs,
+  });
 
   final PackageGraph packageGraph;
   final Map<String, BuildConfig> configs;
+  final Map<String, BuildConfig> definitionConfigs;
 }
 
 class _ResolvedInputs {
@@ -126,15 +138,25 @@ class _NormalizedManifest {
   final List<CatalogEntry> catalogEntries;
 }
 
-Future<_LoadedInputs> _loadInputs(String root) async {
+Future<_LoadedInputs> _loadInputs(String root, BuildSettings settings) async {
   final packageGraph = await loadPackageGraph(root);
   final configs = await loadBuildConfigs(packageGraph);
 
-  return _LoadedInputs(packageGraph: packageGraph, configs: configs);
+  return _LoadedInputs(
+    packageGraph: packageGraph,
+    configs: settings.config == null
+        ? configs
+        : await loadBuildConfigs(packageGraph, configKey: settings.config),
+    definitionConfigs: configs,
+  );
 }
 
 _ResolvedInputs _resolveTargetsAndDefinitions(_LoadedInputs inputs) {
-  final catalog = resolveBuilderCatalog(inputs.packageGraph, inputs.configs);
+  final catalog = resolveBuilderCatalog(
+    inputs.packageGraph,
+    inputs.configs,
+    definitionConfigs: inputs.definitionConfigs,
+  );
   return _ResolvedInputs(
     rootPackageName: catalog.rootPackageName,
     rootConfig: catalog.rootConfig,
@@ -554,12 +576,14 @@ class _Arguments {
     required this.manifest,
     required this.workerEntrypoint,
     required this.fingerprint,
+    required this.settings,
   });
 
   final String root;
   final String manifest;
   final String workerEntrypoint;
   final String fingerprint;
+  final BuildSettings settings;
 
   static _Arguments parse(List<String> arguments) {
     String? value(String name) {
@@ -587,6 +611,9 @@ class _Arguments {
       manifest: manifest,
       workerEntrypoint: workerEntrypoint,
       fingerprint: fingerprint,
+      settings: BuildSettings.parse(
+        (jsonDecode(value('--settings-json') ?? '[]') as List).cast<String>(),
+      ),
     );
   }
 }

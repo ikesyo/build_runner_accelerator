@@ -79,8 +79,9 @@ Future<PackageGraph> loadPackageGraph(String packagePath) async {
 
 /// Loads build configuration after the package graph has been resolved.
 Future<Map<String, BuildConfig>> loadBuildConfigs(
-  PackageGraph packageGraph,
-) async {
+  PackageGraph packageGraph, {
+  String? configKey,
+}) async {
   final configs = <String, BuildConfig>{};
   for (final package in packageGraph.allPackages.values) {
     if (package.name == r'$sdk') continue;
@@ -88,6 +89,49 @@ Future<Map<String, BuildConfig>> loadBuildConfigs(
       package.name,
       package.dependencies.map((dependency) => dependency.name),
       package.path,
+    );
+  }
+  // Stock loads root-level <package>.build.yaml overrides before the
+  // selected root build.<config>.yaml. These replace whole BuildConfigs.
+  final overrides =
+      Directory(packageGraph.root.path)
+          .listSync()
+          .whereType<File>()
+          .where((file) => p.basename(file.path).endsWith('.build.yaml'))
+          .toList()
+        ..sort((a, b) => a.path.compareTo(b.path));
+  final seen = <String>{};
+  for (final file in overrides) {
+    final name = p.basename(file.path).split('.').first;
+    final package = packageGraph.allPackages[name];
+    if (package == null) {
+      stderr.writeln(
+        'Ignoring build config override for unknown package: $name',
+      );
+      continue;
+    }
+    if (!seen.add(name)) {
+      throw StateError('Ambiguous build config overrides for $name');
+    }
+    configs[name] = BuildConfig.parse(
+      name,
+      package.dependencies.map((dependency) => dependency.name),
+      file.readAsStringSync(),
+      configYamlPath: file.path,
+    );
+  }
+  if (configKey != null) {
+    final package = packageGraph.root;
+    final file = File(p.join(package.path, 'build.$configKey.yaml'));
+    if (!file.existsSync())
+      throw StateError(
+        'Cannot find build.$configKey.yaml for specified config.',
+      );
+    configs[package.name] = BuildConfig.parse(
+      package.name,
+      package.dependencies.map((dependency) => dependency.name),
+      file.readAsStringSync(),
+      configYamlPath: file.path,
     );
   }
   return configs;

@@ -174,13 +174,9 @@ impl Options {
                 format!("--background is only supported with prewarm: {command}"),
             ));
         }
-        if stock_arguments.iter().all(|arg| {
-            matches!(
-                arg.as_str(),
-                "--force-aot" | "--force-jit" | "--delete-conflicting-outputs" | "-d"
-            )
-        }) && stock_arguments.iter().any(|arg| arg == "--force-aot")
-            && stock_arguments.iter().any(|arg| arg == "--force-jit")
+        if let Ok(settings) = BuildSettings::parse(&stock_arguments)
+            && settings.force_aot
+            && settings.force_jit
         {
             return Err(io::Error::other(
                 "Only one of --force-aot and --force-jit may be used",
@@ -213,12 +209,81 @@ impl Options {
         }
         matches!(
             self.command.as_str(),
-            "build" | "watch" | "prewarm" | "aot-cache-key" | "--help" | "-h" | "--version"
-        ) && self.stock_arguments.iter().all(|arg| {
-            matches!(arg.as_str(), "--force-aot" | "--force-jit")
-                || (matches!(self.command.as_str(), "build" | "watch")
-                    && matches!(arg.as_str(), "--delete-conflicting-outputs" | "-d"))
+            "build"
+                | "watch"
+                | "prewarm"
+                | "aot-cache-key"
+                | "--help"
+                | "-h"
+                | "--version"
+        ) && BuildSettings::parse(&self.stock_arguments).is_ok_and(|settings| {
+            matches!(self.command.as_str(), "build" | "watch") || !settings.deletion_flag
         })
+    }
+}
+
+/// Lexical capability check only. Dart/build_config owns normalized overrides
+/// and configuration parsing. Never discard the original stock vector.
+#[derive(Default)]
+pub(crate) struct BuildSettings {
+    pub(crate) config: Option<String>,
+    pub(crate) force_aot: bool,
+    pub(crate) force_jit: bool,
+    deletion_flag: bool,
+}
+
+impl BuildSettings {
+    pub(crate) fn parse(arguments: &[String]) -> io::Result<Self> {
+        let mut settings = Self::default();
+        let mut args = arguments.iter();
+        let mut pairs = std::collections::BTreeSet::new();
+        while let Some(argument) = args.next() {
+            match argument.as_str() {
+                "--release" | "--no-release" | "-r" => {}
+                "-d" | "--delete-conflicting-outputs" => settings.deletion_flag = true,
+                "--force-aot" => settings.force_aot = true,
+                "--force-jit" => settings.force_jit = true,
+                _ => {
+                    let (name, inline) = argument
+                        .split_once('=')
+                        .map_or((argument.as_str(), None), |(name, value)| {
+                            (name, Some(value))
+                        });
+                    if !matches!(name, "--define" | "--config" | "-c")
+                        || (name == "-c" && inline.is_some())
+                    {
+                        return Err(io::Error::other(format!(
+                            "Unsupported native argument: {argument}"
+                        )));
+                    }
+                    let value = inline
+                        .or_else(|| args.next().map(String::as_str))
+                        .ok_or_else(|| io::Error::other(format!("{name} requires a value")))?;
+                    if name == "--define" {
+                        if value.split('=').count() < 3 {
+                            return Err(io::Error::other(
+                                "Expected --define <builder>=<option>=<value>",
+                            ));
+                        }
+                        let parts: Vec<_> = value.split('=').collect();
+                        let mut key = parts[0].replacen('|', ":", 1);
+                        let root_relative = key.starts_with(':');
+                        if !key.contains(':') {
+                            key = format!("{key}:{key}");
+                        }
+                        if !pairs.insert((root_relative, key, parts[1].to_owned())) {
+                            return Err(io::Error::other("Duplicate --define"));
+                        }
+                    } else {
+                        if value.contains(['/', '\\']) {
+                            return Err(io::Error::other("Unsupported config name"));
+                        }
+                        settings.config = Some(value.to_owned());
+                    }
+                }
+            }
+        }
+        Ok(settings)
     }
 }
 
@@ -503,6 +568,50 @@ mod tests {
         .unwrap();
         assert!(options.native_supported());
         assert_eq!(options.stock_arguments, ["--force-aot", "-d"]);
+    }
+
+    #[test]
+    fn settings_values_and_compile_flags_are_not_confused() {
+        for command in ["build", "watch", "prewarm", "aot-prewarm", "aot-cache-key"] {
+            let options = super::Options::parse(
+                [
+                    command,
+                    "--config",
+                    "--force-aot",
+                    "--release",
+                    "--no-release",
+                    "--define=:b=x=a=b,c",
+                    "--force-jit",
+                ]
+                .into_iter()
+                .map(str::to_owned),
+            )
+            .unwrap();
+            assert!(options.native_supported());
+            let settings = super::BuildSettings::parse(&options.stock_arguments).unwrap();
+            assert_eq!(settings.config.as_deref(), Some("--force-aot"));
+            assert!(!settings.force_aot);
+            assert!(settings.force_jit);
+            assert_eq!(options.stock_invocation.as_ref().unwrap()[0], command);
+        }
+        for arguments in [
+            vec!["--define"],
+            vec!["--define=a=b"],
+            vec!["--release=true"],
+            vec!["--config"],
+            vec!["--config=../other"],
+            vec!["-cnamed"],
+            vec!["--define=pkg=x=1", "--define=pkg|pkg=x=2"],
+        ] {
+            let options = super::Options::parse(
+                [vec!["build"], arguments]
+                    .concat()
+                    .into_iter()
+                    .map(str::to_owned),
+            )
+            .unwrap();
+            assert!(!options.native_supported());
+        }
     }
 
     #[test]

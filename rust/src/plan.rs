@@ -32,7 +32,7 @@ pub(crate) struct BuilderInstance {
     pub(crate) is_root: bool,
     pub(crate) phase: u32,
     pub(crate) instance_key: String,
-    pub(crate) options: BTreeMap<String, Value>,
+    pub(crate) options: serde_json::Map<String, Value>,
     /// `part` directive suffix required by this configured builder.
     pub(crate) part_directive_suffix: Option<String>,
 }
@@ -543,7 +543,7 @@ mod tests {
                     is_root: true,
                     phase: 0,
                     instance_key: "first".to_owned(),
-                    options: BTreeMap::new(),
+                    options: serde_json::Map::new(),
                     part_directive_suffix: None,
                 }),
                 input: "app|lib/input.txt".to_owned(),
@@ -557,7 +557,7 @@ mod tests {
                     is_root: true,
                     phase: 0,
                     instance_key: "second".to_owned(),
-                    options: BTreeMap::new(),
+                    options: serde_json::Map::new(),
                     part_directive_suffix: None,
                 }),
                 input: "app|lib/input.txt".to_owned(),
