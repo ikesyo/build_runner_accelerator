@@ -5,6 +5,8 @@ import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 
+import 'process_group.dart';
+
 const _releaseDownloaderEntrypoint = 'release_downloader_entrypoint.dart';
 
 abstract interface class FrontendReleaseInstaller {
@@ -75,16 +77,94 @@ class LauncherProcessRunner {
     List<String> arguments,
     String workingDirectory, {
     Map<String, String>? environment,
+    bool isolatedProcessGroup = false,
   }) async {
+    final grouped = isolatedProcessGroup && !Platform.isWindows;
+    final packageConfig = Isolate.packageConfigSync;
     final process = await Process.start(
-      executable,
-      arguments,
+      grouped ? Platform.resolvedExecutable : executable,
+      grouped
+          ? [
+              if (_launcherRuntimeIsDart()) ...[
+                if (packageConfig != null && packageConfig.isScheme('file'))
+                  '--packages=${packageConfig.toFilePath()}',
+                _findProcessGroupLauncher().toFilePath(),
+              ],
+              processGroupCommand,
+              executable,
+              ...arguments,
+            ]
+          : arguments,
       workingDirectory: workingDirectory,
       environment: environment,
       mode: ProcessStartMode.inheritStdio,
     );
-    return process.exitCode;
+    final subscriptions = <StreamSubscription<ProcessSignal>>[];
+    ProcessSignal? interrupted;
+    Stopwatch? shutdown;
+    Timer? shutdownTimer;
+    if (!Platform.isWindows) {
+      for (final signal in [ProcessSignal.sigint, ProcessSignal.sigterm]) {
+        subscriptions.add(
+          signal.watch().listen((_) {
+            interrupted ??= signal;
+            if (grouped) {
+              signalProcessGroup(process.pid, signal.signalNumber);
+              shutdown ??= Stopwatch()..start();
+              shutdownTimer ??= Timer(const Duration(seconds: 5), () {
+                signalProcessGroup(
+                  process.pid,
+                  ProcessSignal.sigkill.signalNumber,
+                );
+              });
+            } else {
+              process.kill(signal);
+            }
+          }),
+        );
+      }
+    }
+    try {
+      final code = await process.exitCode;
+      if (grouped && interrupted != null) {
+        while (shutdown!.elapsed < const Duration(seconds: 5) &&
+            signalProcessGroup(process.pid, 0)) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        signalProcessGroup(process.pid, ProcessSignal.sigkill.signalNumber);
+      } else if (grouped && code != 0) {
+        signalProcessGroup(process.pid, ProcessSignal.sigkill.signalNumber);
+      }
+      if (interrupted != null) return 128 + interrupted!.signalNumber;
+      return code < 0 ? 128 - code : code;
+    } finally {
+      shutdownTimer?.cancel();
+      for (final subscription in subscriptions) {
+        await subscription.cancel();
+      }
+    }
   }
+}
+
+bool _launcherRuntimeIsDart() => const {
+  'dart',
+  'dart.exe',
+  'dartvm',
+  'dartvm.exe',
+}.contains(p.basename(Platform.resolvedExecutable).toLowerCase());
+
+Uri _findProcessGroupLauncher() {
+  final packageUri = Isolate.resolvePackageUriSync(
+    Uri.parse('package:build_runner_accelerator/src/launcher.dart'),
+  );
+  if (packageUri != null) {
+    final root = File.fromUri(packageUri).parent.parent.parent;
+    final launcher = File(
+      p.join(root.path, 'bin', 'build_runner_accelerator.dart'),
+    );
+    if (launcher.existsSync()) return launcher.uri;
+  }
+  throw StateError('Cannot locate source launcher for child process');
 }
 
 class _DownloaderSpawnFailure implements Exception {

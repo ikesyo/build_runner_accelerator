@@ -19,6 +19,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
 
     let initial_native_build = match run_watch_build(options, &mut pool) {
         Ok(native_build) => native_build,
+        Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
         Err(error) => {
             eprintln!("initial watch build failed: {error}");
             false
@@ -63,6 +64,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
                 source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
             }
             Ok(false) => source_post_process_outputs.clear(),
+            Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
             Err(error) => {
                 eprintln!("watch build failed: {error}");
             }
@@ -74,7 +76,7 @@ fn run_watch_build(options: &Options, pool: &mut Option<WorkerPool>) -> io::Resu
     let workspace = Workspace::load(options.root.clone())?;
     let Some(build_config) = select_frontend(options, &workspace)? else {
         pool.take();
-        run_dart_fallback(options, &workspace)?;
+        run_dart_fallback(options)?;
         return Ok(false);
     };
 

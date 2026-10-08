@@ -475,6 +475,7 @@ fn spawn_detached_prewarm(
         FrontendMode::Dart => "dart",
     };
     let mut command = detached_prewarm_command()?;
+    command.env_remove(crate::process::SUPERVISION_CONTEXT);
     command
         .args(["prewarm", "--root"])
         .arg(&workspace.root)
@@ -528,12 +529,17 @@ fn detached_prewarm_command() -> io::Result<Command> {
 #[cfg(windows)]
 fn detached_prewarm_command() -> io::Result<Command> {
     use std::os::windows::process::CommandExt;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
     let mut command = Command::new(std::env::current_exe()?);
-    command
-        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | BELOW_NORMAL_PRIORITY_CLASS);
+    command.creation_flags(
+        DETACHED_PROCESS
+            | CREATE_NEW_PROCESS_GROUP
+            | BELOW_NORMAL_PRIORITY_CLASS
+            | CREATE_BREAKAWAY_FROM_JOB,
+    );
     Ok(command)
 }
 
@@ -544,28 +550,36 @@ fn detached_prewarm_command() -> io::Result<Command> {
 
 fn select_dart_fallback(options: &Options, reason: &str) -> io::Result<Option<RustBuildConfig>> {
     if options.mode == FrontendMode::Rust {
-        return Err(io::Error::other(format!(
-            "Rust frontend cannot handle this package: {reason}; use --mode dart"
-        )));
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("Rust frontend cannot handle this package: {reason}; use --mode dart"),
+        ));
     }
     eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
     Ok(None)
 }
 
-pub(crate) fn run_dart_fallback(options: &Options, workspace: &Workspace) -> io::Result<()> {
+pub(crate) fn run_dart_fallback(options: &Options) -> io::Result<()> {
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     let mut command = Command::new(dart_binary);
+    command.env_remove(crate::process::SUPERVISION_CONTEXT);
     command.args(["--suppress-analytics", "run", "build_runner"]);
-    command.arg(&options.command);
-    if options.command == "build" {
-        command.arg("--delete-conflicting-outputs");
+    if let Some(invocation) = &options.stock_invocation {
+        command.args(invocation);
+    } else {
+        command.arg(&options.command).args(&options.stock_arguments);
     }
-    let status = command.current_dir(&workspace.root).status()?;
-    if !status.success() {
-        return Err(io::Error::other(format!("Dart fallback failed: {status}")));
+    // Replace this process on Unix: stock owns signals, children, and status.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        Err(command.current_dir(&options.root).exec())
     }
-    println!("Build completed (Dart fallback)");
-    Ok(())
+    #[cfg(not(unix))]
+    {
+        let status = command.current_dir(&options.root).status()?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
 }
 
 #[cfg(test)]

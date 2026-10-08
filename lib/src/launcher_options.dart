@@ -1,10 +1,12 @@
 import 'dart:io';
+import 'dart:convert';
 
 /// The small set of launcher options that must be consumed before invoking
 /// either the Rust frontend or stock build_runner.
 class LauncherOptions {
   LauncherOptions._({
     required this.command,
+    required this.nativeUnsupported,
     required this.mode,
     required this.root,
     required this.dartBinary,
@@ -19,6 +21,7 @@ class LauncherOptions {
   factory LauncherOptions.parse(List<String> arguments) {
     var command = 'build';
     var commandSeen = false;
+    var commandPosition = 0;
     var mode = 'auto';
     var root = Directory.current.absolute.path;
     var dartBinary = Platform.resolvedExecutable;
@@ -27,12 +30,15 @@ class LauncherOptions {
     var forceJit = false;
     var showHelp = false;
     var showVersion = false;
+    var separated = false;
     final rustArguments = <String>[];
     final dartArguments = <String>[];
     final passthrough = <String>[];
 
     String takeValue(List<String> values, String option, int index) {
-      if (index + 1 >= values.length) {
+      if (index + 1 >= values.length ||
+          values[index + 1].isEmpty ||
+          values[index + 1].startsWith('-')) {
         throw FormatException('$option requires a value');
       }
       return values[index + 1];
@@ -40,11 +46,20 @@ class LauncherOptions {
 
     for (var index = 0; index < arguments.length; index++) {
       final argument = arguments[index];
-      if (argument == '--help' || argument == '-h') {
+      if (separated) {
+        passthrough.add(argument);
+        continue;
+      }
+      if (argument == '--') {
+        separated = true;
+        passthrough.add(argument);
+        continue;
+      }
+      if (!commandSeen && (argument == '--help' || argument == '-h')) {
         showHelp = true;
         continue;
       }
-      if (argument == '--version') {
+      if (!commandSeen && argument == '--version') {
         showVersion = true;
         continue;
       }
@@ -64,6 +79,7 @@ class LauncherOptions {
             ? argument.substring('--root='.length)
             : takeValue(arguments, '--root', index);
         if (!argument.startsWith('--root=')) index++;
+        if (value.isEmpty) throw FormatException('--root requires a value');
         root = Directory(value).absolute.path;
         continue;
       }
@@ -72,20 +88,24 @@ class LauncherOptions {
             ? argument.substring('--dart='.length)
             : takeValue(arguments, '--dart', index);
         if (!argument.startsWith('--dart=')) index++;
+        if (value.isEmpty) throw FormatException('--dart requires a value');
         dartBinary = value;
         dartBinaryExplicit = true;
         continue;
       }
       if (argument == '--force-aot') {
         forceAot = true;
+        passthrough.add(argument);
         continue;
       }
       if (argument == '--force-jit') {
         forceJit = true;
+        passthrough.add(argument);
         continue;
       }
 
       if (!commandSeen && !argument.startsWith('-')) {
+        commandPosition = passthrough.length;
         command = argument;
         commandSeen = true;
         continue;
@@ -100,6 +120,10 @@ class LauncherOptions {
       } else if (rustValueOptions.contains(argument)) {
         final value = takeValue(arguments, argument, index);
         index++;
+        if ((argument == '--jobs' || argument == '--interval-ms') &&
+            (int.tryParse(value) == null || int.parse(value) <= 0)) {
+          throw FormatException('$argument must be a positive integer');
+        }
         rustArguments.addAll([argument, value]);
       } else if (argument.startsWith('--jobs=') ||
           argument.startsWith('--interval-ms=') ||
@@ -108,9 +132,33 @@ class LauncherOptions {
         final option = argument.substring(0, separator);
         final value = argument.substring(separator + 1);
         if (value.isEmpty) throw FormatException('$option requires a value');
+        if ((option == '--jobs' || option == '--interval-ms') &&
+            (int.tryParse(value) == null || int.parse(value) <= 0)) {
+          throw FormatException('$option must be a positive integer');
+        }
         rustArguments.addAll([option, value]);
       } else {
         passthrough.add(argument);
+        // Values belong to stock, even when they look like launcher flags.
+        const stockValueOptions = {
+          '--build-filter',
+          '--config',
+          '-c',
+          '--output',
+          '-o',
+          '--define',
+          '--enable-experiment',
+          '--dart-jit-vm-arg',
+          '--log-performance',
+          '--build-mode',
+          '--hostname',
+          '--port',
+          '--dart-dev-service-port',
+        };
+        if (stockValueOptions.contains(argument) &&
+            index + 1 < arguments.length) {
+          passthrough.add(arguments[++index]);
+        }
       }
     }
 
@@ -137,16 +185,57 @@ class LauncherOptions {
       mode,
     ]);
     dartArguments
-      ..addAll(['run', 'build_runner', command])
-      ..addAll([if (forceAot) '--force-aot', if (forceJit) '--force-jit'])
-      ..addAll(passthrough);
-    if (command == 'build' &&
-        !passthrough.contains('--delete-conflicting-outputs')) {
-      dartArguments.add('--delete-conflicting-outputs');
+      ..addAll(['run', 'build_runner'])
+      ..addAll([
+        ...passthrough.take(commandPosition),
+        command,
+        ...passthrough.skip(commandPosition),
+      ]);
+    final nativeUnsupported =
+        commandPosition != 0 ||
+        !const {
+          'build',
+          'watch',
+          'prewarm',
+          'aot-prewarm',
+          'aot-cache-key',
+        }.contains(command) ||
+        passthrough.any(
+          (argument) => !const {
+            '--force-aot',
+            '--force-jit',
+            '--delete-conflicting-outputs',
+            '-d',
+          }.contains(argument),
+        ) ||
+        (!const {'build', 'watch'}.contains(command) &&
+            passthrough.any(
+              (argument) =>
+                  argument != '--force-aot' && argument != '--force-jit',
+            ));
+    if (nativeUnsupported &&
+        const {'prewarm', 'aot-prewarm'}.contains(command)) {
+      throw FormatException('prewarm does not accept stock arguments');
     }
+    if (nativeUnsupported && mode == 'rust' && !showHelp && !showVersion) {
+      throw FormatException(
+        'Native frontend does not support this command or '
+        'arguments: $command ${passthrough.join(' ')}; use --mode auto or dart',
+      );
+    }
+    // The native process may discover an unsupported manifest later. Carry
+    // the complete stock argument vector across that boundary as one value.
+    rustArguments.addAll([
+      '--stock-arguments-json',
+      jsonEncode({
+        'arguments': passthrough,
+        'invocation': dartArguments.skip(2).toList(),
+      }),
+    ]);
 
     return LauncherOptions._(
       command: command,
+      nativeUnsupported: nativeUnsupported,
       mode: mode,
       root: root,
       dartBinary: dartBinary,
@@ -159,6 +248,7 @@ class LauncherOptions {
     );
   }
 
+  final bool nativeUnsupported;
   final String command;
   final String mode;
   final String root;

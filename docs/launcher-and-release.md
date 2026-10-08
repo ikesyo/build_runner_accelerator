@@ -32,8 +32,41 @@ The launcher consumes `--mode`, `--root`, `--dart`, `--force-aot`, and
 stock build_runner names, are mutually exclusive, and are retained when the
 stock Dart path is selected. Other arguments are retained for the stock Dart
 path.
-The native frontend does not consume arbitrary build-runner flags; use
-`--mode dart` when those flags are required.
+Unsupported commands and options select stock immediately in `auto`, before
+binary resolution, download, workspace loading, or manifest generation.
+`rust` rejects them explicitly. Stock option values and `--` are retained,
+including values that look like accelerator flags; argument order is preserved.
+Both direct Dart fallback and manifest-time native fallback retain the same
+stock invocation, including explicit force flags, and propagate stock's status.
+The native bridge carries a JSON argument vector internally; it is not a
+user-facing option.
+
+Native build/watch also accept `--delete-conflicting-outputs` and `-d`.
+In the supported build_runner 2.16.2 window these are retired, non-negatable,
+non-operational flags. No path automatically adds them. `--build-filter`,
+output directories, build directories, config/define/release/workspace,
+keep-modified-outputs, only-check, logging, serve options and other stock
+options remain on fallback. See the complete [CLI table](../README.md).
+
+Leading help/version belong to the accelerator; command-level help/version
+belong to stock. `prewarm` rejects stock-only arguments in every mode.
+`aot-cache-key` is a native utility with no stock equivalent.
+Stock clean does not remove accelerator graph/worker caches.
+
+Direct stock execution on Unix uses a small source/AOT launcher re-entry that
+creates a session and execs the selected Dart command. This preserves its PID,
+argument vector, stdio and status while allowing launcher-only Ctrl-C to reach
+the inner stock build process. Shutdown is bounded to five seconds.
+
+On Unix the native process supervises a separate process group containing its
+workers, generator, probes and compilers. Launcher signals are forwarded to the
+selected child; native forwards them to the whole group, waits up to five
+seconds, and kills remaining members. Ctrl-C returns 130. Internal AOT helpers
+share the supervisor context; an intentional background compile can finish
+after a successful build, but is cleaned up on interruption or failure. Detached prewarm has its own session and intentionally survives
+the setup hook. Windows native execution uses a kill-on-close job and forwards
+console interruption to the child group; the Windows execution path requires CI
+validation on that platform.
 
 Mode behavior is part of the release contract:
 

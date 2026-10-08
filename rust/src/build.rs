@@ -39,7 +39,7 @@ pub(crate) fn run(options: &Options, pool: Option<&mut WorkerPool>) -> io::Resul
         None => {
             drop(selection);
             let _fallback = crate::wall::Span::new("dart_fallback");
-            return run_dart_fallback(options, &workspace);
+            return run_dart_fallback(options);
         }
     };
     drop(selection);

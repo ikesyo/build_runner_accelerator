@@ -29,11 +29,21 @@ pub(crate) struct Options {
     pub(crate) jobs: usize,
     pub(crate) mode: FrontendMode,
     pub(crate) background: bool,
+    pub(crate) stock_arguments: Vec<String>,
+    pub(crate) stock_invocation: Option<Vec<String>>,
 }
 
 impl Options {
-    pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> io::Result<Self> {
-        let command = args.next().unwrap_or_else(|| "build".to_owned());
+    pub(crate) fn parse(args: impl Iterator<Item = String>) -> io::Result<Self> {
+        let mut args = args.peekable();
+        let mut command = "build".to_owned();
+        let mut command_seen = false;
+        if args.peek().is_some_and(|arg| {
+            !arg.starts_with('-') || matches!(arg.as_str(), "--help" | "-h" | "--version")
+        }) {
+            command = args.next().unwrap();
+            command_seen = true;
+        }
         let mut root = env::current_dir()?;
         let mut dart_binary = None;
         let mut worker = None;
@@ -45,59 +55,113 @@ impl Options {
         let mut jobs = default_worker_count();
         let mut mode = FrontendMode::Auto;
         let mut background = false;
+        let mut stock_arguments = Vec::new();
+        let mut stock_invocation = None;
+        let mut direct_invocation = if command_seen {
+            vec![command.clone()]
+        } else {
+            Vec::new()
+        };
         while let Some(argument) = args.next() {
+            let (name, inline) = argument
+                .split_once('=')
+                .map_or((argument.as_str(), None), |(name, value)| {
+                    (name, Some(value))
+                });
+            if matches!(
+                name,
+                "--root"
+                    | "--dart"
+                    | "--worker"
+                    | "--interval-ms"
+                    | "--jobs"
+                    | "--mode"
+                    | "--stock-arguments-json"
+            ) {
+                let value = inline
+                    .map(str::to_owned)
+                    .or_else(|| args.next())
+                    .filter(|value| !value.is_empty() && !value.starts_with('-'))
+                    .ok_or_else(|| io::Error::other(format!("{name} needs a value")))?;
+                match name {
+                    "--root" => root = PathBuf::from(value),
+                    "--dart" => dart_binary = Some(value),
+                    "--worker" => worker = Some(value),
+                    "--mode" => mode = FrontendMode::parse(&value)?,
+                    "--stock-arguments-json" => {
+                        #[derive(serde::Deserialize)]
+                        struct StockArguments {
+                            arguments: Vec<String>,
+                            invocation: Vec<String>,
+                        }
+                        let transport: StockArguments =
+                            serde_json::from_str(&value).map_err(io::Error::other)?;
+                        stock_arguments.extend(transport.arguments);
+                        stock_invocation = Some(transport.invocation);
+                    }
+                    "--jobs" => {
+                        jobs = value
+                            .parse()
+                            .map_err(|_| io::Error::other("--jobs must be a positive integer"))?;
+                        if jobs == 0 {
+                            return Err(io::Error::other("--jobs must be greater than zero"));
+                        }
+                    }
+                    "--interval-ms" => {
+                        interval_ms = value.parse().map_err(|_| {
+                            io::Error::other("--interval-ms must be a positive integer")
+                        })?;
+                        if interval_ms == 0 {
+                            return Err(io::Error::other(
+                                "--interval-ms must be greater than zero",
+                            ));
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+                continue;
+            }
+            if !command_seen
+                && (!argument.starts_with('-')
+                    || matches!(argument.as_str(), "--help" | "-h" | "--version"))
+            {
+                direct_invocation.push(argument.clone());
+                command = argument;
+                command_seen = true;
+                continue;
+            }
             match argument.as_str() {
-                "--root" => {
-                    root = PathBuf::from(
-                        args.next()
-                            .ok_or_else(|| io::Error::other("--root needs a value"))?,
-                    )
-                }
-                "--dart" => {
-                    dart_binary = Some(
-                        args.next()
-                            .ok_or_else(|| io::Error::other("--dart needs a value"))?,
-                    )
-                }
-                "--worker" => {
-                    worker = Some(
-                        args.next()
-                            .ok_or_else(|| io::Error::other("--worker needs a value"))?,
-                    )
-                }
-                "--interval-ms" => {
-                    interval_ms = args
-                        .next()
-                        .ok_or_else(|| io::Error::other("--interval-ms needs a value"))?
-                        .parse()
-                        .map_err(|_| io::Error::other("--interval-ms must be an integer"))?;
-                    if interval_ms == 0 {
-                        return Err(io::Error::other("--interval-ms must be greater than zero"));
-                    }
-                }
-                "--jobs" => {
-                    jobs = args
-                        .next()
-                        .ok_or_else(|| io::Error::other("--jobs needs a value"))?
-                        .parse()
-                        .map_err(|_| io::Error::other("--jobs must be an integer"))?;
-                    if jobs == 0 {
-                        return Err(io::Error::other("--jobs must be greater than zero"));
-                    }
-                }
-                "--mode" => {
-                    mode = FrontendMode::parse(
-                        &args
-                            .next()
-                            .ok_or_else(|| io::Error::other("--mode needs a value"))?,
-                    )?;
-                }
                 "--background" => background = true,
+                "--" => {
+                    direct_invocation.push(argument.clone());
+                    stock_arguments.push(argument);
+                    let rest: Vec<String> = args.by_ref().collect();
+                    direct_invocation.extend(rest.iter().cloned());
+                    stock_arguments.extend(rest);
+                }
                 _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        format!("unknown argument: {argument}"),
-                    ));
+                    direct_invocation.push(argument.clone());
+                    stock_arguments.push(argument.clone());
+                    if matches!(
+                        argument.as_str(),
+                        "--build-filter"
+                            | "--config"
+                            | "-c"
+                            | "--output"
+                            | "-o"
+                            | "--define"
+                            | "--enable-experiment"
+                            | "--dart-jit-vm-arg"
+                            | "--log-performance"
+                            | "--build-mode"
+                            | "--hostname"
+                            | "--port"
+                            | "--dart-dev-service-port"
+                    ) && let Some(value) = args.next()
+                    {
+                        direct_invocation.push(value.clone());
+                        stock_arguments.push(value);
+                    }
                 }
             }
         }
@@ -107,6 +171,22 @@ impl Options {
                 format!("--background is only supported with prewarm: {command}"),
             ));
         }
+        if stock_arguments.iter().all(|arg| {
+            matches!(
+                arg.as_str(),
+                "--force-aot" | "--force-jit" | "--delete-conflicting-outputs" | "-d"
+            )
+        }) && stock_arguments.iter().any(|arg| arg == "--force-aot")
+            && stock_arguments.iter().any(|arg| arg == "--force-jit")
+        {
+            return Err(io::Error::other(
+                "Only one of --force-aot and --force-jit may be used",
+            ));
+        }
+        if !command_seen {
+            direct_invocation.insert(0, command.clone());
+        }
+        let stock_invocation = Some(stock_invocation.unwrap_or(direct_invocation));
         Ok(Self {
             command,
             root,
@@ -116,6 +196,32 @@ impl Options {
             jobs,
             mode,
             background,
+            stock_arguments,
+            stock_invocation,
+        })
+    }
+    pub(crate) fn native_supported(&self) -> bool {
+        if self
+            .stock_invocation
+            .as_ref()
+            .is_some_and(|args| args.first() != Some(&self.command))
+        {
+            return false;
+        }
+        matches!(
+            self.command.as_str(),
+            "build"
+                | "watch"
+                | "prewarm"
+                | "aot-prewarm"
+                | "aot-cache-key"
+                | "--help"
+                | "-h"
+                | "--version"
+        ) && self.stock_arguments.iter().all(|arg| {
+            matches!(arg.as_str(), "--force-aot" | "--force-jit")
+                || (matches!(self.command.as_str(), "build" | "watch")
+                    && matches!(arg.as_str(), "--delete-conflicting-outputs" | "-d"))
         })
     }
 }
@@ -364,6 +470,64 @@ mod tests {
         FrontendMode, cgroup_available_bytes, cgroup_dir_for, cgroup_mount,
         parse_vm_stat_available_gib,
     };
+
+    #[test]
+    fn stock_cli_is_preserved_and_classified() {
+        for command in ["build", "watch"] {
+            let supported = super::Options::parse(
+                [command, "--force-jit", "-d"]
+                    .into_iter()
+                    .map(str::to_owned),
+            )
+            .unwrap();
+            assert!(supported.native_supported());
+            assert_eq!(supported.stock_arguments, ["--force-jit", "-d"]);
+        }
+        for args in [
+            vec!["clean"],
+            vec!["serve", "web:8080"],
+            vec!["build", "--build-filter", "lib/*.g.dart"],
+            vec!["build", "--unknown"],
+            vec!["build", "--", "--mode", "rust"],
+        ] {
+            let options = super::Options::parse(args.iter().map(|s| s.to_string())).unwrap();
+            assert!(!options.native_supported());
+            assert_eq!(options.mode, FrontendMode::Auto);
+            assert_eq!(options.stock_arguments, args[1..]);
+        }
+        let options = super::Options::parse(
+            [
+                "build",
+                "--stock-arguments-json",
+                r#"{"arguments":["--force-aot","-d"],"invocation":["build","--force-aot","-d"]}"#,
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        )
+        .unwrap();
+        assert!(options.native_supported());
+        assert_eq!(options.stock_arguments, ["--force-aot", "-d"]);
+    }
+
+    #[test]
+    fn global_options_and_stock_order_are_preserved() {
+        let options =
+            super::Options::parse(["--mode=dart", "--version"].into_iter().map(str::to_owned))
+                .unwrap();
+        assert_eq!(options.command, "--version");
+        let options =
+            super::Options::parse(["--force-jit", "build"].into_iter().map(str::to_owned)).unwrap();
+        assert!(!options.native_supported());
+        assert_eq!(options.stock_invocation.unwrap(), ["--force-jit", "build"]);
+        for args in [
+            vec!["build", "--jobs=0"],
+            vec!["build", "--dart="],
+            vec!["build", "--worker", "--help"],
+            vec!["build", "--interval-ms=-1"],
+        ] {
+            assert!(super::Options::parse(args.into_iter().map(str::to_owned)).is_err());
+        }
+    }
 
     #[test]
     fn frontend_mode_accepts_only_explicit_values() {

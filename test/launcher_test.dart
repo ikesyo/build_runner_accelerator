@@ -39,13 +39,117 @@ void main() {
     );
     expect(
       options.dartArguments,
-      containsAll(<String>[
-        'run',
-        'build_runner',
-        'build',
-        '--delete-conflicting-outputs',
-      ]),
+      containsAll(<String>['run', 'build_runner', 'build']),
     );
+  });
+
+  test('unsupported CLI selects stock before native resolution', () {
+    for (final args in [
+      ['clean'],
+      ['serve'],
+      ['test', '--', '--mode', 'rust'],
+      ['build', '--build-filter', 'lib/*.g.dart'],
+      ['build', '--unknown'],
+      ['build', '--help'],
+      ['build', '--version'],
+      ['build', '--'],
+    ]) {
+      final options = LauncherOptions.parse(args);
+      expect(options.nativeUnsupported, isTrue, reason: '$args');
+      expect(options.dartArguments, ['run', 'build_runner', ...args]);
+      expect(
+        () => LauncherOptions.parse([
+          ...args.takeWhile((a) => a != '--'),
+          '--mode=rust',
+          ...args.skipWhile((a) => a != '--'),
+        ]),
+        throwsFormatException,
+      );
+    }
+  });
+
+  test('stock values and separator never consume launcher flags', () {
+    final options = LauncherOptions.parse([
+      'build',
+      '--dart-jit-vm-arg',
+      '--force-aot',
+      '--define',
+      '--mode=rust',
+      '--',
+      '--jobs',
+      '0',
+      '--force-jit',
+      '--help',
+    ]);
+    expect(options.mode, 'auto');
+    expect(options.forceAot, isFalse);
+    expect(options.forceJit, isFalse);
+    expect(options.showHelp, isFalse);
+    expect(options.dartArguments, [
+      'run',
+      'build_runner',
+      'build',
+      '--dart-jit-vm-arg',
+      '--force-aot',
+      '--define',
+      '--mode=rust',
+      '--',
+      '--jobs',
+      '0',
+      '--force-jit',
+      '--help',
+    ]);
+  });
+
+  test('stock command order is preserved', () {
+    final options = LauncherOptions.parse(['--force-jit', 'build', '-d']);
+    expect(options.nativeUnsupported, isTrue);
+    expect(options.dartArguments, [
+      'run',
+      'build_runner',
+      '--force-jit',
+      'build',
+      '-d',
+    ]);
+  });
+
+  test('native stock flags survive manifest fallback transport', () {
+    final options = LauncherOptions.parse(['watch', '-d', '--force-jit']);
+    expect(options.nativeUnsupported, isFalse);
+    expect(options.dartArguments, [
+      'run',
+      'build_runner',
+      'watch',
+      '-d',
+      '--force-jit',
+    ]);
+    expect(
+      options.rustArguments.last,
+      contains('"arguments":["-d","--force-jit"]'),
+    );
+    expect(
+      options.rustArguments.last,
+      contains('"invocation":["watch","-d","--force-jit"]'),
+    );
+    expect(options.rustArguments, contains('--stock-arguments-json'));
+  });
+
+  test('invalid accelerator values fail in every mode', () {
+    for (final mode in ['auto', 'dart', 'rust']) {
+      for (final args in [
+        ['--jobs', '0'],
+        ['--jobs=abc'],
+        ['--interval-ms=-1'],
+        ['--root'],
+        ['--dart', '--help'],
+        ['--worker='],
+      ]) {
+        expect(
+          () => LauncherOptions.parse(['--mode=$mode', ...args]),
+          throwsFormatException,
+        );
+      }
+    }
   });
 
   test('explicit --dart skips lookup', () async {
