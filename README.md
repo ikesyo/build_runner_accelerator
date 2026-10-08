@@ -107,13 +107,48 @@ when the stock path is preferred.
 | `rust` | Require the native frontend and a compatible manifest; return an error instead of falling back. |
 | `dart` | Always run stock Dart `build_runner`. |
 
-Useful launcher options are `--root`, `--dart`, `--jobs`,
-`--interval-ms`, `--worker`, `--force-aot`, and `--force-jit`. The latter two
-use the stock build_runner names and are honored by both native and Dart
-frontends; they are mutually exclusive. Build-runner options that are not
-consumed by the launcher are passed to the Dart path. The native frontend
-accepts only its documented launcher options; use `--mode dart` when passing
-arbitrary build-runner arguments. A preinstalled native binary can be selected
+Useful accelerator options are `--root`, `--dart`, `--jobs`,
+`--interval-ms`, `--worker`, and prewarm-only `--background`. They never
+reach stock. `--force-aot` and `--force-jit` are mutually exclusive and work
+in native build/watch and stock fallback, including manifest-time fallback.
+
+| Command / option | Native status | auto / dart behavior |
+| --- | --- | --- |
+| `build`, `watch` | Supported for the documented manifest subset | Native in auto; stock in dart |
+| `prewarm`, `aot-prewarm` | Supported, no build actions | Skip when no native frontend; dart skips |
+| `aot-cache-key` | Native utility | Requires native; no stock equivalent |
+| `clean`, `serve`, `run`, `test`, `stop`, `daemon`, `help` | Fallback | Stock, without native download or manifest generation |
+| `--force-aot`, `--force-jit` | Supported | Retained for stock |
+| `--delete-conflicting-outputs`, `-d` | Accepted as retired compatibility flags | No effect in build_runner 2.16.2; never auto-added |
+| `--build-filter`, build directories | Fallback | Stock owns filtering, dependency demand, and output retention/deletion |
+| `--output` / `-o`, `--config` / `-c`, `--define`, `--release` / `-r`, `--no-release`, `--workspace` | Fallback | Stock |
+| `--keep-modified-outputs`, `--only-check`, `--symlink`, `--no-symlink` | Fallback | Stock |
+| `--verbose` / `-v`, `--verbose-durations` | Fallback | Stock logging |
+| `--enable-experiment`, `--dart-jit-vm-arg`, `--dart-aot-perf` (Linux) | Fallback | Stock compilation/profiling |
+| `--hostname`, `--log-requests`, `--live-reload`, `--build-mode` | Fallback | Stock serve/daemon |
+| `--fail-on-severe`, `--no-fail-on-severe`, `--log-performance`, `--low-resources-mode`, `--track-performance`, `--no-track-performance` | Fallback | Stock validates its remaining retired options |
+| Unknown arguments, invalid stock values | Fallback | Stock diagnoses them and its exit code is preserved |
+
+`rust` rejects every fallback entry rather than ignoring it. Leading
+`--help` / `-h` and `--version` print accelerator information; command-level
+help/version are stock requests (and therefore rejected in rust). `--` stops
+accelerator parsing; it and all following arguments are retained. Stock option
+values are kept as values even when they resemble accelerator options.
+The stock argument order is preserved. Invalid accelerator values fail in
+all modes. `prewarm` rejects stock options because it has no stock equivalent.
+
+Output conflicts are handled by the frontend's normal output lifecycle;
+`-d` cannot enable or disable deletion in the supported stock version.
+Native commits only after all actions succeed, including deletion of declared
+outputs that were not emitted. Stock and native use separate graph caches;
+`clean` cleans stock caches, and does not delete accelerator caches.
+For Unix build/watch, Ctrl-C and terminal/SSH hangup (SIGHUP) are forwarded to
+the selected subprocess group with bounded cleanup. Their exit statuses are
+130 and 129 respectively.
+See [the CLI ADR](docs/adr/0029-cli-routing-and-fallback.md) and
+[launcher contract](docs/launcher-and-release.md) for the compatibility boundary.
+
+A preinstalled native binary can be selected
 with `BUILD_RUNNER_ACCELERATOR_BIN`.
 
 Worker AOT and launcher AOT are separate concerns. In the normal invocation

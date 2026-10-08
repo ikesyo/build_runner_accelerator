@@ -810,7 +810,8 @@ fn spawn_background_worker_aot(
         Ok(mut child) => {
             // Reap the helper while the foreground process remains alive
             // (notably during watch). If the foreground process exits first,
-            // the child is re-parented and can finish independently.
+            // the child can finish after a successful exit. Cancellation/failure
+            // remains covered by the inherited supervisor group/job.
             thread::spawn(move || {
                 let _ = child.wait();
             });
