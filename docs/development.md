@@ -102,8 +102,10 @@ interfaces and stock output equivalence. Benchmark scheduling lives in the
 [benchmark workflow](../.github/workflows/benchmark-current.yml).
 
 Native settings CI runs 16 independent `SETTINGS_CASE_GROUP` groups across
-four matrix jobs, each with four parallel steps. They cover stock/native
-configuration, output lifecycle, errors/fallback, JIT/AOT/prewarm and watch. Each group owns disposable workspaces and caches; state transitions
+four matrix jobs, each with four parallel steps. Longer build sequences are
+paired with shorter watch groups to distribute CPU work across the runners.
+They cover stock/native configuration, output lifecycle, errors/fallback,
+JIT/AOT/prewarm and watch. Each group owns disposable workspaces and caches; state transitions
 inside each lane remain serial. All groups run on pull requests with
 `fail-fast: false`. Configuration sequences also restore the default settings
 and check a no-op; error groups build real outputs before checking retention.

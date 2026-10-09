@@ -152,21 +152,21 @@ jobs:
           - id: options
             first: values
             second: compact
-            third: paths
-            fourth: precedence
-          - id: configuration
-            first: files
-            second: errors
-            third: fallback
-            fourth: compile
-          - id: watch-config
-            first: watch-default
-            second: watch-named
-            third: watch-nested
+            third: watch-default
             fourth: watch-reserved
-          - id: watch-paths
-            first: watch-backslash
-            second: watch-dot
+          - id: paths
+            first: paths
+            second: files
+            third: watch-named
+            fourth: watch-dot
+          - id: configuration
+            first: errors
+            second: fallback
+            third: watch-nested
+            fourth: watch-backslash
+          - id: lifecycle
+            first: precedence
+            second: compile
             third: watch-package
             fourth: watch-topology
     env:
