@@ -37,11 +37,13 @@ take precedence over generic native artifact/generated-output event filters.
 Canonical nested names reload normally; separate build/prewarm invocations
 always resolve current settings. Preserve ADR 0031's topology fallback/error.
 
-## Validation
+## Consequences
+
+This replaces only ADR 0031's spelling/path restriction, keeping the other CLI
+and watch boundaries.
 
 Compare accepted short spellings and resolved paths with stock CLI/BuildOptions
 and AssetId. Compare actual outputs, deletion/retention, restored/no-op builds,
 invalid spellings and missing/escaping configs across frontend/fallback modes.
 Include nested/normalized configs in JIT/AOT/prewarm and resident watch fixtures,
-including the raw-versus-normalized reload distinction. This replaces only
-ADR 0031's spelling/path restriction, keeping the other CLI and watch boundaries.
+including the raw-versus-normalized reload distinction.

@@ -49,7 +49,10 @@ The original compact short spelling/config path boundary is replaced by
 package overrides and unsupported manifests remain fallback/error cases.
 No partial application or silent loss of settings is permitted.
 
-## Validation and consequences
+## Consequences
+
+This replaces only ADR 0029's settings boundary; its other CLI, mode, process
+and fallback contracts remain in effect.
 
 See [configuration.md](../configuration.md) for stock APIs, precedence, input
 identity, watch and cache boundaries. The settings fixture changes content,
@@ -57,5 +60,4 @@ output mappings, emission, target filters and builder enablement. Its serial
 stock/native comparisons cover unchanged/restored builds, errors and retained
 outputs, watch, JIT/AOT/prewarm and lossless fallback. Core full verification
 includes that differential suite. Parser tests use stock APIs rather than only
-asserting private cache keys. This replaces only ADR 0029's settings boundary;
-its other CLI, mode, process and fallback contracts remain in effect.
+asserting private cache keys.
