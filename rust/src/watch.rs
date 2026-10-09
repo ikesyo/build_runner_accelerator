@@ -54,11 +54,8 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         let file = workspace.root.join(path);
         // Stock attributes an event to the deepest package. A selected root
         // AssetId physically inside a dependency is not a root config event.
-        retain_configuration |= workspace
-            .package_roots()
-            .iter()
-            .map(|root| normalized_watch_path(root))
-            .any(|root| root != workspace.root && file.starts_with(root));
+        retain_configuration |= configuration_package_root(&workspace, &file)
+            .is_some_and(|root| root != workspace.root);
     }
     if initial_native_build {
         source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
@@ -257,15 +254,20 @@ fn normalized_watch_path(path: &Path) -> PathBuf {
     normalized
 }
 
+fn configuration_package_root(workspace: &Workspace, path: &Path) -> Option<PathBuf> {
+    let path = normalized_watch_path(path);
+    workspace
+        .package_roots()
+        .into_iter()
+        .map(|root| normalized_watch_path(&root))
+        .filter(|root| path.starts_with(root))
+        .max_by_key(|root| root.components().count())
+}
+
 fn is_configuration_event(workspace: &Workspace, event: &Event, selected: Option<&str>) -> bool {
     event.paths.iter().any(|path| {
         let path = normalized_watch_path(path);
-        let root = workspace
-            .package_roots()
-            .into_iter()
-            .map(|root| normalized_watch_path(&root))
-            .filter(|root| path.starts_with(root))
-            .max_by_key(|root| root.components().count());
+        let root = configuration_package_root(workspace, &path);
         let Some(root) = root else { return false };
         let Ok(relative) = path.strip_prefix(&root) else {
             return false;
@@ -440,6 +442,47 @@ fn is_relevant_event(
 #[cfg(test)]
 mod manifest_tests {
     use super::*;
+
+    #[test]
+    fn selected_config_uses_deepest_package_with_parent_and_child_dependencies() {
+        let parent =
+            std::env::temp_dir().join(format!("accelerator-watch-packages-{}", std::process::id()));
+        let root = parent.join("example");
+        fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        fs::write(root.join("pubspec.yaml"), "name: example\n").unwrap();
+        fs::write(
+            root.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[{"name":"parent","rootUri":"../../"},{"name":"child","rootUri":"../build.dir/"}]}"#,
+        )
+        .unwrap();
+        let workspace = Workspace::load(root).unwrap();
+        let root_config = workspace.root.join("build.named.yaml");
+        assert_eq!(
+            configuration_package_root(&workspace, &root_config),
+            Some(workspace.root.clone())
+        );
+        let root_event =
+            Event::new(EventKind::Modify(notify::event::ModifyKind::Any)).add_path(root_config);
+        assert!(is_configuration_event(
+            &workspace,
+            &root_event,
+            Some("build.named.yaml")
+        ));
+        let child_config = workspace.root.join("build.dir/name.yaml");
+        assert_eq!(
+            configuration_package_root(&workspace, &child_config),
+            Some(workspace.root.join("build.dir"))
+        );
+        let child_event =
+            Event::new(EventKind::Modify(notify::event::ModifyKind::Any)).add_path(child_config);
+        assert!(!is_configuration_event(
+            &workspace,
+            &child_event,
+            Some("build.dir/name.yaml")
+        ));
+        fs::remove_dir_all(parent).unwrap();
+    }
+
     #[test]
     fn watch_reads_explicit_extensions_without_flattened_fields() {
         let root =

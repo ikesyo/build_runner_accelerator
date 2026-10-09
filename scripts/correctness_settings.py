@@ -421,9 +421,9 @@ def configuration_compile(temporary, reference):
     check(reference, warmed, flags, compile_flag='--force-aot')
 
 
-def configuration_watch(reference, native, selected):
+def configuration_watch(reference, native, selected, compile_flag='--force-aot'):
     flags = [f'-c{selected}'] if selected else []
-    check(reference, native, flags, compile_flag='--force-aot')
+    check(reference, native, flags, compile_flag=compile_flag)
     path = f'build.{selected}.yaml' if selected else 'build.yaml'
     before = (reference / path).read_text()
     after = (before.replace('named-dev', 'watch-new') if selected
@@ -431,17 +431,37 @@ def configuration_watch(reference, native, selected):
     def edit(root):
         (root / path).write_text(after)
     edit(reference)
-    ok(stock(reference, [*flags, '--force-aot']), reference)
+    ok(stock(reference, [*flags, compile_flag]), reference)
     expected = outputs(reference)
     (reference / path).write_text(before)
-    ref_watch = watch(reference, stock(reference, [*flags, '--force-aot'], 'watch'), edit, expected)
-    actual = watch(native, launcher(native, 'rust', 'watch', [*flags, '--force-aot']), edit, expected)
+    ref_watch = watch(reference, stock(reference, [*flags, compile_flag], 'watch'), edit, expected)
+    actual = watch(native, launcher(native, 'rust', 'watch', [*flags, compile_flag]), edit, expected)
     assert actual == ref_watch
     # Restore input/config then ensure the restored build matches.
     for root in (reference, native):
         (root / path).write_text(before)
         (root / 'lib/a.txt').write_text('a\n')
     check(reference, native, flags)
+
+
+def watch_parent_dependency(temporary, compile_flag='--force-jit'):
+    """A root example config belongs to the app, despite its ancestor dependency."""
+    roots = []
+    for mode in ('stock', 'native'):
+        parent = temporary / f'parent-watch-{mode}'
+        parent.mkdir()
+        (parent / 'lib').mkdir()
+        (parent / 'pubspec.yaml').write_text(
+            'name: settings_parent\nenvironment:\n  sdk: ">=3.11.0 <4.0.0"\n')
+        root = parent / 'example'
+        prepare(root)
+        pubspec = root / 'pubspec.yaml'
+        pubspec.write_text(pubspec.read_text().replace('dev_dependencies:\n',
+            'dev_dependencies:\n  settings_parent:\n    path: ..\n'))
+        ok([DART, 'pub', 'get', '--offline'], root)
+        roots.append(root)
+    configuration_watch(*roots, 'named', compile_flag=compile_flag)
+    print('settings parent dependency watch: PASS', flush=True)
 
 
 def workspace_pair(temporary):
@@ -461,6 +481,7 @@ def run_group(group, temporary):
         configuration_compile(temporary, reference)
         for selected in WATCH_CONFIGS.values():
             configuration_watch(reference, native, selected)
+        watch_parent_dependency(temporary)
         watch_nested_reserved_directory(temporary)
         watch_normalized_config_paths(temporary)
         watch_topology_boundary(temporary)
@@ -486,6 +507,10 @@ def run_group(group, temporary):
         reference = temporary / 'stock'
         prepare(reference)
         configuration_compile(temporary, reference)
+    elif group == 'watch-named':
+        # Exercise the same named/AOT sequence with an ancestor dependency;
+        # don't duplicate the full sequence on the CI runner.
+        watch_parent_dependency(temporary, compile_flag='--force-aot')
     elif group in WATCH_CONFIGS:
         reference, native = workspace_pair(temporary)
         configuration_watch(reference, native, WATCH_CONFIGS[group])
