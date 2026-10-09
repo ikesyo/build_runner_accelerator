@@ -128,11 +128,6 @@ class _NormalizedManifest {
     required this.catalogEntries,
   });
 
-  const _NormalizedManifest.empty()
-    : builders = const [],
-      definitions = const [],
-      catalogEntries = const [];
-
   final List<Map<String, dynamic>> builders;
   final List<Map<String, dynamic>> definitions;
   final List<CatalogEntry> catalogEntries;
@@ -174,13 +169,6 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
   String workerEntrypoint,
   Map<String, List<ManifestTrigger>> triggers,
 ) async {
-  if (selection.selected.isEmpty) {
-    return const _RuntimeMappings(
-      probedMappings: {},
-      compatibleDefinitions: {},
-    );
-  }
-
   // build.yaml remains the ordering source, while the instantiated Builder is
   // the expected-output source. Probe selected multi-factory and
   // option-dependent applications so target-local mapping overrides remain
@@ -230,10 +218,29 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
     );
   }
   final compatibleDefinitions = <String, List<ManifestDefinition>>{};
+  final selectedDefinitionKeys = {
+    for (final selected in selection.selected.values) selected.definition.key,
+  };
   for (final info in resolved.definitions.values) {
+    // Inactive multi-factory builders still need one definition per factory
+    // to delete recorded outputs. Their declared union mapping is sufficient
+    // for this metadata; never instantiate disabled factories or use this
+    // mapping for an active application.
+    final inactiveMappings =
+        !info.isPostProcess &&
+            !selectedDefinitionKeys.contains(info.key) &&
+            info.normal!.builderFactories.length > 1
+        ? <FactoryMapping>[
+            for (final factory in info.normal!.builderFactories)
+              FactoryMapping(
+                factory: factory,
+                buildExtensions: info.normal!.buildExtensions,
+              ),
+          ]
+        : null;
     final converted = tryConvertDefinition(
       info,
-      canonicalMappings[info.key],
+      canonicalMappings[info.key] ?? inactiveMappings,
       triggers: triggers[info.key] ?? const [],
       builderTypes: builderTypes[info.key],
     );
@@ -290,14 +297,40 @@ _NormalizedManifest _normalizeManifest(
   _ApplicationSelection selection,
   _RuntimeMappings runtime,
 ) {
-  if (selection.selected.isEmpty) return const _NormalizedManifest.empty();
-
   final activeEntries = <Map<String, dynamic>>[];
   final selectedDefinitions = <String>{};
   final allOutputSuffixes = <String>{
     for (final definitions in runtime.compatibleDefinitions.values)
       for (final definition in definitions) ...definition.outputSuffixes,
   };
+  final allCompatibleDefinitions = <ManifestDefinition>[
+    for (final definitions in runtime.compatibleDefinitions.values)
+      ...definitions,
+  ]..sort((left, right) => left.id.compareTo(right.id));
+  final definitionEntries = <Map<String, dynamic>>[
+    for (final definition in allCompatibleDefinitions)
+      definition.toJson(
+        generateFor: const [],
+        generateForExclude: const [],
+        targetSources: const [],
+        targetSourcesExclude: const [],
+        options: const {},
+        phase: 0,
+        target: null,
+        package: null,
+        targetOrder: 0,
+        excludedInputSuffixes: allOutputSuffixes.toList()..sort(),
+      ),
+  ];
+  // Definitions also locate outputs owned by previous actions. An empty
+  // application list must still let Rust delete those obsolete outputs.
+  if (selection.selected.isEmpty) {
+    return _NormalizedManifest(
+      builders: const [],
+      definitions: definitionEntries,
+      catalogEntries: const [],
+    );
+  }
   final normalDefinitions = <String, DefinitionInfo>{
     for (final entry in resolved.definitions.entries)
       if (!entry.value.isPostProcess) entry.key: entry.value,
@@ -453,26 +486,6 @@ _NormalizedManifest _normalizeManifest(
       }
     }
   }
-
-  final allCompatibleDefinitions = <ManifestDefinition>[
-    for (final definitions in runtime.compatibleDefinitions.values)
-      ...definitions,
-  ]..sort((left, right) => left.id.compareTo(right.id));
-  final definitionEntries = <Map<String, dynamic>>[
-    for (final definition in allCompatibleDefinitions)
-      definition.toJson(
-        generateFor: const [],
-        generateForExclude: const [],
-        targetSources: const [],
-        targetSourcesExclude: const [],
-        options: const {},
-        phase: 0,
-        target: null,
-        package: null,
-        targetOrder: 0,
-        excludedInputSuffixes: allOutputSuffixes.toList()..sort(),
-      ),
-  ];
 
   final catalogEntries = <CatalogEntry>[
     for (final definition in allCompatibleDefinitions)

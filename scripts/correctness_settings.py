@@ -52,6 +52,14 @@ def prepare(root):
         'build.=named.yaml': named,
         'build..yaml': named,
         'build.--force-aot.yaml': named,
+        'build.off.yaml': '''targets:
+  $default:
+    builders:
+      settings_builder_app:settings:
+        enabled: false
+      settings_builder_app:marker:
+        enabled: false
+''',
     }.items():
         file = root / path
         file.parent.mkdir(parents=True, exist_ok=True)
@@ -253,13 +261,14 @@ SETTINGS_CASES = [[], [], ['--release'], ['--no-release'],
          ['--config=named', '--define=:marker=enabled=true'],
          ['--config=missing', '-c', 'named', '-r', '--no-release', '--release',
           '--define=settings_builder_app|settings=value=combined'],
-         ['--define=:settings=emit=false'], [], ['--config=named'], [], []]
+         ['--define=:settings=emit=false'], [], ['--config=named'], [], [],
+         ['--config=off'], ['--config=off'], [], []]
 
 CASE_GROUPS = {
     'values': tuple(range(0, 8)),
     'compact': tuple(range(8, 13)),
     'paths': tuple(range(13, 20)),
-    'precedence': tuple(range(20, 27)),
+    'precedence': tuple(range(20, len(SETTINGS_CASES))),
 }
 WATCH_CONFIGS = {'watch-default': None, 'watch-named': 'named', 'watch-nested': 'dir/name'}
 NORMALIZED_WATCH = {'watch-backslash': 0, 'watch-dot': 1, 'watch-package': 2}
@@ -273,9 +282,50 @@ def configuration_cases(reference, native, indices):
     for index in indices:
         flags = SETTINGS_CASES[index]
         output = check(reference, native, flags)
-        if index in (1, len(SETTINGS_CASES) - 1):
+        if index in (1, 26, 28, len(SETTINGS_CASES) - 1):
             assert 'No work to do (Rust frontend)' in output, output
+        if index in (27, 28):
+            assert outputs(reference) == outputs(native) == {}, (flags, output)
+        if index == 29:
+            assert outputs(native), output
         print(f'settings case {index}: PASS {flags}', flush=True)
+
+
+def configuration_inactive_factories(reference, native):
+    # Stock does not instantiate disabled factories. Keep this regression on
+    # the same workspaces so the old per-factory action outputs really exist.
+    for root in (reference, native):
+        builder = root / 'lib/builder.dart'
+        builder.write_text(builder.read_text().replace(
+            'Builder settings(BuilderOptions options) => SettingsBuilder(options);',
+            "Builder settings(BuilderOptions options) {\n"
+            "  if (options.config['must_not_instantiate'] == true) {\n"
+            "    throw StateError('disabled factory was instantiated');\n"
+            "  }\n"
+            "  return SettingsBuilder(options);\n"
+            "}"))
+        disabled = root / 'build.off.yaml'
+        disabled.write_text(disabled.read_text() + '''global_options:
+  settings_builder_app:settings:
+    options: {must_not_instantiate: true}
+''')
+        config = root / 'build.yaml'
+        config.write_text(config.read_text()
+            .replace('builder_factories: [settings]', 'builder_factories: [settings, marker]')
+            .replace("build_extensions: {'.txt': ['.out']}",
+                     "build_extensions: {'.txt': ['.out', '.marker']}")
+            .replace('    auto_apply: root_package\n    build_to: source\nglobal_options:',
+                     '    auto_apply: none\n    build_to: source\nglobal_options:'))
+    check(reference, native, [])
+    check(reference, native, ['--config=off'])
+    assert outputs(reference) == outputs(native) == {}
+    output = check(reference, native, ['--config=off'])
+    assert 'No work to do (Rust frontend)' in output, output
+    check(reference, native, [])
+    assert outputs(native)
+    output = check(reference, native, [])
+    assert 'No work to do (Rust frontend)' in output, output
+    print('settings inactive multi-factory lifecycle: PASS', flush=True)
 
 
 def configuration_files(reference, native):
@@ -395,6 +445,7 @@ def configuration_fallback(temporary):
     assert manifest['builders'] == []
     check(empty_stock, empty, flags, mode='rust')
     assert outputs(empty) == {}
+    configuration_inactive_factories(empty_stock, empty)
 
 
 def configuration_compile(temporary, reference):
@@ -419,6 +470,14 @@ def configuration_compile(temporary, reference):
     manifest = json.loads((warmed / '.dart_tool/build_runner_accelerator/builder-manifest.json').read_text())
     assert manifest['builders'][0]['options']['value'] == 'warmed'
     check(reference, warmed, flags, compile_flag='--force-aot')
+    retained = outputs(warmed)
+    ok(launcher(warmed, 'rust', command='prewarm',
+                flags=['--config=off', '--force-aot']), warmed)
+    assert outputs(warmed) == retained
+    check(reference, warmed, ['--config=off'], compile_flag='--force-aot')
+    assert outputs(reference) == outputs(warmed) == {}
+    check(reference, warmed, [])
+    assert outputs(warmed)
 
 
 def configuration_watch(reference, native, selected, compile_flag='--force-aot'):

@@ -72,6 +72,12 @@ override filenames/contents, and the selected named file (including absence).
 Switching modes/configs/defines or editing/removing/restoring configuration
 regenerates the manifest and invalidates the private action graph via its
 manifest signature. Repeating an unchanged request remains a no-op.
+An empty application list retains supported builder definitions so obsolete
+outputs from previously enabled builders can be deleted. Disabling every
+builder, repeating that build and enabling them again follows stock's output
+lifecycle; cached manifests from before this rule are invalidated.
+Inactive multi-factory builders retain per-factory cleanup definitions without
+instantiating their factories; active applications still require runtime probes.
 
 Worker instances are scoped to configured builder applications and receive
 resolved options on each build request. Watch replaces the resident pool when the manifest identity

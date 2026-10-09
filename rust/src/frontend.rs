@@ -99,7 +99,8 @@ pub(crate) fn select_frontend(
 /// Settings are runtime inputs to both probing and action graph reuse. File
 /// names, absent selected configs, and every override are part of the identity.
 fn settings_fingerprint(options: &Options, workspace: &Workspace) -> io::Result<String> {
-    let mut bytes = b"native-settings-v2\0".to_vec();
+    // Earlier manifests could omit definitions needed to delete disabled outputs.
+    let mut bytes = b"native-settings-v3\0".to_vec();
     bytes.extend_from_slice(workspace.builder_manifest_fingerprint()?.as_bytes());
     bytes.extend_from_slice(
         &serde_json::to_vec(&options.stock_arguments).map_err(io::Error::other)?,
