@@ -1,6 +1,8 @@
 import 'dart:convert';
 
-import 'package:build_config/build_config.dart';
+// Import the official normalizer directly: the public barrel also loads YAML
+// configuration parsers into the launcher, before any native process starts.
+import 'package:build_config/src/key_normalization.dart';
 import 'package:path/path.dart' as p;
 
 /// The native CLI subset of build_runner 2.16.x. Keep spelling/order in the
