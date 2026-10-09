@@ -12,10 +12,17 @@ The implementation follows `BuildRunnerCommandLine`,
 Build/watch/prewarm (including detached prewarm and the aot-prewarm alias)
 resolve `--define`, `--release`, `--no-release`, and `--config` consistently.
 Long options accept separate values and `=VALUE`. `-r` and `-c NAME` are
-supported. Compact/grouped short options and config names containing path
-separators remain stock-only for build/watch: auto forwards the entire request
-before native resolution, rust rejects it, and dart forwards it. Prewarm retains
-its existing rejection of unsupported CLI syntax; stock has no prewarm command.
+supported, including attached `-cNAME` and grouped `-rd` / `-dr` (also
+repeated flags). Groups containing `d` retain its build/watch-only acceptance.
+Stock permits a value-taking abbreviation only as the first
+character: `-rcNAME` is invalid. `-c=NAME` selects the literal name `=NAME`.
+Config names may contain `/` or `\`: stock first constructs
+`build.<name>.yaml`, replaces backslashes with `/`, then normalizes POSIX
+segments as an AssetId inside the root package. Thus `-cdir/name` reads
+`build.dir/name.yaml`, while `-cdir/../name` reads `name.yaml`; this is not an
+arbitrary config-file-path option. Names resolving outside the package fail.
+Only the final repeated config value is resolved. Prewarm retains its existing
+rejection of unsupported CLI syntax; stock has no prewarm command.
 For build/watch, a `--` separator, positional build directories and other
 unsupported options still select stock as a whole.
 Values remain stock values even if they resemble accelerator flags.
@@ -72,6 +79,17 @@ changes, ensuring that pinned JIT/AOT artifacts cannot retain an old catalog.
 Stock watches build.yaml, package overrides and the selected named config and
 reloads the build plan; a changed factory/script may require bootstrap restart.
 Native re-resolves value-only configuration changes and reselects the worker.
+Stock 2.16.2 compares the raw `build.<name>.yaml` spelling when deciding whether
+watch events reload configuration, even though loading uses a normalized
+AssetId. Native preserves that behavior: when backslashes or dot segments
+change the spelling, edits to that selected file keep the resident options
+(including on a subsequent input edit) until a recognized configuration event,
+such as a `build.yaml` edit, reloads the plan. A separate build reads the current
+normalized file immediately. Canonical nested names reload directly, including
+selected files under directories such as `target` that native otherwise ignores.
+Stock attributes nested-package events to the deepest package: if the selected
+root config physically lies in a dependency package, its edit also keeps the
+resident root plan until a recognized configuration event.
 Changes to builder applications, mappings, sources, filters or phase topology
 are a conservative watch boundary: auto hands the complete invocation to a new
 stock watch; rust terminates before actions with an explicit error. Stock 2.16.2

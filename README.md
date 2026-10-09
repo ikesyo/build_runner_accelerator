@@ -123,7 +123,7 @@ benchmarks and diagnostics; it is not a supported third-party extension API.
 | `--delete-conflicting-outputs`, `-d` | Accepted as retired compatibility flags | No effect in build_runner 2.16.2; never auto-added |
 | `--build-filter`, build directories | Fallback | Stock owns filtering, dependency demand, and output retention/deletion |
 | `--define`, `--release` / `-r`, `--no-release`, `--config NAME` / `-c NAME` | Supported for the manifest subset, including prewarm | Native in auto; retained for stock fallback |
-| Compact short options (such as `-cNAME`), config paths containing `/` or `\` | Fallback | Stock |
+| Attached `-cNAME`, grouped `-rd` / `-dr`, config names containing `/` or `\` | Supported with stock parsing and AssetId normalization | Native in auto; retained for stock fallback |
 | `--output` / `-o`, `--workspace` | Fallback | Stock |
 | `--keep-modified-outputs`, `--only-check`, `--symlink`, `--no-symlink` | Fallback | Stock |
 | `--verbose` / `-v`, `--verbose-durations` | Fallback | Stock logging |

@@ -234,8 +234,30 @@ pub(crate) struct BuildSettings {
 
 impl BuildSettings {
     pub(crate) fn parse(arguments: &[String]) -> io::Result<Self> {
+        let mut expanded = Vec::new();
+        let mut original = arguments.iter();
+        while let Some(argument) = original.next() {
+            if matches!(argument.as_str(), "--config" | "-c" | "--define") {
+                expanded.push(argument.clone());
+                if let Some(value) = original.next() {
+                    expanded.push(value.clone());
+                }
+            } else if argument.starts_with("-c")
+                && argument.len() > 2
+                && !argument.contains(['\n', '\r'])
+            {
+                expanded.push(format!("--config={}", &argument[2..]));
+            } else if argument.starts_with('-')
+                && argument.len() > 1
+                && argument[1..].chars().all(|flag| matches!(flag, 'r' | 'd'))
+            {
+                expanded.extend(argument[1..].chars().map(|flag| format!("-{flag}")));
+            } else {
+                expanded.push(argument.clone());
+            }
+        }
         let mut settings = Self::default();
-        let mut args = arguments.iter();
+        let mut args = expanded.iter();
         let mut pairs = std::collections::BTreeSet::new();
         while let Some(argument) = args.next() {
             match argument.as_str() {
@@ -244,6 +266,9 @@ impl BuildSettings {
                 "--force-aot" => settings.force_aot = true,
                 "--force-jit" => settings.force_jit = true,
                 _ => {
+                    if argument.contains('=') && argument.contains(['\n', '\r']) {
+                        return Err(io::Error::other("Unsupported inline option spelling"));
+                    }
                     let (name, inline) = argument
                         .split_once('=')
                         .map_or((argument.as_str(), None), |(name, value)| {
@@ -275,15 +300,34 @@ impl BuildSettings {
                             return Err(io::Error::other("Duplicate --define"));
                         }
                     } else {
-                        if value.contains(['/', '\\']) {
-                            return Err(io::Error::other("Unsupported config name"));
-                        }
                         settings.config = Some(value.to_owned());
                     }
                 }
             }
         }
+        settings.config_path()?;
         Ok(settings)
+    }
+
+    /// Mirrors AssetId's POSIX normalization, independent of the host OS.
+    pub(crate) fn config_path(&self) -> io::Result<Option<String>> {
+        let Some(key) = &self.config else {
+            return Ok(None);
+        };
+        let raw = format!("build.{key}.yaml").replace('\\', "/");
+        let mut segments = Vec::new();
+        for segment in raw.split('/') {
+            match segment {
+                "" | "." => {}
+                ".." => {
+                    if segments.pop().is_none() {
+                        return Err(io::Error::other("Config asset must be within the package"));
+                    }
+                }
+                _ => segments.push(segment),
+            }
+        }
+        Ok(Some(segments.join("/")))
     }
 }
 
@@ -571,6 +615,45 @@ mod tests {
     }
 
     #[test]
+    fn compact_settings_and_asset_paths() {
+        for (flags, key, path, deletion) in [
+            (vec!["-cnamed", "-rrd"], "named", "build.named.yaml", true),
+            (vec!["-c=named"], "=named", "build.=named.yaml", false),
+            (vec!["-cdir/name"], "dir/name", "build.dir/name.yaml", false),
+            (
+                vec![r"--config=dir\name"],
+                r"dir\name",
+                "build.dir/name.yaml",
+                false,
+            ),
+            (
+                vec!["--config=dir/../name"],
+                "dir/../name",
+                "name.yaml",
+                false,
+            ),
+            (vec!["--config", "-rd"], "-rd", "build.-rd.yaml", false),
+            (
+                vec!["--config=x/../../invalid", "-cnamed"],
+                "named",
+                "build.named.yaml",
+                false,
+            ),
+        ] {
+            let arguments = flags.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            let settings = super::BuildSettings::parse(&arguments).unwrap();
+            assert_eq!(settings.config.as_deref(), Some(key));
+            assert_eq!(settings.config_path().unwrap().as_deref(), Some(path));
+            assert_eq!(settings.deletion_flag, deletion);
+            let options =
+                super::Options::parse(std::iter::once("build".to_owned()).chain(arguments.clone()))
+                    .unwrap();
+            assert!(options.native_supported());
+            assert_eq!(options.stock_arguments, arguments);
+        }
+    }
+
+    #[test]
     fn settings_values_and_compile_flags_are_not_confused() {
         for command in ["build", "watch", "prewarm", "aot-prewarm", "aot-cache-key"] {
             let options = super::Options::parse(
@@ -599,8 +682,11 @@ mod tests {
             vec!["--define=a=b"],
             vec!["--release=true"],
             vec!["--config"],
-            vec!["--config=../other"],
-            vec!["-cnamed"],
+            vec!["--config=x/../../other"],
+            vec!["-rcnamed"],
+            vec!["-rd=1"],
+            vec!["-c=named\n"],
+            vec!["--config=named\n"],
             vec!["--define=pkg=x=1", "--define=pkg|pkg=x=2"],
         ] {
             let options = super::Options::parse(

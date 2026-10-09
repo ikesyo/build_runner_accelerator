@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 import 'model.dart';
+import 'settings.dart';
 
 /// Loads the package graph data needed by manifest generation.
 ///
@@ -122,7 +123,9 @@ Future<Map<String, BuildConfig>> loadBuildConfigs(
   }
   if (configKey != null) {
     final package = packageGraph.root;
-    final file = File(p.join(package.path, 'build.$configKey.yaml'));
+    final file = File(
+      p.join(package.path, BuildSettings.configPath(configKey)),
+    );
     if (!file.existsSync())
       throw StateError(
         'Cannot find build.$configKey.yaml for specified config.',

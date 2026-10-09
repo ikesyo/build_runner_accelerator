@@ -25,13 +25,10 @@ pub(crate) fn select_frontend(
         return Ok(None);
     }
 
-    if let Some(name) = crate::cli::BuildSettings::parse(&options.stock_arguments)?.config
-        && !workspace.root.join(format!("build.{name}.yaml")).is_file()
+    if let Some(name) = crate::cli::BuildSettings::parse(&options.stock_arguments)?.config_path()?
+        && !workspace.root.join(name.clone()).is_file()
     {
-        return select_dart_fallback(
-            options,
-            &format!("configuration file not found: build.{name}.yaml"),
-        );
+        return select_dart_fallback(options, &format!("configuration file not found: {name}"));
     }
     let fingerprint = match settings_fingerprint(options, workspace) {
         Ok(fingerprint) => fingerprint,
@@ -102,7 +99,7 @@ pub(crate) fn select_frontend(
 /// Settings are runtime inputs to both probing and action graph reuse. File
 /// names, absent selected configs, and every override are part of the identity.
 fn settings_fingerprint(options: &Options, workspace: &Workspace) -> io::Result<String> {
-    let mut bytes = b"native-settings-v1\0".to_vec();
+    let mut bytes = b"native-settings-v2\0".to_vec();
     bytes.extend_from_slice(workspace.builder_manifest_fingerprint()?.as_bytes());
     bytes.extend_from_slice(
         &serde_json::to_vec(&options.stock_arguments).map_err(io::Error::other)?,
@@ -115,11 +112,16 @@ fn settings_fingerprint(options: &Options, workspace: &Workspace) -> io::Result<
             paths.insert(entry.path());
         }
     }
-    if let Some(config) = settings.config {
-        paths.insert(workspace.root.join(format!("build.{config}.yaml")));
+    if let Some(config) = settings.config_path()? {
+        paths.insert(workspace.root.join(config));
     }
     for path in paths {
-        bytes.extend_from_slice(path.file_name().unwrap().to_string_lossy().as_bytes());
+        bytes.extend_from_slice(
+            path.strip_prefix(&workspace.root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .as_bytes(),
+        );
         bytes.push(0);
         match fs::read(path) {
             Ok(content) => {

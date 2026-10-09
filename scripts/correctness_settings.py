@@ -41,6 +41,19 @@ def prepare(root):
                     ignore=shutil.ignore_patterns('.dart_tool', '*.out', '*.alternate', '*.marker'))
     pubspec = root / 'pubspec.yaml'
     pubspec.write_text(pubspec.read_text().replace('path: ../..', f'path: {REPO}'))
+    named = (root / 'build.named.yaml').read_text()
+    for path, content in {
+        'build.dir/name.yaml': named,
+        'build.dir/target/name.yaml': named,
+        'build.other/name.yaml': named.replace('named-dev', 'other-path-dev'),
+        'name.yaml': named,
+        'build.../name.yaml': named,
+        'build./absolute/name.yaml': named,
+        'build.=named.yaml': named,
+    }.items():
+        file = root / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(content)
     ok([DART, 'pub', 'get', '--offline'], root)
 
 
@@ -141,6 +154,87 @@ def watch_topology_boundary(temporary):
                 proc.wait(timeout=15)
 
 
+def watch_nested_reserved_directory(temporary):
+    # Explicit config files must not disappear behind native's generic target
+    # directory filter. Stock recognizes this canonical nested path directly.
+    reference, native = temporary / 'nested-watch-stock', temporary / 'nested-watch-native'
+    prepare(reference)
+    prepare(native)
+    flags = ['-cdir/target/name', '--force-jit']
+    check(reference, native, flags[:-1])
+    path = 'build.dir/target/name.yaml'
+    before = (reference / path).read_text()
+    after = before.replace('named-dev', 'nested-watch-new')
+    def edit(root):
+        (root / path).write_text(after)
+    edit(reference)
+    ok(stock(reference, flags), reference)
+    expected = outputs(reference)
+    (reference / path).write_text(before)
+    actual_stock = watch(reference, stock(reference, flags, 'watch'), edit, expected)
+    actual_native = watch(native, launcher(native, 'rust', 'watch', flags), edit, expected)
+    assert actual_native == actual_stock
+    print('settings nested config watch: PASS', flush=True)
+
+
+def watch_normalized_config_paths(temporary, only=None):
+    # 2.16.2 reload detection compares the raw spelling, while config loading
+    # uses a normalized AssetId. A source edit keeps the old plan; build.yaml
+    # subsequently reloads the selected file. Compare each observable state.
+    for index, (key, path) in enumerate(((r'dir\name', 'build.dir/name.yaml'),
+                                        ('dir/../name', 'name.yaml'),
+                                        ('dir/name', 'build.dir/name.yaml'))):
+        if only is not None and index not in only:
+            continue
+        snapshots = []
+        for mode in ('stock', 'rust'):
+            root = temporary / f'normalized-watch-{index}-{mode}'
+            prepare(root)
+            if index == 2:
+                # Watch attributes nested package events to the child package,
+                # so this selected root AssetId doesn't trigger a root reload.
+                child = root / 'build.dir'
+                (child / 'lib').mkdir()
+                (child / 'pubspec.yaml').write_text(
+                    'name: settings_configs\nenvironment:\n  sdk: ">=3.11.0 <4.0.0"\n')
+                pubspec = root / 'pubspec.yaml'
+                pubspec.write_text(pubspec.read_text().replace('dev_dependencies:\n',
+                    'dev_dependencies:\n  settings_configs:\n    path: build.dir\n'))
+                ok([DART, 'pub', 'get', '--offline'], root)
+            flags = [f'-c{key}', '-rr', '--force-jit']
+            log = root / 'normalized-watch.log'
+            args = stock(root, flags, 'watch') if mode == 'stock' else launcher(root, mode, 'watch', flags)
+            with log.open('w') as stream:
+                proc = subprocess.Popen(args, cwd=root, env=ENV, stdout=stream,
+                                        stderr=subprocess.STDOUT, start_new_session=True)
+                try:
+                    wait(lambda: ('Built with build_runner' in log.read_text() if mode == 'stock'
+                                  else 'Watching ' in log.read_text()), proc, log)
+                    stages = [outputs(root)]
+                    selected = root / path
+                    selected.write_text(selected.read_text().replace('named-release', 'normalized-new'))
+                    # An unrelated Dart source change is not a config reload
+                    # (nor a build-script change), even though watch sees it.
+                    (root / 'lib/unrelated.dart').write_text('void main() {}\n')
+                    (root / 'lib/a.txt').write_text('normalized input\n')
+                    wait(lambda: outputs(root) and all(json.loads(data)['input'] == 'normalized input\n'
+                                                       for data in outputs(root).values()), proc, log)
+                    stages.append(outputs(root))
+                    assert all(json.loads(data)['options']['value'] == 'named-release'
+                               for data in stages[-1].values()), (mode, stages, log.read_text())
+                    ordinary = root / 'build.yaml'
+                    ordinary.write_text(ordinary.read_text() + '\n# recognized config change\n')
+                    wait(lambda: outputs(root) and all(json.loads(data)['options']['value'] == 'normalized-new'
+                                                       for data in outputs(root).values()), proc, log)
+                    stages.append(outputs(root))
+                    snapshots.append(stages)
+                finally:
+                    if proc.poll() is None:
+                        os.killpg(proc.pid, signal.SIGINT)
+                    proc.wait(timeout=15)
+        assert snapshots[0] == snapshots[1], (key, snapshots)
+
+
 def main():
     temporary = Path(tempfile.mkdtemp(prefix='settings-correctness-'))
     ENV.setdefault('BUILD_RUNNER_ACCELERATOR_CACHE', str(temporary / 'accelerator-cache'))
@@ -161,6 +255,11 @@ def main():
                   '--define=:settings=text=a=b,c', '--define=:settings=empty='],
                  ['--config', 'named'], ['--config=named', '--release'],
                  ['--config='], ['--config', '--force-aot'],
+                 ['-cnamed', '-rr'], ['-dr', '-cdir/name'],
+                 [r'-cdir\name'], ['--config=other/name'], ['-cdir/name'],
+                 ['--config=dir/../name'], ['--config=../name'],
+                 ['-c/absolute/name'], ['-c=named'],
+                 ['--config=x/../../invalid', '-cnamed'],
                  ['--config=named', '--define=:marker=enabled=true'],
                  ['--config=missing', '-c', 'named', '-r', '--no-release', '--release',
                   '--define=settings_builder_app|settings=value=combined'],
@@ -194,7 +293,8 @@ def main():
         # Errors preserve stock codes/output retention in auto/dart, and rust
         # fails explicitly. Syntax failures route before native acquisition.
         bad_cases = [['--define'], ['--define=x=y'], ['--release=true'], ['--config'],
-                     ['--config=missing'], ['--define=:settings=x=1',
+                     ['--config=missing'], ['-cdir/missing'], ['--config=x/../../outside'],
+                     ['-rcnamed'], ['-rd=1'], ['--define=:settings=x=1',
                        '--define=settings_builder_app|settings=x=2']]
         for flags in bad_cases:
             code, _ = execute(stock(reference, [*flags, '--force-jit']), reference)
@@ -211,7 +311,7 @@ def main():
         # Non-JSON values are exact strings, invalid builder option types fail
         # as a whole (probe refuses the mapping, then auto invokes stock).
         for mode in ('auto', 'dart'):
-            flags = ['--config=named', '--release', '--define=:settings=value=forwarded']
+            flags = ['-cdir/name', '-rr', '--define=:settings=value=forwarded']
             check(reference, native, flags, mode=mode)
         for flags in (['--define=:settings=suffix=42'],):
             code, _ = execute(stock(reference, [*flags, '--force-jit']), reference)
@@ -232,7 +332,7 @@ def main():
         early, early_stock = temporary / 'early', temporary / 'early-stock'
         prepare(early)
         prepare(early_stock)
-        flags = ['--config=named', '--release', '--define=:settings=value=early',
+        flags = ['-cdir/name', '-rr', '--define=:settings=value=early',
                  '--build-filter=lib/a.alternate', '--force-jit']
         expected_code, _ = execute(stock(early_stock, flags), early_stock)
         code, output = execute(launcher(early, 'auto', flags=flags), early,
@@ -244,7 +344,7 @@ def main():
         # A missing selected file is known before acquisition or generation.
         missing = temporary / 'missing'
         prepare(missing)
-        flags = ['--config=missing', '--release', '--define=:settings=value=missing', '--force-jit']
+        flags = [r'-cdir\missing', '-rr', '--define=:settings=value=missing', '--force-jit']
         expected_code, _ = execute(stock(missing, flags), missing)
         code, output = execute(launcher(missing, 'auto', flags=flags), missing,
                                {**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/missing-native-frontend'})
@@ -261,7 +361,7 @@ def main():
             prepare(root)
             path = root / 'build.yaml'
             path.write_text(path.read_text().replace('package:settings_builder_app/builder.dart', 'lib/builder.dart'))
-        flags = ['--config=named', '--release', '--define=:settings=value=late']
+        flags = [r'-cdir\name', '-rr', '--define=:settings=value=late']
         check(late_stock, late, flags, mode='auto')
         assert (late / '.dart_tool/build_runner_accelerator/dynamic_worker.dart').exists()
         code, _ = execute(launcher(late, 'rust', flags=flags), late)
@@ -271,11 +371,11 @@ def main():
         empty, empty_stock = temporary / 'empty', temporary / 'empty-stock'
         for root in (empty, empty_stock):
             prepare(root)
-            (root / 'build.empty.yaml').write_text(
+            (root / 'build.dir/empty.yaml').write_text(
                 'targets:\n  $default:\n    builders:\n'
                 '      settings_builder_app:settings: {enabled: false}\n'
                 '      settings_builder_app:marker: {enabled: false}\n')
-        flags = ['--config=empty', '--release', '--define=:settings=value=empty']
+        flags = ['-cdir/empty', '-rr', '--define=:settings=value=empty']
         check(empty_stock, empty, flags, mode='auto')
         manifest = json.loads((empty / '.dart_tool/build_runner_accelerator/builder-manifest.json').read_text())
         assert manifest['builders'] == []
@@ -286,10 +386,12 @@ def main():
         # are compared after changing settings in the same workspace/cache.
         warmed = temporary / 'prewarm'
         prepare(warmed)
-        flags = ['--config=named', '--release', '--define=:settings=value=warmed']
+        flags = [r'-cdir\name', '-rr', '--define=:settings=value=warmed']
         ok(launcher(warmed, 'rust', command='prewarm', flags=flags), warmed)
         assert outputs(warmed) == {}
         check(reference, warmed, flags, compile_flag='--force-aot')
+        check(reference, warmed, ['-cother/name', '-rr'], compile_flag='--force-aot')
+        check(reference, warmed, ['-cdir/../name'], compile_flag='--force-aot')
         check(reference, warmed, [], compile_flag='--force-aot')
         check(reference, warmed, flags)
         ok(launcher(warmed, 'rust', command='prewarm', flags=[*flags, '--background']), warmed)
@@ -304,10 +406,10 @@ def main():
 
         # Watch reloads selected configuration and default configuration. Keep
         # an AOT worker resident to exercise artifact/catalog invalidation.
-        for selected in (False, True):
-            flags = ['--config=named'] if selected else []
+        for selected in (None, 'named', 'dir/name'):
+            flags = [f'-c{selected}'] if selected else []
             check(reference, native, flags, compile_flag='--force-aot')
-            path = 'build.named.yaml' if selected else 'build.yaml'
+            path = f'build.{selected}.yaml' if selected else 'build.yaml'
             before = (reference / path).read_text()
             after = (before.replace('named-dev', 'watch-new') if selected
                      else before.replace('global-dev', 'watch-new'))
@@ -325,6 +427,8 @@ def main():
                 (root / path).write_text(before)
                 (root / 'lib/a.txt').write_text('a\n')
             check(reference, native, flags)
+        watch_nested_reserved_directory(temporary)
+        watch_normalized_config_paths(temporary)
         watch_topology_boundary(temporary)
         print('settings-compatibility: PASS', flush=True)
     except BaseException:

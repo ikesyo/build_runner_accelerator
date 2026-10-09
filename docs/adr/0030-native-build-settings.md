@@ -42,7 +42,8 @@ reload differs from fresh builds for mapping/enablement changes. Auto hands the
 complete invocation to fresh stock watch; rust errors before actions. Value-only
 configuration changes remain native.
 
-Compact short spellings and config path semantics remain stock-only. Ambiguous
+The original compact short spelling/config path boundary is replaced by
+[ADR 0031](0031-stock-settings-spellings-and-paths.md). Ambiguous
 package overrides and unsupported/empty manifests remain fallback/error cases.
 No partial application or silent loss of settings is permitted.
 

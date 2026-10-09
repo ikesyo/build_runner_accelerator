@@ -42,13 +42,13 @@ fn main() -> io::Result<()> {
     }
     let missing_config = if options.native_supported() && options.mode != cli::FrontendMode::Dart {
         cli::BuildSettings::parse(&options.stock_arguments)?
-            .config
-            .filter(|name| !options.root.join(format!("build.{name}.yaml")).is_file())
+            .config_path()?
+            .filter(|name| !options.root.join(name.clone()).is_file())
     } else {
         None
     };
     if let Some(name) = &missing_config {
-        eprintln!("configuration file not found: build.{name}.yaml");
+        eprintln!("configuration file not found: {name}");
     }
     if !options.native_supported()
         || options.mode == cli::FrontendMode::Dart
@@ -104,6 +104,6 @@ fn main() -> io::Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: build_runner_accelerator <build|watch|prewarm|aot-cache-key> [--root PATH] [--dart PATH] [--worker PACKAGE:EXECUTABLE] [--jobs N] [--mode auto|rust|dart] [--background] [--force-aot|--force-jit] [--delete-conflicting-outputs|-d] [--define BUILDER=OPTION=VALUE] [--release|--no-release|-r] [--config NAME|-c NAME]\nSettings apply to build/watch/prewarm. Development is default; last release/config wins; duplicate defines fail. Config paths and compact short options use stock.\nWatch application/output topology changes use stock (auto) or error (rust).\n--worker is an internal artifact override for tests/diagnostics, not a third-party extension API.\nUnsupported stock commands/options: auto/dart forward unchanged; rust rejects. --build-filter uses stock. -- stops accelerator option parsing."
+        "usage: build_runner_accelerator <build|watch|prewarm|aot-cache-key> [--root PATH] [--dart PATH] [--worker PACKAGE:EXECUTABLE] [--jobs N] [--mode auto|rust|dart] [--background] [--force-aot|--force-jit] [--delete-conflicting-outputs|-d] [--define BUILDER=OPTION=VALUE] [--release|--no-release|-r] [--config NAME|-c NAME]\nSettings apply to build/watch/prewarm. Development is default; last release/config wins; duplicate defines fail. -cNAME and grouped -rd/-dr follow stock parsing; config uses AssetId path normalization.\nWatch application/output topology changes use stock (auto) or error (rust).\n--worker is an internal artifact override for tests/diagnostics, not a third-party extension API.\nUnsupported stock commands/options: auto/dart forward unchanged; rust rejects. --build-filter uses stock. -- stops accelerator option parsing."
     );
 }

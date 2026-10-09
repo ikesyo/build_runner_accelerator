@@ -37,7 +37,9 @@ Future<int> runLauncher(List<String> arguments) async {
       options.dartArguments.skip(3).toList(),
     ).config;
     if (config != null &&
-        !File('${options.root}/build.$config.yaml').existsSync()) {
+        !File(
+          '${options.root}/${BuildSettings.configPath(config)}',
+        ).existsSync()) {
       unsupportedReason = 'configuration file not found: build.$config.yaml';
       if (options.mode == 'rust' || options.command == 'aot-cache-key') {
         throw StateError(unsupportedReason);
@@ -174,7 +176,8 @@ Stock --build-filter, --output, --workspace,
 --delete-conflicting-outputs / -d are accepted by native build/watch as retired
 stock compatibility flags: they have no effect. They are never auto-added.
 Config/define/release apply to native build/watch/prewarm for supported manifests.
-Define duplicates are errors. Compact short options and config paths use stock.
+Define duplicates are errors. -cNAME and grouped -rd/-dr follow stock parsing.
+Config resolves build.<name>.yaml using stock AssetId path normalization.
 Watch application/output topology changes use stock (auto) or error (rust).
 -- ends accelerator option parsing and is retained for stock.
 Command --help uses stock help (auto/dart); leading --help is launcher help.

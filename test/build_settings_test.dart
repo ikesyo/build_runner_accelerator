@@ -1,3 +1,4 @@
+import 'package:build/build.dart';
 import 'package:build_runner/src/build_runner_command_line.dart';
 import 'package:build_runner/src/build_plan/build_options.dart';
 import 'package:build_runner/src/build_plan/build_paths.dart';
@@ -11,6 +12,18 @@ void main() {
       [],
       ['--release'],
       ['--no-release'],
+      ['-cnamed', '-rrd', '--no-release', '-dr', '-cother'],
+      ['-crd'],
+      ['-c--force-aot', '--force-jit'],
+      ['-c=named'], // '=' is part of the attached value, unlike --config=.
+      ['-c/path/to/name'],
+      ['--config=dir/name'],
+      [r'--config=dir\name'],
+      ['--config=dir/../named'],
+      ['--config=../named'], // The 'build.' prefix makes '..' a normal segment.
+      ['--config=x/../../invalid', '-cnamed'], // Only the last value resolves.
+      ['--config', '-rd'], // A value must not be expanded into flags.
+
       ['--define==x=1', '--define=:=x=2'],
       ['-r', '--no-release', '--release'],
       ['--config', 'one', '-c', 'two', '--config='],
@@ -38,6 +51,16 @@ void main() {
       );
       expect(native.release, stock.isReleaseBuild);
       expect(native.config, stock.configKey);
+      expect(
+        native.deletionFlag,
+        cli.removedOptionsUsed.contains(deleteFilesByDefaultOption),
+      );
+      if (stock.configKey != null) {
+        expect(
+          BuildSettings.configPath(native.config!),
+          AssetId('example', 'build.${stock.configKey}.yaml').path,
+        );
+      }
       expect(native.overrides('example'), {
         for (final entry in stock.builderConfigOverrides.entries)
           entry.key: entry.value.asMap(),
@@ -71,7 +94,7 @@ void main() {
       'aot-prewarm',
       'aot-cache-key',
     ]) {
-      final flags = ['--config', 'named', '--release', '--define=:b=x=a=b,c'];
+      final flags = ['-cdir/named', '-rr', '--define=:b=x=a=b,c'];
       for (final mode in ['auto', 'rust', 'dart']) {
         final options = LauncherOptions.parse([
           command,
@@ -102,6 +125,18 @@ void main() {
       expect(options.forceAot, isFalse);
       expect(options.forceJit, isTrue);
       expect(BuildSettings.parse(['--config', '-d']).deletionFlag, isFalse);
+      expect(
+        LauncherOptions.parse([command, '--config', '-rd']).nativeUnsupported,
+        isFalse,
+      );
+      if (command == 'prewarm') {
+        for (final mode in ['auto', 'rust', 'dart']) {
+          expect(
+            () => LauncherOptions.parse([command, '--mode=$mode', '-rd']),
+            throwsFormatException,
+          );
+        }
+      }
     }
   });
 
@@ -113,8 +148,12 @@ void main() {
       ['--release=true'],
       ['--no-release=false'],
       ['--config'],
-      ['--config=../other'],
-      ['-cnamed'],
+      ['--config=x/../../other'],
+      ['-rcnamed'],
+      ['-rd=1'],
+      ['-cx\nname'],
+      ['-c=named\n'],
+      ['--config=named\n'],
     ]) {
       final options = LauncherOptions.parse(['build', ...arguments]);
       expect(options.nativeUnsupported, isTrue);

@@ -50,7 +50,9 @@ keep-modified-outputs, only-check, logging, serve options and other stock
 options remain on fallback. See the complete [CLI table](../README.md).
 
 Native build/watch/prewarm also support `--define`, `--release` / `-r`,
-`--no-release`, and `--config NAME` / `-c NAME`. Settings are carried in the
+`--no-release`, and `--config NAME` / `-c NAME` / `-cNAME`. Grouped `-rd`
+flags and config names with path separators use stock parsing and AssetId
+normalization. Settings are carried in the
 same original stock vector through early and manifest-time fallback. Prewarm
 resolves these settings in both foreground and detached execution; dart skips.
 See [configuration resolution and cache reuse](configuration.md).
