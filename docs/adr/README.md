@@ -46,8 +46,8 @@ boundary rather than restoring commit-level history.
 | [0028](0028-setup-time-prewarm-command.md) | Setup-time `prewarm` command and single-flight worker AOT compiles |
 | [0029](0029-cli-routing-and-fallback.md) | CLI capability routing, lossless stock fallback and process lifecycle |
 | [0030](0030-compatibility-cleanup-and-disposable-state.md) | 0.x compatibility cleanup, internal worker IPC and disposable state |
-| [0030](0030-native-build-settings.md) | Native configuration resolution, CLI overrides and cache/watch invalidation |
-| [0031](0031-stock-settings-spellings-and-paths.md) | Stock settings abbreviations, config AssetId paths and watch reload spelling |
+| [0031](0031-native-build-settings.md) | Native configuration resolution, CLI overrides and cache/watch invalidation |
+| [0032](0032-stock-settings-spellings-and-paths.md) | Stock settings abbreviations, config AssetId paths and watch reload spelling |
 
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for

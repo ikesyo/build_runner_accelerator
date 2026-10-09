@@ -9,7 +9,7 @@ The implementation follows `BuildRunnerCommandLine`,
 
 ## CLI and resolution
 
-Build/watch/prewarm (including detached prewarm and the aot-prewarm alias)
+Build/watch/prewarm (including detached prewarm)
 resolve `--define`, `--release`, `--no-release`, and `--config` consistently.
 Long options accept separate values and `=VALUE`. `-r` and `-c NAME` are
 supported, including attached `-cNAME` and grouped `-rd` / `-dr` (also

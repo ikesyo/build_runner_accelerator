@@ -87,13 +87,7 @@ void main() {
   });
 
   test('launcher keeps settings in native and both fallback vectors', () {
-    for (final command in [
-      'build',
-      'watch',
-      'prewarm',
-      'aot-prewarm',
-      'aot-cache-key',
-    ]) {
+    for (final command in ['build', 'watch', 'prewarm', 'aot-cache-key']) {
       final flags = ['-cdir/named', '-rr', '--define=:b=x=a=b,c'];
       for (final mode in ['auto', 'rust', 'dart']) {
         final options = LauncherOptions.parse([

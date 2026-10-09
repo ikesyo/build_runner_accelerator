@@ -1,4 +1,4 @@
-# 0030: Native build settings and configuration invalidation
+# 0031: Native build settings and configuration invalidation
 
 Status: Accepted
 
@@ -43,8 +43,8 @@ complete invocation to fresh stock watch; rust errors before actions. Value-only
 configuration changes remain native.
 
 The original compact short spelling/config path boundary is replaced by
-[ADR 0031](0031-stock-settings-spellings-and-paths.md). Ambiguous
-package overrides and unsupported/empty manifests remain fallback/error cases.
+[ADR 0032](0032-stock-settings-spellings-and-paths.md). Ambiguous
+package overrides and unsupported manifests remain fallback/error cases.
 No partial application or silent loss of settings is permitted.
 
 ## Validation and consequences

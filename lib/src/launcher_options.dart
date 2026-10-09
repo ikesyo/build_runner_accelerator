@@ -198,12 +198,7 @@ class LauncherOptions {
       ]);
     var nativeUnsupported =
         commandPosition != 0 ||
-        !const {
-          'build',
-          'watch',
-          'prewarm',
-          'aot-cache-key',
-        }.contains(command);
+        !const {'build', 'watch', 'prewarm', 'aot-cache-key'}.contains(command);
     try {
       final settings = BuildSettings.parse(passthrough);
       if (!const {'build', 'watch'}.contains(command) &&

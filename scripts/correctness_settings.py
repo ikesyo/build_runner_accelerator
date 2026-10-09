@@ -367,7 +367,7 @@ def main():
         code, _ = execute(launcher(late, 'rust', flags=flags), late)
         assert code != 0
 
-        # Successfully generated empty manifest also takes the late fallback.
+        # A valid empty manifest stays native after disabling all builders.
         empty, empty_stock = temporary / 'empty', temporary / 'empty-stock'
         for root in (empty, empty_stock):
             prepare(root)
@@ -379,8 +379,8 @@ def main():
         check(empty_stock, empty, flags, mode='auto')
         manifest = json.loads((empty / '.dart_tool/build_runner_accelerator/builder-manifest.json').read_text())
         assert manifest['builders'] == []
-        code, _ = execute(launcher(empty, 'rust', flags=flags), empty)
-        assert code != 0
+        check(empty_stock, empty, flags, mode='rust')
+        assert outputs(empty) == {}
 
         # Prewarm writes no outputs, including detached prewarm. AOT and JIT
         # are compared after changing settings in the same workspace/cache.

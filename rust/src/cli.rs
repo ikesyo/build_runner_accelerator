@@ -209,13 +209,7 @@ impl Options {
         }
         matches!(
             self.command.as_str(),
-            "build"
-                | "watch"
-                | "prewarm"
-                | "aot-cache-key"
-                | "--help"
-                | "-h"
-                | "--version"
+            "build" | "watch" | "prewarm" | "aot-cache-key" | "--help" | "-h" | "--version"
         ) && BuildSettings::parse(&self.stock_arguments).is_ok_and(|settings| {
             matches!(self.command.as_str(), "build" | "watch") || !settings.deletion_flag
         })
@@ -655,7 +649,7 @@ mod tests {
 
     #[test]
     fn settings_values_and_compile_flags_are_not_confused() {
-        for command in ["build", "watch", "prewarm", "aot-prewarm", "aot-cache-key"] {
+        for command in ["build", "watch", "prewarm", "aot-cache-key"] {
             let options = super::Options::parse(
                 [
                     command,
