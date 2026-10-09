@@ -453,6 +453,36 @@ def configuration_fallback(temporary):
     configuration_inactive_factories(empty_stock, empty)
 
 
+def configuration_publication_recovery(reference, native, compile_flag):
+    """Recover the reachable state between worker and manifest publication."""
+    state = native / '.dart_tool/build_runner_accelerator'
+    manifest, worker = state / 'builder-manifest.json', state / 'dynamic_worker.dart'
+    committed_manifest, committed_worker = manifest.read_bytes(), worker.read_bytes()
+    retained = outputs(native)
+    ok(launcher(native, 'rust', command='prewarm',
+                flags=['--config=off', compile_flag]), native)
+    assert worker.read_bytes() != committed_worker
+    assert outputs(native) == retained == outputs(reference)
+    # The old manifest plus the new, valid empty catalog is exactly the
+    # state left by interruption before the new manifest's atomic rename.
+    manifest.write_bytes(committed_manifest)
+    inputs = {root / 'lib/a.txt': (root / 'lib/a.txt').read_bytes()
+              for root in (reference, native)}
+    try:
+        for path, content in inputs.items():
+            path.write_bytes(content + b'publication recovery\n')
+        check(reference, native, [], compile_flag=compile_flag)
+        assert outputs(native) != retained
+        assert worker.read_bytes() == committed_worker
+        assert 'No work to do' in check(reference, native, [], compile_flag=compile_flag)
+    finally:
+        for path, content in inputs.items():
+            path.write_bytes(content)
+    check(reference, native, [], compile_flag=compile_flag)
+    assert outputs(native) == retained
+    print(f'settings publication recovery: PASS {compile_flag}', flush=True)
+
+
 def configuration_compile(temporary, reference):
     # Prewarm writes no outputs, including detached prewarm. AOT and JIT
     # are compared after changing settings in the same workspace/cache.
@@ -465,6 +495,7 @@ def configuration_compile(temporary, reference):
     check(reference, warmed, ['-cother/name', '-rr'], compile_flag='--force-aot')
     check(reference, warmed, ['-cdir/../name'], compile_flag='--force-aot')
     check(reference, warmed, [], compile_flag='--force-aot')
+    configuration_publication_recovery(reference, warmed, '--force-aot')
     check(reference, warmed, flags)
     ok(launcher(warmed, 'rust', command='prewarm', flags=[*flags, '--background']), warmed)
     deadline = time.monotonic() + 180
@@ -483,6 +514,7 @@ def configuration_compile(temporary, reference):
     assert outputs(reference) == outputs(warmed) == {}
     check(reference, warmed, [])
     assert outputs(warmed)
+    configuration_publication_recovery(reference, warmed, '--force-jit')
 
 
 def configuration_watch(reference, native, selected, compile_flag='--force-aot'):

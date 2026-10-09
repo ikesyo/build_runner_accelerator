@@ -8,10 +8,10 @@ import 'package:test/test.dart';
 
 void main() {
   test('launcher compilation excludes YAML configuration parsers', () async {
-    final launcher = (await Isolate.resolvePackageUri(
-      Uri.parse('package:build_runner_accelerator/src/launcher.dart'),
+    final packageLibrary = (await Isolate.resolvePackageUri(
+      Uri.parse('package:build_runner_accelerator/'),
     ))!;
-    final packageRoot = File.fromUri(launcher).parent.parent.parent;
+    final packageRoot = Directory.fromUri(packageLibrary.resolve('..'));
     final temporary = await Directory.systemTemp.createTemp('launcher-deps-');
     addTearDown(() => temporary.delete(recursive: true));
     final depfile = File('${temporary.path}/launcher.d');

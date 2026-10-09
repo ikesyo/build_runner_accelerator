@@ -75,7 +75,7 @@ Cold CPU medians are 44.820 / 46.251 / 45.157 seconds. Cold ranges are
 35.290–37.521 / 36.364–38.590 / 35.426–37.729 seconds. See the
 [raw measurements](native-settings-cold-2026-10.json) for all wall/CPU samples,
 commands, identities and launcher diagnostics. The initial invalid harness
-attempt had an unre-based path dependency, failed before the first native
+attempt had an unrebased path dependency, failed before the first native
 build, and is not part of this complete run.
 
 The fix removes a measurable launcher compilation cost. In this small sample,
@@ -93,3 +93,26 @@ before/fixed cold comparison by supplying the pre-fix checkout as
 `--baseline-root`, the fixed checkout as `--candidate-root`, and their shared
 release binary as `--native`. Its warm edits append comments, unlike the
 output-changing edits above; those warm numbers should not be conflated.
+
+## Worker-source binding follow-up
+
+The subsequent review fix binds cached manifests to their generated worker
+source ([ADR 0033](../adr/0033-manifest-worker-source-binding.md)). It adds one
+local worker read and FNV-1a digest calculation during cache acceptance. The
+cold/incremental table above predates this fix and is not a measurement of it.
+
+On the same machine and SDKs, compare release native binaries from `3b79e01`
+and that commit plus the binding fix. Use the current source launcher for both,
+with `--mode=rust --jobs=1 --force-aot`, retaining the settings fixture's default
+configuration, workspace and cache. After one untimed no-op per binary, run
+15 alternating pairs, reversing order in every other pair. No verification or
+compilation runs concurrently. Every measured build reports `No work to do`,
+exits successfully and retains bytes identical to stock's `.out`/`.marker`
+outputs. The worker source is 511 bytes.
+
+Launcher-inclusive no-op medians are 0.554 s before binding and 0.550 s after;
+CPU medians are 0.950 / 0.940 s. This small fixture shows no measurable increase
+above launcher noise; it does not establish the cost for large worker catalogs
+or remeasure cold builds. [Raw samples and commands](native-settings-binding-noop-2026-10.json)
+record all 30 invocations, binary hashes and output hashes. Binding itself does
+not add YAML dependencies to the launcher or change compile-artifact identity.

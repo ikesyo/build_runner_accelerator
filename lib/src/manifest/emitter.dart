@@ -20,7 +20,7 @@ Future<void> emitWorkerEntrypoint(
   await _writeAtomically(workerFile, workerSource(catalogEntries));
 }
 
-/// Emits the normalized manifest and the worker entrypoint atomically.
+/// Publishes each artifact atomically, binding the manifest to its worker source.
 Future<void> emitManifestArtifacts({
   required String manifestPath,
   required String workerEntrypoint,
@@ -34,16 +34,28 @@ Future<void> emitManifestArtifacts({
   final workerFile = File(workerEntrypoint);
   await manifestFile.parent.create(recursive: true);
   await workerFile.parent.create(recursive: true);
-  await _writeAtomically(workerFile, workerSource(catalogEntries));
+  final source = workerSource(catalogEntries);
+  await _writeAtomically(workerFile, source);
   final manifest = <String, dynamic>{
     'version': _manifestVersion,
     'fingerprint': fingerprint,
     'trigger_digest': triggerDigest,
     'worker_entrypoint': workerFile.absolute.path,
+    'worker_source_digest': workerSourceDigest(source),
     'builders': builders.toList(),
     'definitions': definitions.toList(),
   };
   await _writeAtomically(manifestFile, jsonEncode(manifest) + '\n');
+}
+
+/// FNV-1a over UTF-8, matching Rust's disposable-state `digest_bytes` identity.
+String workerSourceDigest(String source) {
+  var hash = 0xcbf29ce484222325;
+  for (final byte in utf8.encode(source)) {
+    hash = (hash ^ byte) * 0x100000001b3;
+  }
+  return (hash >>> 32).toRadixString(16).padLeft(8, '0') +
+      (hash & 0xffffffff).toRadixString(16).padLeft(8, '0');
 }
 
 String workerSource(Iterable<CatalogEntry> entries) {

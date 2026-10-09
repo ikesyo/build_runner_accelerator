@@ -12,6 +12,8 @@ pub(crate) struct BuilderManifestFile {
     pub(crate) version: u32,
     pub(crate) fingerprint: String,
     pub(crate) worker_entrypoint: String,
+    #[serde(default)]
+    pub(crate) worker_source_digest: Option<String>,
     pub(crate) trigger_digest: String,
     pub(crate) builders: Vec<BuilderManifestDefinition>,
     pub(crate) definitions: Vec<BuilderManifestDefinition>,

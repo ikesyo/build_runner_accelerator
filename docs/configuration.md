@@ -79,6 +79,13 @@ lifecycle; cached manifests from before this rule are invalidated.
 Inactive multi-factory builders retain per-factory cleanup definitions without
 instantiating their factories; active applications still require runtime probes.
 
+The manifest also records the generated worker's source digest. Before reuse,
+native checks the local worker bytes against that digest; a missing digest or
+mismatched catalog regenerates the pair. This recovers an interrupted settings
+switch that published the new worker before its manifest, and rejects mixed
+restored caches. Older cached manifests without this binding are regenerated.
+See [ADR 0033](adr/0033-manifest-worker-source-binding.md).
+
 Worker instances are scoped to configured builder applications and receive
 resolved options on each build request. Watch replaces the resident pool when the manifest identity
 changes, ensuring that pinned JIT/AOT artifacts cannot retain an old catalog.

@@ -157,6 +157,19 @@ fn read_manifest(
     if !expected_worker_entrypoint.is_file() {
         return Ok(None);
     }
+    // The worker is published before the manifest. An interrupted generation
+    // or a mixed restored cache must not pair an old plan with a new catalog.
+    let Some(expected_digest) = manifest.worker_source_digest.as_deref() else {
+        return Ok(None);
+    };
+    let worker_source = match fs::read(expected_worker_entrypoint) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if crate::digest::digest_bytes(&worker_source) != expected_digest {
+        return Ok(None);
+    }
     // Rebase a restored cache to this workspace. Never run a worker from a
     // stale absolute manifest path when the local generated worker is missing.
     manifest.worker_entrypoint = expected_worker_entrypoint.to_string_lossy().into_owned();
@@ -735,6 +748,7 @@ mod tests {
         fs::write(&stale, "stale worker").unwrap();
         let mut valid = serde_json::json!({
             "version": 9, "fingerprint": "same", "trigger_digest": "stock", "worker_entrypoint": stale,
+            "worker_source_digest": crate::digest::digest_bytes(b"local worker"),
             "definitions": [{"id": "app:copy", "kind": "normal", "extensions": [{"input_suffix": ".txt", "input_match": "suffix", "input_anchored": false, "output_suffixes": [".out"]}], "build_to": "source", "phase": 0}],
             "builders": [{"id": "app:copy", "kind": "normal", "build_to": "source", "phase": 0, "target": "app:app", "package": "app", "is_root": true, "generate_for": ["**"]}]
         });
@@ -763,6 +777,24 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(hit.worker_entrypoint, local.to_string_lossy());
+        fs::write(&local, "a different catalog").unwrap();
+        assert!(
+            super::read_manifest(&path, "same", &local)
+                .unwrap()
+                .is_none()
+        );
+        fs::write(&local, "local worker").unwrap();
+        let mut unbound = valid.clone();
+        unbound
+            .as_object_mut()
+            .unwrap()
+            .remove("worker_source_digest");
+        fs::write(&path, unbound.to_string()).unwrap();
+        assert!(
+            super::read_manifest(&path, "same", &local)
+                .unwrap()
+                .is_none()
+        );
         let mut empty = valid.clone();
         empty["builders"] = serde_json::json!([]);
         empty["definitions"] = serde_json::json!([]);
