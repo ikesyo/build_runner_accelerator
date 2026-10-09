@@ -40,7 +40,20 @@ fn main() -> io::Result<()> {
             _ => {}
         }
     }
-    if !options.native_supported() || options.mode == cli::FrontendMode::Dart {
+    let missing_config = if options.native_supported() && options.mode != cli::FrontendMode::Dart {
+        cli::BuildSettings::parse(&options.stock_arguments)?
+            .config_path()?
+            .filter(|name| !options.root.join(name.clone()).is_file())
+    } else {
+        None
+    };
+    if let Some(name) = &missing_config {
+        eprintln!("configuration file not found: {name}");
+    }
+    if !options.native_supported()
+        || options.mode == cli::FrontendMode::Dart
+        || missing_config.is_some()
+    {
         if options.mode == cli::FrontendMode::Rust || options.command == "aot-cache-key" {
             return Err(io::Error::other(format!(
                 "native frontend unsupported command or arguments: {} {:?}; use --mode auto or dart",
@@ -51,25 +64,18 @@ fn main() -> io::Result<()> {
             if !options.native_supported() {
                 return Err(io::Error::other("prewarm does not accept stock arguments"));
             }
-            eprintln!("Rust frontend disabled (--mode dart); nothing to prewarm");
+            eprintln!("Rust frontend unavailable or disabled; nothing to prewarm");
             return Ok(());
         }
         return frontend::run_dart_fallback(&options);
     }
-    if options
-        .stock_arguments
-        .iter()
-        .any(|arg| arg == "--force-aot")
-    {
+    let settings = cli::BuildSettings::parse(&options.stock_arguments)?;
+    if settings.force_aot {
         // Single-threaded startup, before any workers are spawned.
         unsafe {
             env::set_var("BUILD_RUNNER_ACCELERATOR_WORKER_AOT", "force");
         }
-    } else if options
-        .stock_arguments
-        .iter()
-        .any(|arg| arg == "--force-jit")
-    {
+    } else if settings.force_jit {
         unsafe {
             env::set_var("BUILD_RUNNER_ACCELERATOR_WORKER_AOT", "0");
         }
@@ -98,6 +104,6 @@ fn main() -> io::Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: build_runner_accelerator <build|watch|prewarm|aot-cache-key> [--root PATH] [--dart PATH] [--worker PACKAGE:EXECUTABLE] [--jobs N] [--mode auto|rust|dart] [--background] [--force-aot|--force-jit] [--delete-conflicting-outputs|-d]\n--worker is an internal artifact override for tests/diagnostics, not a third-party extension API.\nUnsupported stock commands/options: auto/dart forward unchanged; rust rejects. --build-filter uses stock. -- stops accelerator option parsing."
+        "usage: build_runner_accelerator <build|watch|prewarm|aot-cache-key> [--root PATH] [--dart PATH] [--worker PACKAGE:EXECUTABLE] [--jobs N] [--mode auto|rust|dart] [--background] [--force-aot|--force-jit] [--delete-conflicting-outputs|-d] [--define BUILDER=OPTION=VALUE] [--release|--no-release|-r] [--config NAME|-c NAME]\nSettings apply to build/watch/prewarm. Development is default; last release/config wins; duplicate defines fail. -cNAME and grouped -rd/-dr follow stock parsing; config uses AssetId path normalization.\nWatch application/output topology changes use stock (auto) or error (rust).\n--worker is an internal artifact override for tests/diagnostics, not a third-party extension API.\nUnsupported stock commands/options: auto/dart forward unchanged; rust rejects. --build-filter uses stock. -- stops accelerator option parsing."
     );
 }

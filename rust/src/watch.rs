@@ -1,5 +1,6 @@
 use crate::build;
-use crate::cli::Options;
+use crate::builder::{ConfiguredBuilder, RustBuildConfig};
+use crate::cli::{BuildSettings, FrontendMode, Options};
 use crate::frontend::{run_dart_fallback, select_frontend, worker_executable};
 use crate::graph::GraphState;
 use crate::pattern::match_capture_pattern;
@@ -9,15 +10,37 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 pub(crate) fn run(options: &Options) -> io::Result<()> {
     let mut pool = None;
+    let mut pool_signature = None;
+    let mut pool_shape = None;
+    let mut cached_configuration = None;
+    let settings = BuildSettings::parse(&options.stock_arguments)?;
+    let stock_config_path = settings
+        .config
+        .as_ref()
+        .map(|key| format!("build.{key}.yaml"));
+    // Stock reads normalized AssetIds, but its watch reload predicate compares
+    // the unnormalized spelling. Such a file edit is an ordinary source event;
+    // keep the resolved plan until a recognized configuration change occurs.
+    let normalized_config_path = settings.config_path()?;
+    let mut retain_configuration = stock_config_path
+        .as_ref()
+        .is_some_and(|raw| normalized_config_path.as_ref() != Some(raw));
     let mut source_post_process_outputs = BTreeSet::new();
 
-    let initial_native_build = match run_watch_build(options, &mut pool) {
+    let initial_native_build = match run_watch_build(
+        options,
+        &mut pool,
+        &mut pool_signature,
+        &mut pool_shape,
+        &mut cached_configuration,
+        false,
+    ) {
         Ok(native_build) => native_build,
         Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
         Err(error) => {
@@ -27,6 +50,13 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     };
 
     let workspace = Workspace::load(options.root.clone())?;
+    if let Some(path) = &normalized_config_path {
+        let file = workspace.root.join(path);
+        // Stock attributes an event to the deepest package. A selected root
+        // AssetId physically inside a dependency is not a root config event.
+        retain_configuration |= configuration_package_root(&workspace, &file)
+            .is_some_and(|root| root != workspace.root);
+    }
     if initial_native_build {
         source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
     }
@@ -49,17 +79,23 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     );
 
     loop {
-        if !wait_for_relevant_event(
+        let configuration_changed = wait_for_relevant_event(
             &receiver,
             &workspace,
             &source_post_process_outputs,
             options.interval_ms,
-        )? {
-            continue;
-        }
+            stock_config_path.as_deref(),
+        )?;
 
         eprintln!("Change detected; rebuilding");
-        match run_watch_build(options, &mut pool) {
+        match run_watch_build(
+            options,
+            &mut pool,
+            &mut pool_signature,
+            &mut pool_shape,
+            &mut cached_configuration,
+            retain_configuration && !configuration_changed,
+        ) {
             Ok(true) => {
                 source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
             }
@@ -72,14 +108,61 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     }
 }
 
-fn run_watch_build(options: &Options, pool: &mut Option<WorkerPool>) -> io::Result<bool> {
+fn run_watch_build(
+    options: &Options,
+    pool: &mut Option<WorkerPool>,
+    pool_signature: &mut Option<String>,
+    pool_shape: &mut Option<Vec<ConfiguredBuilder>>,
+    cached_configuration: &mut Option<RustBuildConfig>,
+    reuse_configuration: bool,
+) -> io::Result<bool> {
     let workspace = Workspace::load(options.root.clone())?;
-    let Some(build_config) = select_frontend(options, &workspace)? else {
+    let selected = if reuse_configuration && cached_configuration.is_some() {
+        cached_configuration.clone()
+    } else {
+        select_frontend(options, &workspace)?
+    };
+    let Some(build_config) = selected else {
         pool.take();
         run_dart_fallback(options)?;
         return Ok(false);
     };
 
+    // Stock 2.16.2 reloads the plan in watch, but changing application/output
+    // topology does not behave like a fresh build. Do not partially emulate
+    // that transition: hand the complete watch invocation to stock instead.
+    let shape: Vec<_> = build_config
+        .builders
+        .iter()
+        .cloned()
+        .map(|mut builder| {
+            builder.options.clear();
+            // Trigger updates retain the existing native watch contract.
+            std::sync::Arc::make_mut(&mut builder.definition)
+                .triggers
+                .clear();
+            builder
+        })
+        .collect();
+    if pool_shape
+        .as_ref()
+        .is_some_and(|previous| previous != &shape)
+    {
+        pool.take();
+        let reason = "watch configuration changed builder applications or output topology";
+        if options.mode == FrontendMode::Rust {
+            return Err(io::Error::new(io::ErrorKind::Unsupported, reason));
+        }
+        eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
+        run_dart_fallback(options)?;
+        return Ok(false);
+    }
+    *pool_shape = Some(shape);
+    *cached_configuration = Some(build_config.clone());
+    if *pool_signature != build_config.manifest_signature {
+        pool.take();
+        *pool_signature = build_config.manifest_signature.clone();
+    }
     if pool.is_none() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
         let worker_command = worker_executable(options, &build_config)?;
@@ -102,14 +185,22 @@ fn wait_for_relevant_event(
     workspace: &Workspace,
     source_post_process_outputs: &BTreeSet<String>,
     debounce_ms: u64,
+    stock_config_path: Option<&str>,
 ) -> io::Result<bool> {
     loop {
         let event = receiver.recv().map_err(io::Error::other)?;
         let event = event.map_err(io::Error::other)?;
-        if !is_relevant_event(workspace, &event, source_post_process_outputs) {
+        if !is_relevant_event(
+            workspace,
+            &event,
+            source_post_process_outputs,
+            stock_config_path,
+        ) {
             continue;
         }
 
+        let mut configuration_changed =
+            is_configuration_event(workspace, &event, stock_config_path);
         // Coalesce the burst from one save/atomic rename into one build.
         // Only relevant events extend the quiet window, and an absolute
         // deadline caps the total wait, so sustained unrelated writes (for
@@ -128,7 +219,14 @@ fn wait_for_relevant_event(
             }
             match receiver.recv_timeout(remaining) {
                 Ok(Ok(event)) => {
-                    if is_relevant_event(workspace, &event, source_post_process_outputs) {
+                    if is_relevant_event(
+                        workspace,
+                        &event,
+                        source_post_process_outputs,
+                        stock_config_path,
+                    ) {
+                        configuration_changed |=
+                            is_configuration_event(workspace, &event, stock_config_path);
                         quiet_until = Instant::now() + debounce;
                     }
                 }
@@ -136,8 +234,49 @@ fn wait_for_relevant_event(
                 Err(_) => break,
             }
         }
-        return Ok(true);
+        return Ok(configuration_changed);
     }
+}
+
+// Package-config relative URIs are stored as joined paths by Workspace. Stock
+// resolves URI dot segments before assigning an event to the deepest package.
+fn normalized_watch_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn configuration_package_root(workspace: &Workspace, path: &Path) -> Option<PathBuf> {
+    let path = normalized_watch_path(path);
+    workspace
+        .package_roots()
+        .into_iter()
+        .map(|root| normalized_watch_path(&root))
+        .filter(|root| path.starts_with(root))
+        .max_by_key(|root| root.components().count())
+}
+
+fn is_configuration_event(workspace: &Workspace, event: &Event, selected: Option<&str>) -> bool {
+    event.paths.iter().any(|path| {
+        let path = normalized_watch_path(path);
+        let root = configuration_package_root(workspace, &path);
+        let Some(root) = root else { return false };
+        let Ok(relative) = path.strip_prefix(&root) else {
+            return false;
+        };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        relative == "build.yaml"
+            || relative.ends_with(".build.yaml")
+            || (root == workspace.root && selected == Some(relative.as_str()))
+    })
 }
 
 fn load_source_post_process_outputs(root: &Path) -> BTreeSet<String> {
@@ -235,6 +374,7 @@ fn is_relevant_event(
     workspace: &Workspace,
     event: &Event,
     source_post_process_outputs: &BTreeSet<String>,
+    selected: Option<&str>,
 ) -> bool {
     if !matches!(
         event.kind,
@@ -260,6 +400,11 @@ fn is_relevant_event(
             .ok()
             .and_then(Path::to_str)
             .unwrap_or_default();
+        // An explicitly selected config takes precedence over generic native
+        // artifact/generated-output filters, like stock's config predicate.
+        if is_root_package && selected == Some(relative.replace('\\', "/").as_str()) {
+            return true;
+        }
         let components = Path::new(relative).components().collect::<Vec<_>>();
         if components.iter().any(|component| {
             matches!(
@@ -297,6 +442,47 @@ fn is_relevant_event(
 #[cfg(test)]
 mod manifest_tests {
     use super::*;
+
+    #[test]
+    fn selected_config_uses_deepest_package_with_parent_and_child_dependencies() {
+        let parent =
+            std::env::temp_dir().join(format!("accelerator-watch-packages-{}", std::process::id()));
+        let root = parent.join("example");
+        fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        fs::write(root.join("pubspec.yaml"), "name: example\n").unwrap();
+        fs::write(
+            root.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[{"name":"parent","rootUri":"../../"},{"name":"child","rootUri":"../build.dir/"}]}"#,
+        )
+        .unwrap();
+        let workspace = Workspace::load(root).unwrap();
+        let root_config = workspace.root.join("build.named.yaml");
+        assert_eq!(
+            configuration_package_root(&workspace, &root_config),
+            Some(workspace.root.clone())
+        );
+        let root_event =
+            Event::new(EventKind::Modify(notify::event::ModifyKind::Any)).add_path(root_config);
+        assert!(is_configuration_event(
+            &workspace,
+            &root_event,
+            Some("build.named.yaml")
+        ));
+        let child_config = workspace.root.join("build.dir/name.yaml");
+        assert_eq!(
+            configuration_package_root(&workspace, &child_config),
+            Some(workspace.root.join("build.dir"))
+        );
+        let child_event =
+            Event::new(EventKind::Modify(notify::event::ModifyKind::Any)).add_path(child_config);
+        assert!(!is_configuration_event(
+            &workspace,
+            &child_event,
+            Some("build.dir/name.yaml")
+        ));
+        fs::remove_dir_all(parent).unwrap();
+    }
+
     #[test]
     fn watch_reads_explicit_extensions_without_flattened_fields() {
         let root =

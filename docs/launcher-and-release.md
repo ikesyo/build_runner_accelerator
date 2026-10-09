@@ -45,12 +45,20 @@ user-facing option.
 Native build/watch also accept `--delete-conflicting-outputs` and `-d`.
 In the supported build_runner 2.16.2 window these are retired, non-negatable,
 non-operational flags. No path automatically adds them. `--build-filter`,
-output directories, build directories, config/define/release/workspace,
+output directories, build directories, workspace,
 keep-modified-outputs, only-check, logging, serve options and other stock
 options remain on fallback. See the complete [CLI table](../README.md).
 
+Native build/watch/prewarm also support `--define`, `--release` / `-r`,
+`--no-release`, and `--config NAME` / `-c NAME` / `-cNAME`. Grouped `-rd`
+flags and config names with path separators use stock parsing and AssetId
+normalization. Settings are carried in the
+same original stock vector through early and manifest-time fallback. Prewarm
+resolves these settings in both foreground and detached execution; dart skips.
+See [configuration resolution and cache reuse](configuration.md).
+
 Leading help/version belong to the accelerator; command-level help/version
-belong to stock. `prewarm` rejects stock-only arguments in every mode.
+belong to stock. `prewarm` rejects unsupported stock-only arguments in every mode.
 `aot-cache-key` is a native utility with no stock equivalent.
 Stock clean does not remove accelerator graph/worker caches.
 

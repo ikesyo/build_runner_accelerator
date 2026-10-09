@@ -12,6 +12,8 @@ pub(crate) struct BuilderManifestFile {
     pub(crate) version: u32,
     pub(crate) fingerprint: String,
     pub(crate) worker_entrypoint: String,
+    #[serde(default)]
+    pub(crate) worker_source_digest: Option<String>,
     pub(crate) trigger_digest: String,
     pub(crate) builders: Vec<BuilderManifestDefinition>,
     pub(crate) definitions: Vec<BuilderManifestDefinition>,
@@ -60,7 +62,7 @@ pub(crate) struct BuilderManifestDefinition {
     pub(crate) generate_for_exclude: Vec<String>,
     pub(crate) target_sources: Vec<String>,
     pub(crate) target_sources_exclude: Vec<String>,
-    pub(crate) options: BTreeMap<String, Value>,
+    pub(crate) options: serde_json::Map<String, Value>,
     #[serde(default)]
     pub(crate) target: String,
     #[serde(default)]

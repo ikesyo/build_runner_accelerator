@@ -25,7 +25,20 @@ pub(crate) fn select_frontend(
         return Ok(None);
     }
 
-    let fingerprint = workspace.builder_manifest_fingerprint()?;
+    if let Some(name) = crate::cli::BuildSettings::parse(&options.stock_arguments)?.config_path()?
+        && !workspace.root.join(name.clone()).is_file()
+    {
+        return select_dart_fallback(options, &format!("configuration file not found: {name}"));
+    }
+    let fingerprint = match settings_fingerprint(options, workspace) {
+        Ok(fingerprint) => fingerprint,
+        Err(error) => {
+            return select_dart_fallback(
+                options,
+                &format!("cannot read configuration inputs: {error}"),
+            );
+        }
+    };
     let manifest_path = workspace.root.join(MANIFEST_PATH);
     let worker_entrypoint = workspace.root.join(WORKER_ENTRYPOINT_PATH);
     let manifest = match read_manifest(&manifest_path, &fingerprint, &worker_entrypoint)? {
@@ -48,7 +61,15 @@ pub(crate) fn select_frontend(
                         &format!("dynamic builder manifest generation failed: {error}"),
                     );
                 }
-                let refreshed = workspace.builder_manifest_fingerprint()?;
+                let refreshed = match settings_fingerprint(options, workspace) {
+                    Ok(fingerprint) => fingerprint,
+                    Err(error) => {
+                        return select_dart_fallback(
+                            options,
+                            &format!("cannot read configuration inputs: {error}"),
+                        );
+                    }
+                };
                 if refreshed == manifest_fingerprint {
                     break;
                 }
@@ -66,10 +87,6 @@ pub(crate) fn select_frontend(
         }
     };
 
-    if manifest.builders.is_empty() {
-        return select_dart_fallback(options, "no builders are configured in the target graph");
-    }
-
     match rust_build_config_from_manifest(manifest) {
         Ok(config) => Ok(Some(config)),
         Err(error) => select_dart_fallback(
@@ -77,6 +94,47 @@ pub(crate) fn select_frontend(
             &format!("dynamic builder manifest is outside the supported subset: {error}"),
         ),
     }
+}
+
+/// Settings are runtime inputs to both probing and action graph reuse. File
+/// names, absent selected configs, and every override are part of the identity.
+fn settings_fingerprint(options: &Options, workspace: &Workspace) -> io::Result<String> {
+    // Earlier manifests could omit definitions needed to delete disabled outputs.
+    let mut bytes = b"native-settings-v3\0".to_vec();
+    bytes.extend_from_slice(workspace.builder_manifest_fingerprint()?.as_bytes());
+    bytes.extend_from_slice(
+        &serde_json::to_vec(&options.stock_arguments).map_err(io::Error::other)?,
+    );
+    let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
+    let mut paths = std::collections::BTreeSet::new();
+    for entry in fs::read_dir(&workspace.root)? {
+        let entry = entry?;
+        if entry.path().is_file() && entry.file_name().to_string_lossy().ends_with(".build.yaml") {
+            paths.insert(entry.path());
+        }
+    }
+    if let Some(config) = settings.config_path()? {
+        paths.insert(workspace.root.join(config));
+    }
+    for path in paths {
+        bytes.extend_from_slice(
+            path.strip_prefix(&workspace.root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .as_bytes(),
+        );
+        bytes.push(0);
+        match fs::read(path) {
+            Ok(content) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&content);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => bytes.push(0),
+            Err(error) => return Err(error),
+        }
+        bytes.push(0xff);
+    }
+    Ok(crate::digest::digest_bytes(&bytes))
 }
 
 fn read_manifest(
@@ -99,6 +157,19 @@ fn read_manifest(
     if !expected_worker_entrypoint.is_file() {
         return Ok(None);
     }
+    // The worker is published before the manifest. An interrupted generation
+    // or a mixed restored cache must not pair an old plan with a new catalog.
+    let Some(expected_digest) = manifest.worker_source_digest.as_deref() else {
+        return Ok(None);
+    };
+    let worker_source = match fs::read(expected_worker_entrypoint) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if crate::digest::digest_bytes(&worker_source) != expected_digest {
+        return Ok(None);
+    }
     // Rebase a restored cache to this workspace. Never run a worker from a
     // stale absolute manifest path when the local generated worker is missing.
     manifest.worker_entrypoint = expected_worker_entrypoint.to_string_lossy().into_owned();
@@ -117,6 +188,8 @@ fn generate_manifest(
 ) -> io::Result<()> {
     let _wall = crate::wall::Span::new("manifest_generate");
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
+    let settings_json =
+        serde_json::to_string(&options.stock_arguments).map_err(io::Error::other)?;
     // Fill the shared analyzer byte store while this window is otherwise
     // CPU-idle on the Rust side: generator kernel compile/load, the early
     // catalog helper, the overlapped worker AOT compile and the factory
@@ -204,6 +277,7 @@ fn generate_manifest(
                 .arg(&helper)
                 .arg(&workspace.root)
                 .arg(worker_entrypoint)
+                .arg(&settings_json)
                 .current_dir(&workspace.root)
                 .status();
             match result {
@@ -263,6 +337,8 @@ fn generate_manifest(
         .arg(worker_entrypoint)
         .arg("--fingerprint")
         .arg(fingerprint)
+        .arg("--settings-json")
+        .arg(&settings_json)
         .current_dir(&workspace.root)
         .spawn();
     let status = match child_result {
@@ -487,6 +563,11 @@ fn spawn_detached_prewarm(
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_stdout))
         .stderr(Stdio::from(log_stderr));
+    let invocation = [vec!["prewarm".to_owned()], options.stock_arguments.clone()].concat();
+    command.arg("--stock-arguments-json").arg(
+        serde_json::json!({"arguments": options.stock_arguments, "invocation": invocation})
+            .to_string(),
+    );
     if let Some(worker) = &options.worker {
         command.args(["--worker"]).arg(worker);
     }
@@ -667,6 +748,7 @@ mod tests {
         fs::write(&stale, "stale worker").unwrap();
         let mut valid = serde_json::json!({
             "version": 9, "fingerprint": "same", "trigger_digest": "stock", "worker_entrypoint": stale,
+            "worker_source_digest": crate::digest::digest_bytes(b"local worker"),
             "definitions": [{"id": "app:copy", "kind": "normal", "extensions": [{"input_suffix": ".txt", "input_match": "suffix", "input_anchored": false, "output_suffixes": [".out"]}], "build_to": "source", "phase": 0}],
             "builders": [{"id": "app:copy", "kind": "normal", "build_to": "source", "phase": 0, "target": "app:app", "package": "app", "is_root": true, "generate_for": ["**"]}]
         });
@@ -695,6 +777,24 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(hit.worker_entrypoint, local.to_string_lossy());
+        fs::write(&local, "a different catalog").unwrap();
+        assert!(
+            super::read_manifest(&path, "same", &local)
+                .unwrap()
+                .is_none()
+        );
+        fs::write(&local, "local worker").unwrap();
+        let mut unbound = valid.clone();
+        unbound
+            .as_object_mut()
+            .unwrap()
+            .remove("worker_source_digest");
+        fs::write(&path, unbound.to_string()).unwrap();
+        assert!(
+            super::read_manifest(&path, "same", &local)
+                .unwrap()
+                .is_none()
+        );
         let mut empty = valid.clone();
         empty["builders"] = serde_json::json!([]);
         empty["definitions"] = serde_json::json!([]);

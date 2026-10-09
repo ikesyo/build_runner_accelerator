@@ -6,6 +6,11 @@ import 'package:build_runner_accelerator/src/manifest/model.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('worker digest matches Rust FNV-1a UTF-8 identities', () {
+    expect(workerSourceDigest(''), 'cbf29ce484222325');
+    expect(workerSourceDigest('hello'), 'a430d84680aabd0b');
+    expect(workerSourceDigest('builder:日本語'), 'a809354f9cbb004e');
+  });
   test('workerSource is deterministic and groups builder kinds', () {
     final entries = <CatalogEntry>[
       CatalogEntry(
@@ -98,6 +103,10 @@ void main() {
       expect(decoded['fingerprint'], 'fingerprint');
       expect(decoded['trigger_digest'], 'trigger-digest');
       expect(decoded['worker_entrypoint'], worker.absolute.path);
+      expect(
+        decoded['worker_source_digest'],
+        workerSourceDigest(await worker.readAsString()),
+      );
       expect(decoded['builders'], <Map<String, dynamic>>[
         <String, dynamic>{'id': 'example:builder'},
       ]);

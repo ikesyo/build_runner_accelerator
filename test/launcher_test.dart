@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:build_runner_accelerator/src/launcher.dart';
 import 'package:build_runner_accelerator/src/launcher_options.dart'
@@ -6,6 +7,30 @@ import 'package:build_runner_accelerator/src/launcher_options.dart'
 import 'package:test/test.dart';
 
 void main() {
+  test('launcher compilation excludes YAML configuration parsers', () async {
+    final packageLibrary = (await Isolate.resolvePackageUri(
+      Uri.parse('package:build_runner_accelerator/'),
+    ))!;
+    final packageRoot = Directory.fromUri(packageLibrary.resolve('..'));
+    final temporary = await Directory.systemTemp.createTemp('launcher-deps-');
+    addTearDown(() => temporary.delete(recursive: true));
+    final depfile = File('${temporary.path}/launcher.d');
+    final result = await Process.run(Platform.resolvedExecutable, [
+      'compile',
+      'kernel',
+      '--packages=${(await Isolate.packageConfig)!.toFilePath()}',
+      '--depfile=${depfile.path}',
+      '-o',
+      '${temporary.path}/launcher.dill',
+      '${packageRoot.path}/bin/build_runner_accelerator.dart',
+    ]);
+    expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+    final dependencies = (await depfile.readAsString()).replaceAll(r'\', '/');
+    expect(dependencies, isNot(contains('/lib/build_config.dart')));
+    expect(dependencies, isNot(contains('/lib/yaml.dart')));
+    expect(dependencies, contains('/src/key_normalization.dart'));
+  });
+
   test('removed alias fails in every mode', () {
     for (final mode in ['auto', 'rust', 'dart']) {
       expect(

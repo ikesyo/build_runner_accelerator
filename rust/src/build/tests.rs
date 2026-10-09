@@ -38,7 +38,7 @@ fn configured_builder(id: &str, target: &str, target_order: u32, phase: u32) -> 
         generate_for_exclude: Vec::new(),
         target_sources: vec!["**".to_owned()],
         target_sources_exclude: Vec::new(),
-        options: BTreeMap::new(),
+        options: serde_json::Map::new(),
         runtime_extensions: None,
         runtime_post_process_input_extensions: None,
         part_directive_suffix: None,

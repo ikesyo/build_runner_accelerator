@@ -64,7 +64,7 @@ pub(crate) struct ConfiguredBuilder {
     pub(crate) generate_for_exclude: Vec<String>,
     pub(crate) target_sources: Vec<String>,
     pub(crate) target_sources_exclude: Vec<String>,
-    pub(crate) options: BTreeMap<String, Value>,
+    pub(crate) options: serde_json::Map<String, Value>,
     /// A per-application runtime mapping. The static definition remains the
     /// build.yaml ordering/identity source, while this mapping is the exact
     /// Builder instance configuration used for planning.

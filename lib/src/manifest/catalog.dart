@@ -5,18 +5,32 @@ import 'patterns.dart';
 import 'package_graph.dart';
 import 'selection.dart';
 import 'emitter.dart';
+import 'settings.dart';
 
 // This library deliberately does not import Analyzer or runtime mappings.
 // The authoritative generator and the early helper share these exact rules.
-Future<void> generateWorkerCatalog(String root, String workerEntrypoint) async {
+Future<void> generateWorkerCatalog(
+  String root,
+  String workerEntrypoint, {
+  BuildSettings settings = const BuildSettings(),
+}) async {
   final graph = await loadPackageGraph(root);
   final configs = await loadBuildConfigs(graph);
-  final resolved = resolveBuilderCatalog(graph, configs);
+  final configured = settings.config == null
+      ? configs
+      : await loadBuildConfigs(graph, configKey: settings.config);
+  final resolved = resolveBuilderCatalog(
+    graph,
+    configured,
+    definitionConfigs: configs,
+  );
   final selected = selectApplications(
     rootPackageName: resolved.rootPackageName,
     rootConfig: resolved.rootConfig,
     orderedTargets: resolved.orderedTargets,
     definitions: resolved.definitions,
+    release: settings.release,
+    overrides: settings.overrides(graph.root.name),
   );
   if (selected.isNotEmpty) {
     await emitWorkerEntrypoint(workerEntrypoint, earlyCatalogEntries(selected));
@@ -41,8 +55,9 @@ class ResolvedCatalog {
 
 ResolvedCatalog resolveBuilderCatalog(
   PackageGraph packageGraph,
-  Map<String, BuildConfig> configs,
-) {
+  Map<String, BuildConfig> configs, {
+  Map<String, BuildConfig>? definitionConfigs,
+}) {
   final rootConfig = configs[packageGraph.root.name];
   if (rootConfig == null) {
     throw StateError('Root package config was not loaded');
@@ -78,7 +93,7 @@ ResolvedCatalog resolveBuilderCatalog(
     throw StateError('Root target is unavailable: ' + rootTargetKey);
   }
   final definitions = <String, DefinitionInfo>{};
-  for (final config in configs.values) {
+  for (final config in (definitionConfigs ?? configs).values) {
     for (final definition in config.builderDefinitions.values) {
       // Match build_runner's build-script rule: relative imports from
       // dependency packages cannot be imported by the root worker script.

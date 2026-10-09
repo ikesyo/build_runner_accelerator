@@ -144,3 +144,10 @@ measured 37.272 s for stock and 31.644 s for the candidate, with three repeats
 and byte-identical outputs. See the separate
 [cold AOT experiment](benchmarks/cold-aot-2026-10.md) for its environment,
 baseline comparison, warm cases, CPU measurements, and scope.
+
+The native settings change also exposed launcher compilation overhead from
+importing the complete build_config library. The
+[settings cold comparison](benchmarks/native-settings-cold-2026-10.md) records
+the narrower official import, launcher dependency checks, and launcher-inclusive
+main/pre-fix/fixed cold and incremental measurements. Remaining differences
+and the small-fixture limitation are stated explicitly.

@@ -11,18 +11,31 @@ import 'model.dart';
 import 'package_graph.dart';
 
 Future<void> main(List<String> arguments) async {
-  if (arguments.length != 2) {
-    stderr.writeln('usage: trigger_worker <root> <result>');
+  if (arguments.length < 2 || arguments.length > 3) {
+    stderr.writeln('usage: trigger_worker <root> <result> [config-json]');
     exitCode = 64;
     return;
   }
-  await writeManifestTriggers(arguments[0], arguments[1]);
+  await writeManifestTriggers(
+    arguments[0],
+    arguments[1],
+    configKey: arguments.length == 3
+        ? jsonDecode(arguments[2]) as String?
+        : null,
+  );
 }
 
-Future<void> writeManifestTriggers(String root, String resultPath) async {
+Future<void> writeManifestTriggers(
+  String root,
+  String resultPath, {
+  String? configKey,
+}) async {
   Map<String, Object> response;
   try {
-    final configs = await loadBuildConfigs(await loadPackageGraph(root));
+    final configs = await loadBuildConfigs(
+      await loadPackageGraph(root),
+      configKey: configKey,
+    );
     response = manifestTriggerData(configs);
   } on StateError catch (error) {
     if (!error.message.startsWith('Unsupported build trigger')) rethrow;

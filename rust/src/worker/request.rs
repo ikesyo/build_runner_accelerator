@@ -2,7 +2,7 @@ use crate::builder::BuilderKind;
 use crate::protocol::BuildResult;
 use crate::visibility::AssetVisibility;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::io;
 
 #[derive(Clone)]
@@ -10,7 +10,7 @@ pub struct BuildRequest {
     pub builder: String,
     pub input: String,
     pub outputs: Vec<String>,
-    pub options: BTreeMap<String, Value>,
+    pub options: serde_json::Map<String, Value>,
     pub phase: u32,
     pub instance_key: String,
     pub is_root: bool,

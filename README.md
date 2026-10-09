@@ -122,7 +122,9 @@ benchmarks and diagnostics; it is not a supported third-party extension API.
 | `--force-aot`, `--force-jit` | Supported | Retained for stock |
 | `--delete-conflicting-outputs`, `-d` | Accepted as retired compatibility flags | No effect in build_runner 2.16.2; never auto-added |
 | `--build-filter`, build directories | Fallback | Stock owns filtering, dependency demand, and output retention/deletion |
-| `--output` / `-o`, `--config` / `-c`, `--define`, `--release` / `-r`, `--no-release`, `--workspace` | Fallback | Stock |
+| `--define`, `--release` / `-r`, `--no-release`, `--config NAME` / `-c NAME` | Supported for the manifest subset, including prewarm | Native in auto; retained for stock fallback |
+| Attached `-cNAME`, grouped `-rd` / `-dr`, config names containing `/` or `\` | Supported with stock parsing and AssetId normalization | Native in auto; retained for stock fallback |
+| `--output` / `-o`, `--workspace` | Fallback | Stock |
 | `--keep-modified-outputs`, `--only-check`, `--symlink`, `--no-symlink` | Fallback | Stock |
 | `--verbose` / `-v`, `--verbose-durations` | Fallback | Stock logging |
 | `--enable-experiment`, `--dart-jit-vm-arg`, `--dart-aot-perf` (Linux) | Fallback | Stock compilation/profiling |
@@ -136,7 +138,30 @@ help/version are stock requests (and therefore rejected in rust). `--` stops
 accelerator parsing; it and all following arguments are retained. Stock option
 values are kept as values even when they resemble accelerator options.
 The stock argument order is preserved. Invalid accelerator values fail in
-all modes. `prewarm` rejects stock options because it has no stock equivalent.
+all modes. `prewarm` accepts the supported configuration options and rejects
+stock-only options because it has no stock equivalent.
+
+Native configuration follows build_runner 2.16.2: `--define builder=key=value`
+parses valid JSON (including lists, objects and null) or keeps the exact string.
+Additional `=` and commas stay in the value; repeated normalized builder/key
+pairs are errors. Unqualified builder names refer to `name:name`; `:builder`
+refers to a builder in the current package. Defines configure selected builders;
+they do not enable disabled builders. `--release` selects release options,
+`--no-release` selects development options (the default). The last release flag
+and last config name win.
+
+Options merge by top-level key in this order: builder defaults, builder
+mode defaults, target options, target mode options, root global options,
+root global mode options, then CLI defines. Nested values are replaced whole.
+`--config NAME` replaces root targets/global options/triggers with
+`build.NAME.yaml`; builder definitions still come from ordinary `build.yaml`
+and root `<package>.build.yaml` overrides. Missing/invalid configurations use
+stock in auto and report errors in rust. Config changes invalidate the manifest,
+probe and incremental graph. Watch reloads value-only settings and replaces its
+worker pool; application/output topology changes use stock in auto or error in
+rust. Prewarm uses the same resolution and never executes builders.
+See [configuration compatibility](docs/configuration.md) for cache reuse and
+unsupported boundaries.
 
 Output conflicts are handled by the frontend's normal output lifecycle;
 `-d` cannot enable or disable deletion in the supported stock version.

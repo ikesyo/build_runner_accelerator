@@ -1,0 +1,29 @@
+builders:
+  settings:
+    import: 'package:settings_builder_app/builder.dart'
+    builder_factories: [settings]
+    build_extensions: {'.txt': ['.out']}
+    auto_apply: root_package
+    build_to: source
+    defaults:
+      options: {value: default, default_only: true, nested: {default: true}}
+      dev_options: {value: default-dev, mode: dev}
+      release_options: {value: default-release, mode: release}
+  marker:
+    import: 'package:settings_builder_app/builder.dart'
+    builder_factories: [marker]
+    build_extensions: {'.txt': ['.marker']}
+    auto_apply: root_package
+    build_to: source
+global_options:
+  settings_builder_app:settings:
+    options: {value: global, global_only: true, nested: {global: true}}
+    dev_options: {value: global-dev}
+    release_options: {value: global-release}
+targets:
+  $default:
+    builders:
+      settings_builder_app:settings:
+        options: {value: target, target_only: true, nested: {target: true}}
+        dev_options: {value: target-dev}
+        release_options: {value: target-release}

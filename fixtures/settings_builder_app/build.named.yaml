@@ -1,0 +1,16 @@
+# Named configuration replaces targets/global options, not builder definitions.
+builders:
+  settings:
+    import: 'package:settings_builder_app/builder.dart'
+    builder_factories: [ignoredFactory]
+    build_extensions: {'.txt': ['.wrong']}
+targets:
+  $default:
+    builders:
+      settings_builder_app:settings:
+        generate_for: [lib/a.txt]
+        options: {value: named, suffix: .alternate}
+        dev_options: {value: named-dev}
+        release_options: {value: named-release}
+      settings_builder_app:marker:
+        enabled: false

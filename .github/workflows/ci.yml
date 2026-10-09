@@ -121,19 +121,89 @@ jobs:
             scripts/correctness_upgrade.sh
           setup-rust: 'true'
           build-frontend: 'true'
-      - name: Run baseline smoke
-        env:
-          PUB_CACHE: ${{ github.workspace }}/.pub-cache
-          SMOKE_SKIP_RUST_TESTS: '1'
-        run: bash scripts/smoke.sh
-      - name: Run generic watch smoke
-        run: bash scripts/watch_smoke.sh
-      - name: Upgrade obsolete accelerator state
-        env:
-          PUB_CACHE: ${{ github.workspace }}/.pub-cache
-        run: bash scripts/correctness_upgrade.sh
-      - name: Run setup-time prewarm correctness
-        run: bash scripts/correctness_prewarm.sh
+      - name: Prime baseline fixture dependencies
+        shell: bash
+        run: |
+          (cd fixtures/json_serializable_app && dart --suppress-analytics pub get)
+          (cd fixtures/current_json_app && dart --suppress-analytics pub get)
+      - parallel:
+          - name: Run baseline smoke
+            env:
+              PUB_CACHE: ${{ github.workspace }}/.pub-cache
+              SMOKE_SKIP_RUST_TESTS: '1'
+            run: bash scripts/smoke.sh
+          - name: Run generic watch smoke
+            run: bash scripts/watch_smoke.sh
+          - name: Upgrade obsolete accelerator state
+            env:
+              PUB_CACHE: ${{ github.workspace }}/.pub-cache
+            run: bash scripts/correctness_upgrade.sh
+          - name: Run setup-time prewarm correctness
+            run: bash scripts/correctness_prewarm.sh
+
+  integration-settings:
+    name: 'Integration: native build settings (${{ matrix.id }})'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: options
+            first: values
+            second: compact
+            third: watch-default
+            fourth: watch-reserved
+          - id: paths
+            first: paths
+            second: files
+            third: watch-named
+            fourth: watch-dot
+          - id: configuration
+            first: errors
+            second: fallback
+            third: watch-nested
+            fourth: watch-backslash
+          - id: lifecycle
+            first: precedence
+            second: compile
+            third: watch-package
+            fourth: watch-topology
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: integration-settings
+          cache-inputs: |
+            pubspec.lock
+            fixtures/settings_builder_app/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_settings.*
+            scripts/worker.sh
+          setup-rust: 'true'
+          build-frontend: 'true'
+      - name: Prime settings fixture dependencies
+        shell: bash
+        run: (cd fixtures/settings_builder_app && dart --suppress-analytics pub get)
+      - parallel:
+          - name: 'Settings: ${{ matrix.first }}'
+            env:
+              SETTINGS_CASE_GROUP: ${{ matrix.first }}
+            run: bash scripts/correctness_settings.sh
+          - name: 'Settings: ${{ matrix.second }}'
+            env:
+              SETTINGS_CASE_GROUP: ${{ matrix.second }}
+            run: bash scripts/correctness_settings.sh
+          - name: 'Settings: ${{ matrix.third }}'
+            env:
+              SETTINGS_CASE_GROUP: ${{ matrix.third }}
+            run: bash scripts/correctness_settings.sh
+          - name: 'Settings: ${{ matrix.fourth }}'
+            env:
+              SETTINGS_CASE_GROUP: ${{ matrix.fourth }}
+            run: bash scripts/correctness_settings.sh
 
   integration-trigger:
     name: 'Integration: trigger builder'

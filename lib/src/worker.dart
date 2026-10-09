@@ -43,8 +43,15 @@ Future<void> runWorker({
   Map<String, PostProcessBuilderFactory> postProcessCatalog =
       const <String, PostProcessBuilderFactory>{},
 }) async {
-  if (arguments.length == 3 && arguments.first == '--manifest-triggers') {
-    await writeManifestTriggers(arguments[1], arguments[2]);
+  if ((arguments.length == 3 || arguments.length == 4) &&
+      arguments.first == '--manifest-triggers') {
+    await writeManifestTriggers(
+      arguments[1],
+      arguments[2],
+      configKey: arguments.length == 4
+          ? jsonDecode(arguments[3]) as String?
+          : null,
+    );
     return;
   }
   if (arguments.isNotEmpty) {
