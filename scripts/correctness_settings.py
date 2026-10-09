@@ -309,6 +309,9 @@ def configuration_inactive_factories(reference, native):
   settings_builder_app:settings:
     options: {must_not_instantiate: true}
 ''')
+        (root / 'build.partial.yaml').write_text(disabled.read_text().replace(
+            'settings_builder_app:marker:\n        enabled: false',
+            'settings_builder_app:marker:\n        enabled: true'))
         config = root / 'build.yaml'
         config.write_text(config.read_text()
             .replace('builder_factories: [settings]', 'builder_factories: [settings, marker]')
@@ -317,6 +320,8 @@ def configuration_inactive_factories(reference, native):
             .replace('    auto_apply: root_package\n    build_to: source\nglobal_options:',
                      '    auto_apply: none\n    build_to: source\nglobal_options:'))
     check(reference, native, [])
+    check(reference, native, ['--config=partial'])
+    assert set(outputs(native)) == {'lib/a.marker', 'lib/b.marker'}
     check(reference, native, ['--config=off'])
     assert outputs(reference) == outputs(native) == {}
     output = check(reference, native, ['--config=off'])
