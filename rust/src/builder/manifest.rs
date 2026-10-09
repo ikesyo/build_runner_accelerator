@@ -103,13 +103,6 @@ pub(crate) fn rust_build_config_from_manifest(
             ));
         }
     }
-    if definitions.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "builder manifest has no compatible builder definitions",
-        ));
-    }
-
     let mut builders = Vec::new();
     for entry in manifest.builders {
         let definition = definitions.get(entry.id.as_str()).cloned().ok_or_else(|| {

@@ -17,7 +17,11 @@ for lane in stock rust; do
   mkdir -p "$fixture"
   cp "$repo_root/fixtures/json_serializable_app/pubspec.yaml" "$repo_root/fixtures/json_serializable_app/pubspec.lock" "$fixture/"
   cp -R "$repo_root/fixtures/json_serializable_app/lib" "$fixture/"
-  worker_pub_get "$fixture" --offline
+  if [[ "$lane" == stock ]]; then
+    worker_pub_get "$fixture"
+  else
+    worker_pub_get "$fixture" --offline
+  fi
 done
 stock="$temporary_dir/workspace/fixtures/stock"
 native="$temporary_dir/workspace/fixtures/rust"

@@ -695,6 +695,25 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(hit.worker_entrypoint, local.to_string_lossy());
+        let mut empty = valid.clone();
+        empty["builders"] = serde_json::json!([]);
+        empty["definitions"] = serde_json::json!([]);
+        fs::write(&path, empty.to_string()).unwrap();
+        let hit = super::read_manifest(&path, "same", &local)
+            .unwrap()
+            .unwrap();
+        assert!(hit.builders.is_empty());
+        assert!(hit.definitions.is_empty());
+        let config = crate::builder::rust_build_config_from_manifest(hit).unwrap();
+        assert!(config.builders.is_empty());
+        let mut dangling = valid.clone();
+        dangling["definitions"] = serde_json::json!([]);
+        fs::write(&path, dangling.to_string()).unwrap();
+        assert!(
+            super::read_manifest(&path, "same", &local)
+                .unwrap()
+                .is_none()
+        );
         fs::write(&path, [0xff, 0xfe]).unwrap();
         assert!(
             super::read_manifest(&path, "same", &local)
