@@ -47,8 +47,6 @@ boundary rather than restoring commit-level history.
 | [0029](0029-cli-routing-and-fallback.md) | CLI capability routing, lossless stock fallback and process lifecycle |
 | [0030](0030-compatibility-cleanup-and-disposable-state.md) | 0.x compatibility cleanup, internal worker IPC and disposable state |
 | [0031](0031-native-build-settings.md) | Native configuration resolution, CLI overrides and cache/watch invalidation |
-| [0032](0032-stock-settings-spellings-and-paths.md) | Stock settings abbreviations, config AssetId paths and watch reload spelling |
-| [0033](0033-manifest-worker-source-binding.md) | Cached manifest and worker source identity, including interrupted publication recovery |
 
 The wire-level details for ADR 0003 live in
 [protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for

@@ -95,7 +95,7 @@ output-changing edits above; those warm numbers should not be conflated.
 ## Worker-source binding follow-up
 
 The subsequent review fix binds cached manifests to their generated worker
-source ([ADR 0033](../adr/0033-manifest-worker-source-binding.md)). It adds one
+source ([ADR 0031](../adr/0031-native-build-settings.md)). It adds one
 local worker read and FNV-1a digest calculation during cache acceptance. The
 cold/incremental table above predates this fix and is not a measurement of it.
 
