@@ -1,5 +1,9 @@
 # ADR 0021: Packed shared cache stores and digest-keyed dep lookups
 
+The per-key alternatives described below are superseded by
+[ADR 0030](0030-compatibility-cleanup-and-disposable-state.md): both caches are
+packed-only and PACKED_STORE is removed. Old per-key entries remain untouched.
+
 - Status: Accepted
 - Date: 2026-10-02
 - Write deduplication and legacy cleanup amended by

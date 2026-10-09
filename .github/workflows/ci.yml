@@ -118,6 +118,7 @@ jobs:
             rust/Cargo.lock
             scripts/smoke.sh
             scripts/watch_smoke.sh
+            scripts/correctness_upgrade.sh
           setup-rust: 'true'
           build-frontend: 'true'
       - name: Run baseline smoke
@@ -127,6 +128,10 @@ jobs:
         run: bash scripts/smoke.sh
       - name: Run generic watch smoke
         run: bash scripts/watch_smoke.sh
+      - name: Upgrade obsolete accelerator state
+        env:
+          PUB_CACHE: ${{ github.workspace }}/.pub-cache
+        run: bash scripts/correctness_upgrade.sh
       - name: Run setup-time prewarm correctness
         run: bash scripts/correctness_prewarm.sh
 

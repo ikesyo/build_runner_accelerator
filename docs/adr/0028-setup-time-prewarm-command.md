@@ -1,5 +1,8 @@
 # ADR 0028: Setup-time `prewarm` command and single-flight worker AOT compiles
 
+The accelerator 0.x alias contract below is superseded by
+[ADR 0030](0030-compatibility-cleanup-and-disposable-state.md); use `prewarm`.
+
 - Status: Accepted
 - Date: 2026-10-07
 

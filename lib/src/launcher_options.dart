@@ -162,9 +162,12 @@ class LauncherOptions {
       }
     }
 
-    if (rustArguments.contains('--background') &&
-        !const {'prewarm', 'aot-prewarm'}.contains(command)) {
+    if (rustArguments.contains('--background') && command != 'prewarm') {
       throw FormatException('--background is only supported with prewarm');
+    }
+
+    if (command == 'aot-prewarm') {
+      throw const FormatException('aot-prewarm was removed; use prewarm');
     }
 
     if (!dartBinaryExplicit) dartBinary = _defaultDartBinary();
@@ -197,7 +200,6 @@ class LauncherOptions {
           'build',
           'watch',
           'prewarm',
-          'aot-prewarm',
           'aot-cache-key',
         }.contains(command) ||
         passthrough.any(
@@ -213,8 +215,7 @@ class LauncherOptions {
               (argument) =>
                   argument != '--force-aot' && argument != '--force-jit',
             ));
-    if (nativeUnsupported &&
-        const {'prewarm', 'aot-prewarm'}.contains(command)) {
+    if (nativeUnsupported && command == 'prewarm') {
       throw FormatException('prewarm does not accept stock arguments');
     }
     if (nativeUnsupported && mode == 'rust' && !showHelp && !showVersion) {

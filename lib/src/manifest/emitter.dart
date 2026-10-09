@@ -4,7 +4,7 @@ import 'dart:io';
 import 'model.dart';
 import 'source.dart';
 
-const _manifestVersion = 8;
+const _manifestVersion = 9;
 
 /// Writes just the worker entrypoint. `generate_builder_manifest` emits it
 /// early — before the factory probe — so the frontend can overlap the

@@ -94,7 +94,7 @@ void main() {
       );
 
       final decoded = jsonDecode(await manifest.readAsString()) as Map;
-      expect(decoded['version'], 8);
+      expect(decoded['version'], 9);
       expect(decoded['fingerprint'], 'fingerprint');
       expect(decoded['trigger_digest'], 'trigger-digest');
       expect(decoded['worker_entrypoint'], worker.absolute.path);

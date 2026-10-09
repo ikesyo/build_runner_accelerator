@@ -1,8 +1,5 @@
-/// A small deterministic digest for the standalone PoC graph.
-///
-/// This is deliberately not presented as build_runner's graph digest format.
-/// The compatibility digest can be added behind this interface once the
-/// pinned build_runner version is selected for the fork-based comparison.
+/// Deterministic FNV-1a identity for disposable accelerator state.
+/// This internal digest is not build_runner's AssetGraph format or a stable API.
 pub fn digest_bytes(bytes: &[u8]) -> String {
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in bytes {

@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:async/async.dart';
 import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:test/test.dart';
+import 'package:build_runner_accelerator/src/frontend_binary_resolver.dart'
+    show buildRunnerAcceleratorVersion;
 
 void main() {
   test(
@@ -55,7 +57,14 @@ void main() {
         );
       }
 
-      await send({'type': 'initialize', 'package': package, 'phase_count': 8});
+      await send({
+        'type': 'initialize',
+        'package': package,
+        'phase_count': 8,
+        'root': Directory.current.absolute.path,
+        'resolver_mode': 'dart_local',
+        'accelerator_version': buildRunnerAcceleratorVersion,
+      });
       Future<Map<String, dynamic>> reset({
         String? content,
         bool deleted = false,

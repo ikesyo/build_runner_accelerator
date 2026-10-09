@@ -44,7 +44,7 @@ startup even though manifest generation needs no resolved Dart source.
 The generator kernel no longer compiles Analyzer. The first measurement reduced
 it to 153 dependencies and 1.94 MB. The AOT worker still includes the official
 parser, so cold execution and subsequent rebuilds retain AOT performance.
-Source-only and custom-worker paths incur a separate helper launch; their
+Source-only and internal worker-override paths incur a separate helper launch; their
 performance is not the target of this decision.
 
 The helper rereads build configuration. The frontend's existing post-generation

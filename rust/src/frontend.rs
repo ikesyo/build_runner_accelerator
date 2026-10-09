@@ -84,25 +84,25 @@ fn read_manifest(
     fingerprint: &str,
     expected_worker_entrypoint: &Path,
 ) -> io::Result<Option<BuilderManifestFile>> {
-    let contents = match fs::read_to_string(path) {
+    let contents = match fs::read(path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let mut manifest = match serde_json::from_str::<BuilderManifestFile>(&contents) {
+    let mut manifest = match serde_json::from_slice::<BuilderManifestFile>(&contents) {
         Ok(manifest) => manifest,
         Err(_) => return Ok(None),
     };
-    if manifest.version != 8 || manifest.fingerprint != fingerprint {
+    if manifest.version != 9 || manifest.fingerprint != fingerprint {
         return Ok(None);
     }
-    let manifest_worker_exists = Path::new(&manifest.worker_entrypoint).is_file();
-    if expected_worker_entrypoint.is_file() {
-        // The generated manifest historically stored an absolute path. Rebase
-        // it to the current workspace so the manifest and AOT cache can move
-        // between CI runners/workspaces together.
-        manifest.worker_entrypoint = expected_worker_entrypoint.to_string_lossy().into_owned();
-    } else if !manifest_worker_exists {
+    if !expected_worker_entrypoint.is_file() {
+        return Ok(None);
+    }
+    // Rebase a restored cache to this workspace. Never run a worker from a
+    // stale absolute manifest path when the local generated worker is missing.
+    manifest.worker_entrypoint = expected_worker_entrypoint.to_string_lossy().into_owned();
+    if rust_build_config_from_manifest(manifest.clone()).is_err() {
         return Ok(None);
     }
     Ok(Some(manifest))
@@ -647,6 +647,130 @@ mod tests {
         });
         assert_eq!(attempts, [true, false]);
         assert_eq!(result.unwrap_err().raw_os_error(), Some(2));
+    }
+
+    #[test]
+    fn obsolete_or_incomplete_manifest_and_missing_local_worker_are_cache_misses() {
+        let root = std::env::temp_dir().join(format!(
+            "accelerator-manifest-contract-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("manifest.json");
+        let local = root.join("local.dart");
+        let stale = root.join("stale.dart");
+        fs::write(&local, "local worker").unwrap();
+        fs::write(&stale, "stale worker").unwrap();
+        let mut valid = serde_json::json!({
+            "version": 9, "fingerprint": "same", "trigger_digest": "stock", "worker_entrypoint": stale,
+            "definitions": [{"id": "app:copy", "kind": "normal", "extensions": [{"input_suffix": ".txt", "input_match": "suffix", "input_anchored": false, "output_suffixes": [".out"]}], "build_to": "source", "phase": 0}],
+            "builders": [{"id": "app:copy", "kind": "normal", "build_to": "source", "phase": 0, "target": "app:app", "package": "app", "is_root": true, "generate_for": ["**"]}]
+        });
+        for field in ["builders", "definitions"] {
+            for entry in valid[field].as_array_mut().unwrap() {
+                let object = entry.as_object_mut().unwrap();
+                for name in [
+                    "required_input_suffixes",
+                    "excluded_input_suffixes",
+                    "generate_for",
+                    "generate_for_exclude",
+                    "target_sources",
+                    "target_sources_exclude",
+                    "triggers",
+                ] {
+                    object.entry(name).or_insert_with(|| serde_json::json!([]));
+                }
+                object.insert("options".into(), serde_json::json!({}));
+                object.insert("is_optional".into(), serde_json::json!(false));
+                object.insert("output_is_optional".into(), serde_json::json!(false));
+            }
+        }
+        valid["builders"][0]["target_order"] = serde_json::json!(0);
+        fs::write(&path, valid.to_string()).unwrap();
+        let hit = super::read_manifest(&path, "same", &local)
+            .unwrap()
+            .unwrap();
+        assert_eq!(hit.worker_entrypoint, local.to_string_lossy());
+        let mut empty = valid.clone();
+        empty["builders"] = serde_json::json!([]);
+        empty["definitions"] = serde_json::json!([]);
+        fs::write(&path, empty.to_string()).unwrap();
+        let hit = super::read_manifest(&path, "same", &local)
+            .unwrap()
+            .unwrap();
+        assert!(hit.builders.is_empty());
+        assert!(hit.definitions.is_empty());
+        let config = crate::builder::rust_build_config_from_manifest(hit).unwrap();
+        assert!(config.builders.is_empty());
+        let mut dangling = valid.clone();
+        dangling["definitions"] = serde_json::json!([]);
+        fs::write(&path, dangling.to_string()).unwrap();
+        assert!(
+            super::read_manifest(&path, "same", &local)
+                .unwrap()
+                .is_none()
+        );
+        fs::write(&path, [0xff, 0xfe]).unwrap();
+        assert!(
+            super::read_manifest(&path, "same", &local)
+                .unwrap()
+                .is_none()
+        );
+        for (field, value) in [("kind", "post_process"), ("build_to", "cache")] {
+            let mut mismatch = valid.clone();
+            mismatch["builders"][0][field] = serde_json::json!(value);
+            let decoded = serde_json::from_value(mismatch.clone()).unwrap();
+            let error = crate::builder::rust_build_config_from_manifest(decoded).unwrap_err();
+            assert!(error.to_string().contains("disagrees with definition"));
+            fs::write(&path, mismatch.to_string()).unwrap();
+            assert!(
+                super::read_manifest(&path, "same", &local)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        for field in [
+            "is_root",
+            "kind",
+            "options",
+            "target_order",
+            "target_sources",
+            "generate_for_exclude",
+            "triggers",
+        ] {
+            let mut missing = valid.clone();
+            missing["builders"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            fs::write(&path, missing.to_string()).unwrap();
+            assert!(
+                super::read_manifest(&path, "same", &local)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let mut old = valid.clone();
+        old["version"] = serde_json::json!(8);
+        fs::write(&path, old.to_string()).unwrap();
+        assert!(
+            super::read_manifest(&path, "same", &local)
+                .unwrap()
+                .is_none()
+        );
+        fs::write(&path, valid.to_string()).unwrap();
+        fs::remove_file(&local).unwrap();
+        assert!(
+            super::read_manifest(&path, "same", &local)
+                .unwrap()
+                .is_none()
+        );
+        assert!(stale.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

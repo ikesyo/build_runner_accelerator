@@ -231,6 +231,7 @@ run_quick() {
   bash "$script_dir/smoke.sh"
   bash "$script_dir/correctness_manifest_snapshot.sh"
   bash "$script_dir/correctness_early_catalog.sh"
+  bash "$script_dir/correctness_upgrade.sh"
   run_trigger_correctness
   if [[ "${VERIFY_ARBITRARY_BUILDER:-0}" == 1 ]]; then
     bash "$script_dir/correctness_arbitrary_builder.sh"

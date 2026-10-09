@@ -165,7 +165,10 @@ impl Options {
                 }
             }
         }
-        if background && !matches!(command.as_str(), "prewarm" | "aot-prewarm") {
+        if command == "aot-prewarm" {
+            return Err(io::Error::other("aot-prewarm was removed; use prewarm"));
+        }
+        if background && command != "prewarm" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("--background is only supported with prewarm: {command}"),
@@ -210,14 +213,7 @@ impl Options {
         }
         matches!(
             self.command.as_str(),
-            "build"
-                | "watch"
-                | "prewarm"
-                | "aot-prewarm"
-                | "aot-cache-key"
-                | "--help"
-                | "-h"
-                | "--version"
+            "build" | "watch" | "prewarm" | "aot-cache-key" | "--help" | "-h" | "--version"
         ) && self.stock_arguments.iter().all(|arg| {
             matches!(arg.as_str(), "--force-aot" | "--force-jit")
                 || (matches!(self.command.as_str(), "build" | "watch")
@@ -545,13 +541,9 @@ mod tests {
                 .background
         );
         assert!(
-            super::Options::parse(
-                ["aot-prewarm", "--background"]
-                    .into_iter()
-                    .map(str::to_owned)
-            )
-            .unwrap()
-            .background
+            super::Options::parse(["prewarm", "--background"].into_iter().map(str::to_owned))
+                .unwrap()
+                .background
         );
         assert!(
             !super::Options::parse(["prewarm"].into_iter().map(str::to_owned))

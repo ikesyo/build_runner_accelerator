@@ -1,5 +1,8 @@
 # ADR 0009: Shared analyzer byte store across workers and builds
 
+The per-key storage choice below is superseded by
+[ADR 0030](0030-compatibility-cleanup-and-disposable-state.md).
+
 - Status: Accepted
 - Date: 2026-09-26
 

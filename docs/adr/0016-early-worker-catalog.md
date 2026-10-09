@@ -29,7 +29,7 @@ If synchronous worker AOT is enabled, the helper's entrypoint starts the
 existing early AOT thread. Generator kernel compilation and the factory probe
 can then overlap worker compilation. A snapshot hit skips the extra helper;
 the full generator emits the early entrypoint as in ADR 0014. JIT, background
-AOT, explicit worker artifacts, and custom workers skip the helper as well.
+AOT and internal explicit worker-artifact overrides skip the helper as well.
 `BUILD_RUNNER_ACCELERATOR_EARLY_CATALOG=0` disables this earlier selection pass
 and the compiled-worker probe described below.
 

@@ -200,19 +200,22 @@ fn is_generated_output(
     };
     if builders.iter().any(|builder| {
         builder.get("build_to").and_then(|value| value.as_str()) == Some("source")
-            && (builder
-                .get("output_suffixes")
+            && builder
+                .get("extensions")
                 .and_then(|value| value.as_array())
-                .is_some_and(|suffixes| {
-                    suffixes
-                        .iter()
-                        .filter_map(|suffix| suffix.as_str())
-                        .any(|suffix| output_pattern_matches(relative, name, suffix))
+                .is_some_and(|extensions| {
+                    extensions.iter().any(|extension| {
+                        extension
+                            .get("output_suffixes")
+                            .and_then(|value| value.as_array())
+                            .is_some_and(|suffixes| {
+                                suffixes
+                                    .iter()
+                                    .filter_map(|suffix| suffix.as_str())
+                                    .any(|suffix| output_pattern_matches(relative, name, suffix))
+                            })
+                    })
                 })
-                || builder
-                    .get("output_suffix")
-                    .and_then(|value| value.as_str())
-                    .is_some_and(|suffix| output_pattern_matches(relative, name, suffix)))
     }) {
         return true;
     }
@@ -289,4 +292,23 @@ fn is_relevant_event(
         }
         !name.contains(".build-runner-accelerator-")
     })
+}
+
+#[cfg(test)]
+mod manifest_tests {
+    use super::*;
+    #[test]
+    fn watch_reads_explicit_extensions_without_flattened_fields() {
+        let root =
+            std::env::temp_dir().join(format!("accelerator-watch-manifest-{}", std::process::id()));
+        let state = root.join(".dart_tool/build_runner_accelerator");
+        fs::create_dir_all(&state).unwrap();
+        let path = root.join("lib/model.g.dart");
+        let manifest_path = state.join("builder-manifest.json");
+        fs::write(&manifest_path, r#"{"version":9,"builders":[{"build_to":"source","extensions":[{"input_suffix":".dart","output_suffixes":[".g.dart"]}]}]}"#).unwrap();
+        assert!(is_generated_output(&root, &path, "app", &BTreeSet::new()));
+        fs::write(&manifest_path, r#"{"version":8,"builders":[{"build_to":"source","output_suffix":".g.dart","output_suffixes":[".g.dart"]}]}"#).unwrap();
+        assert!(!is_generated_output(&root, &path, "app", &BTreeSet::new()));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

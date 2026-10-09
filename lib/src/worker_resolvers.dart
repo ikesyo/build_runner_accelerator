@@ -13,8 +13,6 @@ import 'package:analyzer/src/clients/build_resolvers/build_resolvers.dart';
 // ignore: implementation_imports
 import 'package:analyzer/src/dart/analysis/byte_store.dart';
 // ignore: implementation_imports
-import 'package:analyzer/src/dart/analysis/file_byte_store.dart';
-// ignore: implementation_imports
 import 'package:analyzer/src/dart/analysis/file_content_cache.dart';
 import 'package:build/build.dart';
 import 'package:build/experiments.dart';
@@ -297,10 +295,6 @@ const _memoryCacheBytes = 128 * 1024 * 1024;
 /// to `0`, `false`, or `off`.
 const _byteStoreEnv = 'BUILD_RUNNER_ACCELERATOR_BYTE_STORE';
 
-/// Environment variable that restores per-key file layouts in the on-disk
-/// caches (the analyzer byte store and the dep-parse cache) when set to `0`.
-const _packedStoreEnv = 'BUILD_RUNNER_ACCELERATOR_PACKED_STORE';
-
 /// Byte-store instances per fingerprint for this process. Phase resets
 /// rebuild the analysis driver; keeping the [MemoryCachingByteStore] layer
 /// alive across those rebuilds means a later phase does not re-pay the disk
@@ -341,20 +335,17 @@ ByteStore sharedAnalysisByteStore(
   final dir = p.joinAll([
     acceleratorCacheDirectory(),
     'byte_store',
-    if (Platform.environment[_packedStoreEnv] != '0') 'v2',
+    'v2',
     fingerprint,
   ]);
-  // Neither on-disk store creates the directory itself; without it the writes
-  // fail silently.
+  // The store does not create the directory itself; without it writes fail.
   return _sharedByteStores.putIfAbsent(fingerprint, () {
     try {
       Directory(dir).createSync(recursive: true);
     } on FileSystemException {
       return MemoryByteStore();
     }
-    final disk = Platform.environment[_packedStoreEnv] == '0'
-        ? FileByteStore(dir) as ByteStore
-        : PackedAnalysisByteStore(dir);
+    final disk = PackedAnalysisByteStore(dir);
     final store = MemoryCachingByteStore(disk, _memoryCacheBytes);
     final result = resolverActionMetrics.enabled
         ? _MetricsByteStore(store)
@@ -364,9 +355,7 @@ ByteStore sharedAnalysisByteStore(
         '1') {
       _sharedStartupGates[result] = AnalysisStartupGate(
         p.join(dir, '.analysis-startup.lock'),
-        isWarm: disk is PackedAnalysisByteStore
-            ? () => disk.hasLinkedEntries
-            : () => PackedAnalysisByteStore.hasLegacyLinkedEntries(dir),
+        isWarm: () => disk.hasLinkedEntries,
       );
     }
     return result;

@@ -50,9 +50,8 @@ process that logs to `.dart_tool/build_runner_accelerator/prewarm.log`; a
 second invocation while one is already running is a no-op, and a concurrent
 `build` waits for the published artifact instead of duplicating the compile.
 Without `--background` the command waits for completion. `prewarm` exits 0
-without doing anything under `--mode dart` or when the native frontend is
-unavailable, so the setup hook never fails for lack of a frontend. (`prewarm`
-accepts the `aot-prewarm` alias used by earlier CI tooling.)
+without doing anything under `--mode dart` or in `auto` mode when the native
+frontend is unavailable, so the setup hook never fails for lack of a frontend. The old `aot-prewarm` alias is removed; use `prewarm`.
 
 The default `auto` mode downloads and verifies the matching signed native
 frontend on supported Linux, macOS, and Windows platforms. On macOS Intel or
@@ -108,14 +107,16 @@ when the stock path is preferred.
 | `dart` | Always run stock Dart `build_runner`. |
 
 Useful accelerator options are `--root`, `--dart`, `--jobs`,
-`--interval-ms`, `--worker`, and prewarm-only `--background`. They never
+`--interval-ms`, and prewarm-only `--background`. They never
 reach stock. `--force-aot` and `--force-jit` are mutually exclusive and work
 in native build/watch and stock fallback, including manifest-time fallback.
+`--worker` is an internal worker-artifact override for repository tests,
+benchmarks and diagnostics; it is not a supported third-party extension API.
 
 | Command / option | Native status | auto / dart behavior |
 | --- | --- | --- |
 | `build`, `watch` | Supported for the documented manifest subset | Native in auto; stock in dart |
-| `prewarm`, `aot-prewarm` | Supported, no build actions | Skip when no native frontend; dart skips |
+| `prewarm` | Supported, no build actions | Skip when no native frontend; dart skips |
 | `aot-cache-key` | Native utility | Requires native; no stock equivalent |
 | `clean`, `serve`, `run`, `test`, `stop`, `daemon`, `help` | Fallback | Stock, without native download or manifest generation |
 | `--force-aot`, `--force-jit` | Supported | Retained for stock |
@@ -158,6 +159,14 @@ the launcher itself. The package does not distribute an AOT-compiled launcher.
 An advanced user may compile the launcher with `dart compile exe`; that form is
 supported as a compatibility path for release-cache misses, but it is not the
 normal installation or benchmark path.
+
+## Compatibility updates
+
+For updates during 0.x development, see the
+[cleanup/update guide](docs/compatibility-cleanup.md). It lists retired interfaces,
+regenerated internal state and recovery steps that preserve sources and outputs.
+[ADR 0030](docs/adr/0030-compatibility-cleanup-and-disposable-state.md) records the
+compatibility decisions.
 
 ## Architecture
 
@@ -287,10 +296,9 @@ The v2 pack has a separate checksummed publication index: startup reads metadata
 and validates only the values actually used. Repeated writes of the same key and
 bytes do not grow either file. Writers publish data before index entries and
 repair incomplete tails under the append lock. Cache entries are not fsynced;
-missing or corrupt entries are recomputed. Earlier packed and per-key formats
-are ignored, with no migration. `BUILD_RUNNER_ACCELERATOR_PACKED_STORE=0` retains
-the separate per-key implementation. The first build after updating rebuilds
-the shared caches from empty. Older cache directories remain on disk.
+missing or corrupt entries are recomputed. Both shared caches are packed-only.
+See the [update guide](docs/compatibility-cleanup.md) for obsolete formats,
+retired controls and safe cache recovery.
 
 The pack has no compaction yet, and stale fingerprint directories are not
 garbage-collected. Reclaim space by removing caches for toolchains you no longer

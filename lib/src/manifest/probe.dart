@@ -25,7 +25,7 @@ class ManifestTriggers {
 }
 
 /// Use the official parser without compiling Analyzer into the generator.
-/// The source helper preserves custom-worker and non-AOT configurations.
+/// The source helper preserves internal worker overrides and non-AOT paths.
 Future<ManifestTriggers> loadManifestTriggers(
   String root,
   String workerEntrypoint,

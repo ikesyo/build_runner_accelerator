@@ -1,5 +1,9 @@
 # ADR 0026: Publish byte-store entries through a persistent metadata index
 
+The per-key opt-out described below is removed by
+[ADR 0030](0030-compatibility-cleanup-and-disposable-state.md). The analyzer
+byte store is packed-only; BYTE_STORE=0 remains the cache-disable control.
+
 - Status: Accepted
 - Date: 2026-10-04
 - Replaces the startup scan boundary in ADR 0021; supersedes ADR 0022's migration

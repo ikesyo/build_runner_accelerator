@@ -5,43 +5,106 @@ use serde_json::json;
 #[test]
 fn dynamic_manifest_preserves_builder_phase_order() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
+                "target_order": 0,
                 "id": "example:phase-two",
-                "input_suffix": ".txt",
-                "output_suffixes": [".two"],
+                "kind": "normal",
+                "extensions": [{
+                    "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
+                    "output_suffixes": [".two"]
+                }],
                 "build_to": "source",
                 "phase": 1,
                 "target": "example:example",
                 "package": "example",
+                "is_root": true,
                 "generate_for": ["lib/**/*.txt"]
             },
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
+                "target_order": 0,
                 "id": "example:phase-one",
-                "input_suffix": ".txt",
-                "output_suffixes": [".one"],
+                "kind": "normal",
+                "extensions": [{
+                    "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
+                    "output_suffixes": [".one"]
+                }],
                 "build_to": "source",
                 "phase": 0,
                 "target": "example:example",
                 "package": "example",
+                "is_root": true,
                 "generate_for": ["lib/**/*.txt"]
             }
         ],
         "definitions": [
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:phase-two",
-                "input_suffix": ".txt",
-                "output_suffixes": [".two"],
+                "kind": "normal",
+                "extensions": [{
+                    "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
+                    "output_suffixes": [".two"]
+                }],
                 "build_to": "source",
                 "phase": 1
             },
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:phase-one",
-                "input_suffix": ".txt",
-                "output_suffixes": [".one"],
+                "kind": "normal",
+                "extensions": [{
+                    "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
+                    "output_suffixes": [".one"]
+                }],
                 "build_to": "source",
                 "phase": 0
             }
@@ -69,45 +132,106 @@ fn dynamic_manifest_preserves_builder_phase_order() {
 #[test]
 fn configured_phase_is_the_global_worker_phase() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:phase-one",
-                "input_suffix": ".txt",
-                "output_suffixes": [".one"],
+                "kind": "normal",
+                "extensions": [{
+                    "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
+                    "output_suffixes": [".one"]
+                }],
                 "build_to": "cache",
                 "phase": 3,
                 "target_order": 0,
                 "target": "example:example",
                 "package": "example",
+                "is_root": true,
                 "generate_for": ["lib/**/*.txt"]
             },
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:phase-two",
-                "input_suffix": ".txt",
-                "output_suffixes": [".two"],
+                "kind": "normal",
+                "extensions": [{
+                    "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
+                    "output_suffixes": [".two"]
+                }],
                 "build_to": "cache",
                 "phase": 7,
                 "target_order": 0,
                 "target": "example:example",
                 "package": "example",
+                "is_root": true,
                 "generate_for": ["lib/**/*.txt"]
             }
         ],
         "definitions": [
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:phase-one",
-                "input_suffix": ".txt",
-                "output_suffixes": [".one"],
+                "kind": "normal",
+                "extensions": [{
+                    "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
+                    "output_suffixes": [".one"]
+                }],
                 "build_to": "cache",
                 "phase": 0
             },
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:phase-two",
-                "input_suffix": ".txt",
-                "output_suffixes": [".two"],
+                "kind": "normal",
+                "extensions": [{
+                    "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
+                    "output_suffixes": [".two"]
+                }],
                 "build_to": "cache",
                 "phase": 0
             }
@@ -123,24 +247,54 @@ fn configured_phase_is_the_global_worker_phase() {
 #[test]
 fn dynamic_manifest_preserves_configured_input_exclusions() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "output_suffixes": [".gen.txt"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".gen.txt"]
+            }],
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "excluded_input_suffixes": [".later.txt"],
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "output_suffixes": [".gen.txt"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".gen.txt"]
+            }],
             "build_to": "source",
             "phase": 0,
             "excluded_input_suffixes": [".all.txt"]
@@ -158,23 +312,55 @@ fn dynamic_manifest_preserves_configured_input_exclusions() {
 #[test]
 fn dynamic_manifest_preserves_multiple_outputs() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "output_suffixes": [".gen.txt", ".meta.txt"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".gen.txt", ".meta.txt"]
+            }],
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "output_suffixes": [".gen.txt", ".meta.txt"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".gen.txt", ".meta.txt"]
+            }],
             "build_to": "source",
             "phase": 0
         }]
@@ -190,24 +376,54 @@ fn dynamic_manifest_preserves_multiple_outputs() {
 #[test]
 fn dynamic_manifest_preserves_all_required_input_suffixes() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "output_suffixes": [".generated"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated"]
+            }],
             "required_input_suffixes": [".first", ".second"],
             "build_to": "cache",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "output_suffixes": [".generated"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated"]
+            }],
             "required_input_suffixes": [".first", ".second"],
             "build_to": "cache",
             "phase": 0
@@ -224,24 +440,54 @@ fn dynamic_manifest_preserves_all_required_input_suffixes() {
 #[test]
 fn dynamic_manifest_preserves_optional_builder_flag() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:optional",
-            "input_suffix": ".txt",
-            "output_suffixes": [".optional.txt"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".optional.txt"]
+            }],
             "is_optional": true,
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "output_is_optional": false,
             "id": "example:optional",
-            "input_suffix": ".txt",
-            "output_suffixes": [".optional.txt"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".optional.txt"]
+            }],
             "is_optional": true,
             "build_to": "source",
             "phase": 0
@@ -255,18 +501,34 @@ fn dynamic_manifest_preserves_optional_builder_flag() {
 #[test]
 fn dynamic_manifest_preserves_trigger_metadata_and_digest() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "trigger_digest": "trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:trigger",
-            "input_suffix": ".dart",
-            "output_suffixes": [".generated.dart"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".dart",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated.dart"]
+            }],
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.dart"],
             "triggers": [
                 {"kind": "import", "value": "example/marker.dart"},
@@ -274,9 +536,23 @@ fn dynamic_manifest_preserves_trigger_metadata_and_digest() {
             ]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:trigger",
-            "input_suffix": ".dart",
-            "output_suffixes": [".generated.dart"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".dart",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated.dart"]
+            }],
             "build_to": "source",
             "phase": 0,
             "triggers": [
@@ -306,23 +582,54 @@ fn dynamic_manifest_preserves_trigger_metadata_and_digest() {
 #[test]
 fn dynamic_manifest_rejects_unsupported_trigger_kind() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:trigger",
-            "input_suffix": ".dart",
-            "output_suffixes": [".generated.dart"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".dart",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated.dart"]
+            }],
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.dart"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:trigger",
-            "input_suffix": ".dart",
-            "output_suffixes": [".generated.dart"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".dart",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated.dart"]
+            }],
             "build_to": "source",
             "phase": 0,
             "triggers": [{"kind": "library", "value": "example/marker.dart"}]
@@ -336,15 +643,28 @@ fn dynamic_manifest_rejects_unsupported_trigger_kind() {
 #[test]
 fn dynamic_manifest_accepts_multiple_extension_mappings() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
+            "kind": "normal",
             "extensions": [
                 {
                     "input_suffix": ".txt",
                     "input_match": "suffix",
+                    "input_anchored": false,
                     "output_suffixes": [".multi"]
                 },
                 {
@@ -358,13 +678,27 @@ fn dynamic_manifest_accepts_multiple_extension_mappings() {
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
+            "kind": "normal",
             "extensions": [
                 {
                     "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
                     "output_suffixes": [".multi"]
                 },
                 {
@@ -391,27 +725,53 @@ fn dynamic_manifest_accepts_multiple_extension_mappings() {
 #[test]
 fn dynamic_manifest_accepts_all_input_mapping() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:all",
+            "kind": "normal",
             "extensions": [{
                 "input_suffix": "",
                 "input_match": "all",
+                "input_anchored": false,
                 "output_suffixes": [".all"]
             }],
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["**"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:all",
+            "kind": "normal",
             "extensions": [{
                 "input_suffix": "",
                 "input_match": "all",
+                "input_anchored": false,
                 "output_suffixes": [".all"]
             }],
             "build_to": "source",
@@ -430,25 +790,55 @@ fn dynamic_manifest_accepts_all_input_mapping() {
 #[test]
 fn dynamic_manifest_rejects_non_empty_all_input_metadata() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:all",
-            "input_suffix": ".dart",
-            "input_match": "all",
-            "output_suffixes": [".all"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".dart",
+                "input_match": "all",
+                "input_anchored": false,
+                "output_suffixes": [".all"]
+            }],
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["**"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:all",
-            "input_suffix": ".dart",
-            "input_match": "all",
-            "output_suffixes": [".all"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".dart",
+                "input_match": "all",
+                "input_anchored": false,
+                "output_suffixes": [".all"]
+            }],
             "build_to": "source",
             "phase": 0
         }]
@@ -465,10 +855,21 @@ fn dynamic_manifest_rejects_non_empty_all_input_metadata() {
 #[test]
 fn dynamic_manifest_accepts_post_process_definition() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".gen.txt"],
@@ -476,9 +877,20 @@ fn dynamic_manifest_accepts_post_process_definition() {
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.gen.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".gen.txt"],
@@ -501,10 +913,21 @@ fn dynamic_manifest_accepts_post_process_definition() {
 #[test]
 fn dynamic_manifest_accepts_source_post_process_definition() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".gen.txt"],
@@ -512,9 +935,20 @@ fn dynamic_manifest_accepts_source_post_process_definition() {
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.gen.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".gen.txt"],
@@ -531,23 +965,55 @@ fn dynamic_manifest_accepts_source_post_process_definition() {
 #[test]
 fn singular_output_field_is_accepted_during_manifest_transition() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "output_suffix": ".gen.txt",
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".gen.txt"],
+            }],
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "output_suffix": ".gen.txt",
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".gen.txt"],
+            }],
             "build_to": "source",
             "phase": 0
         }]
@@ -563,27 +1029,55 @@ fn singular_output_field_is_accepted_during_manifest_transition() {
 #[test]
 fn dynamic_manifest_accepts_capture_mapping() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:capture",
-            "input_suffix": "lib/assets/{{dir}}/{{file}}.txt",
-            "input_match": "capture",
-            "input_anchored": true,
-            "output_suffixes": ["lib/generated/{{dir}}/{{file}}.dart"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": "lib/assets/{{dir}}/{{file}}.txt",
+                "input_match": "capture",
+                "input_anchored": true,
+                "output_suffixes": ["lib/generated/{{dir}}/{{file}}.dart"]
+            }],
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/assets/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:capture",
-            "input_suffix": "lib/assets/{{dir}}/{{file}}.txt",
-            "input_match": "capture",
-            "input_anchored": true,
-            "output_suffixes": ["lib/generated/{{dir}}/{{file}}.dart"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": "lib/assets/{{dir}}/{{file}}.txt",
+                "input_match": "capture",
+                "input_anchored": true,
+                "output_suffixes": ["lib/generated/{{dir}}/{{file}}.dart"]
+            }],
             "build_to": "source",
             "phase": 0
         }]
@@ -596,13 +1090,29 @@ fn dynamic_manifest_accepts_capture_mapping() {
 #[test]
 fn dynamic_manifest_preserves_per_application_runtime_mapping() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
-            "input_suffix": ".dart",
-            "output_suffixes": [".static"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".dart",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".static"]
+            }],
             "build_to": "cache",
             "phase": 0,
             "target": "example:example",
@@ -612,14 +1122,31 @@ fn dynamic_manifest_preserves_per_application_runtime_mapping() {
             "runtime_mapping": {
                 "extensions": [{
                     "input_suffix": ".dart",
+                    "input_match": "suffix",
+                    "input_anchored": false,
                     "output_suffixes": [".runtime"]
                 }]
             }
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
-            "input_suffix": ".dart",
-            "output_suffixes": [".static"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".dart",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".static"]
+            }],
             "build_to": "cache",
             "phase": 0
         }]
@@ -641,8 +1168,11 @@ fn dynamic_manifest_preserves_per_application_runtime_mapping() {
 #[test]
 fn dynamic_manifest_rejects_unsupported_version() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
+        "builders": [],
+        "definitions": [],
         "version": 7,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart"
     }))
     .unwrap();
@@ -654,8 +1184,11 @@ fn dynamic_manifest_rejects_unsupported_version() {
 #[test]
 fn dynamic_manifest_rejects_missing_worker_entrypoint() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "builders": [],
+        "definitions": [],
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": ""
     }))
     .unwrap();
@@ -670,21 +1203,53 @@ fn dynamic_manifest_rejects_missing_worker_entrypoint() {
 #[test]
 fn dynamic_manifest_rejects_duplicate_definitions() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "builders": [],
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "definitions": [
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:builder",
-                "input_suffix": ".txt",
-                "output_suffixes": [".generated"],
+                "kind": "normal",
+                "extensions": [{
+                    "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
+                    "output_suffixes": [".generated"]
+                }],
                 "build_to": "source",
                 "phase": 0
             },
             {
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
                 "id": "example:builder",
-                "input_suffix": ".txt",
-                "output_suffixes": [".generated"],
+                "kind": "normal",
+                "extensions": [{
+                    "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
+                    "output_suffixes": [".generated"]
+                }],
                 "build_to": "source",
                 "phase": 0
             }
@@ -702,23 +1267,55 @@ fn dynamic_manifest_rejects_duplicate_definitions() {
 #[test]
 fn dynamic_manifest_rejects_configured_builder_without_definition() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:configured",
-            "input_suffix": ".txt",
-            "output_suffixes": [".generated"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated"]
+            }],
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:other",
-            "input_suffix": ".txt",
-            "output_suffixes": [".generated"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated"]
+            }],
             "build_to": "source",
             "phase": 0
         }]
@@ -735,22 +1332,54 @@ fn dynamic_manifest_rejects_configured_builder_without_definition() {
 #[test]
 fn dynamic_manifest_rejects_configured_builder_without_generate_for() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "output_suffixes": [".generated"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated"]
+            }],
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example"
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "output_suffixes": [".generated"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated"]
+            }],
             "build_to": "source",
             "phase": 0
         }]
@@ -767,23 +1396,55 @@ fn dynamic_manifest_rejects_configured_builder_without_generate_for() {
 #[test]
 fn dynamic_manifest_rejects_configured_builder_without_target_scope() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "output_suffixes": [".generated"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated"]
+            }],
             "build_to": "source",
             "phase": 0,
             "target": "",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "output_suffixes": [".generated"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated"]
+            }],
             "build_to": "source",
             "phase": 0
         }]
@@ -800,25 +1461,55 @@ fn dynamic_manifest_rejects_configured_builder_without_target_scope() {
 #[test]
 fn dynamic_manifest_rejects_invalid_input_match() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "input_match": "regex",
-            "output_suffixes": [".generated"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "regex",
+                "input_anchored": false,
+                "output_suffixes": [".generated"]
+            }],
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
-            "input_suffix": ".txt",
-            "input_match": "regex",
-            "output_suffixes": [".generated"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".txt",
+                "input_match": "regex",
+                "input_anchored": false,
+                "output_suffixes": [".generated"]
+            }],
             "build_to": "source",
             "phase": 0
         }]
@@ -835,25 +1526,55 @@ fn dynamic_manifest_rejects_invalid_input_match() {
 #[test]
 fn dynamic_manifest_rejects_invalid_capture_output() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:capture",
-            "input_suffix": "lib/assets/{{file}}.txt",
-            "input_match": "capture",
-            "output_suffixes": ["lib/generated/{{missing}}.dart"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": "lib/assets/{{file}}.txt",
+                "input_match": "capture",
+                "input_anchored": false,
+                "output_suffixes": ["lib/generated/{{missing}}.dart"]
+            }],
             "build_to": "source",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/assets/**/*.txt"]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:capture",
-            "input_suffix": "lib/assets/{{file}}.txt",
-            "input_match": "capture",
-            "output_suffixes": ["lib/generated/{{missing}}.dart"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": "lib/assets/{{file}}.txt",
+                "input_match": "capture",
+                "input_anchored": false,
+                "output_suffixes": ["lib/generated/{{missing}}.dart"]
+            }],
             "build_to": "source",
             "phase": 0
         }]
@@ -871,10 +1592,20 @@ fn dynamic_manifest_rejects_invalid_capture_output() {
 #[test]
 fn dynamic_manifest_rejects_post_process_triggers() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".generated"],
@@ -882,10 +1613,20 @@ fn dynamic_manifest_rejects_post_process_triggers() {
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.generated"],
             "triggers": [{"kind": "import", "value": "example/marker.dart"}]
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".generated"],
@@ -906,24 +1647,56 @@ fn dynamic_manifest_rejects_post_process_triggers() {
 #[test]
 fn dynamic_manifest_rejects_mismatched_normal_runtime_mapping() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:builder",
-            "input_suffix": ".dart",
-            "output_suffixes": [".generated.dart"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".dart",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated.dart"]
+            }],
             "build_to": "cache",
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.dart"],
             "runtime_mapping": {"input_extensions": [".runtime.dart"]}
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:builder",
-            "input_suffix": ".dart",
-            "output_suffixes": [".generated.dart"],
+            "kind": "normal",
+            "extensions": [{
+                "input_suffix": ".dart",
+                "input_match": "suffix",
+                "input_anchored": false,
+                "output_suffixes": [".generated.dart"]
+            }],
             "build_to": "cache",
             "phase": 0
         }]
@@ -940,10 +1713,21 @@ fn dynamic_manifest_rejects_mismatched_normal_runtime_mapping() {
 #[test]
 fn dynamic_manifest_preserves_post_process_runtime_mapping() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 8,
+        "version": 9,
         "fingerprint": "fingerprint",
+        "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
         "builders": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
+            "target_order": 0,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".static"],
@@ -951,10 +1735,21 @@ fn dynamic_manifest_preserves_post_process_runtime_mapping() {
             "phase": 0,
             "target": "example:example",
             "package": "example",
+            "is_root": true,
             "generate_for": ["lib/**/*.static"],
             "runtime_mapping": {"input_extensions": [".runtime"]}
         }],
         "definitions": [{
+            "required_input_suffixes": [],
+            "excluded_input_suffixes": [],
+            "generate_for": [],
+            "generate_for_exclude": [],
+            "target_sources": [],
+            "target_sources_exclude": [],
+            "triggers": [],
+            "options": {},
+            "is_optional": false,
+            "output_is_optional": false,
             "id": "example:post",
             "kind": "post_process",
             "input_extensions": [".static"],
@@ -976,4 +1771,56 @@ fn dynamic_manifest_preserves_post_process_runtime_mapping() {
         [".runtime"]
     );
     assert_eq!(config.phase_count(), 1);
+}
+
+#[test]
+fn flattened_manifest_is_rejected_without_guessing_extensions() {
+    let manifest: BuilderManifestFile = serde_json::from_value(json!({
+        "builders": [],
+        "version": 9, "fingerprint": "x", "trigger_digest": "digest", "worker_entrypoint": "worker.dart",
+        "trigger_digest": "stock-trigger-digest",
+        "definitions": [{
+        "required_input_suffixes": [],
+        "excluded_input_suffixes": [],
+        "generate_for": [],
+        "generate_for_exclude": [],
+        "target_sources": [],
+        "target_sources_exclude": [],
+        "triggers": [],
+        "options": {},
+        "is_optional": false,
+        "output_is_optional": false,"id": "app:copy", "kind": "normal", "input_suffix": ".txt", "output_suffix": ".out", "phase": 0, "build_to": "source"}]
+    })).unwrap();
+    assert!(rust_build_config_from_manifest(manifest).is_err());
+}
+#[test]
+fn configured_manifest_requires_root_bit() {
+    let manifest: BuilderManifestFile = serde_json::from_value(json!({
+        "version": 9, "fingerprint": "x", "trigger_digest": "digest", "worker_entrypoint": "worker.dart",
+        "trigger_digest": "stock-trigger-digest",
+        "definitions": [{
+        "required_input_suffixes": [],
+        "excluded_input_suffixes": [],
+        "generate_for": [],
+        "generate_for_exclude": [],
+        "target_sources": [],
+        "target_sources_exclude": [],
+        "triggers": [],
+        "options": {},
+        "is_optional": false,
+        "output_is_optional": false,"id": "app:copy", "kind": "normal", "extensions": [{"input_suffix": ".txt", "input_match": "suffix", "input_anchored": false, "output_suffixes": [".out"]}], "phase": 0, "build_to": "source"}],
+        "builders": [{
+        "required_input_suffixes": [],
+        "excluded_input_suffixes": [],
+        "generate_for_exclude": [],
+        "target_sources": [],
+        "target_sources_exclude": [],
+        "triggers": [],
+        "options": {},
+        "is_optional": false,
+        "output_is_optional": false,
+        "target_order": 0,"id": "app:copy", "kind": "normal", "phase": 0, "build_to": "source", "target": "app:app", "package": "app", "generate_for": ["**"]}]
+    })).unwrap();
+    let error = rust_build_config_from_manifest(manifest).unwrap_err();
+    assert!(error.to_string().contains("is_root"));
 }

@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'frontend_binary_resolver.dart' show buildRunnerAcceleratorVersion;
+
 typedef JsonMap = Map<String, dynamic>;
 typedef RpcControlMessageHandler =
     Future<void> Function(WorkerBuildRequest message);
@@ -21,6 +23,7 @@ sealed class WorkerMessage {
   final Object? id;
 
   static WorkerMessage decode(JsonMap message) {
+    validateProtocolVersion(message);
     switch (message['type']) {
       case 'initialize':
         return WorkerInitializeMessage.fromJson(message);
@@ -45,14 +48,25 @@ class WorkerInitializeMessage extends WorkerMessage {
   WorkerInitializeMessage({
     required int id,
     required this.package,
+    required this.root,
     required this.phaseCount,
   }) : super(id: id);
 
   factory WorkerInitializeMessage.fromJson(JsonMap message) {
-    final rawPhaseCount = message['phase_count'];
-    final phaseCount = rawPhaseCount is num
-        ? (rawPhaseCount.toInt() < 1 ? 1 : rawPhaseCount.toInt())
-        : 1;
+    if (message['accelerator_version'] != buildRunnerAcceleratorVersion) {
+      throw const FormatException('initialize accelerator_version mismatch');
+    }
+    final phaseCount = _requiredInt(message, 'phase_count', 'initialize');
+    if (phaseCount < 1) {
+      throw const FormatException('initialize phase_count must be positive');
+    }
+    final root = _requiredString(message, 'root', 'initialize');
+    if (!Directory(root).isAbsolute ||
+        message['resolver_mode'] != 'dart_local') {
+      throw const FormatException(
+        'initialize requires absolute root and dart_local resolver_mode',
+      );
+    }
     final package = _requiredString(message, 'package', 'initialize');
     if (package.isEmpty) {
       throw const FormatException('initialize requires a non-empty package');
@@ -60,11 +74,13 @@ class WorkerInitializeMessage extends WorkerMessage {
     return WorkerInitializeMessage(
       id: _requiredInt(message, 'id', 'initialize'),
       package: package,
+      root: root,
       phaseCount: phaseCount,
     );
   }
 
   final String package;
+  final String root;
   final int phaseCount;
 }
 
@@ -162,16 +178,27 @@ class WorkerBuildBatchMessage extends WorkerMessage {
     if (rawRequests is! List) {
       throw const FormatException('build_batch requests must be a list');
     }
+    final requests = [
+      for (final rawRequest in rawRequests)
+        WorkerBuildRequest.fromJson(
+          _jsonMap(rawRequest, 'build_batch request'),
+          blockedAssets: blockedAssets,
+        ),
+    ];
+    if (requests.isNotEmpty &&
+        requests.any(
+          (request) =>
+              request.phase != requests.first.phase ||
+              request.kind != requests.first.kind,
+        )) {
+      throw const FormatException(
+        'build_batch requires one phase and builder kind',
+      );
+    }
     return WorkerBuildBatchMessage(
       id: _requiredInt(message, 'id', 'build_batch'),
       blockedAssets: blockedAssets,
-      requests: [
-        for (final rawRequest in rawRequests)
-          WorkerBuildRequest.fromJson(
-            _jsonMap(rawRequest, 'build_batch request'),
-            blockedAssets: blockedAssets,
-          ),
-      ],
+      requests: requests,
     );
   }
 
@@ -205,53 +232,43 @@ class WorkerBuildRequest {
     JsonMap message, {
     required List<String> blockedAssets,
   }) {
-    final rawKind = message['kind'];
-    final kind = rawKind == null
-        ? null
-        : _requiredStringValue(rawKind, 'build kind');
-    if (kind != null && kind != 'normal' && kind != 'post_process') {
+    final kind = _requiredString(message, 'kind', 'build');
+    if (kind != 'normal' && kind != 'post_process') {
       throw FormatException('unsupported build kind: $kind');
     }
-    final rawIsRoot = message['is_root'];
-    final rawInstanceKey = message['instance_key'];
-    final rawPhase = message['phase'];
-    final rawOptions = message['options'];
-    final options = rawOptions == null
-        ? <String, dynamic>{}
-        : _stringKeyedMap(rawOptions, 'build options');
-    final rawAllowedOutputs = message['allowed_outputs'];
-    final rawTriggers = message['triggers'];
+    final instanceKey = _requiredString(message, 'instance_key', 'build');
+    final phase = _requiredInt(message, 'phase', 'build');
+    if (instanceKey.isEmpty || phase < 0) {
+      throw const FormatException(
+        'build requires non-empty instance_key and nonnegative phase',
+      );
+    }
     return WorkerBuildRequest(
       id: _requiredInt(message, 'id', 'build'),
       builder: _requiredString(message, 'builder', 'build'),
       input: _requiredString(message, 'input', 'build'),
       kind: kind,
       allowedOutputs: _stringList(
-        rawAllowedOutputs ?? const <dynamic>[],
+        message['allowed_outputs'],
         'build allowed_outputs',
       ),
-      options: options,
-      phase: rawPhase is num ? rawPhase.toInt() : 0,
-      instanceKey: rawInstanceKey is String && rawInstanceKey.isNotEmpty
-          ? rawInstanceKey
-          : null,
-      isRoot: rawIsRoot is bool ? rawIsRoot : true,
+      options: _stringKeyedMap(message['options'], 'build options'),
+      phase: phase,
+      instanceKey: instanceKey,
+      isRoot: _requiredBool(message, 'is_root', 'build'),
       blockedAssets: blockedAssets,
-      triggers: _triggerList(
-        rawTriggers ?? const <dynamic>[],
-        'build triggers',
-      ),
+      triggers: _triggerList(message['triggers'], 'build triggers'),
     );
   }
 
   final int id;
   final String builder;
   final String input;
-  final String? kind;
+  final String kind;
   final List<String> allowedOutputs;
   final Map<String, dynamic> options;
   final int phase;
-  final String? instanceKey;
+  final String instanceKey;
   final bool isRoot;
   final List<String> blockedAssets;
   final List<WorkerBuildTrigger> triggers;
@@ -272,6 +289,12 @@ class WorkerBuildTrigger {
 
   final String kind;
   final String value;
+}
+
+void validateProtocolVersion(JsonMap message) {
+  if (message['v'] is! int || message['v'] != 1) {
+    throw const FormatException('unsupported or missing IPC protocol version');
+  }
 }
 
 int _requiredInt(JsonMap message, String key, String type) {
@@ -576,8 +599,8 @@ class RpcSession {
       ...parameters,
       'build_id': buildId,
       // Rust applies the same phase-aware logical view as the Dart adapter.
-      // Keeping these on every asset request also protects custom workers
-      // which do not consume the build request's blocked_assets hint.
+      // Each asset request carries the context Rust needs to enforce
+      // visibility independently of the worker-side blocked_assets hint.
       'phase': phase,
       'kind': postProcess ? 'post_process' : 'normal',
     });
@@ -586,6 +609,7 @@ class RpcSession {
       if (response == null) {
         throw const FormatException('Rust frontend exited during RPC');
       }
+      validateProtocolVersion(response);
       if (response['type'] == 'build') {
         final handler = onControlMessage;
         if (handler == null) {

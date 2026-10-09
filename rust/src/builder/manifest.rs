@@ -1,4 +1,4 @@
-use super::model::{BuilderTrigger, ConfiguredBuilder, RustBuildConfig};
+use super::model::{BuildTo, BuilderKind, BuilderTrigger, ConfiguredBuilder, RustBuildConfig};
 use super::validation::{dynamic_builder_definition, runtime_mapping_from_manifest};
 use serde::Deserialize;
 use serde_json::Value;
@@ -12,23 +12,16 @@ pub(crate) struct BuilderManifestFile {
     pub(crate) version: u32,
     pub(crate) fingerprint: String,
     pub(crate) worker_entrypoint: String,
-    #[serde(default)]
     pub(crate) trigger_digest: String,
-    #[serde(default)]
     pub(crate) builders: Vec<BuilderManifestDefinition>,
-    #[serde(default)]
     pub(crate) definitions: Vec<BuilderManifestDefinition>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct BuilderManifestExtension {
-    #[serde(default)]
     pub(crate) input_suffix: String,
-    #[serde(default = "default_input_match")]
     pub(crate) input_match: String,
-    #[serde(default)]
     pub(crate) input_anchored: bool,
-    #[serde(default)]
     pub(crate) output_suffixes: Vec<String>,
 }
 
@@ -43,20 +36,7 @@ pub(crate) struct BuilderManifestRuntime {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct BuilderManifestDefinition {
     pub(crate) id: String,
-    #[serde(default = "default_builder_kind")]
     pub(crate) kind: String,
-    #[serde(default)]
-    pub(crate) input_suffix: String,
-    #[serde(default = "default_input_match")]
-    pub(crate) input_match: String,
-    #[serde(default)]
-    pub(crate) input_anchored: bool,
-    #[serde(default)]
-    pub(crate) output_suffixes: Vec<String>,
-    // Read the flattened fields for compatibility with the v4-shaped v5
-    // payload. New manifests use extensions.
-    #[serde(default)]
-    pub(crate) output_suffix: Option<String>,
     #[serde(default)]
     pub(crate) extensions: Vec<BuilderManifestExtension>,
     #[serde(default)]
@@ -70,35 +50,25 @@ pub(crate) struct BuilderManifestDefinition {
     pub(crate) runtime_mapping: Option<BuilderManifestRuntime>,
     pub(crate) build_to: String,
     pub(crate) phase: u32,
-    #[serde(default)]
     pub(crate) is_optional: bool,
-    #[serde(default)]
     pub(crate) output_is_optional: bool,
-    #[serde(default)]
     pub(crate) required_input_suffixes: Vec<String>,
-    #[serde(default)]
     pub(crate) excluded_input_suffixes: Vec<String>,
     #[serde(default)]
     pub(crate) applies_builder: Option<String>,
-    #[serde(default)]
     pub(crate) generate_for: Vec<String>,
-    #[serde(default)]
     pub(crate) generate_for_exclude: Vec<String>,
-    #[serde(default)]
     pub(crate) target_sources: Vec<String>,
-    #[serde(default)]
     pub(crate) target_sources_exclude: Vec<String>,
-    #[serde(default)]
     pub(crate) options: BTreeMap<String, Value>,
     #[serde(default)]
     pub(crate) target: String,
     #[serde(default)]
     pub(crate) package: String,
     #[serde(default)]
-    pub(crate) is_root: bool,
+    pub(crate) is_root: Option<bool>,
     #[serde(default)]
-    pub(crate) target_order: u32,
-    #[serde(default)]
+    pub(crate) target_order: Option<u32>,
     pub(crate) triggers: Vec<BuilderTrigger>,
     #[serde(default)]
     pub(crate) part_directive_suffix: Option<String>,
@@ -107,7 +77,7 @@ pub(crate) struct BuilderManifestDefinition {
 pub(crate) fn rust_build_config_from_manifest(
     manifest: BuilderManifestFile,
 ) -> io::Result<RustBuildConfig> {
-    if manifest.version != 8 {
+    if manifest.version != 9 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unsupported builder manifest version: {}", manifest.version),
@@ -133,13 +103,6 @@ pub(crate) fn rust_build_config_from_manifest(
             ));
         }
     }
-    if definitions.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "builder manifest has no compatible builder definitions",
-        ));
-    }
-
     let mut builders = Vec::new();
     for entry in manifest.builders {
         let definition = definitions.get(entry.id.as_str()).cloned().ok_or_else(|| {
@@ -151,6 +114,23 @@ pub(crate) fn rust_build_config_from_manifest(
                 ),
             )
         })?;
+        let expected_kind = match definition.kind {
+            BuilderKind::Normal => "normal",
+            BuilderKind::PostProcess => "post_process",
+        };
+        let expected_build_to = match definition.build_to {
+            BuildTo::Source => "source",
+            BuildTo::Cache => "cache",
+        };
+        if entry.kind != expected_kind || entry.build_to != expected_build_to {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "configured builder metadata disagrees with definition: {} (kind/build_to)",
+                    entry.id
+                ),
+            ));
+        }
         if entry.generate_for.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -191,8 +171,18 @@ pub(crate) fn rust_build_config_from_manifest(
             definition,
             target: entry.target,
             package: entry.package,
-            is_root: entry.is_root,
-            target_order: entry.target_order,
+            is_root: entry.is_root.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "configured builder requires is_root",
+                )
+            })?,
+            target_order: entry.target_order.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "configured builder requires target_order",
+                )
+            })?,
             phase: entry.phase,
             excluded_input_suffixes: entry.excluded_input_suffixes,
             generate_for: entry.generate_for,
@@ -221,12 +211,4 @@ pub(crate) fn rust_build_config_from_manifest(
         trigger_digest: Some(manifest.trigger_digest),
         definitions,
     })
-}
-
-fn default_input_match() -> String {
-    "suffix".to_owned()
-}
-
-fn default_builder_kind() -> String {
-    "normal".to_owned()
 }

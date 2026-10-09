@@ -171,15 +171,6 @@ class ManifestDefinition {
 
   bool get isPostProcess => kind == 'post_process';
 
-  String get inputSuffix =>
-      isPostProcess ? inputExtensions.first : extensions.first.inputSuffix;
-
-  String get inputMatch =>
-      isPostProcess ? 'suffix' : extensions.first.inputMatch;
-
-  bool get inputAnchored =>
-      isPostProcess ? false : extensions.first.inputAnchored;
-
   List<String> get outputSuffixes => [
     for (final extension in extensions) ...extension.outputSuffixes,
   ];
@@ -204,12 +195,6 @@ class ManifestDefinition {
     if (!isPostProcess)
       'extensions': [for (final extension in extensions) extension.toJson()],
     if (isPostProcess) 'input_extensions': inputExtensions,
-    // Keep the flattened fields while the watch-side manifest reader and
-    // older diagnostics transition to the explicit extension list.
-    if (!isPostProcess) 'input_suffix': inputSuffix,
-    if (!isPostProcess) 'input_match': inputMatch,
-    if (!isPostProcess) 'input_anchored': inputAnchored,
-    if (!isPostProcess) 'output_suffixes': outputSuffixes,
     'build_to': buildTo,
     'phase': phase,
     if (target != null) 'target': target,
