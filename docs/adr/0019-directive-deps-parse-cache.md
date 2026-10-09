@@ -1,5 +1,8 @@
 # ADR 0019: Content-keyed directive-deps parse cache
 
+The per-key layout below is superseded by
+[ADR 0030](0030-compatibility-cleanup-and-disposable-state.md).
+
 - Status: Accepted
 - Date: 2026-10-02
 

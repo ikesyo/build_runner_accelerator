@@ -1,5 +1,8 @@
 # ADR 0011: Analysis prewarm in `aot-prewarm`
 
+The command name below is superseded by
+[ADR 0030](0030-compatibility-cleanup-and-disposable-state.md).
+
 - Status: Accepted
 - Date: 2026-09-26
 

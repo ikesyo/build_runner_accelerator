@@ -160,18 +160,13 @@ An advanced user may compile the launcher with `dart compile exe`; that form is
 supported as a compatibility path for release-cache misses, but it is not the
 normal installation or benchmark path.
 
-## Compatibility cleanup during 0.x development
+## Compatibility updates
 
-Development continues on the 0.x release line. This cleanup removes obsolete
-compatibility paths as preparation for an eventual 1.0; it does not select the
-next release version or finalize the 1.0 API. The current public CLI,
-diagnostic/experimental/internal environment classification, package/frontend/worker
-version validation and safe recovery steps are documented in
-[the compatibility cleanup guide](docs/compatibility-cleanup.md). Manifest,
-graph, worker AOT and analysis cache formats are disposable internal state; upgrades may
-invalidate and regenerate them. Cache compatibility cleanup does not delete
-user sources or existing generated source files. Stock build_runner and the
-auto/rust/dart mode contracts remain the compatibility reference.
+For updates during 0.x development, see the
+[cleanup/update guide](docs/compatibility-cleanup.md). It lists retired interfaces,
+regenerated internal state and recovery steps that preserve sources and outputs.
+[ADR 0030](docs/adr/0030-compatibility-cleanup-and-disposable-state.md) records the
+compatibility decisions.
 
 ## Architecture
 
@@ -301,13 +296,9 @@ The v2 pack has a separate checksummed publication index: startup reads metadata
 and validates only the values actually used. Repeated writes of the same key and
 bytes do not grow either file. Writers publish data before index entries and
 repair incomplete tails under the append lock. Cache entries are not fsynced;
-missing or corrupt entries are recomputed. Earlier packed and per-key formats
-are ignored, with no migration. Both shared stores are packed-only;
-`BUILD_RUNNER_ACCELERATOR_PACKED_STORE` is removed and ignored. For diagnosis,
-use `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0`,
-`BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0`, or a fresh cache directory. The first
-build after updating may regenerate shared caches. Older directories remain
-on disk without being migrated or deleted.
+missing or corrupt entries are recomputed. Both shared caches are packed-only.
+See the [update guide](docs/compatibility-cleanup.md) for obsolete formats,
+retired controls and safe cache recovery.
 
 The pack has no compaction yet, and stale fingerprint directories are not
 garbage-collected. Reclaim space by removing caches for toolchains you no longer

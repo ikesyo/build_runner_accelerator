@@ -91,19 +91,15 @@ so CI can shard those suites without maintaining a second list of probes.
 
 ### CI coverage
 
-Pull request CI separates verification by responsibility:
+[The CI workflow](../.github/workflows/ci.yml) owns the current job groups and
+triggers. It runs unit/format/analysis checks and splits stock comparisons across
+baseline, builder and lifecycle/graph/mapping jobs. Those jobs invoke fixture
+scripts directly rather than running the full local wrapper repeatedly.
 
-| CI entry | Scope | Frequency |
-| --- | --- | --- |
-| `Baseline integration and package smoke` | Quick verification, arbitrary builder cases, and published-package smoke | Pull requests and pushes to `main` |
-| `Freezed and Riverpod compatibility` | Freezed and Riverpod correctness plus watch smoke | Pull requests and pushes to `main` |
-| `Compatibility suite (lifecycle, graph, mapping)` | `compatibility-lifecycle`, `compatibility-graph`, and `compatibility-mapping`, one selector per parallel step | Pull requests and pushes to `main` |
-| `Core correctness` | The `core` full suite: JSON serializable cases, generic watch smoke, and built_value | Nightly and `workflow_dispatch` |
-
-The compatibility job intentionally selects one `VERIFY_FULL_SUITES` value per
-parallel step. It does not rerun the baseline or current-codegen suites. The
-periodic core workflow uses the canonical `core` selector so the missing core
-coverage is exercised without expanding the required pull-request checks.
+`scripts/correctness_upgrade.sh` runs in both quick verification and the CI
+baseline job. It checks obsolete/corrupt state, cache-disable recovery, retired
+interfaces and stock output equivalence. Benchmark scheduling lives in the
+[benchmark workflow](../.github/workflows/benchmark-current.yml).
 
 Run `bash scripts/correctness_cli.sh` when changing CLI routing, fallback,
 compile flags, conflict handling or process lifecycle. It compares stock/native

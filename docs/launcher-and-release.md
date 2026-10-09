@@ -9,9 +9,8 @@ contract.
 
 Add the package to a target project's `dev_dependencies`:
 
-```yaml
-dev_dependencies:
-  build_runner_accelerator: ^0.1.0-dev.1
+```bash
+dart pub add dev:build_runner_accelerator
 ```
 
 Invoke the project-local executable:
@@ -94,12 +93,36 @@ binary in the background so the session is not held up. A long-running
 `watch` session keeps the artifact it
 started with so the resident worker is not replaced mid-session; a later
 invocation can use the completed AOT cache. Set the variable to `1` for a
-synchronous compile on the first build, to `background` for the background
-compile, or to `0` to keep the kernel/script
-worker path. Explicit
+synchronous compile on the first build (`auto` has the same behavior), to
+`background` for background compilation, to `force` for mandatory AOT, or to
+`0` for the kernel/script worker path. Other values select the non-AOT path.
+Explicit
 `--force-aot` and `--force-jit` take precedence over the environment variable;
 `--force-aot` also makes an AOT compilation failure fatal, matching stock
 build_runner's force semantics.
+
+## Environment controls
+
+Names below have the `BUILD_RUNNER_ACCELERATOR_` prefix. Unknown environment
+names are ignored. Retired controls and upgrade steps are listed in
+[the cleanup guide](compatibility-cleanup.md). Platform cache selection also
+honors LOCALAPPDATA, XDG_CACHE_HOME and platform home/cache conventions.
+
+| Class | Names | Contract |
+| --- | --- | --- |
+| Public, intended to remain supported | `BIN`, `CACHE`, `RELEASE_BASE_URL`, `WORKER_AOT` | Preinstalled frontend, cache root, signed HTTPS release mirror and worker compilation policy. |
+| Diagnostic, supported but output/schema not stable | `DEBUG`, `METRICS`, `ANALYSIS_TRACE`, `WALL_TRACE`, `PLAN_ONLY` | Error stack, worker metrics, analysis details, frontend timing, and non-building plan inspection. Trace needs METRICS; PLAN_ONLY exits before executing actions. |
+| Diagnostic recovery controls | `BYTE_STORE`, `DEP_CACHE`, `DEP_PREFETCH`, `MANIFEST_SNAPSHOT`, `EARLY_CATALOG`, `PART_FILTER`, `SDK_SUMMARY_PREWARM`, `ANALYSIS_PREWARM` | Set `0` to disable the corresponding optimization; BYTE_STORE=0 disables shared analyzer storage; DEP_CACHE=0 disables directive caches. BYTE_STORE also accepts false/off. |
+| Experimental, opt-in | `ANALYSIS_SINGLE_FLIGHT`, `COMPILE_PREWARM`, `MANIFEST_PREWARM` | Set `1` to enable; disabled by default, may change or be removed in a later release. |
+| Experimental tuning | `ANALYSIS_PREWARM_JOBS`, `ANALYSIS_PREWARM_DIRS`, `RESOLVER_CAP` | Prewarm shard count/directories and resolver concurrency cap; no stable performance guarantee. |
+| Internal | `WORKER_KERNEL`, `WORKER_AOT_PATH`, `WORKER_AOT_BACKGROUND_LOCK`, `MANIFEST_WORKER_AOT`, `SUPERVISED` | Artifact overrides and subprocess coordination; no public compatibility guarantee. Do not set in normal CI. |
+
+The internal `--stock-arguments-json` / `--accelerator-process-group` transport
+options are not public CLI. Toolchain variables DART_BIN, DART_SDK,
+CARGO_BIN, PUB_CACHE, CARGO_HOME and RUSTUP_HOME belong to repository scripts,
+not the project-facing launcher option API.
+
+The classification describes the current support intent during 0.x development.
 
 ## Setup-time prewarm
 
@@ -137,8 +160,6 @@ command's serial time, so `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` opts
 out for foreground or CI runs where it has nothing to hide behind; it stays
 on by default because a detached `prewarm --background` hides the cost
 entirely.
-
-The old `aot-prewarm` alias is removed at both CLI boundaries; use `prewarm`.
 
 ## Frontend resolution
 
@@ -235,14 +256,10 @@ worker before the first dirty build. Direct binary selection through
 `BUILD_RUNNER_ACCELERATOR_BIN` remains available for benchmarking, offline
 environments, and CI images that preinstall the frontend.
 
-## Compatibility cleanup during 0.x
+## Workspace state and updates
 
-This cleanup prepares for an eventual 1.0 while development continues through
-0.x releases. It does not select the next release version or finalize the
-1.0 API. See [the cleanup/update guide](compatibility-cleanup.md) for the current
-CLI/environment classification and internal state recovery. `aot-prewarm` is
-removed. The generated Dart worker is an internal package component and must
-match the package/native version exactly and pass version/capability validation.
-Internal worker overrides pass the same checks; no third-party worker API is
-promised.
-Storage formats are regenerated on invalidation and are not stable API.
+The generated worker and Rust/Dart IPC are internal package components;
+[protocol/v1.md](../protocol/v1.md) defines their version and validation checks.
+Manifest, graph, worker AOT and analysis cache formats are disposable internal
+state. See [the cleanup/update guide](compatibility-cleanup.md) for retired
+interfaces, regeneration and safe recovery.

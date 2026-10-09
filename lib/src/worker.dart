@@ -1,4 +1,3 @@
-import 'frontend_binary_resolver.dart' show buildRunnerAcceleratorVersion;
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -19,6 +18,7 @@ import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
 import 'package:build_runner/src/build_plan/build_inputs.dart' show BuildInputs;
 
 import 'asset_read_cache.dart';
+import 'frontend_binary_resolver.dart' show buildRunnerAcceleratorVersion;
 import 'overlay_blob.dart';
 import 'reset_directives.dart';
 import 'current_build_runtime.dart';

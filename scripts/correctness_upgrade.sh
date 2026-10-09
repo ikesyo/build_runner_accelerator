@@ -78,6 +78,35 @@ for name in ['byte_store/old-fingerprint/ab/ab.linked', 'byte_store/per-key-v1/o
     assert (cache/name).read_bytes() == b'old-cache-sentinel'
 assert list((cache/'byte_store'/'v2').rglob('*.index'))
 PY
+# A corrupt byte sequence must regenerate just like obsolete JSON metadata.
+python3 - "$state/builder-manifest.json" <<'PY_CORRUPT'
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_bytes(b'\xff\xfe')
+PY_CORRUPT
+native_build non-utf8-manifest
+compare
+# Configured metadata must not disagree with the canonical definition.
+python3 - "$state/builder-manifest.json" <<'PY_MISMATCH'
+from pathlib import Path
+import json, sys
+path = Path(sys.argv[1])
+manifest = json.loads(path.read_text())
+manifest['builders'][0]['kind'] = 'invalid-kind'
+path.write_text(json.dumps(manifest))
+PY_MISMATCH
+native_build inconsistent-manifest
+compare
+python3 - "$state/builder-manifest.json" <<'PY_REGENERATED'
+from pathlib import Path
+import json, sys
+manifest = json.loads(Path(sys.argv[1]).read_text())
+definitions = {entry['id']: entry for entry in manifest['definitions']}
+for entry in manifest['builders']:
+    definition = definitions[entry['id']]
+    assert entry['kind'] == definition['kind']
+    assert entry['build_to'] == definition['build_to']
+PY_REGENERATED
 native_build noop
 compare
 grep -Fq 'No work to do (Rust frontend)' "$temporary_dir/noop.log"
@@ -160,4 +189,4 @@ if VERIFY_COMMAND_LOG="$temporary_dir/alias.log" VERIFY_WORKSPACE="$native" work
   printf 'upgrade: old alias unexpectedly succeeded\n' >&2; exit 1
 fi
 grep -Fq 'aot-prewarm was removed; use prewarm' "$temporary_dir/alias.log"
-printf 'upgrade: PASS old-state/clean/noop/incremental/retired-packed-switch/uncached-analysis/worker-validation stock bytes preserved\n'
+printf 'upgrade: PASS old-state/corrupt-manifest/inconsistent-manifest/clean/noop/incremental/retired-packed-switch/uncached-analysis/worker-validation stock bytes preserved\n'

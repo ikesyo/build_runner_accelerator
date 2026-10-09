@@ -1,4 +1,4 @@
-use super::model::{BuilderTrigger, ConfiguredBuilder, RustBuildConfig};
+use super::model::{BuildTo, BuilderKind, BuilderTrigger, ConfiguredBuilder, RustBuildConfig};
 use super::validation::{dynamic_builder_definition, runtime_mapping_from_manifest};
 use serde::Deserialize;
 use serde_json::Value;
@@ -121,6 +121,23 @@ pub(crate) fn rust_build_config_from_manifest(
                 ),
             )
         })?;
+        let expected_kind = match definition.kind {
+            BuilderKind::Normal => "normal",
+            BuilderKind::PostProcess => "post_process",
+        };
+        let expected_build_to = match definition.build_to {
+            BuildTo::Source => "source",
+            BuildTo::Cache => "cache",
+        };
+        if entry.kind != expected_kind || entry.build_to != expected_build_to {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "configured builder metadata disagrees with definition: {} (kind/build_to)",
+                    entry.id
+                ),
+            ));
+        }
         if entry.generate_for.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,

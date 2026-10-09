@@ -26,7 +26,7 @@ boundary rather than restoring commit-level history.
 | [0008](0008-runtime-expected-output-mappings.md) | Runtime expected-output mappings and conservative fallback |
 | [0009](0009-shared-analyzer-byte-store.md) | Shared analyzer byte store across workers and builds |
 | [0010](0010-path-based-asset-reads.md) | Path-based asset reads |
-| [0011](0011-analysis-prewarm-in-aot-prewarm.md) | Analysis prewarm in `aot-prewarm` |
+| [0011](0011-analysis-prewarm-in-aot-prewarm.md) | Analysis prewarm (command renamed to `prewarm` by ADR 0030) |
 | [0012](0012-machine-wide-cache.md) | Machine-wide cache for the worker AOT and analyzer byte store |
 | [0013](0013-part-directive-prefilter.md) | `part` directive pre-filter for part-family builders |
 | [0014](0014-manifest-probe-caching-and-compile-overlap.md) | Factory-probe caching and compile overlap in manifest generation |
@@ -44,7 +44,6 @@ boundary rather than restoring commit-level history.
 | [0026](0026-byte-store-publication-index.md) | Persistent metadata publication index and lazy payload validation |
 | [0027](0027-reset-overlay-blob-transport.md) | Immutable per-reset overlay blob transport |
 | [0028](0028-setup-time-prewarm-command.md) | Setup-time `prewarm` command and single-flight worker AOT compiles |
-
 | [0029](0029-cli-routing-and-fallback.md) | CLI capability routing, lossless stock fallback and process lifecycle |
 | [0030](0030-compatibility-cleanup-and-disposable-state.md) | 0.x compatibility cleanup, internal worker IPC and disposable state |
 

@@ -84,12 +84,12 @@ fn read_manifest(
     fingerprint: &str,
     expected_worker_entrypoint: &Path,
 ) -> io::Result<Option<BuilderManifestFile>> {
-    let contents = match fs::read_to_string(path) {
+    let contents = match fs::read(path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let mut manifest = match serde_json::from_str::<BuilderManifestFile>(&contents) {
+    let mut manifest = match serde_json::from_slice::<BuilderManifestFile>(&contents) {
         Ok(manifest) => manifest,
         Err(_) => return Ok(None),
     };
@@ -695,6 +695,25 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(hit.worker_entrypoint, local.to_string_lossy());
+        fs::write(&path, [0xff, 0xfe]).unwrap();
+        assert!(
+            super::read_manifest(&path, "same", &local)
+                .unwrap()
+                .is_none()
+        );
+        for (field, value) in [("kind", "post_process"), ("build_to", "cache")] {
+            let mut mismatch = valid.clone();
+            mismatch["builders"][0][field] = serde_json::json!(value);
+            let decoded = serde_json::from_value(mismatch.clone()).unwrap();
+            let error = crate::builder::rust_build_config_from_manifest(decoded).unwrap_err();
+            assert!(error.to_string().contains("disagrees with definition"));
+            fs::write(&path, mismatch.to_string()).unwrap();
+            assert!(
+                super::read_manifest(&path, "same", &local)
+                    .unwrap()
+                    .is_none()
+            );
+        }
         for field in [
             "is_root",
             "kind",
