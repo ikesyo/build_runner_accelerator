@@ -1,6 +1,8 @@
-# 0031: Native build settings and configuration invalidation
+# ADR 0031: Native build settings and configuration invalidation
 
-Status: Accepted
+- Status: Accepted
+- Date: 2026-10-09
+- Amends ADR 0029.
 
 ## Context
 

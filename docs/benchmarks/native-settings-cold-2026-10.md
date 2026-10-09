@@ -72,9 +72,7 @@ Median wall seconds:
 | Broad | 0.366 | 0.465 | 0.416 |
 
 Cold CPU medians are 44.820 / 46.251 / 45.157 seconds. Cold ranges are
-35.290–37.521 / 36.364–38.590 / 35.426–37.729 seconds. See the
-[raw measurements](native-settings-cold-2026-10.json) for all wall/CPU samples,
-commands, identities and launcher diagnostics. The initial invalid harness
+35.290–37.521 / 36.364–38.590 / 35.426–37.729 seconds. The initial invalid harness
 attempt had an unrebased path dependency, failed before the first native
 build, and is not part of this complete run.
 
@@ -113,6 +111,5 @@ outputs. The worker source is 511 bytes.
 Launcher-inclusive no-op medians are 0.554 s before binding and 0.550 s after;
 CPU medians are 0.950 / 0.940 s. This small fixture shows no measurable increase
 above launcher noise; it does not establish the cost for large worker catalogs
-or remeasure cold builds. [Raw samples and commands](native-settings-binding-noop-2026-10.json)
-record all 30 invocations, binary hashes and output hashes. Binding itself does
-not add YAML dependencies to the launcher or change compile-artifact identity.
+or remeasure cold builds. Binding itself does not add YAML dependencies to the
+launcher or change compile-artifact identity.

@@ -1,6 +1,8 @@
-# 0032: Stock setting abbreviations and config asset paths
+# ADR 0032: Stock setting abbreviations and config asset paths
 
-Status: Accepted
+- Status: Accepted
+- Date: 2026-10-09
+- Amends ADR 0031.
 
 ## Context
 

@@ -1,6 +1,8 @@
-# 0033: Bind cached manifests to their worker source
+# ADR 0033: Bind cached manifests to their worker source
 
-Status: Accepted
+- Status: Accepted
+- Date: 2026-10-09
+- Amends ADR 0031.
 
 ## Context
 
@@ -21,6 +23,8 @@ manifest, compare the digest with the expected local worker's bytes. Missing
 metadata, a missing worker, or a digest mismatch is a cache miss and requires
 generation before actions. Rebased restored caches must match the local source;
 the manifest's stale absolute worker path is never used.
+
+## Consequences
 
 This additive cache metadata does not change protocol v1 or BuilderOptions.
 Older version-9 cache entries are regenerated; builder/configuration identity
