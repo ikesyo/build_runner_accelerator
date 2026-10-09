@@ -121,24 +121,45 @@ jobs:
             scripts/correctness_upgrade.sh
           setup-rust: 'true'
           build-frontend: 'true'
-      - name: Run baseline smoke
-        env:
-          PUB_CACHE: ${{ github.workspace }}/.pub-cache
-          SMOKE_SKIP_RUST_TESTS: '1'
-        run: bash scripts/smoke.sh
-      - name: Run generic watch smoke
-        run: bash scripts/watch_smoke.sh
-      - name: Upgrade obsolete accelerator state
-        env:
-          PUB_CACHE: ${{ github.workspace }}/.pub-cache
-        run: bash scripts/correctness_upgrade.sh
-      - name: Run setup-time prewarm correctness
-        run: bash scripts/correctness_prewarm.sh
+      - parallel:
+          - name: Run baseline smoke
+            env:
+              PUB_CACHE: ${{ github.workspace }}/.pub-cache
+              SMOKE_SKIP_RUST_TESTS: '1'
+            run: bash scripts/smoke.sh
+          - name: Run generic watch smoke
+            run: bash scripts/watch_smoke.sh
+          - name: Upgrade obsolete accelerator state
+            env:
+              PUB_CACHE: ${{ github.workspace }}/.pub-cache
+            run: bash scripts/correctness_upgrade.sh
+          - name: Run setup-time prewarm correctness
+            run: bash scripts/correctness_prewarm.sh
 
   integration-settings:
-    name: 'Integration: native build settings'
+    name: 'Integration: native build settings (${{ matrix.group }})'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 45
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          - values
+          - compact
+          - paths
+          - precedence
+          - files
+          - errors
+          - fallback
+          - compile
+          - watch-default
+          - watch-named
+          - watch-nested
+          - watch-reserved
+          - watch-backslash
+          - watch-dot
+          - watch-package
+          - watch-topology
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
@@ -155,6 +176,8 @@ jobs:
           setup-rust: 'true'
           build-frontend: 'true'
       - name: Compare configuration, invalidation, watch and prewarm with stock
+        env:
+          SETTINGS_CASE_GROUP: ${{ matrix.group }}
         run: bash scripts/correctness_settings.sh
 
   integration-trigger:

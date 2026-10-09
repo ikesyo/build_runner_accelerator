@@ -101,8 +101,23 @@ baseline job. It checks obsolete/corrupt state, cache-disable recovery, retired
 interfaces and stock output equivalence. Benchmark scheduling lives in the
 [benchmark workflow](../.github/workflows/benchmark-current.yml).
 
-The native settings CI job compares stock/native configuration, output lifecycle,
-watch, JIT/AOT/prewarm and fallback.
+Native settings CI uses 16 independent `SETTINGS_CASE_GROUP` matrix entries
+for stock/native configuration, output lifecycle, errors/fallback, JIT/AOT/prewarm
+and watch. Each group owns disposable workspaces and caches; state transitions
+inside each lane remain serial. All groups run on pull requests with
+`fail-fast: false`. Configuration sequences also restore the default settings
+and check a no-op; error groups build real outputs before checking retention.
+The baseline smoke, watch, upgrade and prewarm checks run as parallel steps.
+Keep the complete CI critical path around 5–6 minutes; measure actual runs rather
+than increasing timeouts or moving comparisons out of pull-request CI.
+
+`bash scripts/correctness_settings.sh` defaults to `SETTINGS_CASE_GROUP=all`,
+which retains the complete serial settings sequence in one workspace. To run
+one CI group locally, for example:
+
+```bash
+SETTINGS_CASE_GROUP=paths bash scripts/correctness_settings.sh
+```
 
 Run `bash scripts/correctness_cli.sh` when changing CLI routing, fallback,
 compile flags, conflict handling or process lifecycle. It compares stock/native
