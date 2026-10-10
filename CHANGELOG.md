@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.12.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.11.0...v0.12.0) - 2026-10-10
+
+- Restore analyzer 14.5 support with build_runner 2.16.2 by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/103
+- Preserve CLI arguments and enforce frontend capability routing by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/105
+- Remove obsolete 0.x compatibility paths and clarify disposable internal state by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/106
+- Support stock build settings in the native frontend by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/107
+
 ## [v0.11.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.10.0...v0.11.0) - 2026-10-08
 
 - feat: add setup-time prewarm with background AOT compilation by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/95
