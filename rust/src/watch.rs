@@ -105,12 +105,18 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     );
 
     loop {
+        let filtered_state = if initial_native_build && !settings.build_filters.is_empty() {
+            Some(GraphState::load(&build::graph_path(&workspace))?)
+        } else {
+            None
+        };
         let (configuration_changed, changed_paths) = wait_for_relevant_event(
             &receiver,
             &workspace,
             &source_post_process_outputs,
             options.interval_ms,
             stock_config_path.as_deref(),
+            filtered_state.as_ref(),
         )?;
 
         eprintln!("Change detected; rebuilding");
@@ -238,6 +244,7 @@ fn wait_for_relevant_event(
     source_post_process_outputs: &BTreeSet<String>,
     debounce_ms: u64,
     stock_config_path: Option<&str>,
+    filtered_state: Option<&GraphState>,
 ) -> io::Result<(bool, WatchChanges)> {
     loop {
         let event = receiver.recv().map_err(io::Error::other)?;
@@ -247,6 +254,7 @@ fn wait_for_relevant_event(
             &event,
             source_post_process_outputs,
             stock_config_path,
+            filtered_state,
         ) {
             continue;
         }
@@ -282,6 +290,7 @@ fn wait_for_relevant_event(
                         &event,
                         source_post_process_outputs,
                         stock_config_path,
+                        filtered_state,
                     ) {
                         configuration_changed |=
                             is_configuration_event(workspace, &event, stock_config_path);
@@ -442,6 +451,7 @@ fn is_relevant_event(
     event: &Event,
     source_post_process_outputs: &BTreeSet<String>,
     selected: Option<&str>,
+    filtered_state: Option<&GraphState>,
 ) -> bool {
     if !matches!(
         event.kind,
@@ -498,6 +508,24 @@ fn is_relevant_event(
                 source_post_process_outputs,
             )
         {
+            if let Some(state) = filtered_state {
+                let asset = format!("{}|{}", workspace.root_package, relative.replace('\\', "/"));
+                // Filtered state omits undemanded outputs. Their external
+                // writes must reach conflict classification, even when the
+                // filename also matches a generated-output suffix. Only
+                // suppress source writes whose bytes match a committed result.
+                if state.output_locations.get(&asset) == Some(&false)
+                    && let Some(expected) = state
+                        .actions
+                        .values()
+                        .find_map(|action| action.output_digests.get(&asset))
+                    && let Ok(bytes) = fs::read(path)
+                    && crate::digest::digest_bytes(&bytes) == *expected
+                {
+                    return false;
+                }
+                return true;
+            }
             // Ignore our own generated writes, but rebuild if a generated
             // source file was removed by the user.
             return matches!(event.kind, EventKind::Remove(_));
@@ -509,6 +537,83 @@ fn is_relevant_event(
 #[cfg(test)]
 mod manifest_tests {
     use super::*;
+
+    #[test]
+    fn filtered_generated_events_suppress_committed_bytes_but_accept_conflicts() {
+        let root = std::env::temp_dir().join(format!(
+            "accelerator-filtered-watch-events-{}",
+            std::process::id()
+        ));
+        let directory = root.join(".dart_tool/build_runner_accelerator");
+        fs::create_dir_all(&directory).unwrap();
+        fs::create_dir_all(root.join("lib")).unwrap();
+        fs::write(root.join("pubspec.yaml"), "name: app\n").unwrap();
+        fs::write(
+            root.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[{"name":"app","rootUri":"../"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("builder-manifest.json"),
+            r#"{"builders":[{"build_to":"source","extensions":[{"output_suffixes":[".final"]}]}]}"#,
+        )
+        .unwrap();
+        let output = root.join("lib/a.final");
+        fs::write(&output, "generated").unwrap();
+        let workspace = Workspace::load(root.clone()).unwrap();
+        let event = Event::new(EventKind::Modify(ModifyKind::Any)).add_path(output.clone());
+        let mut state = GraphState::default();
+        state
+            .output_locations
+            .insert("app|lib/a.final".into(), false);
+        state.actions.insert(
+            "producer".into(),
+            crate::graph::ActionState {
+                outputs: vec!["app|lib/a.final".into()],
+                output_digests: [(
+                    "app|lib/a.final".into(),
+                    crate::digest::digest_bytes(b"generated"),
+                )]
+                .into(),
+                ..Default::default()
+            },
+        );
+        assert!(!is_relevant_event(
+            &workspace,
+            &event,
+            &BTreeSet::new(),
+            None,
+            Some(&state)
+        ));
+        fs::write(&output, "external edit").unwrap();
+        assert!(is_relevant_event(
+            &workspace,
+            &event,
+            &BTreeSet::new(),
+            None,
+            Some(&state)
+        ));
+        // An undemanded output has no committed digest, even when an external
+        // write leaves the same bytes on disk. It must reach conflict cleanup.
+        state.actions.clear();
+        state.output_locations.clear();
+        assert!(is_relevant_event(
+            &workspace,
+            &event,
+            &BTreeSet::new(),
+            None,
+            Some(&state)
+        ));
+        // Ordinary watch retains its existing event contract.
+        assert!(!is_relevant_event(
+            &workspace,
+            &event,
+            &BTreeSet::new(),
+            None,
+            None
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn selected_config_uses_deepest_package_with_parent_and_child_dependencies() {

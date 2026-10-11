@@ -37,7 +37,9 @@ class Recorder implements Builder {
   final List<String> outputs;
   Map<String, List<String>> get buildExtensions => {input: outputs};
   Future<void> build(BuildStep step) async {
-    File('history.log').writeAsStringSync(
+    File(
+      Platform.environment['BUILD_FILTER_HISTORY'] ?? 'history.log',
+    ).writeAsStringSync(
       '${step.inputId.package}|${step.inputId.path}\n',
       mode: FileMode.append,
     );
@@ -77,7 +79,9 @@ PostProcessBuilder post(BuilderOptions options) => PostRecorder();
 class PostRecorder implements PostProcessBuilder {
   Iterable<String> get inputExtensions => ['.final'];
   Future<void> build(PostProcessBuildStep step) async {
-    File('history.log').writeAsStringSync(
+    File(
+      Platform.environment['BUILD_FILTER_HISTORY'] ?? 'history.log',
+    ).writeAsStringSync(
       'post:${step.inputId.package}|${step.inputId.path}\n',
       mode: FileMode.append,
     );
@@ -96,7 +100,9 @@ class DartSeed implements Builder {
     '.src': ['.dart'],
   };
   Future<void> build(BuildStep step) async {
-    File('history.log').writeAsStringSync(
+    File(
+      Platform.environment['BUILD_FILTER_HISTORY'] ?? 'history.log',
+    ).writeAsStringSync(
       '${step.inputId.package}|${step.inputId.path}\n',
       mode: FileMode.append,
     );
@@ -115,7 +121,9 @@ class Resolve implements Builder {
     '.dart': ['.final'],
   };
   Future<void> build(BuildStep step) async {
-    File('history.log').writeAsStringSync(
+    File(
+      Platform.environment['BUILD_FILTER_HISTORY'] ?? 'history.log',
+    ).writeAsStringSync(
       '${step.inputId.package}|${step.inputId.path}\n',
       mode: FileMode.append,
     );

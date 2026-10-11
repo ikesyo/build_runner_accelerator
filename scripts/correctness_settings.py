@@ -402,7 +402,7 @@ def configuration_fallback(temporary):
     prepare(early)
     prepare(early_stock)
     flags = ['-cdir/name', '-rr', '--define=:settings=value=early',
-             '--build-filter=lib/a.alternate', '--force-jit']
+             '--build-filter=lib/[a].alternate', '--force-jit']
     expected_code, _ = execute(stock(early_stock, flags), early_stock)
     code, output = execute(launcher(early, 'auto', flags=flags), early,
                            {**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/missing-native-frontend'})

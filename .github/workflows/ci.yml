@@ -104,9 +104,15 @@ jobs:
         run: cargo test --locked --manifest-path rust/Cargo.toml
 
   integration-build-filter:
-    name: 'Integration: build-filter demand and output state'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    name: 'Integration: build-filter (${{ matrix.group }})'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [selection, glob, resolver, state, fallback-optional-post, fallback-zero-trigger, routing, watch-source, watch-cache, watch-classification]
+    env:
+      BUILD_FILTER_CASE_GROUP: ${{ matrix.group }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
@@ -125,7 +131,11 @@ jobs:
       - name: Prime comparison fixture dependencies
         shell: bash
         run: |
-          for fixture in build_filter_app optional_builder_app post_process_builder_app; do
+          fixtures=(build_filter_app)
+          if [[ "$BUILD_FILTER_CASE_GROUP" == fallback-zero-trigger ]]; then
+            fixtures+=(optional_builder_app post_process_builder_app)
+          fi
+          for fixture in "${fixtures[@]}"; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - name: Compare stock and native filters, dependency history and watch

@@ -96,7 +96,13 @@ covers source/cache chains, siblings, shared reads and generated resolver import
 filter transitions, ordered conditional reads, glob membership-only reuse and
 phase/UTF-16 listing order, watch edits/deletions/restarts
 and optional/post-process/zero-output/trigger-only/cyclic-reuse
-fallback. The core full suite and a dedicated CI job run this probe.
+fallback. The core full suite runs every group. CI runs the same groups as
+independent matrix jobs so resolver, fallback and watch comparisons do not
+accumulate in one long serial job. Run one group locally with, for example,
+`BUILD_FILTER_CASE_GROUP=watch-source bash scripts/correctness_build_filter.sh`.
+The script reports elapsed time for each group and rejects unknown group names.
+Watch logs and builder histories are written outside the watched workspaces so
+the test's own bookkeeping cannot trigger or mask a rebuild.
 
 ### CI coverage
 

@@ -65,7 +65,11 @@ file absent from that state is a conflicting output and is removed unless
 actually generated or reused. Continuing watch builds do not rescan unchanged
 such files as new conflicts; a new or modified unrecorded package-path output is
 a conflict. Restoring an input can also reclassify an unchanged unrecorded
-file as a generated-output conflict during watch. Removed producer declarations
+file as a generated-output conflict during watch. Filtered watch accepts external
+writes even when their names match generated-output suffixes. It suppresses
+writes matching committed actual-output bytes rather than every
+generated-looking write, so external edits reach demand and conflict
+reevaluation without incidental unrelated events. Removed producer declarations
 caused by input deletion use the ordinary graph
 deletion path. Cache-built declared outputs also remove conflicting package-path
 files. Clean plans replace the entire artifact tree on successful commit,
