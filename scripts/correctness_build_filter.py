@@ -1328,19 +1328,22 @@ def state_comparison(tmp):
 
 
 def caught_demand_failure_comparison(tmp):
-    def selected_outputs(root):
+    def selected_outputs(root, roots=('a',)):
         current = outputs(root)
-        selected = ('lib/a.final', 'lib/a.mid', 'lib/a.side', 'lib/common.mid', 'lib/common.side')
+        selected = tuple(
+            f'lib/{name}.{suffix}' for name in roots for suffix in ('final', 'mid', 'side')
+        ) + ('lib/common.mid', 'lib/common.side')
         return {path: current[path] for path in selected if path in current}
 
-    def recover(stock, native, flags, expected_stock_history, expected_native_history):
+    def recover(stock, native, flags, expected_stock_history, expected_native_history,
+                roots=('a',)):
         for root in (stock, native):
             history_path(root).unlink(missing_ok=True)
         reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
         actual = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
         assert actual[0] == reference[0] == 0, (flags, reference, actual)
-        assert selected_outputs(stock) == selected_outputs(native), (
-            flags, selected_outputs(stock), selected_outputs(native), actual)
+        assert selected_outputs(stock, roots) == selected_outputs(native, roots), (
+            flags, selected_outputs(stock, roots), selected_outputs(native, roots), actual)
         assert history(stock) == expected_stock_history, (
             flags, 'stock recovery history', history(stock), actual)
         assert history(native) == expected_native_history, (
@@ -1388,11 +1391,15 @@ def caught_demand_failure_comparison(tmp):
 
         for root in (stock, native):
             (root / 'lib/common.txt').write_text('recovered common\n')
+        recovered_stock_history = (
+            Counter({f'lib/{name}.mid': 1 for name in roots})
+            + Counter({'lib/common.txt': 1})
+        )
         rebuilt = recover(stock, native, flags,
-                          Counter({'lib/common.txt': 1, 'lib/a.mid': 1}),
-                          Counter({'lib/common.txt': 1, 'lib/a.mid': 1}))
-        assert rebuilt == Counter({'lib/common.txt': 1, 'lib/a.mid': 1}), (rpc, rebuilt)
-        assert b'recovered common' in (native / 'lib/a.final').read_bytes(), rpc
+                          recovered_stock_history, recovered_stock_history, roots=roots)
+        assert rebuilt == recovered_stock_history, (rpc, rebuilt)
+        for name in roots:
+            assert b'recovered common' in (native / f'lib/{name}.final').read_bytes(), rpc
         restore_full_state(stock, native, flags)
 
         fresh_stock, fresh_native = tmp / f'fresh-caught-{rpc}-stock', tmp / f'fresh-caught-{rpc}-native'
