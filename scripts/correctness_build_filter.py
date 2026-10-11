@@ -876,7 +876,7 @@ def caught_demand_failure_comparison(tmp):
             history_path(root).unlink(missing_ok=True)
         reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
         actual = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
-        assert reference[0] != 0 and actual[0] != 0, (rpc, reference, actual)
+        assert reference[0] == actual[0] != 0, (rpc, reference, actual)
         assert 'intentional build-filter fixture failure' in actual[1], (rpc, actual)
         # Stock may write the consumer's caught-error output before reporting
         # its failed build. Native keeps its all-success transaction boundary.
@@ -903,7 +903,7 @@ def caught_demand_failure_comparison(tmp):
         fresh_actual = execute(
             launcher(fresh_native, 'rust', flags=['--force-jit', *fresh_flags]), fresh_native)
         fresh_graph = fresh_native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
-        assert fresh_reference[0] != 0 and fresh_actual[0] != 0, (rpc, fresh_reference, fresh_actual)
+        assert fresh_reference[0] == fresh_actual[0] != 0, (rpc, fresh_reference, fresh_actual)
         assert 'intentional build-filter fixture failure' in fresh_actual[1], (rpc, fresh_actual)
         assert outputs(fresh_native) == {}, (rpc, outputs(fresh_native))
         assert not fresh_graph.exists(), (rpc, fresh_graph)
