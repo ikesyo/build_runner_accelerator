@@ -104,15 +104,29 @@ jobs:
         run: cargo test --locked --manifest-path rust/Cargo.toml
 
   integration-build-filter:
-    name: 'Integration: build-filter (${{ matrix.group }})'
+    name: 'Integration: build-filter (${{ matrix.id }})'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        group: [selection, glob, resolver, state, fallback-optional-post, fallback-zero-trigger, routing, watch-source, watch-cache, watch-classification]
-    env:
-      BUILD_FILTER_CASE_GROUP: ${{ matrix.group }}
+        include:
+          - id: selection
+            first: selection-source
+            second: selection-cache
+            third: selection-packages
+          - id: graph
+            first: glob
+            second: resolver
+            third: state
+          - id: fallback
+            first: fallback-optional-post
+            second: fallback-zero-trigger
+            third: routing
+          - id: watch
+            first: watch-source
+            second: watch-cache
+            third: watch-classification
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
@@ -132,14 +146,25 @@ jobs:
         shell: bash
         run: |
           fixtures=(build_filter_app)
-          if [[ "$BUILD_FILTER_CASE_GROUP" == fallback-zero-trigger ]]; then
+          if [[ '${{ matrix.id }}' == fallback ]]; then
             fixtures+=(optional_builder_app post_process_builder_app)
           fi
           for fixture in "${fixtures[@]}"; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
-      - name: Compare stock and native filters, dependency history and watch
-        run: bash scripts/correctness_build_filter.sh
+      - parallel:
+          - name: 'Build-filter: ${{ matrix.first }}'
+            env:
+              BUILD_FILTER_CASE_GROUP: ${{ matrix.first }}
+            run: bash scripts/correctness_build_filter.sh
+          - name: 'Build-filter: ${{ matrix.second }}'
+            env:
+              BUILD_FILTER_CASE_GROUP: ${{ matrix.second }}
+            run: bash scripts/correctness_build_filter.sh
+          - name: 'Build-filter: ${{ matrix.third }}'
+            env:
+              BUILD_FILTER_CASE_GROUP: ${{ matrix.third }}
+            run: bash scripts/correctness_build_filter.sh
 
   integration-baseline:
     name: 'Integration: baseline smoke'

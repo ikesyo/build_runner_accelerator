@@ -429,7 +429,7 @@ def watch_source_classification_comparison(tmp):
             for handle in handles: stop(handle)
 
 
-def selection_comparison(tmp):
+def source_selection_comparison(tmp):
     stock, native = tmp / 'stock', tmp / 'native'
     prepare(stock); prepare(native)
     # Clean selection requires both a primary chain and a shared secondary producer.
@@ -485,6 +485,9 @@ def selection_comparison(tmp):
         config = root / 'build.yaml'
         config.write_text(config.read_text().replace('build_to: source', 'build_to: cache', 1))
     check(stock, native, ['--build-filter=lib/b.final'])
+
+
+def cache_selection_comparison(tmp):
     cs, cn = tmp / 'cache-stock', tmp / 'cache-native'
     prepare(cs); prepare(cn)
     for root in (cs, cn):
@@ -525,6 +528,9 @@ def selection_comparison(tmp):
     for root in (us, un):
         for name in ('a', 'common'): (root / f'lib/{name}.txt').write_text('changed unread primary\n')
     assert check(us, un, ['--build-filter=lib/a.final']) == Counter()
+
+
+def package_selection_comparison(tmp):
     # Explicit dependency targets exercise real package selection, not just
     # a package-qualified spelling for the root package.
     ps, pn = tmp / 'package-stock', tmp / 'package-native'
@@ -691,7 +697,9 @@ def routing_comparison(tmp):
 
 
 GROUPS = {
-    'selection': selection_comparison,
+    'selection-source': source_selection_comparison,
+    'selection-cache': cache_selection_comparison,
+    'selection-packages': package_selection_comparison,
     'glob': glob_comparison,
     'resolver': resolver_comparison,
     'state': state_comparison,
