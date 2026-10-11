@@ -56,6 +56,11 @@ temporary spool read by path. Spools are removed best-effort when their
 transaction references are dropped. Unix creation requests owner-only mode
 `0600`; Windows inherits the temporary directory's ACL, and an abrupt process
 exit can leave an orphan spool.
+Native watch registers package roots after native-plan validation and before
+worker startup or the initial build. It queues events during that build and
+consumes them afterward, so an edit after a source was read remains visible to
+the next cycle. Unsupported plans do not start a native watcher; stock fallback
+retains ownership of its watch lifecycle.
 The private binary graph writes format 2 with actual-output locations and ordered
 stock inputs and glob membership. Format 1 can still be read by ordinary builds, but filtered builds
 with actions lacking ordered evidence route to stock. Configuration transitions removing prior builder

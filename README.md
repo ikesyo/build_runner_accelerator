@@ -208,6 +208,11 @@ not acquire it; stop an existing native build/watch before running either in
 the same workspace. The lock file stays on disk and OS ownership is released
 when its holder exits.
 
+Native watch subscribes after native-plan validation and before worker startup,
+then processes queued file changes after the initial build. Edits made during
+that first build therefore trigger a following watch cycle, matching stock
+`build_runner` watch behavior.
+
 The all-success boundary protects against builder failure, not interruption
 or I/O failure during commit. Artifact deletions and individual atomic output
 writes precede graph publication; an interrupted commit can leave partial

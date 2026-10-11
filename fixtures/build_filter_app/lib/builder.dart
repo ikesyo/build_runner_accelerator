@@ -30,7 +30,12 @@ Future<void> _waitAfterCommonRead(AssetId input) async {
   if (!File(armPath).existsSync()) return;
 
   File(reachedPath).writeAsStringSync('common.side read completed\n');
-  final deadline = DateTime.now().add(const Duration(seconds: 30));
+  final timeoutSeconds =
+      int.tryParse(
+        Platform.environment['BUILD_FILTER_READ_BARRIER_TIMEOUT_SECONDS'] ?? '',
+      ) ??
+      30;
+  final deadline = DateTime.now().add(Duration(seconds: timeoutSeconds));
   while (!File(releasePath).existsSync()) {
     if (DateTime.now().isAfter(deadline)) {
       throw StateError('timed out waiting for filtered watch read barrier');

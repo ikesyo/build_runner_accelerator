@@ -116,7 +116,7 @@ def wait(predicate, proc, log, timeout=180):
         time.sleep(.1)
 
 
-def watch(root, mode, flags, command=None, jobs=1, extra_env=None):
+def watch(root, mode, flags, command=None, jobs=1, extra_env=None, wait_ready=True):
     log = root.parent / (root.name + '-watch.log')
     args = command or ([DART, 'run', 'build_runner', 'watch', '--force-jit', *flags]
                        if mode == 'stock' else launcher(root, mode, 'watch', ['--force-jit', *flags]))
@@ -131,14 +131,15 @@ def watch(root, mode, flags, command=None, jobs=1, extra_env=None):
         stream.close()
         raise
     handle = proc, log, stream
-    try:
-        wait(lambda: ('Built with build_runner' in log.read_text() if mode == 'stock' else 'Watching ' in log.read_text()), proc, log)
-    except BaseException as failure:
+    if wait_ready:
         try:
-            stop(handle)
-        except BaseException as cleanup_error:
-            raise failure from cleanup_error
-        raise
+            wait(lambda: ('Built with build_runner' in log.read_text() if mode == 'stock' else 'Watching ' in log.read_text()), proc, log)
+        except BaseException as failure:
+            try:
+                stop(handle)
+            except BaseException as cleanup_error:
+                raise failure from cleanup_error
+            raise
     return handle
 
 
@@ -558,6 +559,64 @@ def watch_midbuild_source_edit_comparison(tmp):
         }), (history(stock), history(native))
     finally:
         for _, _, release in barrier_paths.values(): release.write_text('release\n')
+        stop_all(handles)
+
+
+def watch_initial_build_source_edit_comparison(tmp):
+    stock, native = tmp / 'watch-initial-stock', tmp / 'watch-initial-native'
+    prepare(stock); prepare(native)
+    flags = ['--build-filter=lib/a.final']
+    handles = []
+    barriers = {}
+    marker_tokens = ('Built with build_runner', 'Build completed (Rust frontend)')
+    try:
+        for root, mode in ((stock, 'stock'), (native, 'rust')):
+            arm = tmp / (root.name + '-initial-arm')
+            reached = tmp / (root.name + '-initial-reached')
+            release = tmp / (root.name + '-initial-release')
+            barriers[root] = (arm, reached, release)
+            arm.write_text('armed\n')
+            extras = {
+                'BUILD_FILTER_READ_BARRIER_ARM': str(arm),
+                'BUILD_FILTER_READ_BARRIER_REACHED': str(reached),
+                'BUILD_FILTER_READ_BARRIER_RELEASE': str(release),
+                'BUILD_FILTER_READ_BARRIER_TIMEOUT_SECONDS': '120',
+            }
+            # Observe both initial builds while they are held after reading the
+            # common source, before either consumer writes its first output.
+            handles.append(watch(
+                root, mode, flags, extra_env=extras, wait_ready=False))
+
+        for root, handle in zip((stock, native), handles):
+            reached = barriers[root][1]
+            wait(lambda reached=reached: reached.exists(), handle[0], handle[1], timeout=150)
+
+        value = 'startup edit during initial build\n'
+        for root in (stock, native):
+            (root / 'lib/common.txt').write_text(value)
+        for _, _, release in barriers.values():
+            release.write_text('release\n')
+
+        for index, handle in enumerate(handles):
+            marker = marker_tokens[index]
+            wait(lambda handle=handle, marker=marker:
+                 handle[1].read_text().count(marker) >= 2,
+                 handle[0], handle[1], timeout=240)
+
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+        assert value.encode() in outputs(stock)['lib/a.final'], outputs(stock)
+        assert value.encode() in outputs(native)['lib/a.final'], outputs(native)
+        expected_history = Counter({
+            'lib/a.txt': 1,
+            'lib/common.txt': 2,
+            'lib/a.mid': 2,
+        })
+        assert history(stock) == history(native) == expected_history, (
+            history(stock), history(native), expected_history,
+            handles[0][1].read_text(), handles[1][1].read_text())
+    finally:
+        for _, _, release in barriers.values():
+            release.write_text('release cleanup\n')
         stop_all(handles)
 
 
@@ -1465,6 +1524,7 @@ GROUPS = {
     'watch-source': lambda tmp: (
         watch_comparison(tmp),
         watch_midbuild_source_edit_comparison(tmp),
+        watch_initial_build_source_edit_comparison(tmp),
         watch_unknown_external_source_comparison(tmp),
         writer_lock_watch_comparison(tmp),
     ),

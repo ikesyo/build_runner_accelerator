@@ -23,6 +23,52 @@ pub(crate) struct WatchChanges {
     pub(crate) added_paths: BTreeSet<PathBuf>,
 }
 
+#[derive(Default)]
+struct WatchEvents {
+    watcher: Option<notify::RecommendedWatcher>,
+    receiver: Option<Receiver<notify::Result<Event>>>,
+}
+
+impl WatchEvents {
+    // Subscribe once after native-plan validation. The channel is left unread
+    // until the initial build completes so in-build edits queue for the loop.
+    fn start(&mut self, workspace: &Workspace) -> io::Result<()> {
+        if self.watcher.is_some() {
+            return Ok(());
+        }
+
+        let (sender, receiver) = mpsc::channel();
+        let mut watcher = notify::recommended_watcher(move |result| {
+            let _ = sender.send(result);
+        })
+        .map_err(io::Error::other)?;
+        for package_root in workspace.package_roots() {
+            if package_root != workspace.root && package_root.starts_with(&workspace.root) {
+                continue;
+            }
+            watcher
+                .watch(&package_root, RecursiveMode::Recursive)
+                .map_err(io::Error::other)?;
+        }
+        self.watcher = Some(watcher);
+        self.receiver = Some(receiver);
+        Ok(())
+    }
+
+    // Drop both the backend and receiver before handing watch ownership to stock.
+    fn stop(&mut self) {
+        self.receiver.take();
+        self.watcher.take();
+    }
+}
+
+// These values survive native cycles; stock fallback owns its own watcher.
+#[derive(Default)]
+struct WatchState {
+    cached_configuration: Option<RustBuildConfig>,
+    events: WatchEvents,
+}
+
 fn added_event_paths(event: &Event) -> Vec<PathBuf> {
     match event.kind {
         EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(RenameMode::To)) => event
@@ -43,7 +89,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     let mut pool = None;
     let mut pool_signature = None;
     let mut pool_shape = None;
-    let mut cached_configuration = None;
+    let mut watch_state = WatchState::default();
     let settings = BuildSettings::parse(&options.stock_arguments)?;
     let stock_config_path = settings
         .config
@@ -63,7 +109,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         &mut pool,
         &mut pool_signature,
         &mut pool_shape,
-        &mut cached_configuration,
+        &mut watch_state,
         false,
         &WatchChanges::default(),
     ) {
@@ -76,6 +122,9 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     };
 
     let workspace = Workspace::load(options.root.clone())?;
+    // Preserve watch recovery when the first native attempt fails before plan
+    // selection reaches the early subscription point.
+    watch_state.events.start(&workspace)?;
     if let Some(path) = &normalized_config_path {
         let file = workspace.root.join(path);
         // Stock attributes an event to the deepest package. A selected root
@@ -85,19 +134,6 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     }
     if initial_native_build {
         source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
-    }
-    let (sender, receiver) = mpsc::channel();
-    let mut watcher = notify::recommended_watcher(move |result| {
-        let _ = sender.send(result);
-    })
-    .map_err(io::Error::other)?;
-    for package_root in workspace.package_roots() {
-        if package_root != workspace.root && package_root.starts_with(&workspace.root) {
-            continue;
-        }
-        watcher
-            .watch(&package_root, RecursiveMode::Recursive)
-            .map_err(io::Error::other)?;
     }
     println!(
         "Watching {} (native filesystem events)",
@@ -111,7 +147,11 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
             None
         };
         let (configuration_changed, changed_paths) = wait_for_relevant_event(
-            &receiver,
+            watch_state
+                .events
+                .receiver
+                .as_ref()
+                .ok_or_else(|| io::Error::other("native watch was not initialized"))?,
             &workspace,
             &source_post_process_outputs,
             options.interval_ms,
@@ -125,7 +165,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
             &mut pool,
             &mut pool_signature,
             &mut pool_shape,
-            &mut cached_configuration,
+            &mut watch_state,
             retain_configuration && !configuration_changed,
             &changed_paths,
         ) {
@@ -146,19 +186,20 @@ fn run_watch_build(
     pool: &mut Option<WorkerPool>,
     pool_signature: &mut Option<String>,
     pool_shape: &mut Option<Vec<ConfiguredBuilder>>,
-    cached_configuration: &mut Option<RustBuildConfig>,
+    watch_state: &mut WatchState,
     reuse_configuration: bool,
     changed_paths: &WatchChanges,
 ) -> io::Result<bool> {
     let workspace = Workspace::load(options.root.clone())?;
-    let session_start = cached_configuration.is_none();
-    let selected = if reuse_configuration && cached_configuration.is_some() {
-        cached_configuration.clone()
+    let session_start = watch_state.cached_configuration.is_none();
+    let selected = if reuse_configuration && watch_state.cached_configuration.is_some() {
+        watch_state.cached_configuration.clone()
     } else {
         select_frontend(options, &workspace)?
     };
     let Some(build_config) = selected else {
         pool.take();
+        watch_state.events.stop();
         run_dart_fallback(options)?;
         return Ok(false);
     };
@@ -175,6 +216,7 @@ fn run_watch_build(
             return Err(io::Error::new(io::ErrorKind::Unsupported, reason));
         }
         eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
+        watch_state.events.stop();
         run_dart_fallback(options)?;
         return Ok(false);
     }
@@ -205,15 +247,22 @@ fn run_watch_build(
             return Err(io::Error::new(io::ErrorKind::Unsupported, reason));
         }
         eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
+        watch_state.events.stop();
         run_dart_fallback(options)?;
         return Ok(false);
     }
     *pool_shape = Some(shape);
-    *cached_configuration = Some(build_config.clone());
+    watch_state.cached_configuration = Some(build_config.clone());
     if *pool_signature != build_config.manifest_signature {
         pool.take();
         *pool_signature = build_config.manifest_signature.clone();
     }
+    // Subscribe only after the native plan is known to be supported, and before
+    // worker startup or the initial build can observe source files. Events are
+    // consumed by run() after the initial build so edits made during it remain
+    // queued for the next watch cycle. Stock fallback keeps sole ownership of
+    // its own watchers.
+    watch_state.events.start(&workspace)?;
     if pool.is_none() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
         let worker_command = worker_executable(options, &build_config)?;
