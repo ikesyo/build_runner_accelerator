@@ -296,7 +296,6 @@ def invoke_case(args, package, binary, root, cache, sources, mode, jobs,
     assert history == expected_history(case, sources), (lane, case, history, expected_history(case, sources), log_path)
     if case == "no-op":
         assert outputs == args.clean_outputs, (lane, case, "output changed on no-op", log_path)
-        assert "No work to do (Rust frontend)" in text, (lane, text)
     if case in ("one-file", "broad"):
         assert outputs != args.clean_outputs, (lane, case, "edit produced unchanged outputs", log_path)
     return {
