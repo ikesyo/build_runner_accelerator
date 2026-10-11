@@ -572,6 +572,11 @@ impl WorkerPool {
                 specs,
                 lazy,
             )?;
+            if let Some(error) = lazy.failed_demand() {
+                return Err(io::Error::other(format!(
+                    "filtered dependency build failed: {error}"
+                )));
+            }
         }
         Ok(())
     }

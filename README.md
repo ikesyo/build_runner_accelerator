@@ -169,7 +169,10 @@ option or separate values with commas to OR filters. Use `package:my_app/a.g.dar
 for lib paths or `asset:my_app/lib/a.g.dart` for package-root paths; package
 names support `*`. Native paths support `*` and whole `**` segments. Builders
 run with all their outputs, including siblings, and required primary/secondary
-producer actions run on demand. No match is a successful build.
+producer actions run on demand. Filtered demand currently uses one worker even
+when `--jobs` is higher. Parallel filtered execution is feasible, but needs
+shared action-demand/result coordination so shared producers run once and
+workers see a consistent transaction overlay. No match is a successful build.
 
 Classes/braces/escaping, `?`, complex URI syntax, non-ASCII, absolute/dot-segment
 paths and filters with optional/post-process/zero-output or trigger-only builders use stock

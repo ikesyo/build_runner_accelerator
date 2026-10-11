@@ -56,7 +56,13 @@ Canonical parsed release/config flags and original define values form configurat
 filters, AOT/JIT artifact selection and retired deletion flags do not.
 No deletion infers
 previous location from path existence.
-Failures retain the existing all-success output/graph commit boundary.
+Failures retain the existing all-success output/graph commit boundary. A failed
+demanded producer fails a filtered invocation even when its consumer catches
+the resulting `canRead` or read error; caught asset errors cannot commit partial
+consumer outputs. Stock may already have written or removed physical artifacts
+when its failed invocation returns, while the native frontend keeps the prior
+successful output tree and graph. Recovery comparisons restore a full successful
+build before comparing the complete artifact trees.
 
 Persist only evaluated actions in the successful incremental state. A still
 declared but undemanded normal output from a compatible previous build can
@@ -135,6 +141,9 @@ watch restarts. Unsupported optional/post-process combinations use stock
 comparisons and strict-mode rejection. Parser/routing regressions protect the
 lossless early and late fallback vector.
 
-Demand execution is serialized on one resident worker, like existing nested
-optional execution. It trades parallelism for correct dependency discovery;
-normal unfiltered execution retains its current scheduler.
+Filtered roots and recursive producer demands currently run serially on one
+resident worker, even when `--jobs` is higher, like existing nested optional
+execution. Parallel filtered execution is feasible, but requires shared
+action-demand/result coordination across recursive asset RPCs so shared
+producers execute once and workers observe a consistent transaction overlay.
+Normal unfiltered execution retains its current scheduler.

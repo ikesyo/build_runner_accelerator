@@ -6,9 +6,10 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
-from correctness_cli import REPO, DART, ENV, launcher
+from correctness_cli import REPO, DART, ENV, launcher, live
 
 
 RESOLVER_BUILD_YAML = """builders:
@@ -82,17 +83,18 @@ def check(stock, native, flags=(), mode='rust', same_history=True, compile_flag=
     return history(native)
 
 
-def wait(predicate, proc, log):
-    deadline = time.monotonic() + 180
+def wait(predicate, proc, log, timeout=180):
+    deadline = time.monotonic() + timeout
     while not predicate():
-        assert proc.poll() is None, log.read_text()
+        assert proc.poll() is None, f'{log.read_text()}\nwatch process exited with status {proc.returncode}'
         assert time.monotonic() < deadline, log.read_text()
         time.sleep(.1)
 
 
-def watch(root, mode, flags):
+def watch(root, mode, flags, command=None):
     log = root.parent / (root.name + '-watch.log')
-    args = [DART, 'run', 'build_runner', 'watch', '--force-jit', *flags] if mode == 'stock' else launcher(root, mode, 'watch', ['--force-jit', *flags])
+    args = command or ([DART, 'run', 'build_runner', 'watch', '--force-jit', *flags]
+                       if mode == 'stock' else launcher(root, mode, 'watch', ['--force-jit', *flags]))
     stream = log.open('w')
     try:
         proc = subprocess.Popen(args, cwd=root, env=fixture_env(root), stdout=stream, stderr=stream, start_new_session=True)
@@ -102,13 +104,16 @@ def watch(root, mode, flags):
     handle = proc, log, stream
     try:
         wait(lambda: ('Built with build_runner' in log.read_text() if mode == 'stock' else 'Watching ' in log.read_text()), proc, log)
-    except BaseException:
-        stop(handle)
+    except BaseException as failure:
+        try:
+            stop(handle)
+        except BaseException as cleanup_error:
+            raise failure from cleanup_error
         raise
     return handle
 
 
-def stop(handle):
+def stop(handle, timeout=15):
     proc, _, stream = handle
     try:
         try:
@@ -116,15 +121,149 @@ def stop(handle):
         except ProcessLookupError:
             pass
         try:
-            proc.wait(timeout=15)
+            proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            pass
+    finally:
+        try:
+            # The group can outlive its leader. Always kill anything that did
+            # not exit after SIGINT, even when proc.wait() returned promptly.
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
             proc.wait()
-    finally:
+        finally:
+            stream.close()
+
+
+def stop_all(handles):
+    active_error = sys.exc_info()[1]
+    errors = []
+    for handle in handles:
+        try:
+            stop(handle)
+        except BaseException as error:
+            errors.append(error)
+    if errors:
+        if active_error is not None:
+            raise active_error from errors[0]
+        raise errors[0]
+
+
+def process_handle(log, code):
+    stream = log.open('w')
+    try:
+        proc = subprocess.Popen([sys.executable, '-c', code], stdout=stream, stderr=stream,
+                                start_new_session=True)
+    except BaseException:
         stream.close()
+        raise
+    return proc, log, stream
+
+
+def watch_process_cleanup_comparison(tmp):
+    # A process that fails before readiness must report its original startup
+    # failure even when cleanup reports an error of its own.
+    original_stop = stop
+    failed_handle = []
+
+    def failing_stop(handle):
+        failed_handle.append(handle)
+        original_stop(handle)
+        raise RuntimeError('injected cleanup failure')
+
+    try:
+        globals()['stop'] = failing_stop
+        try:
+            (tmp / 'startup').mkdir()
+            watch(tmp / 'startup', 'stock', (),
+                  command=[sys.executable, '-c', 'raise SystemExit(17)'])
+        except AssertionError as failure:
+            assert 'status 17' in str(failure), failure
+            assert isinstance(failure.__cause__, RuntimeError), failure
+        else:
+            raise AssertionError('a watch process that exits before readiness was accepted')
+        assert len(failed_handle) == 1 and failed_handle[0][2].closed
+    finally:
+        globals()['stop'] = original_stop
+
+    # A process that ignores SIGINT exercises the bounded wait and SIGKILL
+    # escalation path.
+    timeout_handle = process_handle(
+        tmp / 'timeout.log',
+        'import signal, time; signal.signal(signal.SIGINT, signal.SIG_IGN); print("ready", flush=True); time.sleep(60)')
+    try:
+        wait(lambda: 'ready' in timeout_handle[1].read_text(), timeout_handle[0], timeout_handle[1], timeout=3)
+        stop(timeout_handle, timeout=.1)
+        assert timeout_handle[0].returncode == -signal.SIGKILL, timeout_handle[0].returncode
+        assert timeout_handle[2].closed
+    finally:
+        stop(timeout_handle, timeout=.1)
+
+    # The parent exits after starting a child that ignores SIGINT. The child's
+    # process group must still be killed after the parent has been reaped.
+    child_pid_file = tmp / 'child.pid'
+    child_code = (
+        'import os, pathlib, signal, time; '
+        'signal.signal(signal.SIGINT, signal.SIG_IGN); '
+        f'pathlib.Path({str(child_pid_file)!r}).write_text(str(os.getpid())); '
+        'time.sleep(60)')
+    parent_code = (
+        'import pathlib, subprocess, sys, time\n'
+        f'subprocess.Popen([sys.executable, "-c", {child_code!r}])\n'
+        f'ready = pathlib.Path({str(child_pid_file)!r})\n'
+        'deadline = time.monotonic() + 5\n'
+        'while not ready.exists() and time.monotonic() < deadline:\n'
+        '    time.sleep(.01)\n')
+    parent_handle = process_handle(tmp / 'parent.log', parent_code)
+    try:
+        deadline = time.monotonic() + 5
+        while not child_pid_file.exists():
+            assert time.monotonic() < deadline, parent_handle[1].read_text()
+            time.sleep(.01)
+        assert parent_handle[0].wait(timeout=5) == 0
+        child_pid = int(child_pid_file.read_text())
+        assert live(child_pid), child_pid
+        stop(parent_handle, timeout=.1)
+        deadline = time.monotonic() + 3
+        while live(child_pid):
+            assert time.monotonic() < deadline, f'child survived process-group cleanup: {child_pid}'
+            time.sleep(.02)
+        assert parent_handle[2].closed
+    finally:
+        stop(parent_handle, timeout=.1)
+
+    # Cleanup errors from the first watcher must not prevent the second
+    # process group from being stopped.
+    pair = []
+    attempts = []
+
+    def fail_after_first(handle):
+        attempts.append(handle)
+        original_stop(handle, timeout=.1)
+        if len(attempts) == 1:
+            raise RuntimeError('injected first-watcher cleanup failure')
+
+    try:
+        pair.append(process_handle(
+            tmp / 'pair-one.log', 'import time; print("ready", flush=True); time.sleep(60)'))
+        pair.append(process_handle(
+            tmp / 'pair-two.log', 'import time; print("ready", flush=True); time.sleep(60)'))
+        for handle in pair:
+            wait(lambda handle=handle: 'ready' in handle[1].read_text(), handle[0], handle[1], timeout=3)
+        globals()['stop'] = fail_after_first
+        try:
+            stop_all(pair)
+        except RuntimeError as failure:
+            assert str(failure) == 'injected first-watcher cleanup failure', failure
+        else:
+            raise AssertionError('paired cleanup did not report its first failure')
+        assert attempts == pair
+        assert all(handle[0].poll() is not None and handle[2].closed for handle in pair)
+    finally:
+        globals()['stop'] = original_stop
+        stop_all(pair)
 
 
 def legacy_graph(root):
@@ -315,7 +454,7 @@ def watch_comparison(tmp, cache=False):
                 wait(lambda root=root: not (root / pattern).exists(), handle[0], handle[1])
             assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
         finally:
-            for handle in handles: stop(handle)
+            stop_all(handles)
 
 
 def resolver_cycle_comparison(tmp):
@@ -401,6 +540,7 @@ def undeclared_artifact_comparison(tmp):
 
 
 def watch_source_classification_comparison(tmp):
+    watch_process_cleanup_comparison(tmp)
     stock, native = tmp / 'classification-stock', tmp / 'classification-native'
     prepare(stock); prepare(native)
     for root in (stock, native): (root / 'lib/c.txt').write_text('retained c source\n')
@@ -451,7 +591,7 @@ def watch_source_classification_comparison(tmp):
             assert history(stock) == history(native), (history(stock), history(native))
             assert b'externally edited c' not in (native / 'lib/a.final').read_bytes()
         finally:
-            for handle in handles: stop(handle)
+            stop_all(handles)
 
 
 def source_selection_comparison(tmp):
@@ -553,6 +693,65 @@ def cache_selection_comparison(tmp):
     for root in (us, un):
         for name in ('a', 'common'): (root / f'lib/{name}.txt').write_text('changed unread primary\n')
     assert check(us, un, ['--build-filter=lib/a.final']) == Counter()
+    parallel_history_comparison(tmp)
+
+
+def parallel_history_comparison(tmp):
+    stock, native = tmp / 'parallel-history-stock', tmp / 'parallel-history-native'
+    prepare(stock); prepare(native)
+    parallel_inputs = [f'parallel_{index:02}' for index in range(40)]
+    for root in (stock, native):
+        for name in parallel_inputs:
+            (root / f'lib/{name}.txt').write_text(f'{name} input\n')
+
+    # Each selected finish action requests the same generated secondary input.
+    # The common seed and each selected producer must be recorded once.
+    filtered_flags = ['--force-jit', '--build-filter=lib/parallel_*.final']
+
+    def rust_four_jobs(flags):
+        args = launcher(native, 'rust', flags=flags)
+        args[args.index('--jobs=1')] = '--jobs=4'
+        return args
+
+    for root in (stock, native): history_path(root).unlink(missing_ok=True)
+    reference = execute([DART, 'run', 'build_runner', 'build', *filtered_flags], stock)
+    actual = execute(rust_four_jobs(filtered_flags), native)
+    assert actual[0] == reference[0] == 0, (reference, actual)
+    assert '(Rust frontend)' in actual[1], actual
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), actual)
+    filtered_history = (
+        Counter({f'lib/{name}.txt': 1 for name in parallel_inputs})
+        + Counter({f'lib/{name}.mid': 1 for name in parallel_inputs})
+        + Counter({'lib/common.txt': 1})
+    )
+    assert history(stock) == history(native) == filtered_history, (
+        'filtered jobs=4 action history', history(stock), history(native), filtered_history)
+
+    # Start from empty action/output state and fan out enough actions to exercise
+    # concurrent writes from multiple workers to the shared history file.
+    generated_suffixes = {'.mid', '.side', '.final', '.ignored', '.post'}
+    for root in (stock, native):
+        history_path(root).unlink(missing_ok=True)
+        (root / '.dart_tool/build/asset_graph.json').unlink(missing_ok=True)
+        (root / '.dart_tool/build_runner_accelerator/graph-v3.bin').unlink(missing_ok=True)
+        for path in (root / 'lib').rglob('*'):
+            if path.is_file() and path.suffix in generated_suffixes:
+                path.unlink()
+
+    all_text_inputs = ['a', 'b', 'common', 'empty', *parallel_inputs]
+    full_history = (
+        Counter({f'lib/{name}.txt': 1 for name in all_text_inputs})
+        + Counter({f'lib/{name}.mid': 1 for name in all_text_inputs if name != 'empty'})
+        + Counter({'lib/other.noise': 1})
+    )
+    full_flags = ['--force-jit']
+    reference = execute([DART, 'run', 'build_runner', 'build', *full_flags], stock)
+    actual = execute(rust_four_jobs(full_flags), native)
+    assert actual[0] == reference[0] == 0, (reference, actual)
+    assert '(Rust frontend)' in actual[1], actual
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), actual)
+    assert history(stock) == history(native) == full_history, (
+        'unfiltered jobs=4 action history', history(stock), history(native), full_history)
 
 
 def package_selection_comparison(tmp):
@@ -634,6 +833,93 @@ def state_comparison(tmp):
     # even when the entire invocation deliberately uses stock fallback.
 
 
+def caught_demand_failure_comparison(tmp):
+    def selected_outputs(root):
+        current = outputs(root)
+        selected = ('lib/a.final', 'lib/a.mid', 'lib/a.side', 'lib/common.mid', 'lib/common.side')
+        return {path: current[path] for path in selected if path in current}
+
+    def recover(stock, native, flags, expected_stock_history, expected_native_history):
+        for root in (stock, native):
+            history_path(root).unlink(missing_ok=True)
+        reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
+        actual = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
+        assert actual[0] == reference[0] == 0, (flags, reference, actual)
+        assert selected_outputs(stock) == selected_outputs(native), (
+            flags, selected_outputs(stock), selected_outputs(native), actual)
+        assert history(stock) == expected_stock_history, (
+            flags, 'stock recovery history', history(stock), actual)
+        assert history(native) == expected_native_history, (
+            flags, 'native recovery history', history(native), actual)
+        return history(native)
+
+    def restore_full_state(stock, native, flags):
+        # Stock may remove unselected outputs before reporting its failed
+        # build. A successful unfiltered build restores that physical baseline
+        # so the complete output set, bytes, and histories can be compared.
+        check(stock, native, [flags[-1]])
+        assert check(stock, native, flags) == Counter()
+
+    for rpc, option in (('can-read', 'catch_can_read_error'), ('read', 'catch_read_error')):
+        stock, native = tmp / f'caught-{rpc}-stock', tmp / f'caught-{rpc}-native'
+        prepare(stock)
+        prepare(native)
+        catch_flag = f'--define=:finish={option}=true'
+        check(stock, native, [catch_flag])
+        flags = ['--build-filter=lib/a.final', catch_flag]
+        previous_outputs = outputs(native)
+        graph = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+        previous_graph = graph.read_bytes()
+
+        for root in (stock, native):
+            (root / 'lib/common.txt').write_text('fail\n')
+            history_path(root).unlink(missing_ok=True)
+        reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
+        actual = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
+        assert reference[0] != 0 and actual[0] != 0, (rpc, reference, actual)
+        assert 'intentional build-filter fixture failure' in actual[1], (rpc, actual)
+        # Stock may write the consumer's caught-error output before reporting
+        # its failed build. Native keeps its all-success transaction boundary.
+        assert outputs(native) == previous_outputs, (rpc, outputs(native), previous_outputs)
+        assert graph.read_bytes() == previous_graph, rpc
+
+        for root in (stock, native):
+            (root / 'lib/common.txt').write_text('recovered common\n')
+        rebuilt = recover(stock, native, flags,
+                          Counter({'lib/common.txt': 1, 'lib/a.mid': 1}),
+                          Counter({'lib/common.txt': 1, 'lib/a.mid': 1}))
+        assert rebuilt == Counter({'lib/common.txt': 1, 'lib/a.mid': 1}), (rpc, rebuilt)
+        assert b'recovered common' in (native / 'lib/a.final').read_bytes(), rpc
+        restore_full_state(stock, native, flags)
+
+        fresh_stock, fresh_native = tmp / f'fresh-caught-{rpc}-stock', tmp / f'fresh-caught-{rpc}-native'
+        prepare(fresh_stock)
+        prepare(fresh_native)
+        fresh_flags = ['--build-filter=lib/a.final', catch_flag]
+        for root in (fresh_stock, fresh_native):
+            (root / 'lib/common.txt').write_text('fail\n')
+        fresh_reference = execute(
+            [DART, 'run', 'build_runner', 'build', '--force-jit', *fresh_flags], fresh_stock)
+        fresh_actual = execute(
+            launcher(fresh_native, 'rust', flags=['--force-jit', *fresh_flags]), fresh_native)
+        fresh_graph = fresh_native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+        assert fresh_reference[0] != 0 and fresh_actual[0] != 0, (rpc, fresh_reference, fresh_actual)
+        assert 'intentional build-filter fixture failure' in fresh_actual[1], (rpc, fresh_actual)
+        assert outputs(fresh_native) == {}, (rpc, outputs(fresh_native))
+        assert not fresh_graph.exists(), (rpc, fresh_graph)
+
+        for root in (fresh_stock, fresh_native):
+            (root / 'lib/common.txt').write_text('recovered fresh common\n')
+        first_success = recover(
+            fresh_stock, fresh_native, fresh_flags,
+            Counter({'lib/common.txt': 1, 'lib/a.mid': 1}),
+            Counter({'lib/a.txt': 1, 'lib/common.txt': 1, 'lib/a.mid': 1}))
+        assert first_success == Counter({
+            'lib/a.txt': 1, 'lib/common.txt': 1, 'lib/a.mid': 1}), (rpc, first_success)
+        assert b'recovered fresh common' in (fresh_native / 'lib/a.final').read_bytes(), rpc
+        restore_full_state(fresh_stock, fresh_native, fresh_flags)
+
+
 def traced_fallback_comparison(tmp, kinds):
     for kind in kinds:
         ts, tn = tmp / (kind + '-traced-stock'), tmp / (kind + '-traced-auto')
@@ -707,6 +993,7 @@ def existing_fallback_comparison(tmp):
 
 
 def routing_comparison(tmp):
+    caught_demand_failure_comparison(tmp)
     stock, native = tmp / 'routing-stock', tmp / 'routing-native'
     prepare(stock); prepare(native)
     # Early fallback preserves unknown/invalid values, separators and compile flags.

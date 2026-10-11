@@ -89,6 +89,7 @@ pub struct LazyBuildState {
     built_keys: BTreeSet<String>,
     building_keys: BTreeSet<String>,
     results: Vec<LazyBuildResult>,
+    failed_demand: Option<String>,
     filtered_previous: Option<crate::graph::GraphState>,
     demanded_keys: BTreeSet<String>,
     filtered_snapshot: crate::snapshot::Snapshot,
@@ -102,6 +103,7 @@ impl LazyBuildState {
             built_keys: BTreeSet::new(),
             building_keys: BTreeSet::new(),
             results: Vec::new(),
+            failed_demand: None,
             filtered_previous: None,
             demanded_keys: BTreeSet::new(),
             filtered_snapshot: BTreeMap::new(),
@@ -165,6 +167,16 @@ impl LazyBuildState {
 
     pub(crate) fn demanded_keys(&self) -> &BTreeSet<String> {
         &self.demanded_keys
+    }
+
+    fn record_demand_failure(&mut self, error: &io::Error) {
+        if self.filtered_previous.is_some() {
+            self.failed_demand.get_or_insert_with(|| error.to_string());
+        }
+    }
+
+    pub(crate) fn failed_demand(&self) -> Option<&str> {
+        self.failed_demand.as_deref()
     }
 
     pub fn take_results(&mut self) -> Vec<LazyBuildResult> {
@@ -432,6 +444,7 @@ impl WorkerClient {
                         lazy,
                     )
                 {
+                    lazy.record_demand_failure(&error);
                     return self.send_asset_error(request, &error);
                 }
             }
@@ -470,6 +483,7 @@ impl WorkerClient {
                         lazy_specs,
                         lazy,
                     ) {
+                        lazy.record_demand_failure(&error);
                         return self.send_asset_error(request, &error);
                     }
                 }
