@@ -68,6 +68,29 @@ void main() {
     }
   });
 
+  test('build-filter multi-option parsing agrees with stock', () async {
+    for (final flags in <List<String>>[
+      ['--build-filter=lib/a.final'],
+      ['--build-filter', 'lib/a.final,lib/b.final'],
+      ['--build-filter=lib/a.final', '--build-filter=asset:*/lib/**'],
+      ['--build-filter=package:example*/a.final', '--release', '-cnamed'],
+    ]) {
+      final native = BuildSettings.parse(flags);
+      final cli = (await BuildRunnerCommandLine.parse(['build', ...flags]))!;
+      expect(native.buildFilters, cli.buildFilter!.toList());
+      final stock = BuildOptions.parse(
+        cli,
+        buildPaths: BuildPaths(packagePath: '.', buildWorkspace: false),
+        currentPackage: 'example',
+        restIsBuildDirs: true,
+      );
+      final matches = stock.buildFilters.any(
+        (f) => f.matches(AssetId('example', 'lib/a.final')),
+      );
+      expect(matches, isTrue);
+    }
+  });
+
   test('duplicate aliases are errors just as in stock', () async {
     final arguments = ['--define=:b=x=1', '--define=example|b=x=2'];
     final cli = (await BuildRunnerCommandLine.parse(['build', ...arguments]))!;

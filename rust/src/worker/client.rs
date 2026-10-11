@@ -36,7 +36,7 @@ pub struct WorkerClient {
     output: BufReader<ChildStdout>,
     pub(super) next_id: u64,
     pub(super) metrics: WorkerClientMetrics,
-    /// Resolver dependency edges reported with this client's batch results.
+    /// Resolver dependency edges reported with this client's batch or single results.
     pub(super) dep_graph: BTreeMap<String, Vec<String>>,
 }
 

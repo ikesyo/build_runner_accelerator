@@ -6,13 +6,38 @@ use crate::graph::GraphState;
 use crate::pattern::match_capture_pattern;
 use crate::worker::WorkerPool;
 use crate::workspace::Workspace;
-use notify::{Event, EventKind, RecursiveMode, Watcher};
+use notify::{
+    Event, EventKind, RecursiveMode, Watcher,
+    event::{ModifyKind, RenameMode},
+};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
+
+#[derive(Default)]
+pub(crate) struct WatchChanges {
+    pub(crate) paths: BTreeSet<PathBuf>,
+    pub(crate) added_paths: BTreeSet<PathBuf>,
+}
+
+fn added_event_paths(event: &Event) -> Vec<PathBuf> {
+    match event.kind {
+        EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(RenameMode::To)) => event
+            .paths
+            .iter()
+            .map(|path| normalized_watch_path(path))
+            .collect(),
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => event
+            .paths
+            .last()
+            .map(|path| vec![normalized_watch_path(path)])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
 
 pub(crate) fn run(options: &Options) -> io::Result<()> {
     let mut pool = None;
@@ -40,6 +65,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         &mut pool_shape,
         &mut cached_configuration,
         false,
+        &WatchChanges::default(),
     ) {
         Ok(native_build) => native_build,
         Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
@@ -79,7 +105,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     );
 
     loop {
-        let configuration_changed = wait_for_relevant_event(
+        let (configuration_changed, changed_paths) = wait_for_relevant_event(
             &receiver,
             &workspace,
             &source_post_process_outputs,
@@ -95,6 +121,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
             &mut pool_shape,
             &mut cached_configuration,
             retain_configuration && !configuration_changed,
+            &changed_paths,
         ) {
             Ok(true) => {
                 source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
@@ -115,8 +142,10 @@ fn run_watch_build(
     pool_shape: &mut Option<Vec<ConfiguredBuilder>>,
     cached_configuration: &mut Option<RustBuildConfig>,
     reuse_configuration: bool,
+    changed_paths: &WatchChanges,
 ) -> io::Result<bool> {
     let workspace = Workspace::load(options.root.clone())?;
+    let session_start = cached_configuration.is_none();
     let selected = if reuse_configuration && cached_configuration.is_some() {
         cached_configuration.clone()
     } else {
@@ -127,6 +156,22 @@ fn run_watch_build(
         run_dart_fallback(options)?;
         return Ok(false);
     };
+    // A successful cold build can discover resolver cycles. Re-check the
+    // incremental evidence even when filesystem events reuse the manifest.
+    if reuse_configuration
+        && !crate::cli::BuildSettings::parse(&options.stock_arguments)?
+            .build_filters
+            .is_empty()
+        && let Some(reason) = build::filtered_transition_reason(&workspace, &build_config)?
+    {
+        pool.take();
+        if options.mode == FrontendMode::Rust {
+            return Err(io::Error::new(io::ErrorKind::Unsupported, reason));
+        }
+        eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
+        run_dart_fallback(options)?;
+        return Ok(false);
+    }
 
     // Stock 2.16.2 reloads the plan in watch, but changing application/output
     // topology does not behave like a fresh build. Do not partially emulate
@@ -176,7 +221,14 @@ fn run_watch_build(
         worker_pool.pin_worker_artifact();
         *pool = Some(worker_pool);
     }
-    build::run_with_config(options, pool.as_mut(), workspace, build_config)?;
+    build::run_with_config_session(
+        options,
+        pool.as_mut(),
+        workspace,
+        build_config,
+        session_start,
+        changed_paths,
+    )?;
     Ok(true)
 }
 
@@ -186,7 +238,7 @@ fn wait_for_relevant_event(
     source_post_process_outputs: &BTreeSet<String>,
     debounce_ms: u64,
     stock_config_path: Option<&str>,
-) -> io::Result<bool> {
+) -> io::Result<(bool, WatchChanges)> {
     loop {
         let event = receiver.recv().map_err(io::Error::other)?;
         let event = event.map_err(io::Error::other)?;
@@ -201,6 +253,12 @@ fn wait_for_relevant_event(
 
         let mut configuration_changed =
             is_configuration_event(workspace, &event, stock_config_path);
+        let mut changed_paths: BTreeSet<_> = event
+            .paths
+            .iter()
+            .map(|path| normalized_watch_path(path))
+            .collect();
+        let mut added_paths: BTreeSet<_> = added_event_paths(&event).into_iter().collect();
         // Coalesce the burst from one save/atomic rename into one build.
         // Only relevant events extend the quiet window, and an absolute
         // deadline caps the total wait, so sustained unrelated writes (for
@@ -227,6 +285,9 @@ fn wait_for_relevant_event(
                     ) {
                         configuration_changed |=
                             is_configuration_event(workspace, &event, stock_config_path);
+                        changed_paths
+                            .extend(event.paths.iter().map(|path| normalized_watch_path(path)));
+                        added_paths.extend(added_event_paths(&event));
                         quiet_until = Instant::now() + debounce;
                     }
                 }
@@ -234,13 +295,19 @@ fn wait_for_relevant_event(
                 Err(_) => break,
             }
         }
-        return Ok(configuration_changed);
+        return Ok((
+            configuration_changed,
+            WatchChanges {
+                paths: changed_paths,
+                added_paths,
+            },
+        ));
     }
 }
 
 // Package-config relative URIs are stored as joined paths by Workspace. Stock
 // resolves URI dot segments before assigning an event to the deepest package.
-fn normalized_watch_path(path: &Path) -> PathBuf {
+pub(crate) fn normalized_watch_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {

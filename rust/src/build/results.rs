@@ -51,6 +51,12 @@ pub(super) fn record_missing_primary_input(
                 .push((spec.instance.builder.clone(), output));
         }
     }
+    pending
+        .pending_stock_inputs
+        .insert(key.clone(), Some(Vec::new()));
+    pending
+        .pending_stock_globs
+        .insert(key.clone(), BTreeMap::new());
     pending.pending_actions.push((
         key,
         ActionState {
@@ -256,6 +262,12 @@ pub(super) fn record_build_result(
     for generated in &result.outputs {
         output_digests.insert(generated.asset.clone(), digest_bytes(&generated.bytes));
     }
+    pending
+        .pending_stock_inputs
+        .insert(spec.action_key(), result.stock_inputs);
+    pending
+        .pending_stock_globs
+        .insert(spec.action_key(), result.stock_globs.unwrap_or_default());
     pending.pending_actions.push((
         spec.action_key(),
         ActionState {

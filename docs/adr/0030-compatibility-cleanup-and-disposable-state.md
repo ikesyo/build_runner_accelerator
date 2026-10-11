@@ -4,6 +4,9 @@
 - Date: 2026-10-08
 - Amends ADRs 0001–0004, 0009, 0011, 0019, 0021, 0022, 0024, 0026, 0028 and 0029.
 
+Native filter demand extends private state with actual output locations and
+ordered stock input tracking; see [ADR 0032](0032-native-build-filter-demand-and-output-state.md).
+
 ## Context
 
 Development continues through 0.x releases. This cleanup prepares for an eventual

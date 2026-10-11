@@ -76,12 +76,37 @@ void main() {
     );
   });
 
+  test('supported filters retain the complete late fallback invocation', () {
+    for (final command in ['build', 'watch']) {
+      final arguments = [
+        command,
+        '--build-filter',
+        'lib/a.final,lib/b.final',
+        '--build-filter=package:app*/**',
+        '--force-jit',
+        '--release',
+      ];
+      final options = LauncherOptions.parse(arguments);
+      expect(options.nativeUnsupported, isFalse);
+      expect(options.dartArguments, ['run', 'build_runner', ...arguments]);
+      final transport = options.rustArguments.indexOf('--stock-arguments-json');
+      final json = options.rustArguments[transport + 1];
+      expect(json, contains('lib/a.final,lib/b.final'));
+      expect(json, contains('--build-filter=package:app*/**'));
+    }
+    expect(
+      () => LauncherOptions.parse(['prewarm', '--build-filter=lib/**']),
+      throwsFormatException,
+    );
+  });
+
   test('unsupported CLI selects stock before native resolution', () {
     for (final args in [
       ['clean'],
       ['serve'],
       ['test', '--', '--mode', 'rust'],
-      ['build', '--build-filter', 'lib/*.g.dart'],
+      ['build', '--build-filter', 'lib/[ab].g.dart'],
+      ['build', '--build-filter', 'lib/a\n'],
       ['build', '--unknown'],
       ['build', '--help'],
       ['build', '--version'],

@@ -44,10 +44,25 @@ user-facing option.
 
 Native build/watch also accept `--delete-conflicting-outputs` and `-d`.
 In the supported build_runner 2.16.2 window these are retired, non-negatable,
-non-operational flags. No path automatically adds them. `--build-filter`,
-output directories, build directories, workspace,
-keep-modified-outputs, only-check, logging, serve options and other stock
+non-operational flags. No path automatically adds them. Output directories,
+build directories, workspace, keep-modified-outputs, only-check, logging, serve
+options and other stock
 options remain on fallback. See the complete [CLI table](../README.md).
+
+Native build/watch support repeated/comma-separated `--build-filter` values,
+relative paths, `package:`/`asset:` URIs, package `*` and path `*`/whole `**`
+segments. The full graph remains available for dependency demand, and a
+multiple-output builder may write all its outputs. Unsupported lexical syntax routes
+before binary acquisition; optional/post-process/zero-output manifests route
+before actions. Auto/dart preserve every stock argument; rust rejects unsupported
+combinations. Configuration transitions removing previous declarations/applications
+or lacking legacy ordered-input/glob evidence also use stock. Current graphs record
+output locations for source/cache transitions. Trigger-only builders and
+incremental cyclic resolver reuse use stock. Other filtered configuration changes
+without stock plan-compatibility evidence also use stock. Compile modes and retired
+deletion flags are excluded from builder identity. Filters are not prewarm settings. Retention/deletion depends on the
+previous evaluated state and watch restart boundary; see
+[ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md).
 
 Native build/watch/prewarm also support `--define`, `--release` / `-r`,
 `--no-release`, and `--config NAME` / `-c NAME` / `-cNAME`. Grouped `-rd`

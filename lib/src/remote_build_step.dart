@@ -35,6 +35,7 @@ class _RemoteActionState {
   final Map<AssetId, Uint8List> outputs = <AssetId, Uint8List>{};
   final Set<AssetId> observedReads = <AssetId>{};
   final Set<AssetId> observedGlobResults = <AssetId>{};
+  final Map<ObservedGlob, List<AssetId>> observedGlobMembers = {};
   final Set<ObservedGlob> observedGlobs = <ObservedGlob>{};
 }
 
@@ -47,6 +48,7 @@ class _RemoteIoState {
   final Map<AssetId, Uint8List> _idleOutputs = <AssetId, Uint8List>{};
   final Set<AssetId> _idleObservedReads = <AssetId>{};
   final Set<AssetId> _idleObservedGlobResults = <AssetId>{};
+  final Map<ObservedGlob, List<AssetId>> _idleObservedGlobMembers = {};
   final Set<ObservedGlob> _idleObservedGlobs = <ObservedGlob>{};
   final Set<AssetId> _idleBlockedAssets = <AssetId>{};
 
@@ -89,6 +91,8 @@ class _RemoteIoState {
       _actions.isEmpty ? _idleObservedReads : _active.observedReads;
   Set<AssetId> get observedGlobResults =>
       _actions.isEmpty ? _idleObservedGlobResults : _active.observedGlobResults;
+  Map<ObservedGlob, List<AssetId>> get observedGlobMembers =>
+      _actions.isEmpty ? _idleObservedGlobMembers : _active.observedGlobMembers;
   Set<ObservedGlob> get observedGlobs =>
       _actions.isEmpty ? _idleObservedGlobs : _active.observedGlobs;
 }
@@ -124,6 +128,8 @@ class RemoteAssetReaderWriter extends ReaderWriter {
   Map<AssetId, Uint8List> get outputs => _state.outputs;
   Set<AssetId> get observedReads => _state.observedReads;
   Set<AssetId> get observedGlobResults => _state.observedGlobResults;
+  Map<ObservedGlob, List<AssetId>> get observedGlobMembers =>
+      _state.observedGlobMembers;
   Set<ObservedGlob> get observedGlobs => _state.observedGlobs;
 
   void beginAction({
@@ -394,9 +400,15 @@ class _RemoteAssetFinder implements AssetFinder {
     if (assets is! List) {
       throw const FormatException('Asset find response assets must be a list');
     }
-    for (final rawAsset in assets) {
-      final id = AssetId.parse(rawAsset as String);
-      if (_isBlocked(id)) continue;
+    final members = [
+      for (final rawAsset in assets) AssetId.parse(rawAsset as String),
+    ]..removeWhere(_isBlocked);
+    _state.observedGlobMembers[ObservedGlob(
+          package: requestedPackage,
+          pattern: glob.pattern,
+        )] =
+        members;
+    for (final id in members) {
       // Rust applies phase visibility and existence checks before returning
       // glob results. Reuse that positive answer just like a successful
       // can_read. The normal read path still fetches bytes and tracks reads;

@@ -88,7 +88,34 @@ pub(crate) fn select_frontend(
     };
 
     match rust_build_config_from_manifest(manifest) {
-        Ok(config) => Ok(Some(config)),
+        Ok(config) => {
+            let filters = crate::cli::BuildSettings::parse(&options.stock_arguments)?.build_filters;
+            if !filters.is_empty()
+                && config.builders.iter().any(|b| {
+                    b.definition.is_optional
+                        || b.options
+                            .get("run_only_if_triggered")
+                            .and_then(serde_json::Value::as_bool)
+                            == Some(true)
+                        || b.definition.kind == crate::builder::BuilderKind::PostProcess
+                        || b.effective_definition()
+                            .extensions
+                            .iter()
+                            .any(|e| e.output_suffixes.is_empty())
+                })
+            {
+                return select_dart_fallback(
+                    options,
+                    "build filters with optional, post-process, trigger-only or zero-output builders are outside the supported subset",
+                );
+            }
+            if !filters.is_empty()
+                && let Some(reason) = crate::build::filtered_transition_reason(workspace, &config)?
+            {
+                return select_dart_fallback(options, reason);
+            }
+            Ok(Some(config))
+        }
         Err(error) => select_dart_fallback(
             options,
             &format!("dynamic builder manifest is outside the supported subset: {error}"),
@@ -103,7 +130,10 @@ fn settings_fingerprint(options: &Options, workspace: &Workspace) -> io::Result<
     let mut bytes = b"native-settings-v3\0".to_vec();
     bytes.extend_from_slice(workspace.builder_manifest_fingerprint()?.as_bytes());
     bytes.extend_from_slice(
-        &serde_json::to_vec(&options.stock_arguments).map_err(io::Error::other)?,
+        &serde_json::to_vec(&crate::build_filter::configuration_arguments(
+            &options.stock_arguments,
+        )?)
+        .map_err(io::Error::other)?,
     );
     let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
     let mut paths = std::collections::BTreeSet::new();

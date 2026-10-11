@@ -1,0 +1,20 @@
+builders:
+  seed:
+    import: 'package:build_filter_app/builder.dart'
+    builder_factories: [seed]
+    build_extensions: {'.txt': ['.mid', '.side']}
+    auto_apply: root_package
+    build_to: source
+  finish:
+    import: 'package:build_filter_app/builder.dart'
+    builder_factories: [finish]
+    build_extensions: {'.mid': ['.final']}
+    auto_apply: root_package
+    build_to: source
+    required_inputs: ['.mid', '.side']
+  noise:
+    import: 'package:build_filter_app/builder.dart'
+    builder_factories: [noise]
+    build_extensions: {'.noise': ['.ignored']}
+    auto_apply: root_package
+    build_to: source

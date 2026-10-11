@@ -676,7 +676,7 @@ Future<void> _handleBuild(
   Map<String, PostProcessBuilderFactory> postProcessCatalog,
 ) async {
   await writer.sendBuildResult(
-    await _runBuild(
+    await _runSingleBuild(
       request,
       reader,
       writer,
@@ -697,7 +697,7 @@ Future<void> _handleNestedBuild(
 ) async {
   try {
     await writer.sendBuildResult(
-      await _runBuild(
+      await _runSingleBuild(
         request,
         reader,
         writer,
@@ -715,15 +715,45 @@ Future<void> _handleNestedBuild(
       'outputs': <dynamic>[],
       'deleted': <String>[],
       'reads': <String>[],
+      'stock_inputs': <String>[],
+      'stock_globs': <String, List<String>>{},
       'resolver_reads': <String>[],
       'resolver_entrypoints': <String>[],
       'resolver_used': false,
+      'dep_graph': <String, List<String>>{},
       'glob_reads': <dynamic>[],
       'diagnostics': <dynamic>[],
       'error': '$error',
       'stack': '$stack',
     });
   }
+}
+
+// Single demand calls need the same transitive resolver evidence as batches.
+// Keep graph emission outside _runBuild so batch results retain their shared
+// graph and nested single results can each deliver the edges they discovered.
+Future<JsonMap> _runSingleBuild(
+  WorkerBuildRequest request,
+  FrameReader reader,
+  FrameWriter writer,
+  _WorkerRuntime runtime,
+  Map<String, BuilderFactory> builderCatalog,
+  Map<String, PostProcessBuilderFactory> postProcessCatalog,
+) async {
+  final result = await _runBuild(
+    request,
+    reader,
+    writer,
+    runtime,
+    builderCatalog,
+    postProcessCatalog,
+  );
+  result['dep_graph'] = _resolverDepGraphJson(
+    runtime.resolver.phasedAssetDeps(),
+    (result['resolver_entrypoints'] as List<String>).map(AssetId.parse).toSet(),
+    runtime.sentDepGraphValues,
+  );
+  return result;
 }
 
 Future<void> _handleBuildBatch(
@@ -1005,14 +1035,32 @@ Future<JsonMap> _runBuild(
       'deleted': <String>[for (final asset in deleted) asset.toString()]
         ..sort(),
       'reads': reads,
+      // Preserve stock InputTracker iteration order for filtered reuse. The
+      // broader reads above also include analyzer/prefetch bookkeeping.
+      'stock_inputs': <String>[
+        if (triggerInputTracker != null)
+          ...triggerInputTracker.inputs.map((id) => id.toString()),
+        if (step != null)
+          ...step.inputTracker.inputs.map((id) => id.toString()),
+      ],
+      'stock_globs': <String, List<String>>{
+        for (final entry in runtime.io.observedGlobMembers.entries)
+          '${entry.key.package}|${entry.key.pattern}': [
+            for (final asset in entry.value) asset.toString(),
+          ],
+      },
       'resolver_reads': resolverReads,
       'resolver_entrypoints': <String>[
         for (final id in resolverEntrypoints) id.toString(),
-      ]..sort(),
+      ],
       'resolver_used': resolverUsed,
       'glob_reads': <Map<String, String>>[
-        for (final glob in globReads)
-          <String, String>{'package': glob.package, 'pattern': glob.pattern},
+        if (step != null)
+          for (final glob in step.inputTracker.globsEvaluated)
+            <String, String>{'package': glob.package, 'pattern': glob.glob}
+        else
+          for (final glob in globReads)
+            <String, String>{'package': glob.package, 'pattern': glob.pattern},
       ],
       'diagnostics': <dynamic>[],
     };

@@ -84,6 +84,23 @@ pub(super) fn commit(
     // Commit only after every dirty action succeeded. Cache-built part files
     // are kept below .dart_tool and are visible to later phases through the
     // overlay and the cache-aware reader.
+    if transaction.clean_artifact_tree {
+        let path = workspace
+            .root
+            .join(".dart_tool/build_runner_accelerator/cache");
+        if path.exists() {
+            fs::remove_dir_all(path)?;
+        }
+    }
+    for (location, asset) in transaction.pending_location_deletions {
+        let path = match location {
+            crate::builder::BuildTo::Source => workspace.path_for_asset(&asset)?,
+            crate::builder::BuildTo::Cache => workspace.cache_path_for_asset(&asset)?,
+        };
+        if path.is_file() {
+            fs::remove_file(path)?;
+        }
+    }
     for (builder, asset) in transaction.pending_deletions {
         let path = output_path(workspace, builder.as_ref(), &asset)?;
         if path.is_file() {
@@ -113,7 +130,39 @@ pub(super) fn commit(
     for (key, action) in transaction.pending_actions {
         state.actions.insert(key, action);
     }
+    for (key, inputs) in transaction.pending_stock_inputs {
+        if let Some(inputs) = inputs {
+            state.stock_input_order.insert(key, inputs);
+        } else {
+            state.stock_input_order.remove(&key);
+        }
+    }
+    for (key, globs) in transaction.pending_stock_globs {
+        state.stock_glob_members.insert(key, globs);
+    }
+    state
+        .stock_glob_members
+        .retain(|key, _| state.actions.contains_key(key));
 
+    // Record location from the producing action, rather than rediscovering it
+    // from files during a later configuration/filter transition.
+    let actual_outputs: BTreeSet<_> = state.actions.values().flat_map(|a| &a.outputs).collect();
+    state
+        .stock_input_order
+        .retain(|key, _| state.actions.contains_key(key));
+    state
+        .output_locations
+        .retain(|asset, _| actual_outputs.contains(asset));
+    for action in state.actions.values() {
+        if let Some(builder) = build_config.definition(&action.builder) {
+            for asset in &action.outputs {
+                state.output_locations.insert(
+                    asset.clone(),
+                    builder.build_to == crate::builder::BuildTo::Cache,
+                );
+            }
+        }
+    }
     drop(outputs);
     let metadata = crate::wall::Span::new("commit_metadata");
     workspace.clear_asset_caches()?;

@@ -121,7 +121,8 @@ benchmarks and diagnostics; it is not a supported third-party extension API.
 | `clean`, `serve`, `run`, `test`, `stop`, `daemon`, `help` | Fallback | Stock, without native download or manifest generation |
 | `--force-aot`, `--force-jit` | Supported | Retained for stock |
 | `--delete-conflicting-outputs`, `-d` | Accepted as retired compatibility flags | No effect in build_runner 2.16.2; never auto-added |
-| `--build-filter`, build directories | Fallback | Stock owns filtering, dependency demand, and output retention/deletion |
+| `--build-filter` | Supported for normal, non-optional builders with declared outputs and basic globs | Unsupported syntax or builder combinations use stock |
+| build directories | Fallback | Stock |
 | `--define`, `--release` / `-r`, `--no-release`, `--config NAME` / `-c NAME` | Supported for the manifest subset, including prewarm | Native in auto; retained for stock fallback |
 | Attached `-cNAME`, grouped `-rd` / `-dr`, config names containing `/` or `\` | Supported with stock parsing and AssetId normalization | Native in auto; retained for stock fallback |
 | `--output` / `-o`, `--workspace` | Fallback | Stock |
@@ -162,6 +163,25 @@ worker pool; application/output topology changes use stock in auto or error in
 rust. Prewarm uses the same resolution and never executes builders.
 See [configuration compatibility](docs/configuration.md) for cache reuse and
 unsupported boundaries.
+
+`--build-filter=lib/*.g.dart` selects outputs in the root package. Repeat the
+option or separate values with commas to OR filters. Use `package:my_app/a.g.dart`
+for lib paths or `asset:my_app/lib/a.g.dart` for package-root paths; package
+names support `*`. Native paths support `*` and whole `**` segments. Builders
+run with all their outputs, including siblings, and required primary/secondary
+producer actions run on demand. No match is a successful build.
+
+Classes/braces/escaping, `?`, complex URI syntax, non-ASCII, absolute/dot-segment
+paths and filters with optional/post-process/zero-output or trigger-only builders use stock
+(or error in rust). Configuration transitions removing previous builder/output
+applications, or a legacy graph without ordered stock input/glob evidence, also
+use stock. Other configuration transitions without stock plan-compatibility
+information also use stock; current-state source/cache location changes are supported.
+Incremental reuse of recorded cyclic resolver graphs also uses stock.
+Filters are rejected by prewarm. A compatible unselected
+output can survive the first filtered build but disappear on a later build or
+watch restart when absent from the last build state. Do not rely on filters to
+preserve generated files. See [the demand/output-state ADR](docs/adr/0032-native-build-filter-demand-and-output-state.md).
 
 Output conflicts are handled by the frontend's normal output lifecycle;
 `-d` cannot enable or disable deletion in the supported stock version.

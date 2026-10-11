@@ -153,6 +153,8 @@ fn is_ident_byte(byte: u8) -> bool {
 
 pub(super) fn empty_build_result(spec: &BuildSpec) -> BuildResult {
     BuildResult {
+        stock_inputs: Some(Vec::new()),
+        stock_globs: Some(BTreeMap::new()),
         message_type: "build_result".to_owned(),
         id: 0,
         status: "success".to_owned(),

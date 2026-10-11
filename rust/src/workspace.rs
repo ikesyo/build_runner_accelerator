@@ -356,7 +356,10 @@ impl Workspace {
         Ok(assets)
     }
 
-    fn list_cached_package_assets(&self, package: &str) -> io::Result<Vec<(String, PathBuf)>> {
+    pub(crate) fn list_cached_package_assets(
+        &self,
+        package: &str,
+    ) -> io::Result<Vec<(String, PathBuf)>> {
         let cache_root = self
             .root
             .join(".dart_tool/build_runner_accelerator/cache")

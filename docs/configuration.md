@@ -66,7 +66,9 @@ applied. The existing manifest subset remains the boundary.
 
 ## Cache and watch behavior
 
-The manifest/probe identity includes the original supported CLI vector,
+The manifest/probe identity includes the supported configuration CLI vector
+(canonical release/config flags and define values, excluding runtime filters,
+compile modes and retired deletion flags),
 package configuration, lockfile, all packages' build.yaml contents, root package
 override filenames/contents, and the selected named file (including absence).
 Switching modes/configs/defines or editing/removing/restoring configuration
@@ -85,6 +87,18 @@ mismatched catalog regenerates the pair. This recovers an interrupted settings
 switch that published the new worker before its manifest, and rejects mixed
 restored caches. Older cached manifests without this binding are regenerated.
 See [ADR 0031](adr/0031-native-build-settings.md).
+
+`--build-filter` is runtime demand, so adding, changing or removing filters does
+not change builder configuration identity. For filtered builds, current state
+with recorded output locations supports source/cache layout transitions.
+Transitions removing prior applications/declarations, legacy state lacking
+ordered stock inputs, per-action glob membership or locations, and other changes without stock plan-compatibility evidence route
+the complete invocation to stock in auto and fail before actions in rust.
+Optional/post-process/zero-output/trigger-only combinations and incremental
+reuse of recorded cyclic resolver graphs also use this whole-invocation
+boundary. Package-path conflicts with declared dependency outputs use stock's
+error handling; native never deletes these dependency files. See [ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md)
+for output deletion and watch session rules.
 
 Worker instances are scoped to configured builder applications and receive
 resolved options on each build request. Watch replaces the resident pool when the manifest identity

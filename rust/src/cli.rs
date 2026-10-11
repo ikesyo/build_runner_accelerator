@@ -211,7 +211,8 @@ impl Options {
             self.command.as_str(),
             "build" | "watch" | "prewarm" | "aot-cache-key" | "--help" | "-h" | "--version"
         ) && BuildSettings::parse(&self.stock_arguments).is_ok_and(|settings| {
-            matches!(self.command.as_str(), "build" | "watch") || !settings.deletion_flag
+            matches!(self.command.as_str(), "build" | "watch")
+                || (!settings.deletion_flag && settings.build_filters.is_empty())
         })
     }
 }
@@ -220,7 +221,10 @@ impl Options {
 /// and configuration parsing. Never discard the original stock vector.
 #[derive(Default)]
 pub(crate) struct BuildSettings {
+    pub(crate) release: bool,
+    pub(crate) defines: Vec<String>,
     pub(crate) config: Option<String>,
+    pub(crate) build_filters: Vec<crate::build_filter::BuildFilter>,
     pub(crate) force_aot: bool,
     pub(crate) force_jit: bool,
     deletion_flag: bool,
@@ -231,7 +235,10 @@ impl BuildSettings {
         let mut expanded = Vec::new();
         let mut original = arguments.iter();
         while let Some(argument) = original.next() {
-            if matches!(argument.as_str(), "--config" | "-c" | "--define") {
+            if matches!(
+                argument.as_str(),
+                "--config" | "-c" | "--define" | "--build-filter"
+            ) {
                 expanded.push(argument.clone());
                 if let Some(value) = original.next() {
                     expanded.push(value.clone());
@@ -255,7 +262,8 @@ impl BuildSettings {
         let mut pairs = std::collections::BTreeSet::new();
         while let Some(argument) = args.next() {
             match argument.as_str() {
-                "--release" | "--no-release" | "-r" => {}
+                "--release" | "-r" => settings.release = true,
+                "--no-release" => settings.release = false,
                 "-d" | "--delete-conflicting-outputs" => settings.deletion_flag = true,
                 "--force-aot" => settings.force_aot = true,
                 "--force-jit" => settings.force_jit = true,
@@ -268,7 +276,7 @@ impl BuildSettings {
                         .map_or((argument.as_str(), None), |(name, value)| {
                             (name, Some(value))
                         });
-                    if !matches!(name, "--define" | "--config" | "-c")
+                    if !matches!(name, "--define" | "--config" | "-c" | "--build-filter")
                         || (name == "-c" && inline.is_some())
                     {
                         return Err(io::Error::other(format!(
@@ -278,7 +286,13 @@ impl BuildSettings {
                     let value = inline
                         .or_else(|| args.next().map(String::as_str))
                         .ok_or_else(|| io::Error::other(format!("{name} requires a value")))?;
-                    if name == "--define" {
+                    if name == "--build-filter" {
+                        for filter in value.split(',') {
+                            settings
+                                .build_filters
+                                .push(crate::build_filter::BuildFilter::parse(filter)?);
+                        }
+                    } else if name == "--define" {
                         if value.split('=').count() < 3 {
                             return Err(io::Error::other(
                                 "Expected --define <builder>=<option>=<value>",
@@ -293,6 +307,7 @@ impl BuildSettings {
                         if !pairs.insert((root_relative, key, parts[1].to_owned())) {
                             return Err(io::Error::other("Duplicate --define"));
                         }
+                        settings.defines.push(value.to_owned());
                     } else {
                         settings.config = Some(value.to_owned());
                     }
@@ -585,7 +600,7 @@ mod tests {
         for args in [
             vec!["clean"],
             vec!["serve", "web:8080"],
-            vec!["build", "--build-filter", "lib/*.g.dart"],
+            vec!["build", "--build-filter", "lib/[ab].g.dart"],
             vec!["build", "--unknown"],
             vec!["build", "--", "--mode", "rust"],
         ] {
@@ -606,6 +621,40 @@ mod tests {
         .unwrap();
         assert!(options.native_supported());
         assert_eq!(options.stock_arguments, ["--force-aot", "-d"]);
+    }
+
+    #[test]
+    fn supported_build_filter_vector_and_command_boundary() {
+        for command in ["build", "watch"] {
+            let options = super::Options::parse(
+                [
+                    command,
+                    "--build-filter",
+                    "lib/a,lib/b",
+                    "--build-filter=package:app*/**",
+                    "--force-jit",
+                ]
+                .into_iter()
+                .map(str::to_owned),
+            )
+            .unwrap();
+            assert!(options.native_supported());
+            assert_eq!(
+                super::BuildSettings::parse(&options.stock_arguments)
+                    .unwrap()
+                    .build_filters
+                    .len(),
+                3
+            );
+            assert_eq!(options.stock_invocation.unwrap()[1], "--build-filter");
+        }
+        let options = super::Options::parse(
+            ["prewarm", "--build-filter=lib/**"]
+                .into_iter()
+                .map(str::to_owned),
+        )
+        .unwrap();
+        assert!(!options.native_supported());
     }
 
     #[test]

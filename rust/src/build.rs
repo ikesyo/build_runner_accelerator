@@ -1,6 +1,7 @@
 mod commit;
 mod dirty;
 mod execution;
+mod filtered;
 mod part_directive;
 mod planning;
 mod results;
@@ -52,6 +53,24 @@ pub(crate) fn run_with_config(
     workspace: Workspace,
     build_config: crate::builder::RustBuildConfig,
 ) -> io::Result<()> {
+    run_with_config_session(
+        options,
+        pool,
+        workspace,
+        build_config,
+        true,
+        &crate::watch::WatchChanges::default(),
+    )
+}
+
+pub(crate) fn run_with_config_session(
+    options: &Options,
+    pool: Option<&mut WorkerPool>,
+    workspace: Workspace,
+    build_config: crate::builder::RustBuildConfig,
+    session_start: bool,
+    changed_paths: &crate::watch::WatchChanges,
+) -> io::Result<()> {
     // Watch already resolved the workspace and manifest to initialize or
     // reuse its worker pool. Keep that resolution alive for the build itself.
     let _wall = crate::wall::Session::new();
@@ -78,14 +97,74 @@ pub(crate) fn run_with_config(
         &mut filesystem_metrics,
     )?;
     drop(scan);
+    let filters = crate::cli::BuildSettings::parse(&options.stock_arguments)?.build_filters;
+    let mut planning_snapshot = None;
+    if !filters.is_empty() {
+        if session_start || !state.is_compatible(&config_digest) {
+            state.watch_generated_sources.clear();
+        } else {
+            let mut previous_sources = state.assets.clone();
+            for asset in &state.watch_generated_sources {
+                previous_sources.remove(asset);
+            }
+            let previous_declared =
+                planning::create(&workspace, &state, &build_config, &previous_sources)?
+                    .expected_outputs();
+            state.watch_generated_sources.retain(|asset| {
+                let path = workspace
+                    .path_for_asset(asset)
+                    .ok()
+                    .map(|path| crate::watch::normalized_watch_path(&path));
+                if previous_declared.contains(asset) {
+                    state.assets.get(asset) == current_snapshot.get(asset)
+                        && !path
+                            .as_ref()
+                            .is_some_and(|path| changed_paths.paths.contains(path))
+                } else {
+                    // Stock ignores modifications/removals of unknown assets;
+                    // only an ADD can introduce a new plain source here.
+                    !path
+                        .as_ref()
+                        .is_some_and(|path| changed_paths.added_paths.contains(path))
+                }
+            });
+            let mut sources = current_snapshot.clone();
+            for asset in &state.watch_generated_sources {
+                sources.remove(asset);
+            }
+            planning_snapshot = Some(sources);
+        }
+    }
     let planning = crate::wall::Span::new("planning");
-    let plan = planning::create(&workspace, &state, &build_config, &current_snapshot)?;
+    let plan = planning::create(
+        &workspace,
+        &state,
+        &build_config,
+        planning_snapshot.as_ref().unwrap_or(&current_snapshot),
+    )?;
     drop(planning);
     planning::report_metrics(&plan, &state, &build_config);
     if planning::report_plan_only(&workspace, &plan) {
         return Ok(());
     }
 
+    if !filters.is_empty() {
+        return filtered::run(
+            options,
+            pool,
+            &workspace,
+            &mut state,
+            &build_config,
+            &config_digest,
+            &state_path,
+            &scanned_packages,
+            &plan,
+            &filters,
+            session_start,
+            &current_snapshot,
+            &changed_paths.paths,
+        );
+    }
     let dirty = crate::wall::Span::new("dirty_check");
     let dirty_plan = dirty::analyze(
         &workspace,
@@ -176,4 +255,127 @@ pub(crate) fn run_with_config(
     }
     println!("Build completed (Rust frontend)");
     Ok(())
+}
+
+pub(crate) fn empty_filtered_result(spec: &crate::plan::BuildSpec) -> crate::protocol::BuildResult {
+    part_directive::empty_build_result(spec)
+}
+
+/// Old private state cannot supply output locations after a configuration change.
+/// Changes removing previous declarations also require stock's source reclassification.
+pub(crate) fn filtered_transition_reason(
+    workspace: &Workspace,
+    config: &crate::builder::RustBuildConfig,
+) -> io::Result<Option<&'static str>> {
+    let state = GraphState::load(&graph_path(workspace))?;
+    if state.has_resolver_cycle() {
+        return Ok(Some(
+            "filtered incremental resolver cycles are outside the supported subset",
+        ));
+    }
+    if state
+        .actions
+        .keys()
+        .any(|key| !state.stock_input_order.contains_key(key))
+    {
+        return Ok(Some(
+            "filtered legacy state lacks ordered stock input evidence",
+        ));
+    }
+    if state.actions.values().any(|action| {
+        !config
+            .builders
+            .iter()
+            .any(|builder| builder.definition.id == action.builder)
+    }) {
+        return Ok(Some(
+            "filtered configuration removed a previous builder application",
+        ));
+    }
+    if state.actions.iter().any(|(key, action)| {
+        action.glob_reads.iter().any(|glob| {
+            !state.stock_glob_members.get(key).is_some_and(|globs| {
+                globs.contains_key(&format!("{}|{}", glob.package, glob.pattern))
+            })
+        })
+    }) {
+        return Ok(Some(
+            "filtered legacy state lacks per-action stock glob evidence",
+        ));
+    }
+    let digest = snapshot::config_digest(workspace, config)?;
+    if config
+        .builders
+        .iter()
+        .any(|builder| builder.package != workspace.root_package)
+    {
+        let packages = snapshot::scanned_packages(workspace, config);
+        let current = snapshot::scan_initial(
+            workspace,
+            &state,
+            config,
+            &packages,
+            &mut FilesystemMetrics::default(),
+        )?;
+        let plan = planning::create(workspace, &state, config, &current)?;
+        for spec in &plan.specs {
+            for output in &spec.outputs {
+                if output
+                    .split_once('|')
+                    .is_some_and(|(package, _)| package != workspace.root_package)
+                    && workspace.asset_exists_at(output, crate::builder::BuildTo::Source)?
+                {
+                    return Ok(Some(
+                        "filtered package-path output conflicts in dependencies are outside the supported subset",
+                    ));
+                }
+            }
+        }
+    }
+    if state.config_digest.is_empty() || state.is_compatible(&digest) {
+        return Ok(None);
+    }
+    if state
+        .actions
+        .values()
+        .flat_map(|action| &action.outputs)
+        .any(|output| !state.output_locations.contains_key(output))
+    {
+        return Ok(Some(
+            "filtered configuration change requires previous output locations missing from legacy state",
+        ));
+    }
+    let packages = snapshot::scanned_packages(workspace, config);
+    let current = snapshot::scan_initial(
+        workspace,
+        &state,
+        config,
+        &packages,
+        &mut FilesystemMetrics::default(),
+    )?;
+    let plan = planning::create(workspace, &state, config, &current)?;
+    let declared = plan.expected_outputs();
+    if state
+        .actions
+        .values()
+        .flat_map(|action| &action.outputs)
+        .any(|output| !declared.contains(output))
+    {
+        return Ok(Some(
+            "filtered configuration change removed previous output declarations",
+        ));
+    }
+    if !state.output_locations.iter().any(|(asset, cache)| {
+        let previous = if *cache {
+            crate::builder::BuildTo::Cache
+        } else {
+            crate::builder::BuildTo::Source
+        };
+        plan.visibility.location(asset) != Some(previous)
+    }) {
+        return Ok(Some(
+            "filtered configuration changes without a source/cache layout transition are outside the supported subset",
+        ));
+    }
+    Ok(None)
 }

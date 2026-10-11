@@ -206,7 +206,15 @@ impl WorkerClient {
                         assets.push(asset.clone());
                     }
                 }
-                assets.sort();
+                // Preserve stock glob membership order in ordinary results as
+                // well, so an unfiltered -> filtered build can reuse them.
+                assets.sort_by(|a, b| {
+                    visibility
+                        .location(a)
+                        .is_some()
+                        .cmp(&visibility.location(b).is_some())
+                        .then_with(|| a.encode_utf16().cmp(b.encode_utf16()))
+                });
                 assets.dedup();
                 self.metrics.find_assets_results += assets.len() as u64;
                 json!({ "v": 1, "type": "asset_response", "id": id, "ok": true, "assets": assets })

@@ -82,12 +82,21 @@ bash scripts/verify.sh
 VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
 VERIFY_LEVEL=full bash scripts/verify.sh
 VERIFY_LEVEL=full VERIFY_FULL_SUITES=compatibility-graph bash scripts/verify.sh
+bash scripts/correctness_build_filter.sh
 ```
 
 The full level is the union of `core`, `current-codegen`,
 `compatibility-lifecycle`, `compatibility-graph`, and
 `compatibility-mapping`. `VERIFY_FULL_SUITES` accepts a comma-separated subset
 so CI can shard those suites without maintaining a second list of probes.
+
+The build-filter probe compares stock 2.16.2 and native output bytes,
+existence/deletion, exit status and real builder histories. Its traced fixture
+covers source/cache chains, siblings, shared reads and generated resolver imports,
+filter transitions, ordered conditional reads, glob membership-only reuse and
+phase/UTF-16 listing order, watch edits/deletions/restarts
+and optional/post-process/zero-output/trigger-only/cyclic-reuse
+fallback. The core full suite and a dedicated CI job run this probe.
 
 ### CI coverage
 

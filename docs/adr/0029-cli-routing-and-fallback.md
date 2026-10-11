@@ -5,6 +5,10 @@ The accelerator 0.x alias contract below is superseded by
 
 Status: Accepted
 
+Native settings are amended by [ADR 0031](0031-native-build-settings.md);
+filter capability and output demand are amended by
+[ADR 0032](0032-native-build-filter-demand-and-output-state.md).
+
 ## Context
 
 The launcher kept stock arguments only in its Dart lane. Selecting native
