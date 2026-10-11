@@ -169,10 +169,15 @@ option or separate values with commas to OR filters. Use `package:my_app/a.g.dar
 for lib paths or `asset:my_app/lib/a.g.dart` for package-root paths; package
 names support `*`. Native paths support `*` and whole `**` segments. Builders
 run with all their outputs, including siblings, and required primary/secondary
-producer actions run on demand. Filtered demand currently uses one worker even
-when `--jobs` is higher. Parallel filtered execution is feasible, but needs
-shared action-demand/result coordination so shared producers run once and
-workers see a consistent transaction overlay. No match is a successful build.
+producer actions run on demand. Filtered demand runs serially on one worker,
+even when `--jobs` is higher. No match is a successful build. During watch,
+source edits, additions, or deletions that arrive during an active build remain
+visible to the queued build cycle. If the first worker `read` or `canRead`
+observes an external source absent from the build-start snapshot, the
+transaction keeps the actual bytes or missing result and commits that first
+observation to the graph. This matches stock's source read cache and leaves a
+later edit visible to the queued cycle instead of absorbing it in the
+post-build scan.
 
 Classes/braces/escaping, `?`, complex URI syntax, non-ASCII, absolute/dot-segment
 paths and filters with optional/post-process/zero-output or trigger-only builders use stock
@@ -189,7 +194,26 @@ preserve generated files. See [the demand/output-state ADR](docs/adr/0032-native
 Output conflicts are handled by the frontend's normal output lifecycle;
 `-d` cannot enable or disable deletion in the supported stock version.
 Native commits only after all actions succeed, including deletion of declared
-outputs that were not emitted. Stock and native use separate graph caches;
+outputs that were not emitted. A failed demanded producer fails the invocation
+even if its consumer catches the read or `canRead` error. Native keeps the
+previous successful outputs and graph in that case; stock may leave partial
+artifacts on failure.
+
+Native build/watch holds a workspace writer lock for the entire command. A
+second native command with a supported invocation, including another filter in
+auto mode, fails instead of running a competing fallback. Different
+workspaces can build concurrently. Direct stock and dart-mode commands do not
+share this lock, and an early fallback that bypasses the native binary does
+not acquire it; stop an existing native build/watch before running either in
+the same workspace. The lock file stays on disk and OS ownership is released
+when its holder exits.
+
+The all-success boundary protects against builder failure, not interruption
+or I/O failure during commit. Artifact deletions and individual atomic output
+writes precede graph publication; an interrupted commit can leave partial
+files with the previous graph. There is no crash rollback or commit journal.
+See [safe recovery](docs/compatibility-cleanup.md#safe-recovery) before clearing
+state or switching frontends. Stock and native use separate graph caches;
 `clean` cleans stock caches, and does not delete accelerator caches.
 For Unix build/watch, Ctrl-C and terminal/SSH hangup (SIGHUP) are forwarded to
 the selected subprocess group with bounded cleanup. Their exit statuses are

@@ -325,6 +325,7 @@ impl WorkerClient {
                             visibility,
                             active_request,
                             build_id,
+                            None,
                         )?
                     }
                     Some("build_batch_result") => {

@@ -18,6 +18,13 @@ use std::{
     path::Path,
 };
 
+/// Executes selected output roots against the complete planned action graph.
+/// The starting snapshot and compatible graph provide reuse evidence; recorded
+/// output locations provide old-path evidence for cleanup across configuration
+/// changes. Only demanded actions enter the next graph, while each demanded
+/// action publishes all sibling outputs together. Worker or probe errors return
+/// before filesystem commit; an error during commit can still leave partial
+/// filesystem changes because the commit sequence is not crash-atomic.
 #[expect(
     clippy::too_many_arguments,
     reason = "Filtered execution consumes the same planned transaction inputs as ordinary execution"
@@ -37,6 +44,18 @@ pub(super) fn run(
     current_snapshot: &crate::snapshot::Snapshot,
     changed_paths: &BTreeSet<std::path::PathBuf>,
 ) -> io::Result<()> {
+    // Preserve only source-state evidence from the start of a filtered build.
+    // Old and current outputs are refreshed from the committed filesystem,
+    // including outputs removed by this transition.
+    let mut generated_assets: BTreeSet<String> = state.output_locations.keys().cloned().collect();
+    generated_assets.extend(state.watch_generated_sources.iter().cloned());
+    generated_assets.extend(
+        state
+            .actions
+            .values()
+            .flat_map(|action| action.outputs.iter().cloned()),
+    );
+    generated_assets.extend(plan.expected_outputs());
     let previous_declared = if !session_start && state.is_compatible(config_digest) {
         // An unchanged file can become a generated-output conflict when an
         // added input restores its producer chain (stock misclassifiedSources).
@@ -321,6 +340,11 @@ pub(super) fn run(
             config_digest: config_digest.to_owned(),
             scanned_packages,
             expected_outputs: plan.expected_outputs(),
+            filtered_snapshot_evidence: Some((
+                current_snapshot,
+                &generated_assets,
+                lazy.filtered_snapshot_delta(),
+            )),
             transaction,
         },
     )?;

@@ -21,6 +21,75 @@ void _recordHistory(String entry) {
   }
 }
 
+Future<void> _waitAfterCommonRead(AssetId input) async {
+  if (input.path != 'lib/a.mid') return;
+  final armPath = Platform.environment['BUILD_FILTER_READ_BARRIER_ARM'];
+  final reachedPath = Platform.environment['BUILD_FILTER_READ_BARRIER_REACHED'];
+  final releasePath = Platform.environment['BUILD_FILTER_READ_BARRIER_RELEASE'];
+  if (armPath == null || reachedPath == null || releasePath == null) return;
+  if (!File(armPath).existsSync()) return;
+
+  File(reachedPath).writeAsStringSync('common.side read completed\n');
+  final deadline = DateTime.now().add(const Duration(seconds: 30));
+  while (!File(releasePath).existsSync()) {
+    if (DateTime.now().isAfter(deadline)) {
+      throw StateError('timed out waiting for filtered watch read barrier');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
+Future<void> _waitBeforeExternalRead(AssetId input) async {
+  if (input.path != 'lib/b.mid') return;
+  final armPath = Platform.environment['BUILD_FILTER_EXTERNAL_READ_ARM'];
+  final allowPath = Platform.environment['BUILD_FILTER_EXTERNAL_READ_B_ALLOW'];
+  if (armPath == null || allowPath == null || !File(armPath).existsSync()) {
+    return;
+  }
+
+  final deadline = DateTime.now().add(const Duration(seconds: 30));
+  while (!File(allowPath).existsSync()) {
+    if (DateTime.now().isAfter(deadline)) {
+      throw StateError('timed out waiting to read external fixture source');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
+Future<void> _waitAfterExternalRead(AssetId input, String contents) async {
+  if (input.path != 'lib/a.mid' && input.path != 'lib/b.mid') return;
+  final armPath = Platform.environment['BUILD_FILTER_EXTERNAL_READ_ARM'];
+  final reachedPath =
+      Platform.environment['BUILD_FILTER_EXTERNAL_READ_REACHED'];
+  final releasePath =
+      Platform.environment['BUILD_FILTER_EXTERNAL_READ_RELEASE'];
+  if (armPath == null || reachedPath == null || releasePath == null) return;
+  if (!File(armPath).existsSync()) return;
+
+  // Track cycle state per input so an edit cannot misclassify its first read.
+  final inputMarker = input.path.split('/').last;
+  final nextCycle = File('$reachedPath/$inputMarker').existsSync();
+  final activeReachedPath = nextCycle
+      ? Platform.environment['BUILD_FILTER_EXTERNAL_READ_NEXT_REACHED']
+      : reachedPath;
+  final activeReleasePath = nextCycle
+      ? Platform.environment['BUILD_FILTER_EXTERNAL_READ_NEXT_RELEASE']
+      : releasePath;
+  if (activeReachedPath == null || activeReleasePath == null) return;
+  final reachedDirectory = Directory(activeReachedPath)
+    ..createSync(recursive: true);
+  File(
+    '${reachedDirectory.path}/${input.path.split('/').last}',
+  ).writeAsStringSync('external source read completed\n');
+  final deadline = DateTime.now().add(const Duration(seconds: 30));
+  while (!File(activeReleasePath).existsSync()) {
+    if (DateTime.now().isAfter(deadline)) {
+      throw StateError('timed out waiting for filtered external read barrier');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
 Builder seed(BuilderOptions options) => Recorder('.txt', ['.mid', '.side']);
 Builder finish(BuilderOptions options) => Recorder(
   '.mid',
@@ -95,6 +164,20 @@ class Recorder implements Builder {
         }
       } else if (await step.canRead(common)) {
         text += await step.readAsString(common);
+        await _waitAfterCommonRead(step.inputId);
+      }
+    }
+    if (input == '.mid' &&
+        Platform.environment['BUILD_FILTER_EXTERNAL_READ'] == '1') {
+      await _waitBeforeExternalRead(step.inputId);
+      final externalAsset = AssetId(
+        'build_filter_external',
+        'lib/shared.asset',
+      );
+      if (await step.canRead(externalAsset)) {
+        final externalContents = await step.readAsString(externalAsset);
+        text += externalContents;
+        await _waitAfterExternalRead(step.inputId, externalContents);
       }
     }
     if (glob || (conditionalGlob && text.startsWith('use-glob'))) {

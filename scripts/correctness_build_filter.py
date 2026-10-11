@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from correctness_cli import REPO, DART, ENV, launcher, live
+from correctness_cli import REPO, DART, ENV, NATIVE, descendants, launcher, live
 
 
 RESOLVER_BUILD_YAML = """builders:
@@ -36,8 +36,10 @@ def fixture_env(root):
     return {**ENV, 'BUILD_FILTER_HISTORY': str(history_path(root))}
 
 
-def execute(args, root):
-    result = subprocess.run(args, cwd=root, env=fixture_env(root), text=True, stdout=subprocess.PIPE,
+def execute(args, root, extra_env=None):
+    env = fixture_env(root)
+    env.update(extra_env or {})
+    result = subprocess.run(args, cwd=root, env=env, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=300)
     return result.returncode, result.stdout
 
@@ -49,6 +51,29 @@ def prepare(root):
     file.write_text(file.read_text().replace('path: ../..', f'path: {REPO}'))
     code, log = execute([DART, 'pub', 'get', '--offline'], root)
     assert code == 0, log
+
+
+def add_external_fixture_package(root, contents):
+    # Keep the package outside Workspace's package scan, but inside the watched
+    # workspace tree so its edit is a real watch event. Its source is first
+    # observed only when a builder requests it.
+    package_root = root / 'external_fixture'
+    (package_root / 'lib').mkdir(parents=True, exist_ok=True)
+    (package_root / 'lib/shared.asset').write_text(contents)
+    (package_root / 'pubspec.yaml').write_text(
+        'name: build_filter_external\n'
+        'publish_to: none\n'
+        'environment:\n'
+        '  sdk: ">=3.11.0 <4.0.0"\n')
+    pubspec = root / 'pubspec.yaml'
+    pubspec_contents = pubspec.read_text()
+    dependency = '  build_filter_external:\n    path: external_fixture\n'
+    assert '  glob: ^2.1.3\n' in pubspec_contents
+    pubspec.write_text(pubspec_contents.replace(
+        '  glob: ^2.1.3\n', '  glob: ^2.1.3\n' + dependency, 1))
+    code, log = execute([DART, 'pub', 'get', '--offline'], root)
+    assert code == 0, log
+    return package_root
 
 
 def outputs(root):
@@ -71,11 +96,11 @@ def history(root):
     return Counter(line.removeprefix('build_filter_app|') for line in file.read_text().splitlines()) if file.exists() else Counter()
 
 
-def check(stock, native, flags=(), mode='rust', same_history=True, compile_flag='--force-jit', native_expected=False):
+def check(stock, native, flags=(), mode='rust', same_history=True, compile_flag='--force-jit', native_expected=False, extra_env=None):
     assert (stock / 'pubspec.lock').read_text() == (native / 'pubspec.lock').read_text()
     for root in (stock, native): history_path(root).unlink(missing_ok=True)
-    reference = execute([DART, 'run', 'build_runner', 'build', compile_flag, *flags], stock)
-    actual = execute(launcher(native, mode, flags=[compile_flag, *flags]), native)
+    reference = execute([DART, 'run', 'build_runner', 'build', compile_flag, *flags], stock, extra_env)
+    actual = execute(launcher(native, mode, flags=[compile_flag, *flags]), native, extra_env)
     assert actual[0] == reference[0] == 0, (flags, reference, actual)
     assert outputs(stock) == outputs(native), (flags, outputs(stock), outputs(native), actual)
     if same_history: assert history(stock) == history(native), (flags, history(stock), history(native), actual)
@@ -91,13 +116,17 @@ def wait(predicate, proc, log, timeout=180):
         time.sleep(.1)
 
 
-def watch(root, mode, flags, command=None):
+def watch(root, mode, flags, command=None, jobs=1, extra_env=None):
     log = root.parent / (root.name + '-watch.log')
     args = command or ([DART, 'run', 'build_runner', 'watch', '--force-jit', *flags]
                        if mode == 'stock' else launcher(root, mode, 'watch', ['--force-jit', *flags]))
+    if command is None and mode != 'stock':
+        args[args.index('--jobs=1')] = f'--jobs={jobs}'
+    env = fixture_env(root)
+    env.update(extra_env or {})
     stream = log.open('w')
     try:
-        proc = subprocess.Popen(args, cwd=root, env=fixture_env(root), stdout=stream, stderr=stream, start_new_session=True)
+        proc = subprocess.Popen(args, cwd=root, env=env, stdout=stream, stderr=stream, start_new_session=True)
     except BaseException:
         stream.close()
         raise
@@ -160,6 +189,23 @@ def process_handle(log, code):
         stream.close()
         raise
     return proc, log, stream
+
+
+def native_waiting_for_fifo_writer(launcher_pid):
+    # graph::save opens graph-v3.bin.tmp for writing. With a FIFO in that path
+    # and no reader, Linux reports the Rust process in wait_for_partner while
+    # its open(2) is blocked.
+    for pid in descendants(launcher_pid):
+        try:
+            executable = os.readlink(f'/proc/{pid}/exe')
+            if Path(executable).name != NATIVE.name:
+                continue
+            wait_channel = Path(f'/proc/{pid}/wchan').read_text()
+            if 'wait_for_partner' in wait_channel:
+                return pid
+        except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+            continue
+    return None
 
 
 def watch_process_cleanup_comparison(tmp):
@@ -457,6 +503,259 @@ def watch_comparison(tmp, cache=False):
             stop_all(handles)
 
 
+def watch_midbuild_source_edit_comparison(tmp):
+    stock, native = tmp / 'watch-midbuild-stock', tmp / 'watch-midbuild-native'
+    prepare(stock); prepare(native)
+    flags = ['--build-filter=lib/a.final']
+    check(stock, native, flags)
+
+    handles = []
+    barrier_paths = {}
+    try:
+        for root, mode in ((stock, 'stock'), (native, 'rust')):
+            arm = tmp / (root.name + '-barrier-arm')
+            reached = tmp / (root.name + '-barrier-reached')
+            release = tmp / (root.name + '-barrier-release')
+            barrier_paths[root] = (arm, reached, release)
+            extras = {
+                'BUILD_FILTER_READ_BARRIER_ARM': str(arm),
+                'BUILD_FILTER_READ_BARRIER_REACHED': str(reached),
+                'BUILD_FILTER_READ_BARRIER_RELEASE': str(release),
+            }
+            handles.append(watch(root, mode, flags, extra_env=extras))
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+        for root in (stock, native): history_path(root).unlink(missing_ok=True)
+
+        positions = [handle[1].stat().st_size for handle in handles]
+        for arm, _, _ in barrier_paths.values(): arm.write_text('armed\n')
+        for root in (stock, native):
+            (root / 'lib/a.txt').write_text('watch build trigger edit\n')
+        for root, (_, reached, _), handle in zip((stock, native), barrier_paths.values(), handles):
+            wait(lambda reached=reached: reached.exists(), handle[0], handle[1])
+
+        value = 'watch source edited during active build\n'
+        for root in (stock, native): (root / 'lib/common.txt').write_text(value)
+        for _, _, release in barrier_paths.values(): release.write_text('release\n')
+
+        markers = ('Built with build_runner', 'Build completed (Rust frontend)')
+        for index, handle in enumerate(handles):
+            marker = markers[index]
+            wait(lambda handle=handle, index=index, marker=marker:
+                 handle[1].read_text()[positions[index]:].count(marker) >= 2,
+                 handle[0], handle[1])
+
+        stock_output = outputs(stock).get('lib/a.final', b'')
+        native_output = outputs(native).get('lib/a.final', b'')
+        assert value.encode() in stock_output, (
+            'stock watch must process a source edit that arrives after its builder read',
+            stock_output, history(stock), handles[0][1].read_text()[positions[0]:])
+        assert value.encode() in native_output, (
+            'filtered native watch must process a source edit that arrives after its builder read',
+            native_output, history(native), handles[1][1].read_text()[positions[1]:])
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+        assert history(stock) == history(native) == Counter({
+            'lib/a.txt': 1, 'lib/a.mid': 2, 'lib/common.txt': 1,
+        }), (history(stock), history(native))
+    finally:
+        for _, _, release in barrier_paths.values(): release.write_text('release\n')
+        stop_all(handles)
+
+
+def writer_lock_watch_comparison(tmp):
+    stock, native = tmp / 'writer-lock-stock', tmp / 'writer-lock-native'
+    prepare(stock); prepare(native)
+    check(stock, native)
+    flags = ['--build-filter=lib/a.final']
+    arm = tmp / 'writer-lock-barrier-arm'
+    reached = tmp / 'writer-lock-barrier-reached'
+    release = tmp / 'writer-lock-barrier-release'
+    handle = None
+    try:
+        handle = watch(native, 'rust', flags, extra_env={
+            'BUILD_FILTER_READ_BARRIER_ARM': str(arm),
+            'BUILD_FILTER_READ_BARRIER_REACHED': str(reached),
+            'BUILD_FILTER_READ_BARRIER_RELEASE': str(release),
+        })
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+        history_path(stock).unlink(missing_ok=True)
+        history_path(native).unlink(missing_ok=True)
+        watch_log_position = handle[1].stat().st_size
+        arm.write_text('armed\n')
+        trigger = 'writer lock held build edit\n'
+        (stock / 'lib/a.txt').write_text(trigger)
+        (native / 'lib/a.txt').write_text(trigger)
+        wait(lambda: reached.exists(), handle[0], handle[1])
+
+        # The resident watcher is paused after the builder has read its shared
+        # input. Competing filters must fail before either outputs or graph move.
+        before_outputs = outputs(native)
+        graph_path = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+        before_graph = graph_path.read_bytes()
+        for mode in ('auto', 'rust'):
+            competing = execute(
+                launcher(native, mode, flags=['--force-jit', '--build-filter=lib/b.final']),
+                native,
+            )
+            assert competing[0] != 0 and 'workspace writer lock' in competing[1].lower(), (
+                mode, competing)
+            assert outputs(native) == before_outputs, (mode, outputs(native), before_outputs)
+            assert graph_path.read_bytes() == before_graph, mode
+
+        release.write_text('release\n')
+        wait(lambda: 'Build completed (Rust frontend)' in
+             handle[1].read_text()[watch_log_position:], handle[0], handle[1])
+        stop(handle)
+        handle = None
+
+        stock_a = execute(
+            [DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
+        assert stock_a[0] == 0, stock_a
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+        assert history(stock) == history(native), (history(stock), history(native))
+        assert trigger.encode() in outputs(native)['lib/a.final'], outputs(native)
+
+        # Ending watch releases the OS lock for a later native writer.
+        for root in (stock, native):
+            (root / 'lib/b.txt').write_text('writer lock released build edit\n')
+            history_path(root).unlink(missing_ok=True)
+        next_flags = ['--build-filter=lib/b.final']
+        stock_b = execute(
+            [DART, 'run', 'build_runner', 'build', '--force-jit', *next_flags], stock)
+        native_b = execute(
+            launcher(native, 'rust', flags=['--force-jit', *next_flags]), native)
+        assert native_b[0] == stock_b[0] == 0, (stock_b, native_b)
+        assert '(Rust frontend)' in native_b[1], native_b
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), native_b)
+        assert history(stock) == history(native), (history(stock), history(native))
+    finally:
+        release.write_text('release cleanup\n')
+        if handle is not None:
+            stop_all([handle])
+
+
+def watch_unknown_external_source_comparison(tmp):
+    stock, native = tmp / 'watch-external-stock', tmp / 'watch-external-native'
+    prepare(stock); prepare(native)
+    for root in (stock, native):
+        add_external_fixture_package(root, 'external-version-1\n')
+    flags = ['--build-filter=lib/a.final,lib/b.final']
+    # Establish a clean selected graph before the builder starts observing the
+    # external package source for the first time in the resident watch session.
+    check(stock, native, flags)
+
+    handles = []
+    barriers = {}
+    marker_tokens = ('Built with build_runner', 'Build completed (Rust frontend)')
+    try:
+        for root, mode in ((stock, 'stock'), (native, 'rust')):
+            arm = tmp / (root.name + '-external-arm')
+            allow_b = tmp / (root.name + '-external-allow-b')
+            reached = tmp / (root.name + '-external-reached')
+            release = tmp / (root.name + '-external-release')
+            next_reached = tmp / (root.name + '-external-next-reached')
+            next_release = tmp / (root.name + '-external-next-release')
+            barriers[root] = (arm, allow_b, reached, release, next_reached, next_release)
+            extra_env = {
+                'BUILD_FILTER_EXTERNAL_READ': '1',
+                'BUILD_FILTER_EXTERNAL_READ_ARM': str(arm),
+                'BUILD_FILTER_EXTERNAL_READ_B_ALLOW': str(allow_b),
+                'BUILD_FILTER_EXTERNAL_READ_REACHED': str(reached),
+                'BUILD_FILTER_EXTERNAL_READ_RELEASE': str(release),
+                'BUILD_FILTER_EXTERNAL_READ_NEXT_REACHED': str(next_reached),
+                'BUILD_FILTER_EXTERNAL_READ_NEXT_RELEASE': str(next_release),
+            }
+            # The serial scheduler runs both roots in one transaction. The
+            # source observation cache must therefore span those sequential
+            # worker requests just as stock's build-step cache does.
+            handles.append(watch(root, mode, flags, jobs=1, extra_env=extra_env))
+
+        for index, handle in enumerate(handles):
+            marker = marker_tokens[index]
+            wait(lambda handle=handle, marker=marker: marker in handle[1].read_text(),
+                 handle[0], handle[1])
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+        for root in (stock, native):
+            history_path(root).unlink(missing_ok=True)
+        positions = [handle[1].stat().st_size for handle in handles]
+        for arm, _, _, _, _, _ in barriers.values():
+            arm.write_text('armed\n')
+        for root in (stock, native):
+            (root / 'lib/a.txt').write_text('external-read cycle a\n')
+            (root / 'lib/b.txt').write_text('external-read cycle b\n')
+
+        for root, handle in zip((stock, native), handles):
+            reached = barriers[root][2]
+            wait(lambda reached=reached: (reached / 'a.mid').exists(), handle[0], handle[1])
+        # A has read v1 and is held after the read. Edit the source, then let A
+        # finish; B's later read checks the transaction-wide first observation.
+        for root in (stock, native):
+            (root / 'external_fixture/lib/shared.asset').write_text('external-version-2\n')
+            barriers[root][1].write_text('allow b read\n')
+        for _, _, _, release, _, _ in barriers.values():
+            release.write_text('release first build\n')
+
+        for index, handle in enumerate(handles):
+            marker = marker_tokens[index]
+            wait(lambda handle=handle, index=index, marker=marker:
+                 marker in handle[1].read_text()[positions[index]:], handle[0], handle[1])
+        for root, handle in zip((stock, native), handles):
+            reached = barriers[root][2]
+            wait(lambda reached=reached: (reached / 'b.mid').exists(), handle[0], handle[1])
+        for root in (stock, native):
+            current = outputs(root)
+            assert b'external-version-1' in current['lib/a.final'], current
+            assert b'external-version-1' in current['lib/b.final'], current
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+
+        # The source edit is queued for another watch cycle. Hold A during that
+        # cycle so its pre-commit outputs still show v1 before release.
+        for root, handle in zip((stock, native), handles):
+            next_reached = barriers[root][4]
+            wait(lambda next_reached=next_reached: (next_reached / 'a.mid').exists(),
+                 handle[0], handle[1], timeout=60)
+            current = outputs(root)
+            assert b'external-version-1' in current['lib/a.final'], current
+            assert b'external-version-1' in current['lib/b.final'], current
+        for _, _, _, _, _, next_release in barriers.values():
+            next_release.write_text('release second build\n')
+        for index, handle in enumerate(handles):
+            marker = marker_tokens[index]
+            wait(lambda handle=handle, index=index, marker=marker:
+                 handle[1].read_text()[positions[index]:].count(marker) >= 2,
+                 handle[0], handle[1])
+
+        expected_history = Counter({
+            'lib/a.txt': 1, 'lib/b.txt': 1, 'lib/a.mid': 2, 'lib/b.mid': 2,
+        })
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+        assert all(b'external-version-2' in outputs(root)[f'lib/{name}.final']
+                   for root in (stock, native) for name in ('a', 'b')), (
+            outputs(stock), outputs(native))
+        assert history(stock) == history(native) == expected_history, (
+            history(stock), history(native), expected_history)
+
+        # After v2 is committed, an unrelated event should not keep the
+        # selected consumers dirty.
+        for root in (stock, native):
+            history_path(root).unlink(missing_ok=True)
+        before = outputs(stock)
+        positions = [handle[1].stat().st_size for handle in handles]
+        for root in (stock, native):
+            (root / 'lib/other.noise').write_text('external-source no-op event\n')
+        for index, handle in enumerate(handles):
+            marker = marker_tokens[index]
+            wait(lambda handle=handle, index=index, marker=marker:
+                 marker in handle[1].read_text()[positions[index]:], handle[0], handle[1])
+        assert outputs(stock) == outputs(native) == before, (outputs(stock), outputs(native), before)
+        assert history(stock) == history(native) == Counter(), (
+            history(stock), history(native), handles[0][1].read_text(), handles[1][1].read_text())
+    finally:
+        for _, _, _, release, _, next_release in barriers.values():
+            release.write_text('release cleanup\n')
+            next_release.write_text('release cleanup\n')
+        stop_all(handles)
+
+
 def resolver_cycle_comparison(tmp):
     stock, native = tmp / 'cycle-stock', tmp / 'cycle-native'
     prepare(stock); prepare(native)
@@ -683,6 +982,8 @@ def cache_selection_comparison(tmp):
         file.write_text(file.read_text().replace('build_to: cache', 'build_to: source', 1))
     check(cs, cn, ['--build-filter=lib/a.final'])
     assert not any(path.startswith('cache/') for path in outputs(cn)), outputs(cn)
+    root_cache_source_collision_comparison(tmp)
+    artifact_commit_graph_save_crash_comparison(tmp)
     # Primary source edits alone do not force a step that never read it.
     us, un = tmp / 'unread-stock', tmp / 'unread-native'
     prepare(us); prepare(un)
@@ -752,6 +1053,140 @@ def parallel_history_comparison(tmp):
     assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), actual)
     assert history(stock) == history(native) == full_history, (
         'unfiltered jobs=4 action history', history(stock), history(native), full_history)
+
+
+def root_cache_source_collision_comparison(tmp):
+    stock, native = tmp / 'root-collision-stock', tmp / 'root-collision-native'
+    prepare(stock); prepare(native)
+    for root in (stock, native):
+        config = root / 'build.yaml'
+        config.write_text(config.read_text().replace('build_to: source', 'build_to: cache', 1))
+        (root / 'lib/a.mid').write_text('root package source collision\n')
+
+    # Stock classifies package-path files matching declared cache outputs as
+    # conflicts even when their producer is outside the selected roots.
+    flags = ['--build-filter=lib/b.final']
+    reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
+    actual = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
+    assert actual[0] == reference[0] == 0, (reference, actual)
+    assert '(Rust frontend)' in actual[1], actual
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), actual)
+    for root in (stock, native):
+        assert not (root / 'lib/a.mid').exists(), root
+    assert 'cache/build_filter_app/lib/a.mid' not in outputs(stock), outputs(stock)
+    assert 'cache/build_filter_app/lib/a.mid' not in outputs(native), outputs(native)
+
+    # Once selected, the action publishes its logical asset in cache and still
+    # removes the conflicting package-path source.
+    check(stock, native, ['--build-filter=lib/a.final'])
+    for root in (stock, native):
+        assert not (root / 'lib/a.mid').exists(), root
+    assert 'cache/build_filter_app/lib/a.mid' in outputs(stock), outputs(stock)
+    assert 'cache/build_filter_app/lib/a.mid' in outputs(native), outputs(native)
+
+
+def artifact_commit_graph_save_crash_comparison(tmp):
+    stock, native = tmp / 'graph-crash-stock', tmp / 'graph-crash-native'
+    prepare(stock); prepare(native)
+    for root in (stock, native):
+        config = root / 'build.yaml'
+        config.write_text(config.read_text().replace('build_to: source', 'build_to: cache', 1))
+    check(stock, native)
+
+    # A source/cache transition cleans the old artifact tree. Block graph save
+    # after output publication to expose the documented crash boundary.
+    for root in (stock, native):
+        config = root / 'build.yaml'
+        config.write_text(config.read_text().replace('build_to: cache', 'build_to: source', 1))
+        (root / 'lib/a.txt').write_text('crash window cache-to-source edit\n')
+
+    graph_path = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+    graph_temp = graph_path.with_name('graph-v3.bin.tmp')
+    before_graph = graph_path.read_bytes()
+    assert not graph_temp.exists(), graph_temp
+    os.mkfifo(graph_temp)
+    assert graph_temp.is_fifo(), graph_temp
+
+    log = tmp / 'graph-crash-native.log'
+    stream = log.open('w')
+    proc = None
+    try:
+        args = launcher(native, 'rust', flags=[
+            '--force-jit', '--build-filter=lib/a.final',
+        ])
+        proc = subprocess.Popen(
+            args, cwd=native, env=fixture_env(native), stdout=stream,
+            stderr=stream, start_new_session=True,
+        )
+
+        def outputs_committed_and_graph_blocked():
+            current = outputs(native)
+            token = b'crash window cache-to-source edit'
+            committed = all(
+                token in current.get(f'lib/a.{suffix}', b'')
+                for suffix in ('mid', 'side', 'final')
+            )
+            return (
+                committed
+                and not any(path.startswith('cache/') for path in current)
+                and graph_path.read_bytes() == before_graph
+                and native_waiting_for_fifo_writer(proc.pid) is not None
+            )
+
+        wait(outputs_committed_and_graph_blocked, proc, log, timeout=240)
+        assert proc.poll() is None, log.read_text()
+        assert graph_temp.is_fifo(), graph_temp
+        assert graph_path.read_bytes() == before_graph
+
+        # Kill the launcher group and supervised descendants while graph save
+        # is blocked opening the FIFO.
+        children = descendants(proc.pid)
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        for child in children:
+            try:
+                os.kill(child, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        proc.wait(timeout=15)
+    finally:
+        if proc is not None and proc.poll() is None:
+            children = descendants(proc.pid)
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            for child in children:
+                try:
+                    os.kill(child, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            proc.wait()
+        stream.close()
+        graph_temp.unlink(missing_ok=True)
+
+    assert proc.returncode != 0, (proc.returncode, log.read_text())
+    assert graph_path.read_bytes() == before_graph
+    assert b'crash window cache-to-source edit' in outputs(native)['lib/a.final']
+    history_path(native).unlink(missing_ok=True)
+    history_path(stock).unlink(missing_ok=True)
+
+    stock_result = execute(
+        [DART, 'run', 'build_runner', 'build', '--force-jit', '--build-filter=lib/a.final'],
+        stock,
+    )
+    native_result = execute(
+        launcher(native, 'rust', flags=['--force-jit', '--build-filter=lib/a.final']),
+        native,
+    )
+    assert stock_result[0] == native_result[0] == 0, (stock_result, native_result)
+    assert '(Rust frontend)' in native_result[1], native_result
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), native_result)
+    assert history(stock) == history(native), (history(stock), history(native))
+    assert not any(path.startswith('cache/') for path in outputs(native)), outputs(native)
+    assert graph_path.read_bytes() != before_graph
 
 
 def package_selection_comparison(tmp):
@@ -1027,7 +1462,12 @@ GROUPS = {
     'fallback-optional-post': lambda tmp: traced_fallback_comparison(tmp, ('optional', 'post')),
     'fallback-zero-trigger': lambda tmp: (traced_fallback_comparison(tmp, ('zero', 'trigger')), existing_fallback_comparison(tmp)),
     'routing': routing_comparison,
-    'watch-source': watch_comparison,
+    'watch-source': lambda tmp: (
+        watch_comparison(tmp),
+        watch_midbuild_source_edit_comparison(tmp),
+        watch_unknown_external_source_comparison(tmp),
+        writer_lock_watch_comparison(tmp),
+    ),
     'watch-cache': lambda tmp: watch_comparison(tmp, cache=True),
     'watch-classification': watch_source_classification_comparison,
 }

@@ -229,6 +229,7 @@ pub(crate) fn run_with_config_session(
             config_digest,
             scanned_packages: &scanned_packages,
             expected_outputs,
+            filtered_snapshot_evidence: None,
             transaction,
         },
     )?;

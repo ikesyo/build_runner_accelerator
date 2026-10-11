@@ -1,16 +1,27 @@
 use super::WorkerClient;
+use super::lazy::{FilteredSourceContent, FilteredSourceObservation, FilteredSourceSpool};
 use super::request::{BuildRequest, build_request_kind};
 use crate::builder::{BuildTo, BuilderKind};
+use crate::plan::BuildSpec;
 use crate::protocol::{BINARY_ASSET_RESPONSE_MAGIC, MAX_FRAME_LENGTH};
 use crate::visibility::AssetVisibility;
+use crate::worker::LazyBuildState;
 use crate::workspace::{Workspace, glob_candidates, matches_glob};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io;
+use std::io::{self, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+
+pub(super) struct FilteredAssetEvidence<'a> {
+    pub(super) lazy: &'a mut LazyBuildState,
+    pub(super) lazy_specs: &'a BTreeMap<String, BuildSpec>,
+}
 
 impl WorkerClient {
     #[expect(
@@ -26,6 +37,7 @@ impl WorkerClient {
         visibility: &AssetVisibility,
         active_request: &BuildRequest,
         expected_build_id: u64,
+        mut filtered_evidence: Option<FilteredAssetEvidence<'_>>,
     ) -> io::Result<()> {
         validate_asset_request_context(request, active_request, expected_build_id)?;
         let _wall = self.wall_span("asset_rpc", None);
@@ -60,6 +72,23 @@ impl WorkerClient {
                 } else {
                     if let Some(bytes) = overlay.get(asset) {
                         Ok(ReadResult::Bytes(Arc::clone(bytes)))
+                    } else if let Some(evidence) = filtered_evidence.as_mut()
+                        && evidence
+                            .lazy
+                            .is_untracked_filtered_source(asset, evidence.lazy_specs)
+                    {
+                        match observe_filtered_source(workspace, asset, visibility, evidence.lazy)?
+                            .content
+                        {
+                            FilteredSourceContent::Bytes(bytes) => Ok(ReadResult::Bytes(bytes)),
+                            FilteredSourceContent::Spool(spool) => {
+                                Ok(ReadResult::Path(spool.path().to_path_buf()))
+                            }
+                            FilteredSourceContent::Missing => Err(io::Error::new(
+                                io::ErrorKind::NotFound,
+                                format!("asset not found: {asset}"),
+                            )),
+                        }
                     } else {
                         asset_disk_path(workspace, asset, visibility).map(ReadResult::Path)
                     }
@@ -174,8 +203,24 @@ impl WorkerClient {
                     .get("asset")
                     .and_then(Value::as_str)
                     .ok_or_else(|| io::Error::other("can_read request has no asset"))?;
-                let value = !visibility.is_blocked(asset, phase, kind, deleted_overlay)
-                    && asset_exists(workspace, asset, overlay, visibility)?;
+                let blocked = visibility.is_blocked(asset, phase, kind, deleted_overlay);
+                let value = if blocked {
+                    false
+                } else if overlay.contains_key(asset) {
+                    true
+                } else if let Some(evidence) = filtered_evidence.as_mut()
+                    && evidence
+                        .lazy
+                        .is_untracked_filtered_source(asset, evidence.lazy_specs)
+                {
+                    !matches!(
+                        observe_filtered_source(workspace, asset, visibility, evidence.lazy)?
+                            .content,
+                        FilteredSourceContent::Missing
+                    )
+                } else {
+                    asset_exists(workspace, asset, overlay, visibility)?
+                };
                 json!({ "v": 1, "type": "asset_response", "id": id, "ok": true, "value": value })
             }
             "find_assets" => {
@@ -227,6 +272,113 @@ impl WorkerClient {
         self.metrics.asset_rpc_us += started.elapsed().as_micros() as u64;
         result
     }
+}
+
+/// Record the transaction's first observation of a source outside the
+/// build-start snapshot. `can_read` and `read` across workers share this
+/// observation, matching stock build-step source caching; filesystem I/O stays
+/// outside the coordinator lock.
+fn observe_filtered_source(
+    workspace: &Workspace,
+    asset: &str,
+    visibility: &AssetVisibility,
+    lazy: &mut LazyBuildState,
+) -> io::Result<FilteredSourceObservation> {
+    if let Some(observed) = lazy.shared_source_observation(asset) {
+        return Ok(lazy.publish_source_observation(asset, observed));
+    }
+    let observed = match asset_disk_path(workspace, asset, visibility) {
+        Ok(path) => {
+            let bytes = match fs::read(path) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    return Ok(lazy.publish_source_observation(asset, missing_source_observation()));
+                }
+                Err(error) => return Err(error),
+            };
+            let snapshot = crate::snapshot::AssetSnapshot {
+                exists: true,
+                digest: crate::digest::digest_bytes(&bytes),
+                size: bytes.len() as u64,
+            };
+            let content = if asset_response_fits(bytes.len())? {
+                FilteredSourceContent::Bytes(Arc::from(bytes))
+            } else {
+                FilteredSourceContent::Spool(spool_source_bytes(&bytes)?)
+            };
+            FilteredSourceObservation { content, snapshot }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => missing_source_observation(),
+        Err(error) => return Err(error),
+    };
+    Ok(lazy.publish_source_observation(asset, observed))
+}
+
+fn missing_source_observation() -> FilteredSourceObservation {
+    FilteredSourceObservation {
+        content: FilteredSourceContent::Missing,
+        snapshot: crate::snapshot::AssetSnapshot {
+            exists: false,
+            digest: crate::digest::digest_bytes(b"<missing>"),
+            size: 0,
+        },
+    }
+}
+
+fn asset_response_fits(byte_length: usize) -> io::Result<bool> {
+    let metadata = json!({
+        "v": 1,
+        "type": "asset_response",
+        // The first observation is reused within one worker across different
+        // RPC ids. Budget for the largest serialized id so its transport
+        // remains valid for every later request using this publication.
+        "id": u64::MAX,
+        "ok": true,
+        "encoding": "raw",
+        "length": byte_length,
+    });
+    let metadata_length = serde_json::to_vec(&metadata)
+        .map_err(io::Error::other)?
+        .len();
+    Ok(BINARY_ASSET_RESPONSE_MAGIC
+        .len()
+        .checked_add(4)
+        .and_then(|length| length.checked_add(metadata_length))
+        .and_then(|length| length.checked_add(byte_length))
+        .is_some_and(|length| length <= MAX_FRAME_LENGTH))
+}
+
+static NEXT_SOURCE_SPOOL: AtomicU64 = AtomicU64::new(0);
+
+/// Stores an oversized filtered-source snapshot for the worker to read by path.
+/// Unix files are owner-only from their initial creation.
+fn spool_source_bytes(bytes: &[u8]) -> io::Result<Arc<FilteredSourceSpool>> {
+    let directory = std::env::temp_dir();
+    for _ in 0..16 {
+        let id = NEXT_SOURCE_SPOOL.fetch_add(1, Ordering::Relaxed);
+        let path = directory.join(format!(
+            "build-runner-accelerator-source-{}-{id}.tmp",
+            std::process::id()
+        ));
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = match options.open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        if let Err(error) = file.write_all(bytes) {
+            drop(file);
+            let _ = fs::remove_file(&path);
+            return Err(error);
+        }
+        return Ok(Arc::new(FilteredSourceSpool::new(path)));
+    }
+    Err(io::Error::other(
+        "could not allocate a source snapshot spool",
+    ))
 }
 
 // Reject an oversized optional prefetch before writing any frame bytes. Dart
@@ -498,5 +650,44 @@ mod batch_response_tests {
             assert_eq!(declined["ok"], false);
             assert_eq!(declined["id"], 9);
         }
+    }
+
+    #[test]
+    fn filtered_source_read_accounts_for_binary_metadata_at_the_frame_limit() {
+        let metadata = json!({
+            "v": 1,
+            "type": "asset_response",
+            "id": u64::MAX,
+            "ok": true,
+            "encoding": "raw",
+            // Use the maximum frame length's nine digits when measuring the
+            // metadata overhead. The boundary payload length has the same
+            // number of digits.
+            "length": MAX_FRAME_LENGTH,
+        });
+        let overhead =
+            BINARY_ASSET_RESPONSE_MAGIC.len() + 4 + serde_json::to_vec(&metadata).unwrap().len();
+        let largest_payload = MAX_FRAME_LENGTH - overhead;
+        assert!(asset_response_fits(largest_payload).unwrap());
+        assert!(!asset_response_fits(largest_payload + 1).unwrap());
+    }
+
+    #[test]
+    fn source_spool_lives_until_its_shared_observation_is_dropped() {
+        let spool = spool_source_bytes(b"pinned source bytes").unwrap();
+        let path = spool.path().to_path_buf();
+        assert_eq!(fs::read(&path).unwrap(), b"pinned source bytes");
+        drop(spool);
+        assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_spool_is_owner_only_when_created() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let spool = spool_source_bytes(b"private source bytes").unwrap();
+        let mode = fs::metadata(spool.path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o077, 0);
     }
 }

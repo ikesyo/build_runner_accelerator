@@ -41,6 +41,21 @@ sorted using Dart's UTF-16 asset-ID order. Membership is persisted per action
 and glob, preserving different phases' views of the same pattern.
 Ordinary asset RPC uses the same listing order so an unfiltered build supplies
 valid evidence for filtered reuse without rerunning membership-only builders.
+Filtered builds preserve source evidence from build start through commit. The
+build-start snapshot is authoritative for sources it contains. If a worker's
+first `read` or `canRead` observes an eligible external source absent from that
+snapshot, the serial transaction caches its first bytes or missing result and
+records the matching existence, digest and size in the graph snapshot. `canRead`
+must share the same bytes as `read`, because stock's asset reader populates its
+content cache while checking availability. The post-build scan does not replace
+that first observation, so an edit that arrives afterward remains visible to
+the queued watch cycle. Sources already classified as generated or declared
+outputs do not use this path. A first observation that fits the binary frame,
+including response metadata, is returned as bytes; larger sources use a
+temporary spool read by path. Spools are removed best-effort when their
+transaction references are dropped. Unix creation requests owner-only mode
+`0600`; Windows inherits the temporary directory's ACL, and an abrupt process
+exit can leave an orphan spool.
 The private binary graph writes format 2 with actual-output locations and ordered
 stock inputs and glob membership. Format 1 can still be read by ordinary builds, but filtered builds
 with actions lacking ordered evidence route to stock. Configuration transitions removing prior builder

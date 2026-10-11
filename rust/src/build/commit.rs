@@ -22,6 +22,7 @@ pub(super) struct GraphSaveMetrics {
     pub(super) post_assets_us: u128,
 }
 
+/// All plan and staged-state evidence needed to publish one successful build.
 pub(super) struct CommitInputs<'a> {
     pub(super) workspace: &'a Workspace,
     pub(super) state_path: &'a Path,
@@ -29,9 +30,19 @@ pub(super) struct CommitInputs<'a> {
     pub(super) config_digest: String,
     pub(super) scanned_packages: &'a BTreeSet<String>,
     pub(super) expected_outputs: BTreeSet<String>,
+    /// Filtered watch builds must not mark source changes that arrived after
+    /// their initial snapshot as already incorporated by the completed build.
+    pub(super) filtered_snapshot_evidence: Option<(
+        &'a crate::snapshot::Snapshot,
+        &'a BTreeSet<String>,
+        &'a crate::snapshot::Snapshot,
+    )>,
     pub(super) transaction: PendingTransaction,
 }
 
+/// Persists changed configuration and snapshot metadata without running actions.
+/// An exact metadata match skips the graph write; read, encoding and filesystem
+/// errors propagate to the caller.
 pub(super) fn save_no_work(
     state: &mut GraphState,
     state_path: &Path,
@@ -63,6 +74,11 @@ pub(super) fn save_no_work(
     })
 }
 
+/// Publishes staged outputs, deletions and graph state after all actions pass.
+/// This is an all-success boundary, not a crash-atomic filesystem transaction:
+/// deletions and per-file atomic writes precede the graph rename, with no
+/// journal or rollback. An I/O error or interruption can leave some files
+/// changed while the previous graph remains on disk.
 pub(super) fn commit(
     state: &mut GraphState,
     inputs: CommitInputs<'_>,
@@ -74,6 +90,7 @@ pub(super) fn commit(
         config_digest,
         scanned_packages,
         expected_outputs,
+        filtered_snapshot_evidence,
         transaction,
     } = inputs;
 
@@ -170,8 +187,37 @@ pub(super) fn commit(
     state.config_digest = config_digest;
     drop(metadata);
     let scan = crate::wall::Span::new("post_snapshot");
-    let (post_snapshot, post_scan_us, post_assets_us) =
+    let (mut post_snapshot, post_scan_us, post_assets_us) =
         snapshot::scan_committed(workspace, state, build_config, scanned_packages)?;
+    if let Some((initial_snapshot, generated_assets, observed_snapshot_delta)) =
+        filtered_snapshot_evidence
+    {
+        // Drop source entries first discovered by a post-build scan. New
+        // external reads are added back below from the bytes actually served
+        // to workers, while generated outputs and glob evidence keep their
+        // own transaction semantics.
+        post_snapshot.retain(|asset, _snapshot| {
+            generated_assets.contains(asset)
+                || initial_snapshot.contains_key(asset)
+                || asset.starts_with("__glob__|")
+        });
+        // Keep build-start evidence for every source asset, including deleted
+        // files. The queued event must still see a delta on the next filtered
+        // iteration. Generated outputs retain their committed post-scan bytes.
+        for (asset, initial) in initial_snapshot {
+            if !generated_assets.contains(asset) {
+                post_snapshot.insert(asset.clone(), initial.clone());
+            }
+        }
+        // Build-start snapshots do not cover a first-time external source.
+        // Its first observed bytes/missing result came through lazy asset RPC;
+        // using the later filesystem scan here could hide an edit in-flight.
+        for (asset, observed) in observed_snapshot_delta {
+            if !generated_assets.contains(asset) {
+                post_snapshot.insert(asset.clone(), observed.clone());
+            }
+        }
+    }
     drop(scan);
     let update = crate::wall::Span::new("graph_update_assets");
     state.update_assets(post_snapshot);

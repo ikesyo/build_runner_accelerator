@@ -1,5 +1,7 @@
 use super::WorkerClient;
-use super::asset_rpc::{batch_asset_request_context, validate_asset_request_context};
+use super::asset_rpc::{
+    FilteredAssetEvidence, batch_asset_request_context, validate_asset_request_context,
+};
 use super::client::protocol_error;
 use super::request::{BuildRequest, batch_blocked_assets, build_request_kind};
 use crate::builder::BuilderKind;
@@ -12,6 +14,7 @@ use crate::workspace::{Workspace, glob_candidates, matches_glob};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -80,6 +83,44 @@ pub struct LazyBuildResult {
     pub result: BuildResult,
 }
 
+#[derive(Clone)]
+pub(crate) enum FilteredSourceContent {
+    Bytes(Arc<[u8]>),
+    Spool(Arc<FilteredSourceSpool>),
+    Missing,
+}
+
+#[derive(Clone)]
+pub(crate) struct FilteredSourceObservation {
+    pub(crate) content: FilteredSourceContent,
+    pub(crate) snapshot: crate::snapshot::AssetSnapshot,
+}
+
+/// Keeps an oversized filtered-source snapshot available to the worker by path.
+/// Dropping the guard removes the temporary file during normal cleanup; an
+/// abrupt process exit can leave an orphan in the temporary directory.
+pub(crate) struct FilteredSourceSpool {
+    path: PathBuf,
+}
+
+impl FilteredSourceSpool {
+    pub(crate) fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl Drop for FilteredSourceSpool {
+    fn drop(&mut self) {
+        // Best-effort lifecycle cleanup; crash-orphan reclamation is outside
+        // this guard's scope.
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 /// State shared by optional builds and filtered normal demand in one transaction.
 /// Demand builds are deliberately serialized on one worker because they
 /// mutate the transaction overlay and may recursively request another lazy
@@ -93,6 +134,8 @@ pub struct LazyBuildState {
     filtered_previous: Option<crate::graph::GraphState>,
     demanded_keys: BTreeSet<String>,
     filtered_snapshot: crate::snapshot::Snapshot,
+    filtered_snapshot_delta: crate::snapshot::Snapshot,
+    source_observations: BTreeMap<String, FilteredSourceObservation>,
     filtered_compatible: bool,
 }
 
@@ -107,6 +150,8 @@ impl LazyBuildState {
             filtered_previous: None,
             demanded_keys: BTreeSet::new(),
             filtered_snapshot: BTreeMap::new(),
+            filtered_snapshot_delta: BTreeMap::new(),
+            source_observations: BTreeMap::new(),
             filtered_compatible: false,
         }
     }
@@ -132,6 +177,54 @@ impl LazyBuildState {
                 .as_ref()
                 .and_then(|s| s.assets.get(asset)),
         ) != identity(self.filtered_snapshot.get(asset))
+    }
+
+    pub(super) fn is_untracked_filtered_source(
+        &self,
+        asset: &str,
+        lazy_specs: &BTreeMap<String, BuildSpec>,
+    ) -> bool {
+        if self.filtered_previous.is_none()
+            || self.filtered_snapshot.contains_key(asset)
+            || lazy_specs.contains_key(asset)
+        {
+            return false;
+        }
+        let Some(previous) = &self.filtered_previous else {
+            return false;
+        };
+        !previous.output_locations.contains_key(asset)
+            && !previous.watch_generated_sources.contains(asset)
+            && !previous
+                .actions
+                .values()
+                .any(|action| action.outputs.iter().any(|output| output == asset))
+    }
+
+    pub(super) fn shared_source_observation(
+        &self,
+        asset: &str,
+    ) -> Option<FilteredSourceObservation> {
+        self.source_observations.get(asset).cloned()
+    }
+
+    pub(super) fn publish_source_observation(
+        &mut self,
+        asset: &str,
+        observed: FilteredSourceObservation,
+    ) -> FilteredSourceObservation {
+        let published = self
+            .source_observations
+            .entry(asset.to_owned())
+            .or_insert(observed)
+            .clone();
+        self.filtered_snapshot_delta
+            .insert(asset.to_owned(), published.snapshot.clone());
+        published
+    }
+
+    pub(crate) fn filtered_snapshot_delta(&self) -> &crate::snapshot::Snapshot {
+        &self.filtered_snapshot_delta
     }
 
     fn update_outputs(
@@ -526,6 +619,7 @@ impl WorkerClient {
             visibility,
             active_request,
             expected_build_id,
+            Some(FilteredAssetEvidence { lazy, lazy_specs }),
         )
     }
 
@@ -877,5 +971,54 @@ impl WorkerClient {
         lazy.update_outputs(&spec, overlay, deleted_overlay);
         lazy.results.push(LazyBuildResult { spec, result });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod source_observation_tests {
+    use super::*;
+
+    #[test]
+    fn serial_filtered_source_observation_keeps_first_bytes_and_snapshot() {
+        let mut lazy = LazyBuildState::new(BTreeSet::new());
+        let asset = "external|lib/shared.asset";
+        let first_bytes: Arc<[u8]> = Arc::from(&b"first version"[..]);
+        let first_snapshot = crate::snapshot::AssetSnapshot {
+            exists: true,
+            digest: crate::digest::digest_bytes(&first_bytes),
+            size: first_bytes.len() as u64,
+        };
+
+        let first = lazy.publish_source_observation(
+            asset,
+            FilteredSourceObservation {
+                content: FilteredSourceContent::Bytes(Arc::clone(&first_bytes)),
+                snapshot: first_snapshot.clone(),
+            },
+        );
+        let later = lazy.publish_source_observation(
+            asset,
+            FilteredSourceObservation {
+                content: FilteredSourceContent::Bytes(Arc::from(&b"edited version"[..])),
+                snapshot: crate::snapshot::AssetSnapshot {
+                    exists: true,
+                    digest: crate::digest::digest_bytes(b"edited version"),
+                    size: b"edited version".len() as u64,
+                },
+            },
+        );
+
+        assert_eq!(first.snapshot, first_snapshot);
+        assert_eq!(later.snapshot, first_snapshot);
+        match later.content {
+            FilteredSourceContent::Bytes(bytes) => assert_eq!(&*bytes, &*first_bytes),
+            FilteredSourceContent::Spool(_) | FilteredSourceContent::Missing => {
+                panic!("the first serial source observation was not reused")
+            }
+        }
+        assert_eq!(
+            lazy.filtered_snapshot_delta().get(asset),
+            Some(&first_snapshot)
+        );
     }
 }
