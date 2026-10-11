@@ -12,6 +12,7 @@ import signal
 import subprocess
 import tempfile
 import time
+from unittest.mock import patch
 
 from correctness_cli import REPO, DART, NATIVE, ENV, launcher
 
@@ -90,6 +91,91 @@ def wait(predicate, proc, log):
         time.sleep(.1)
 
 
+def wait_for_json_outputs(root, proc, log, predicate):
+    """Retry snapshots observed while a watch build is replacing outputs."""
+    matched_snapshot = None
+    matched = False
+    last_incomplete = None
+
+    def ready():
+        nonlocal matched, matched_snapshot, last_incomplete
+        try:
+            snapshot = outputs(root)
+            decoded = {path: json.loads(data) for path, data in snapshot.items()}
+        except (FileNotFoundError, json.JSONDecodeError) as error:
+            last_incomplete = error
+            return False
+        if predicate(snapshot, decoded):
+            matched_snapshot = snapshot
+            matched = True
+            return True
+        return False
+
+    try:
+        wait(ready, proc, log)
+    except AssertionError as error:
+        if last_incomplete is None:
+            raise
+        raise AssertionError(
+            f'{error}\nlast incomplete watched output snapshot: {last_incomplete}') from error
+    assert matched
+    return matched_snapshot
+
+
+def watch_json_poll_regression(temporary):
+    """Prove missing and half-written JSON snapshots are retried by watch polling."""
+    expected = {'lib/a.out': b'{"input":"complete"}'}
+    snapshots = [FileNotFoundError('output was replaced during read'),
+                 {'lib/a.out': b''}, expected]
+    attempts = 0
+
+    def transient_outputs(_root):
+        nonlocal attempts
+        current = snapshots[attempts]
+        attempts += 1
+        if isinstance(current, BaseException):
+            raise current
+        return current
+
+    class RunningProcess:
+        def poll(self):
+            return None
+
+    log = temporary / 'watch-json-poll.log'
+    log.write_text('watch process remains active\n')
+    with patch(f'{__name__}.outputs', side_effect=transient_outputs):
+        matched = wait_for_json_outputs(
+            temporary, RunningProcess(), log,
+            lambda _snapshot, decoded: decoded.get('lib/a.out', {}).get('input') == 'complete')
+    assert matched == expected and attempts == 3, (matched, attempts)
+
+    class ExitedProcess:
+        def poll(self):
+            return 1
+
+    with patch(f'{__name__}.outputs', return_value={'lib/a.out': b''}):
+        try:
+            wait_for_json_outputs(temporary, ExitedProcess(), log,
+                                  lambda _snapshot, _decoded: True)
+        except AssertionError as error:
+            assert 'watch process remains active' in str(error), error
+            assert 'Expecting value' in str(error), error
+        else:
+            raise AssertionError('persistent incomplete JSON unexpectedly satisfied watch polling')
+
+    def broken_predicate(_snapshot, _decoded):
+        raise RuntimeError('predicate failure must propagate')
+
+    with patch(f'{__name__}.outputs', return_value=expected):
+        try:
+            wait_for_json_outputs(temporary, RunningProcess(), log, broken_predicate)
+        except RuntimeError as error:
+            assert str(error) == 'predicate failure must propagate', error
+        else:
+            raise AssertionError('watch JSON polling suppressed a predicate failure')
+    print('settings watch JSON polling: PASS', flush=True)
+
+
 def watch(root, args, edit, expected):
     log = root / 'settings-watch.log'
     with log.open('w') as stream:
@@ -99,12 +185,17 @@ def watch(root, args, edit, expected):
             markers = ('Watching ', 'Built with build_runner')
             wait(lambda: any(m in log.read_text() for m in markers), proc, log)
             edit(root)
-            wait(lambda: outputs(root) == expected, proc, log)
+            wait_for_json_outputs(root, proc, log,
+                                  lambda snapshot, _decoded: snapshot == expected)
             # A later input edit must use the newly selected options/catalog.
             (root / 'lib/a.txt').write_text('watched input\n')
-            wait(lambda: all(json.loads(data)['input'] == 'watched input\n'
-                             for path, data in outputs(root).items() if path.startswith('lib/a.')), proc, log)
-            return outputs(root)
+            return wait_for_json_outputs(
+                root, proc, log,
+                lambda snapshot, decoded: (
+                    snapshot.keys() == expected.keys()
+                    and any(path.startswith('lib/a.') for path in snapshot)
+                    and all(decoded[path]['input'] == 'watched input\n'
+                            for path in snapshot if path.startswith('lib/a.'))))
         finally:
             os.killpg(proc.pid, signal.SIGINT)
             proc.wait(timeout=15)
@@ -220,23 +311,27 @@ def watch_normalized_config_paths(temporary, only=None):
                 try:
                     wait(lambda: ('Built with build_runner' in log.read_text() if mode == 'stock'
                                   else 'Watching ' in log.read_text()), proc, log)
-                    stages = [outputs(root)]
+                    stages = [wait_for_json_outputs(
+                        root, proc, log, lambda snapshot, _decoded: bool(snapshot))]
                     selected = root / path
                     selected.write_text(selected.read_text().replace('named-release', 'normalized-new'))
                     # An unrelated Dart source change is not a config reload
                     # (nor a build-script change), even though watch sees it.
                     (root / 'lib/unrelated.dart').write_text('void main() {}\n')
                     (root / 'lib/a.txt').write_text('normalized input\n')
-                    wait(lambda: outputs(root) and all(json.loads(data)['input'] == 'normalized input\n'
-                                                       for data in outputs(root).values()), proc, log)
-                    stages.append(outputs(root))
+                    stages.append(wait_for_json_outputs(
+                        root, proc, log,
+                        lambda snapshot, decoded: bool(snapshot) and all(
+                            value['input'] == 'normalized input\n' for value in decoded.values())))
                     assert all(json.loads(data)['options']['value'] == 'named-release'
                                for data in stages[-1].values()), (mode, stages, log.read_text())
                     ordinary = root / 'build.yaml'
                     ordinary.write_text(ordinary.read_text() + '\n# recognized config change\n')
-                    wait(lambda: outputs(root) and all(json.loads(data)['options']['value'] == 'normalized-new'
-                                                       for data in outputs(root).values()), proc, log)
-                    stages.append(outputs(root))
+                    stages.append(wait_for_json_outputs(
+                        root, proc, log,
+                        lambda snapshot, decoded: bool(snapshot) and all(
+                            value['options']['value'] == 'normalized-new'
+                            for value in decoded.values())))
                     snapshots.append(stages)
                 finally:
                     if proc.poll() is None:
@@ -613,6 +708,7 @@ def run_group(group, temporary):
     elif group == 'watch-reserved':
         watch_nested_reserved_directory(temporary)
     elif group in NORMALIZED_WATCH:
+        watch_json_poll_regression(temporary)
         watch_normalized_config_paths(temporary, only=(NORMALIZED_WATCH[group],))
     elif group == 'watch-topology':
         watch_topology_boundary(temporary)
