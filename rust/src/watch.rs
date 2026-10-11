@@ -207,6 +207,9 @@ fn run_watch_build(
 ) -> io::Result<bool> {
     let workspace = Workspace::load(options.root.clone())?;
     let session_start = watch_state.cached_configuration.is_none();
+    let filtered = !BuildSettings::parse(&options.stock_arguments)?
+        .build_filters
+        .is_empty();
     let selected = if reuse_configuration && watch_state.cached_configuration.is_some() {
         watch_state.cached_configuration.clone()
     } else {
@@ -221,9 +224,7 @@ fn run_watch_build(
     // A successful cold build can discover resolver cycles. Re-check the
     // incremental evidence even when filesystem events reuse the manifest.
     if reuse_configuration
-        && !crate::cli::BuildSettings::parse(&options.stock_arguments)?
-            .build_filters
-            .is_empty()
+        && filtered
         && let Some(reason) = build::filtered_transition_reason(&workspace, &build_config)?
     {
         pool.take();
@@ -281,13 +282,23 @@ fn run_watch_build(
     if pool.is_none() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
         let worker_command = worker_executable(options, &build_config)?;
-        let mut worker_pool = WorkerPool::start(
-            &workspace.root,
-            dart_binary,
-            &worker_command,
-            options.jobs,
-            options.worker.is_none(),
-        )?;
+        let mut worker_pool = if filtered {
+            WorkerPool::start_deferred(
+                &workspace.root,
+                dart_binary,
+                &worker_command,
+                options.jobs,
+                options.worker.is_none(),
+            )?
+        } else {
+            WorkerPool::start(
+                &workspace.root,
+                dart_binary,
+                &worker_command,
+                options.jobs,
+                options.worker.is_none(),
+            )?
+        };
         worker_pool.pin_worker_artifact();
         *pool = Some(worker_pool);
     }

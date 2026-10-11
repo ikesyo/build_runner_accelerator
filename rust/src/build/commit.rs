@@ -44,9 +44,9 @@ pub(super) struct CommitInputs<'a> {
     pub(super) transaction: PendingTransaction,
 }
 
-/// Persists changed configuration and snapshot metadata without running actions.
-/// An exact metadata match skips the graph write; read, encoding and filesystem
-/// errors propagate to the caller.
+/// Persists changed configuration/snapshot metadata without running actions.
+/// The graph is left untouched on an exact metadata match; read, encode, and
+/// filesystem errors propagate to the caller.
 pub(super) fn save_no_work(
     state: &mut GraphState,
     state_path: &Path,
@@ -78,11 +78,11 @@ pub(super) fn save_no_work(
     })
 }
 
-/// Publishes staged outputs, deletions and graph state after all actions pass.
+/// Publishes staged outputs, deletions, and graph state after all actions pass.
 /// This is an all-success boundary, not a crash-atomic filesystem transaction:
-/// deletions and per-file atomic writes precede the graph rename, with no
-/// journal or rollback. An I/O error or interruption can leave some files
-/// changed while the previous graph remains on disk.
+/// deletions and per-file atomic writes happen before the graph rename, with no
+/// journal or rollback. An I/O error or interruption can therefore leave some
+/// files changed while the previous graph remains on disk.
 pub(super) fn commit(
     state: &mut GraphState,
     inputs: CommitInputs<'_>,

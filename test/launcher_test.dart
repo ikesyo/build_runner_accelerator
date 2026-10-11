@@ -100,6 +100,25 @@ void main() {
     );
   });
 
+  test('filtered worker count is implicit unless the caller sets --jobs', () {
+    for (final command in ['build', 'watch']) {
+      final defaultJobs = LauncherOptions.parse([
+        command,
+        '--build-filter=lib/a.final,lib/b.final',
+      ]);
+      expect(defaultJobs.rustArguments, isNot(contains('--jobs')));
+
+      final explicitJobs = LauncherOptions.parse([
+        command,
+        '--build-filter=lib/a.final,lib/b.final',
+        '--jobs=4',
+      ]);
+      final jobsIndex = explicitJobs.rustArguments.indexOf('--jobs');
+      expect(jobsIndex, isNonNegative);
+      expect(explicitJobs.rustArguments[jobsIndex + 1], '4');
+    }
+  });
+
   test('unsupported CLI selects stock before native resolution', () {
     for (final args in [
       ['clean'],

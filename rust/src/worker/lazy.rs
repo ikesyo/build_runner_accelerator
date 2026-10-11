@@ -12,10 +12,10 @@ use crate::protocol::{
 use crate::visibility::AssetVisibility;
 use crate::workspace::{Workspace, glob_candidates, matches_glob};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Instant;
 
 #[expect(
@@ -84,6 +84,13 @@ pub struct LazyBuildResult {
 }
 
 #[derive(Clone)]
+enum PublishedOutput {
+    Bytes(Arc<[u8]>),
+    Missing,
+    OnDisk,
+}
+
+#[derive(Clone)]
 pub(crate) enum FilteredSourceContent {
     Bytes(Arc<[u8]>),
     Spool(Arc<FilteredSourceSpool>),
@@ -96,7 +103,7 @@ pub(crate) struct FilteredSourceObservation {
     pub(crate) snapshot: crate::snapshot::AssetSnapshot,
 }
 
-/// Keeps an oversized filtered-source snapshot available to the worker by path.
+/// Keeps a large filtered-source snapshot available to the worker by path.
 /// Dropping the guard removes the temporary file during normal cleanup; an
 /// abrupt process exit can leave an orphan in the temporary directory.
 pub(crate) struct FilteredSourceSpool {
@@ -121,22 +128,290 @@ impl Drop for FilteredSourceSpool {
     }
 }
 
+#[derive(Clone, Default)]
+struct ActionPublication {
+    outputs: BTreeMap<String, PublishedOutput>,
+    snapshots: BTreeMap<String, crate::snapshot::AssetSnapshot>,
+}
+
+#[derive(Clone)]
+enum DemandActionState {
+    Running { worker: usize },
+    Complete(ActionPublication),
+    Failed(String),
+}
+
+#[derive(Default)]
+struct DemandCoordinatorState {
+    actions: HashMap<String, DemandActionState>,
+    dependencies: HashMap<String, String>,
+    published_outputs: BTreeMap<String, PublishedOutput>,
+    // Stock's filesystem content cache stabilizes external source bytes across
+    // build steps in one transaction. Share the first unknown-source
+    // observation across native workers to preserve that behavior.
+    source_observations: BTreeMap<String, FilteredSourceObservation>,
+    failed: Option<String>,
+}
+
+#[derive(Default)]
+struct DemandCoordinatorInner {
+    state: Mutex<DemandCoordinatorState>,
+    changed: Condvar,
+}
+
+/// Coordinates filtered actions across worker RPC stacks. The lock protects
+/// only claims and immutable completion publications; no worker IPC or file
+/// access is performed while it is held.
+#[derive(Clone, Default)]
+pub(crate) struct FilteredDemandCoordinator {
+    inner: Arc<DemandCoordinatorInner>,
+}
+
+enum DemandClaim {
+    Owner(ActionClaimGuard),
+    Complete(ActionPublication),
+}
+
+struct ActionClaimGuard {
+    coordinator: FilteredDemandCoordinator,
+    key: String,
+    parent: Option<String>,
+    worker: usize,
+    settled: bool,
+}
+
+impl ActionClaimGuard {
+    fn complete(&mut self, publication: ActionPublication) {
+        let mut state = self.coordinator.lock();
+        state.published_outputs.extend(
+            publication
+                .outputs
+                .iter()
+                .map(|(asset, output)| (asset.clone(), output.clone())),
+        );
+        state
+            .actions
+            .insert(self.key.clone(), DemandActionState::Complete(publication));
+        if let Some(parent) = &self.parent
+            && state.dependencies.get(parent) == Some(&self.key)
+        {
+            state.dependencies.remove(parent);
+        }
+        state.dependencies.remove(&self.key);
+        self.settled = true;
+        self.coordinator.inner.changed.notify_all();
+    }
+
+    fn fail(&mut self, error: impl Into<String>) {
+        self.coordinator
+            .fail_action(&self.key, self.parent.as_deref(), self.worker, error.into());
+        self.settled = true;
+    }
+}
+
+impl Drop for ActionClaimGuard {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.coordinator.fail_action(
+                &self.key,
+                self.parent.as_deref(),
+                self.worker,
+                "filtered demand owner exited without publishing a result".to_owned(),
+            );
+        }
+    }
+}
+
+impl FilteredDemandCoordinator {
+    fn lock(&self) -> MutexGuard<'_, DemandCoordinatorState> {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn claim(&self, key: &str, parent: Option<&str>, worker: usize) -> io::Result<DemandClaim> {
+        let mut state = self.lock();
+        loop {
+            if let Some(error) = &state.failed {
+                return Err(io::Error::other(error.clone()));
+            }
+            match state.actions.get(key).cloned() {
+                Some(DemandActionState::Complete(publication)) => {
+                    return Ok(DemandClaim::Complete(publication));
+                }
+                Some(DemandActionState::Failed(error)) => {
+                    return Err(io::Error::other(error.clone()));
+                }
+                Some(DemandActionState::Running { worker: _owner }) => {
+                    if let Some(parent) = parent {
+                        state.dependencies.insert(parent.to_owned(), key.to_owned());
+                        let mut next = key;
+                        let mut visited = BTreeSet::new();
+                        while let Some(waiting_on) = state.dependencies.get(next) {
+                            if waiting_on == parent {
+                                let error = format!(
+                                    "filtered dependency wait cycle: {parent} waits for {key}"
+                                );
+                                latch_demand_failure(&mut state, error.clone());
+                                self.inner.changed.notify_all();
+                                state.dependencies.remove(parent);
+                                return Err(io::Error::other(error));
+                            }
+                            if !visited.insert(waiting_on.clone()) {
+                                break;
+                            }
+                            next = waiting_on;
+                        }
+                    }
+                    // Do not retain the shared lock while sleeping. Producers
+                    // publish and wake all waiters after the entire sibling set.
+                    state = self
+                        .inner
+                        .changed
+                        .wait(state)
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if let Some(parent) = parent {
+                        state.dependencies.remove(parent);
+                    }
+                }
+                None => {
+                    if let Some(parent) = parent {
+                        state.dependencies.insert(parent.to_owned(), key.to_owned());
+                    }
+                    state
+                        .actions
+                        .insert(key.to_owned(), DemandActionState::Running { worker });
+                    return Ok(DemandClaim::Owner(ActionClaimGuard {
+                        coordinator: self.clone(),
+                        key: key.to_owned(),
+                        parent: parent.map(str::to_owned),
+                        worker,
+                        settled: false,
+                    }));
+                }
+            }
+        }
+    }
+
+    fn source_observation(&self, asset: &str) -> Option<FilteredSourceObservation> {
+        self.lock().source_observations.get(asset).cloned()
+    }
+
+    fn publish_source_observation(
+        &self,
+        asset: &str,
+        observed: FilteredSourceObservation,
+    ) -> FilteredSourceObservation {
+        let published = {
+            let mut state = self.lock();
+            state
+                .source_observations
+                .entry(asset.to_owned())
+                .or_insert_with(|| observed.clone())
+                .clone()
+        };
+        // A losing spool candidate may unlink its temporary file on drop.
+        // Keep the original outside the guard so that cleanup never performs
+        // filesystem I/O while holding the coordinator mutex.
+        published
+    }
+
+    fn fail_action(&self, key: &str, parent: Option<&str>, worker: usize, error: String) {
+        let mut state = self.lock();
+        if matches!(
+            state.actions.get(key),
+            Some(DemandActionState::Running { worker: owner }) if *owner == worker
+        ) {
+            state
+                .actions
+                .insert(key.to_owned(), DemandActionState::Failed(error.clone()));
+        }
+        if let Some(parent) = parent
+            && state
+                .dependencies
+                .get(parent)
+                .is_some_and(|child| child == key)
+        {
+            state.dependencies.remove(parent);
+        }
+        state.dependencies.remove(key);
+        latch_demand_failure(&mut state, error);
+        self.inner.changed.notify_all();
+    }
+
+    pub(crate) fn fail_worker(&self, error: impl Into<String>) {
+        let mut state = self.lock();
+        latch_demand_failure(&mut state, error.into());
+        self.inner.changed.notify_all();
+    }
+
+    pub(crate) fn failure(&self) -> Option<String> {
+        self.lock().failed.clone()
+    }
+
+    pub(crate) fn apply_outputs(
+        &self,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
+        deleted: &mut BTreeSet<String>,
+    ) {
+        for (asset, output) in &self.lock().published_outputs {
+            apply_published_output(asset, output, overlay, deleted);
+        }
+    }
+}
+
+fn latch_demand_failure(state: &mut DemandCoordinatorState, error: String) {
+    state.failed.get_or_insert(error);
+}
+
+fn apply_published_output(
+    asset: &str,
+    output: &PublishedOutput,
+    overlay: &mut BTreeMap<String, Arc<[u8]>>,
+    deleted: &mut BTreeSet<String>,
+) {
+    match output {
+        PublishedOutput::Bytes(bytes) => {
+            overlay.insert(asset.to_owned(), Arc::clone(bytes));
+            deleted.remove(asset);
+        }
+        PublishedOutput::Missing => {
+            overlay.remove(asset);
+            deleted.insert(asset.to_owned());
+        }
+        PublishedOutput::OnDisk => {
+            overlay.remove(asset);
+            deleted.remove(asset);
+        }
+    }
+}
+
 /// State shared by optional builds and filtered normal demand in one transaction.
-/// Demand builds are deliberately serialized on one worker because they
-/// mutate the transaction overlay and may recursively request another lazy
-/// output.
+/// Filtered demand workers share immutable action publications and retain
+/// worker-local RPC stacks and mutable transaction views.
 pub struct LazyBuildState {
     force_keys: BTreeSet<String>,
     built_keys: BTreeSet<String>,
     building_keys: BTreeSet<String>,
+    building_stack: Vec<String>,
     results: Vec<LazyBuildResult>,
     failed_demand: Option<String>,
-    filtered_previous: Option<crate::graph::GraphState>,
+    filtered_previous: Option<Arc<crate::graph::GraphState>>,
     demanded_keys: BTreeSet<String>,
-    filtered_snapshot: crate::snapshot::Snapshot,
-    filtered_snapshot_delta: crate::snapshot::Snapshot,
-    source_observations: BTreeMap<String, FilteredSourceObservation>,
+    filtered_snapshot: Arc<crate::snapshot::Snapshot>,
+    filtered_snapshot_delta: BTreeMap<String, crate::snapshot::AssetSnapshot>,
+    filtered_unconfirmed_outputs: BTreeSet<String>,
+    filtered_dirty_keys: BTreeSet<String>,
+    filtered_probe_root_dirty: bool,
     filtered_compatible: bool,
+    filtered_coordinator: Option<FilteredDemandCoordinator>,
+    filtered_worker: usize,
+}
+
+enum FilteredExecution<'a> {
+    Worker(&'a mut WorkerClient),
+    Probe,
 }
 
 impl LazyBuildState {
@@ -145,14 +420,19 @@ impl LazyBuildState {
             force_keys,
             built_keys: BTreeSet::new(),
             building_keys: BTreeSet::new(),
+            building_stack: Vec::new(),
             results: Vec::new(),
             failed_demand: None,
             filtered_previous: None,
             demanded_keys: BTreeSet::new(),
-            filtered_snapshot: BTreeMap::new(),
+            filtered_snapshot: Arc::new(BTreeMap::new()),
             filtered_snapshot_delta: BTreeMap::new(),
-            source_observations: BTreeMap::new(),
+            filtered_unconfirmed_outputs: BTreeSet::new(),
+            filtered_dirty_keys: BTreeSet::new(),
+            filtered_probe_root_dirty: false,
             filtered_compatible: false,
+            filtered_coordinator: None,
+            filtered_worker: 0,
         }
     }
 
@@ -162,21 +442,31 @@ impl LazyBuildState {
         compatible: bool,
     ) -> Self {
         let mut state = Self::new(BTreeSet::new());
-        state.filtered_previous = Some(previous);
-        state.filtered_snapshot = current;
+        state.filtered_previous = Some(Arc::new(previous));
+        state.filtered_snapshot = Arc::new(current);
         state.filtered_compatible = compatible;
         state
     }
 
     fn asset_changed(&self, asset: &str) -> bool {
-        let identity = |entry: Option<&crate::snapshot::AssetSnapshot>| {
-            entry.map(|e| (e.exists, e.digest.clone()))
-        };
-        identity(
-            self.filtered_previous
-                .as_ref()
-                .and_then(|s| s.assets.get(asset)),
-        ) != identity(self.filtered_snapshot.get(asset))
+        if self.filtered_unconfirmed_outputs.contains(asset) {
+            return true;
+        }
+        let current = self
+            .filtered_snapshot_delta
+            .get(asset)
+            .or_else(|| self.filtered_snapshot.get(asset));
+        let previous = self
+            .filtered_previous
+            .as_ref()
+            .and_then(|s| s.assets.get(asset));
+        match (previous, current) {
+            (Some(previous), Some(current)) => {
+                previous.exists != current.exists || previous.digest != current.digest
+            }
+            (None, None) => false,
+            _ => true,
+        }
     }
 
     pub(super) fn is_untracked_filtered_source(
@@ -184,10 +474,10 @@ impl LazyBuildState {
         asset: &str,
         lazy_specs: &BTreeMap<String, BuildSpec>,
     ) -> bool {
-        if self.filtered_previous.is_none()
-            || self.filtered_snapshot.contains_key(asset)
-            || lazy_specs.contains_key(asset)
-        {
+        if self.filtered_previous.is_none() || self.filtered_snapshot.contains_key(asset) {
+            return false;
+        }
+        if lazy_specs.contains_key(asset) {
             return false;
         }
         let Some(previous) = &self.filtered_previous else {
@@ -205,7 +495,9 @@ impl LazyBuildState {
         &self,
         asset: &str,
     ) -> Option<FilteredSourceObservation> {
-        self.source_observations.get(asset).cloned()
+        self.filtered_coordinator
+            .as_ref()?
+            .source_observation(asset)
     }
 
     pub(super) fn publish_source_observation(
@@ -213,17 +505,19 @@ impl LazyBuildState {
         asset: &str,
         observed: FilteredSourceObservation,
     ) -> FilteredSourceObservation {
-        let published = self
-            .source_observations
-            .entry(asset.to_owned())
-            .or_insert(observed)
-            .clone();
+        let published = if let Some(coordinator) = &self.filtered_coordinator {
+            coordinator.publish_source_observation(asset, observed)
+        } else {
+            observed
+        };
         self.filtered_snapshot_delta
             .insert(asset.to_owned(), published.snapshot.clone());
         published
     }
 
-    pub(crate) fn filtered_snapshot_delta(&self) -> &crate::snapshot::Snapshot {
+    pub(crate) fn filtered_snapshot_delta(
+        &self,
+    ) -> &BTreeMap<String, crate::snapshot::AssetSnapshot> {
         &self.filtered_snapshot_delta
     }
 
@@ -237,6 +531,7 @@ impl LazyBuildState {
             return;
         }
         for output in &spec.outputs {
+            self.filtered_unconfirmed_outputs.remove(output);
             let entry = if let Some(bytes) = overlay.get(output) {
                 Some(crate::snapshot::AssetSnapshot {
                     exists: true,
@@ -253,8 +548,116 @@ impl LazyBuildState {
                 None
             };
             if let Some(entry) = entry {
-                self.filtered_snapshot.insert(output.clone(), entry);
+                self.filtered_snapshot_delta.insert(output.clone(), entry);
             }
+        }
+    }
+
+    pub(crate) fn worker_state(
+        &self,
+        worker: usize,
+        coordinator: FilteredDemandCoordinator,
+    ) -> Self {
+        Self {
+            force_keys: self.force_keys.clone(),
+            // The single-threaded probe already completed every reused action
+            // and left its transaction view in the overlays passed to workers.
+            // Seed those claims so parallel roots do not replay reuse work.
+            built_keys: self.built_keys.clone(),
+            building_keys: BTreeSet::new(),
+            building_stack: Vec::new(),
+            results: Vec::new(),
+            failed_demand: None,
+            filtered_previous: self.filtered_previous.clone(),
+            demanded_keys: self.demanded_keys.clone(),
+            filtered_snapshot: self.filtered_snapshot.clone(),
+            filtered_snapshot_delta: self.filtered_snapshot_delta.clone(),
+            // Probe-only dirtiness is resolved again by actual worker reads;
+            // carrying it into execution would invalidate equal rebuilt bytes.
+            filtered_unconfirmed_outputs: BTreeSet::new(),
+            filtered_dirty_keys: BTreeSet::new(),
+            filtered_probe_root_dirty: false,
+            filtered_compatible: self.filtered_compatible,
+            filtered_coordinator: Some(coordinator),
+            filtered_worker: worker,
+        }
+    }
+
+    pub(crate) fn merge_worker_state(&mut self, mut worker: Self) {
+        self.built_keys.append(&mut worker.built_keys);
+        self.demanded_keys.append(&mut worker.demanded_keys);
+        self.filtered_snapshot_delta
+            .append(&mut worker.filtered_snapshot_delta);
+        self.filtered_unconfirmed_outputs
+            .append(&mut worker.filtered_unconfirmed_outputs);
+        self.filtered_dirty_keys
+            .append(&mut worker.filtered_dirty_keys);
+        self.results.append(&mut worker.results);
+        if let Some(error) = worker.failed_demand.take() {
+            self.failed_demand.get_or_insert(error);
+        }
+    }
+
+    fn publication(
+        &self,
+        spec: &BuildSpec,
+        overlay: &BTreeMap<String, Arc<[u8]>>,
+        deleted: &BTreeSet<String>,
+    ) -> ActionPublication {
+        let outputs = spec
+            .outputs
+            .iter()
+            .map(|output| {
+                let status = if let Some(bytes) = overlay.get(output) {
+                    PublishedOutput::Bytes(Arc::clone(bytes))
+                } else if deleted.contains(output) {
+                    PublishedOutput::Missing
+                } else {
+                    PublishedOutput::OnDisk
+                };
+                (output.clone(), status)
+            })
+            .collect();
+        let snapshots = spec
+            .outputs
+            .iter()
+            .filter_map(|output| {
+                self.filtered_snapshot_delta
+                    .get(output)
+                    .map(|snapshot| (output.clone(), snapshot.clone()))
+            })
+            .collect();
+        ActionPublication { outputs, snapshots }
+    }
+
+    fn apply_publication(
+        &mut self,
+        spec: &BuildSpec,
+        publication: &ActionPublication,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
+        deleted: &mut BTreeSet<String>,
+    ) {
+        for output in &spec.outputs {
+            if let Some(status) = publication.outputs.get(output) {
+                apply_published_output(output, status, overlay, deleted);
+            }
+        }
+        self.filtered_snapshot_delta
+            .extend(publication.snapshots.clone());
+        let key = spec.action_key();
+        self.demanded_keys.insert(key.clone());
+        self.built_keys.insert(key);
+    }
+
+    fn complete_action(
+        &mut self,
+        spec: &BuildSpec,
+        claim: &mut Option<ActionClaimGuard>,
+        overlay: &BTreeMap<String, Arc<[u8]>>,
+        deleted: &BTreeSet<String>,
+    ) {
+        if let Some(mut claim) = claim.take() {
+            claim.complete(self.publication(spec, overlay, deleted));
         }
     }
 
@@ -266,10 +669,52 @@ impl LazyBuildState {
         if self.filtered_previous.is_some() {
             self.failed_demand.get_or_insert_with(|| error.to_string());
         }
+        if let Some(coordinator) = &self.filtered_coordinator {
+            coordinator.fail_worker(error.to_string());
+        }
+    }
+
+    fn mark_filtered_dirty(&mut self, spec: &BuildSpec) {
+        self.filtered_dirty_keys.insert(spec.action_key());
+        self.filtered_unconfirmed_outputs
+            .extend(spec.outputs.iter().cloned());
+        self.filtered_probe_root_dirty = true;
     }
 
     pub(crate) fn failed_demand(&self) -> Option<&str> {
         self.failed_demand.as_deref()
+    }
+
+    pub(crate) fn probe_filtered_roots(
+        &mut self,
+        workspace: &Workspace,
+        roots: &[String],
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
+        deleted_overlay: &mut BTreeSet<String>,
+        visibility: &AssetVisibility,
+        specs: &BTreeMap<String, BuildSpec>,
+    ) -> io::Result<Vec<String>> {
+        let mut dirty_roots = Vec::new();
+        let mut execution = FilteredExecution::Probe;
+        for root in roots {
+            self.filtered_probe_root_dirty = false;
+            execution.ensure_optional_output(
+                workspace,
+                root,
+                overlay,
+                deleted_overlay,
+                visibility,
+                u32::MAX,
+                BuilderKind::Normal,
+                specs,
+                self,
+            )?;
+            if self.filtered_probe_root_dirty {
+                dirty_roots.push(root.clone());
+            }
+        }
+        self.filtered_probe_root_dirty = false;
+        Ok(dirty_roots)
     }
 
     pub fn take_results(&mut self) -> Vec<LazyBuildResult> {
@@ -653,6 +1098,188 @@ impl WorkerClient {
         lazy_specs: &BTreeMap<String, BuildSpec>,
         lazy: &mut LazyBuildState,
     ) -> io::Result<()> {
+        let mut execution = FilteredExecution::Worker(self);
+        execution.ensure_optional_output(
+            workspace,
+            asset,
+            overlay,
+            deleted_overlay,
+            visibility,
+            phase,
+            kind,
+            lazy_specs,
+            lazy,
+        )
+    }
+}
+
+impl FilteredExecution<'_> {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Filtered demand shares one reuse path between probe and worker execution"
+    )]
+    fn ensure_optional_output(
+        &mut self,
+        workspace: &Workspace,
+        asset: &str,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
+        deleted_overlay: &mut BTreeSet<String>,
+        visibility: &AssetVisibility,
+        phase: u32,
+        kind: BuilderKind,
+        lazy_specs: &BTreeMap<String, BuildSpec>,
+        lazy: &mut LazyBuildState,
+    ) -> io::Result<()> {
+        let coordinator = match self {
+            Self::Worker(_) => lazy.filtered_coordinator.clone(),
+            Self::Probe => None,
+        };
+        let Some(coordinator) = coordinator else {
+            let pending_producer = lazy.filtered_previous.is_some()
+                && lazy_specs
+                    .get(asset)
+                    .is_some_and(|spec| !lazy.built_keys.contains(&spec.action_key()));
+            let blocked = if pending_producer {
+                visibility.is_blocked(asset, phase, kind, &BTreeSet::new())
+            } else {
+                visibility.is_blocked(asset, phase, kind, deleted_overlay)
+            };
+            if blocked || overlay.contains_key(asset) {
+                return Ok(());
+            }
+            let Some(spec) = lazy_specs
+                .get(asset)
+                .filter(|spec| spec.instance.builder.kind == BuilderKind::Normal)
+                .cloned()
+            else {
+                return Ok(());
+            };
+            let key = spec.action_key();
+            if lazy.built_keys.contains(&key)
+                || (lazy.filtered_previous.is_none() && !lazy.force_keys.contains(&key))
+            {
+                return Ok(());
+            }
+            if !lazy.building_keys.insert(key.clone()) {
+                return Err(io::Error::other(format!(
+                    "optional builder dependency cycle while reading {asset}"
+                )));
+            }
+            lazy.demanded_keys.insert(key.clone());
+            lazy.building_stack.push(key.clone());
+            let result = self.ensure_optional_output_body(
+                workspace,
+                asset,
+                overlay,
+                deleted_overlay,
+                visibility,
+                phase,
+                kind,
+                lazy_specs,
+                lazy,
+            );
+            lazy.building_stack.pop();
+            lazy.building_keys.remove(&key);
+            return result;
+        };
+
+        let pending_producer = lazy.filtered_previous.is_some()
+            && lazy_specs
+                .get(asset)
+                .is_some_and(|spec| !lazy.built_keys.contains(&spec.action_key()));
+        let blocked = if pending_producer {
+            visibility.is_blocked(asset, phase, kind, &BTreeSet::new())
+        } else {
+            visibility.is_blocked(asset, phase, kind, deleted_overlay)
+        };
+        if blocked || overlay.contains_key(asset) {
+            return Ok(());
+        }
+        let Some(spec) = lazy_specs
+            .get(asset)
+            .filter(|spec| spec.instance.builder.kind == BuilderKind::Normal)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let key = spec.action_key();
+        if lazy.built_keys.contains(&key) {
+            return Ok(());
+        }
+        if lazy.filtered_previous.is_none() && !lazy.force_keys.contains(&key) {
+            return Ok(());
+        }
+        if lazy.building_keys.contains(&key) {
+            return Err(io::Error::other(format!(
+                "filtered dependency cycle while reading {asset}"
+            )));
+        }
+        if let Some(error) = coordinator.failure() {
+            return Err(io::Error::other(error));
+        }
+        lazy.demanded_keys.insert(key.clone());
+        let parent = lazy.building_stack.last().map(String::as_str);
+        let claim = match coordinator.claim(&key, parent, lazy.filtered_worker) {
+            Ok(claim) => claim,
+            Err(error) => {
+                lazy.record_demand_failure(&error);
+                return Err(error);
+            }
+        };
+        let mut owner = match claim {
+            DemandClaim::Complete(publication) => {
+                lazy.apply_publication(&spec, &publication, overlay, deleted_overlay);
+                return Ok(());
+            }
+            DemandClaim::Owner(owner) => Some(owner),
+        };
+
+        lazy.building_keys.insert(key.clone());
+        lazy.building_stack.push(key.clone());
+        let result = self.ensure_optional_output_body(
+            workspace,
+            asset,
+            overlay,
+            deleted_overlay,
+            visibility,
+            phase,
+            kind,
+            lazy_specs,
+            lazy,
+        );
+        lazy.building_stack.pop();
+        lazy.building_keys.remove(&key);
+        match result {
+            Ok(()) => {
+                lazy.complete_action(&spec, &mut owner, overlay, deleted_overlay);
+                Ok(())
+            }
+            Err(error) => {
+                if let Some(owner) = owner.as_mut() {
+                    owner.fail(error.to_string());
+                }
+                lazy.record_demand_failure(&error);
+                Err(error)
+            }
+        }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "IPC operations pass workspace, visibility, and transaction state explicitly"
+    )]
+    fn ensure_optional_output_body(
+        &mut self,
+        workspace: &Workspace,
+        asset: &str,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
+        deleted_overlay: &mut BTreeSet<String>,
+        visibility: &AssetVisibility,
+        phase: u32,
+        kind: BuilderKind,
+        lazy_specs: &BTreeMap<String, BuildSpec>,
+        lazy: &mut LazyBuildState,
+    ) -> io::Result<()> {
         let pending_producer = lazy.filtered_previous.is_some()
             && lazy_specs
                 .get(asset)
@@ -683,11 +1310,6 @@ impl WorkerClient {
             return Ok(());
         }
         lazy.demanded_keys.insert(key.clone());
-        if !lazy.building_keys.insert(key.clone()) {
-            return Err(io::Error::other(format!(
-                "optional builder dependency cycle while reading {asset}"
-            )));
-        }
 
         if lazy.filtered_previous.is_some() {
             // Stock computes a generated primary input before checking reuse.
@@ -702,6 +1324,16 @@ impl WorkerClient {
                 lazy_specs,
                 lazy,
             )?;
+            // A probe cannot know whether a dirty generated primary will
+            // exist until its producer executes. Do not classify its parent
+            // from stale on-disk bytes or as skipped-missing-input.
+            if lazy_specs
+                .get(&spec.input)
+                .is_some_and(|producer| lazy.filtered_dirty_keys.contains(&producer.action_key()))
+            {
+                lazy.mark_filtered_dirty(&spec);
+                return Ok(());
+            }
             // Stock skips a missing generated primary before examining any
             // old secondary dependency. Such dependencies must leave demand
             // state even if their retained physical outputs still exist.
@@ -720,7 +1352,6 @@ impl WorkerClient {
                     deleted_overlay.insert(output.clone());
                     overlay.remove(output);
                 }
-                lazy.building_keys.remove(&key);
                 lazy.built_keys.insert(key);
                 lazy.update_outputs(&spec, overlay, deleted_overlay);
                 lazy.results.push(LazyBuildResult { spec, result });
@@ -741,12 +1372,12 @@ impl WorkerClient {
                     .as_ref()
                     .and_then(|state| state.actions.get(&producer.action_key()))
                     .is_some_and(|action| action.outputs.contains(&spec.input));
-                if !previously_output
-                    && lazy
-                        .filtered_snapshot
-                        .get(&spec.input)
-                        .is_some_and(|s| s.exists)
-                {
+                let primary_exists = lazy
+                    .filtered_snapshot_delta
+                    .get(&spec.input)
+                    .or_else(|| lazy.filtered_snapshot.get(&spec.input))
+                    .is_some_and(|snapshot| snapshot.exists);
+                if !previously_output && primary_exists {
                     needs_build = true;
                 }
             }
@@ -814,6 +1445,21 @@ impl WorkerClient {
                                 lazy_specs,
                                 lazy,
                             )?;
+                            // A producer reached only to classify glob
+                            // membership may itself need to run. The probe
+                            // cannot seed this consumer as reused until that
+                            // producer's actual output set is known.
+                            if matches!(self, FilteredExecution::Probe)
+                                && lazy_specs.get(&asset).is_some_and(|producer| {
+                                    lazy.filtered_dirty_keys.contains(&producer.action_key())
+                                })
+                            {
+                                needs_build = true;
+                                break;
+                            }
+                        }
+                        if needs_build {
+                            break;
                         }
                         let matched = filtered_glob_members(
                             workspace,
@@ -899,10 +1545,14 @@ impl WorkerClient {
                     }
                     lazy.update_outputs(&spec, overlay, deleted_overlay);
                 }
-                lazy.building_keys.remove(&key);
                 lazy.built_keys.insert(key);
                 return Ok(());
             }
+        }
+
+        if matches!(self, FilteredExecution::Probe) {
+            lazy.mark_filtered_dirty(&spec);
+            return Ok(());
         }
 
         for output in &spec.outputs {
@@ -929,7 +1579,6 @@ impl WorkerClient {
             lazy_specs,
             lazy,
         );
-        lazy.building_keys.remove(&key);
         let result = result?;
         if result.status != "success" && result.status != "not_triggered" {
             return Err(io::Error::other(
@@ -972,53 +1621,245 @@ impl WorkerClient {
         lazy.results.push(LazyBuildResult { spec, result });
         Ok(())
     }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Demand execution passes its shared transaction context explicitly"
+    )]
+    fn build_lazy(
+        &mut self,
+        workspace: &Workspace,
+        request: &BuildRequest,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
+        deleted_overlay: &mut BTreeSet<String>,
+        visibility: &AssetVisibility,
+        lazy_specs: &BTreeMap<String, BuildSpec>,
+        lazy: &mut LazyBuildState,
+    ) -> io::Result<BuildResult> {
+        match self {
+            Self::Worker(worker) => worker.build_lazy(
+                workspace,
+                request,
+                overlay,
+                deleted_overlay,
+                visibility,
+                lazy_specs,
+                lazy,
+            ),
+            Self::Probe => Err(io::Error::other("filtered probe cannot execute a builder")),
+        }
+    }
 }
 
 #[cfg(test)]
-mod source_observation_tests {
+mod demand_coordinator_tests {
     use super::*;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    fn owner(claim: DemandClaim) -> ActionClaimGuard {
+        match claim {
+            DemandClaim::Owner(owner) => owner,
+            DemandClaim::Complete(_) => panic!("action unexpectedly completed"),
+        }
+    }
 
     #[test]
-    fn serial_filtered_source_observation_keeps_first_bytes_and_snapshot() {
-        let mut lazy = LazyBuildState::new(BTreeSet::new());
-        let asset = "external|lib/shared.asset";
+    fn source_observations_are_shared_across_workers_and_committed_consistently() {
+        let coordinator = FilteredDemandCoordinator::default();
+        let mut merged = LazyBuildState::new(BTreeSet::new());
+        let asset = "external|lib/shared.txt";
         let first_bytes: Arc<[u8]> = Arc::from(&b"first version"[..]);
         let first_snapshot = crate::snapshot::AssetSnapshot {
             exists: true,
             digest: crate::digest::digest_bytes(&first_bytes),
             size: first_bytes.len() as u64,
         };
-
-        let first = lazy.publish_source_observation(
-            asset,
-            FilteredSourceObservation {
-                content: FilteredSourceContent::Bytes(Arc::clone(&first_bytes)),
-                snapshot: first_snapshot.clone(),
-            },
-        );
-        let later = lazy.publish_source_observation(
-            asset,
-            FilteredSourceObservation {
-                content: FilteredSourceContent::Bytes(Arc::from(&b"edited version"[..])),
-                snapshot: crate::snapshot::AssetSnapshot {
-                    exists: true,
-                    digest: crate::digest::digest_bytes(b"edited version"),
-                    size: b"edited version".len() as u64,
+        for (worker, value) in [(0, b"first version".as_slice()), (1, b"edited version")] {
+            let mut state = merged.worker_state(worker, coordinator.clone());
+            let published = state.publish_source_observation(
+                asset,
+                FilteredSourceObservation {
+                    content: FilteredSourceContent::Bytes(Arc::from(value)),
+                    snapshot: crate::snapshot::AssetSnapshot {
+                        exists: true,
+                        digest: crate::digest::digest_bytes(value),
+                        size: value.len() as u64,
+                    },
                 },
-            },
-        );
-
-        assert_eq!(first.snapshot, first_snapshot);
-        assert_eq!(later.snapshot, first_snapshot);
-        match later.content {
-            FilteredSourceContent::Bytes(bytes) => assert_eq!(&*bytes, &*first_bytes),
-            FilteredSourceContent::Spool(_) | FilteredSourceContent::Missing => {
-                panic!("the first serial source observation was not reused")
+            );
+            assert_eq!(published.snapshot, first_snapshot);
+            match published.content {
+                FilteredSourceContent::Bytes(bytes) => assert_eq!(&*bytes, &*first_bytes),
+                FilteredSourceContent::Spool(_) | FilteredSourceContent::Missing => {
+                    panic!("the transaction-wide byte publication was not reused")
+                }
             }
+            merged.merge_worker_state(state);
         }
+
         assert_eq!(
-            lazy.filtered_snapshot_delta().get(asset),
+            merged.filtered_snapshot_delta.get(asset),
             Some(&first_snapshot)
         );
+    }
+
+    #[test]
+    fn nested_cross_worker_wait_cycle_is_detected_and_wakes_waiter() {
+        let coordinator = FilteredDemandCoordinator::default();
+        let _root = owner(coordinator.claim("A", None, 0).unwrap());
+        let _nested = owner(coordinator.claim("B", Some("A"), 0).unwrap());
+        let _other_root = owner(coordinator.claim("C", None, 1).unwrap());
+        let waiting_coordinator = coordinator.clone();
+        let (waiter_tx, waiter_rx) = mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let result = waiting_coordinator
+                .claim("C", Some("B"), 0)
+                .map(|claim| matches!(claim, DemandClaim::Complete(_)))
+                .map_err(|error| error.to_string());
+            let _ = waiter_tx.send(result);
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while coordinator.lock().dependencies.get("B").map(String::as_str) != Some("C") {
+            assert!(
+                Instant::now() < deadline,
+                "nested wait edge was not recorded"
+            );
+            thread::yield_now();
+        }
+
+        let cycle_coordinator = coordinator.clone();
+        let (cycle_tx, cycle_rx) = mpsc::channel();
+        let cycle = thread::spawn(move || {
+            let result = cycle_coordinator
+                .claim("A", Some("C"), 1)
+                .map(|claim| matches!(claim, DemandClaim::Complete(_)))
+                .map_err(|error| error.to_string());
+            let _ = cycle_tx.send(result);
+        });
+        let cycle_error = cycle_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("cycle claim hung instead of detecting the nested wait cycle")
+            .unwrap_err();
+        assert!(cycle_error.contains("wait cycle"), "{cycle_error}");
+        let waiter_result = waiter_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("waiter was not released after cycle detection");
+        assert!(waiter_result.is_err(), "waiter did not receive the failure");
+        assert!(coordinator.failure().unwrap().contains("wait cycle"));
+        cycle.join().expect("cycle thread panicked");
+        waiter.join().expect("waiter thread panicked");
+    }
+
+    #[test]
+    fn dropped_running_owner_latches_failure_and_releases_waiters() {
+        let coordinator = FilteredDemandCoordinator::default();
+        let shared_owner = owner(coordinator.claim("shared", None, 0).unwrap());
+        let _consumer = owner(coordinator.claim("consumer", None, 1).unwrap());
+        let waiting_coordinator = coordinator.clone();
+        let (waiter_tx, waiter_rx) = mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let result = waiting_coordinator
+                .claim("shared", Some("consumer"), 1)
+                .map(|claim| matches!(claim, DemandClaim::Complete(_)))
+                .map_err(|error| error.to_string());
+            let _ = waiter_tx.send(result);
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while coordinator
+            .lock()
+            .dependencies
+            .get("consumer")
+            .map(String::as_str)
+            != Some("shared")
+        {
+            assert!(
+                Instant::now() < deadline,
+                "waiter did not record its dependency edge"
+            );
+            thread::yield_now();
+        }
+        drop(shared_owner);
+        let result = waiter_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("dropped owner did not wake its waiter");
+        assert!(result.is_err());
+        assert!(
+            coordinator
+                .failure()
+                .unwrap()
+                .contains("exited without publishing")
+        );
+        waiter.join().expect("waiter thread panicked");
+    }
+
+    #[test]
+    fn protocol_failure_is_shared_with_waiting_worker() {
+        let coordinator = FilteredDemandCoordinator::default();
+        let mut shared_owner = owner(coordinator.claim("shared", None, 0).unwrap());
+        let _consumer = owner(coordinator.claim("consumer", None, 1).unwrap());
+        let waiting_coordinator = coordinator.clone();
+        let (waiter_tx, waiter_rx) = mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let result = waiting_coordinator
+                .claim("shared", Some("consumer"), 1)
+                .map(|claim| matches!(claim, DemandClaim::Complete(_)))
+                .map_err(|error| error.to_string());
+            let _ = waiter_tx.send(result);
+        });
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while coordinator
+            .lock()
+            .dependencies
+            .get("consumer")
+            .map(String::as_str)
+            != Some("shared")
+        {
+            assert!(
+                Instant::now() < deadline,
+                "waiter did not record its dependency edge"
+            );
+            thread::yield_now();
+        }
+        shared_owner.fail("worker IPC failed".to_owned());
+        let result = waiter_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker failure did not wake its waiter");
+        assert!(result.unwrap_err().contains("worker IPC failed"));
+        waiter.join().expect("waiter thread panicked");
+    }
+
+    #[test]
+    fn action_publication_updates_all_siblings_as_one_bundle() {
+        let coordinator = FilteredDemandCoordinator::default();
+        let mut claim = owner(coordinator.claim("multi", None, 0).unwrap());
+        let publication = ActionPublication {
+            outputs: BTreeMap::from([
+                (
+                    "app|lib/a.mid".to_owned(),
+                    PublishedOutput::Bytes(Arc::from(&b"generated"[..])),
+                ),
+                ("app|lib/a.side".to_owned(), PublishedOutput::Missing),
+                ("app|lib/a.final".to_owned(), PublishedOutput::OnDisk),
+            ]),
+            snapshots: BTreeMap::new(),
+        };
+        claim.complete(publication);
+
+        let completed = match coordinator.claim("multi", None, 1).unwrap() {
+            DemandClaim::Complete(publication) => publication,
+            DemandClaim::Owner(_) => panic!("completed action was claimed again"),
+        };
+        assert_eq!(completed.outputs.len(), 3);
+        let mut overlay =
+            BTreeMap::from([("app|lib/a.final".to_owned(), Arc::from(&b"stale"[..]))]);
+        let mut deleted = BTreeSet::from(["app|lib/a.mid".to_owned()]);
+        for (asset, output) in &completed.outputs {
+            apply_published_output(asset, output, &mut overlay, &mut deleted);
+        }
+        assert_eq!(overlay["app|lib/a.mid"].as_ref(), b"generated");
+        assert!(!overlay.contains_key("app|lib/a.final"));
+        assert_eq!(deleted, BTreeSet::from(["app|lib/a.side".to_owned()]));
     }
 }

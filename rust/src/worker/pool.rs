@@ -1,5 +1,5 @@
 use super::client::{WorkerClient, WorkerClientMetrics};
-use super::lazy::LazyBuildState;
+use super::lazy::{FilteredDemandCoordinator, LazyBuildState};
 use super::request::BuildRequest;
 use crate::plan::BuildSpec;
 use crate::protocol::BuildResult;
@@ -15,13 +15,18 @@ use std::env;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
+/// Owns resident Dart processes and their initialization/analysis state for a
+/// native build or watch session. Workers are kept alive when a later phase
+/// needs fewer of them; restart occurs only when the artifact or initialization
+/// signature changes, and dropping the pool kills and waits for every child.
 pub struct WorkerPool {
     workers: Vec<WorkerClient>,
     dart_binary: String,
     worker_executable: String,
-    worker_artifact: WorkerArtifact,
+    worker_artifact: Option<WorkerArtifact>,
     auto_worker_artifact: bool,
     allow_worker_artifact_upgrade: bool,
     max_jobs: usize,
@@ -75,20 +80,72 @@ impl WorkerPool {
         jobs: usize,
         auto_worker_artifact: bool,
     ) -> io::Result<Self> {
+        Self::start_with_initial_worker(
+            root,
+            dart_binary,
+            worker_executable,
+            jobs,
+            auto_worker_artifact,
+            true,
+        )
+    }
+
+    /// Creates a pool descriptor without starting a Dart process. Filtered
+    /// watch uses this so an initial no-op can avoid worker startup entirely.
+    pub fn start_deferred(
+        root: &Path,
+        dart_binary: &str,
+        worker_executable: &str,
+        jobs: usize,
+        auto_worker_artifact: bool,
+    ) -> io::Result<Self> {
+        Self::start_with_initial_worker(
+            root,
+            dart_binary,
+            worker_executable,
+            jobs,
+            auto_worker_artifact,
+            false,
+        )
+    }
+
+    fn start_with_initial_worker(
+        root: &Path,
+        dart_binary: &str,
+        worker_executable: &str,
+        jobs: usize,
+        auto_worker_artifact: bool,
+        start_worker: bool,
+    ) -> io::Result<Self> {
         let _wall = crate::wall::Span::new("pool_start");
         let dart_binary = dart_binary.to_owned();
         let worker_executable = worker_executable.to_owned();
-        let worker_artifact =
-            resolve_worker_artifact(root, &dart_binary, &worker_executable, auto_worker_artifact)?;
+        let worker_artifact = if start_worker {
+            Some(resolve_worker_artifact(
+                root,
+                &dart_binary,
+                &worker_executable,
+                auto_worker_artifact,
+            )?)
+        } else {
+            None
+        };
         let max_jobs = jobs.max(1);
         // Keep the initial pool small. Additional workers are started only when
         // a phase actually has enough independent actions to use them.
-        let workers = vec![WorkerClient::start(
-            root,
-            &dart_binary,
-            &worker_executable,
-            &worker_artifact,
-        )?];
+        let workers = if start_worker {
+            vec![WorkerClient::start(
+                root,
+                &dart_binary,
+                &worker_executable,
+                worker_artifact
+                    .as_ref()
+                    .expect("eager pool resolves its worker artifact"),
+            )?]
+        } else {
+            Vec::new()
+        };
+        let worker_starts = workers.len() as u64;
         Ok(Self {
             workers,
             dart_binary,
@@ -101,7 +158,7 @@ impl WorkerPool {
             initialized_workers: 0,
             resolver_usage: BTreeMap::new(),
             retired_metrics: WorkerClientMetrics::default(),
-            worker_starts: 1,
+            worker_starts,
             worker_initializes: 0,
             worker_resets: 0,
             resolver_resets: 0,
@@ -124,6 +181,9 @@ impl WorkerPool {
         self.allow_worker_artifact_upgrade = false;
     }
 
+    /// Reuses workers only for an identical workspace/configuration signature.
+    /// A changed signature clears resolver-use hints and restarts the resident
+    /// processes; each newly admitted process must pass worker IPC checks.
     pub fn initialize(
         &mut self,
         root: &Path,
@@ -132,6 +192,11 @@ impl WorkerPool {
         phase_count: usize,
         requires_optional_builder: bool,
     ) -> io::Result<()> {
+        // Deferred filtered-watch pools materialize only when a build actually
+        // reaches worker initialization. Ordinary callers retain eager start.
+        if self.workers.is_empty() {
+            self.prepare_for_requests(root, 1)?;
+        }
         let signature = (
             root.to_path_buf(),
             package.to_owned(),
@@ -148,7 +213,7 @@ impl WorkerPool {
                 ) {
                     Ok(Some(aot)) => {
                         let artifact = WorkerArtifact::Aot(aot);
-                        if self.worker_artifact != artifact {
+                        if self.worker_artifact.as_ref() != Some(&artifact) {
                             self.restart_workers(root, artifact)?;
                             self.initialize_pending_workers(
                                 root,
@@ -187,7 +252,9 @@ impl WorkerPool {
                 root,
                 &self.dart_binary,
                 &self.worker_executable,
-                &self.worker_artifact,
+                self.worker_artifact
+                    .as_ref()
+                    .expect("initialized pool has a worker artifact"),
             )
             .unwrap_or_else(|error| {
                 eprintln!(
@@ -195,7 +262,10 @@ impl WorkerPool {
                 );
                 false
             }) {
-                self.worker_artifact.clone()
+                self.worker_artifact
+                    .as_ref()
+                    .expect("initialized pool has a worker artifact")
+                    .clone()
             } else {
                 resolve_worker_artifact(
                     root,
@@ -212,6 +282,8 @@ impl WorkerPool {
         Ok(())
     }
 
+    /// Replaces the resident process set while preserving its current width.
+    /// Old worker metrics are collected before their children are dropped.
     fn restart_workers(&mut self, root: &Path, worker_artifact: WorkerArtifact) -> io::Result<()> {
         let worker_count = self.workers.len().max(1);
         self.retire_workers(0);
@@ -226,14 +298,27 @@ impl WorkerPool {
             })
             .collect::<io::Result<Vec<_>>>()?;
         self.worker_starts += worker_count as u64;
-        self.worker_artifact = worker_artifact;
+        self.worker_artifact = Some(worker_artifact);
         self.initialized_workers = 0;
         Ok(())
     }
 
+    /// Expands to at most `min(max_jobs, request_count)` workers and never
+    /// shrinks a resident pool during ordinary request preparation.
     pub fn prepare_for_requests(&mut self, root: &Path, request_count: usize) -> io::Result<()> {
         let _wall = crate::wall::Span::new("pool_expand");
         let target = target_worker_count(self.max_jobs, request_count);
+        if target > self.workers.len() && self.worker_artifact.is_none() {
+            self.worker_artifact = Some(resolve_worker_artifact(
+                root,
+                &self.dart_binary,
+                &self.worker_executable,
+                self.auto_worker_artifact,
+            )?);
+        }
+        let Some(worker_artifact) = self.worker_artifact.as_ref() else {
+            return Ok(());
+        };
         // Never shrink the pool here: an idle worker that is retired now has to
         // be restarted and re-initialized by the next wider phase, which costs
         // far more than keeping it resident. Retirement only happens on a full
@@ -243,13 +328,36 @@ impl WorkerPool {
                 root,
                 &self.dart_binary,
                 &self.worker_executable,
-                &self.worker_artifact,
+                worker_artifact,
             )?);
             self.worker_starts += 1;
         }
         Ok(())
     }
 
+    /// Chooses the number of filtered root workers from shared-store evidence.
+    /// Without the shared Analyzer byte store, roots stay on one process because
+    /// resolver state may otherwise be process-local.
+    pub(crate) fn prepare_for_filtered_roots(
+        &mut self,
+        root: &Path,
+        root_count: usize,
+    ) -> io::Result<()> {
+        // When the shared analyzer byte store is disabled, a resolver may
+        // retain process-local state. Unknown filtered roots therefore stay
+        // on one worker; with the shared store, each worker can resolve from
+        // the transaction's reset overlay and on-demand producer RPCs.
+        let request_count = if shared_analysis_cache_enabled() {
+            root_count
+        } else {
+            root_count.min(1)
+        };
+        self.prepare_for_requests(root, request_count)
+    }
+
+    /// Initializes only workers added since the last pool initialization.
+    /// The worker protocol and any requested optional-demand capability are
+    /// checked before the caller dispatches actions to those processes.
     fn initialize_pending_workers(
         &mut self,
         root: &Path,
@@ -313,6 +421,10 @@ impl WorkerPool {
         }
     }
 
+    /// Dispatches one same-phase request set and returns results in request
+    /// order. Resolver-worker limits use prior successful reports when the
+    /// shared byte store is enabled; without it, an unclassified homogeneous
+    /// batch starts on one worker before the pool trusts any resolver-use hint.
     pub fn build_parallel(
         &mut self,
         workspace: &Workspace,
@@ -424,6 +536,9 @@ impl WorkerPool {
         Ok(results)
     }
 
+    /// Splits requests into contiguous balanced ranges, joins every dispatched
+    /// worker, and combines results in range order. Worker errors and panics
+    /// return an error; callers must not commit any staged output on that path.
     fn build_parallel_on_current_workers(
         &mut self,
         workspace: &Workspace,
@@ -483,6 +598,8 @@ impl WorkerPool {
         Ok(results)
     }
 
+    /// Records only successful results; a later `resolver_used = true` keeps
+    /// the instance classified as resolver-backed for the rest of this session.
     fn record_resolver_usage(&mut self, requests: &[BuildRequest], results: &[BuildResult]) {
         for (request, result) in requests.iter().zip(results) {
             if result.status != "success" {
@@ -500,6 +617,9 @@ impl WorkerPool {
         clippy::too_many_arguments,
         reason = "IPC operations pass workspace, visibility, and transaction state explicitly"
     )]
+    /// Runs demand-enabled actions on one worker so nested asset RPCs share a
+    /// single mutable overlay and recursive request stack. Any nested demand
+    /// failure returns to the transaction owner, which must abort publication.
     pub fn build_parallel_lazy(
         &mut self,
         workspace: &Workspace,
@@ -543,7 +663,12 @@ impl WorkerPool {
         clippy::too_many_arguments,
         reason = "Demand execution shares transaction and visibility state with nested IPC"
     )]
-    /// Filtered normal phases share the resident worker's recursive demand path.
+    /// Runs independent filtered roots across workers while a shared coordinator
+    /// claims each action once and publishes its complete sibling set to peers.
+    /// Each worker keeps its own nested RPC stack and starts from a copy of the
+    /// transaction overlay. On any latched failure all workers are joined and
+    /// the error propagates; staged memory may have changed, so the caller must
+    /// discard the transaction instead of calling filesystem commit.
     pub(crate) fn build_filtered(
         &mut self,
         workspace: &Workspace,
@@ -554,35 +679,129 @@ impl WorkerPool {
         specs: &BTreeMap<String, BuildSpec>,
         lazy: &mut LazyBuildState,
     ) -> io::Result<()> {
-        self.prepare_for_requests(&workspace.root, 1)?;
+        if roots.is_empty() {
+            return Ok(());
+        }
+        self.prepare_for_filtered_roots(&workspace.root, roots.len())?;
         let (root, package, _, phase_count, _) = self
             .initialized
             .clone()
             .ok_or_else(|| io::Error::other("worker pool must be initialized"))?;
         self.initialize_pending_workers(&root, &package, phase_count, true)?;
-        for output in roots {
-            self.workers[0].ensure_optional_output(
-                workspace,
-                output,
-                overlay,
-                deleted_overlay,
-                visibility,
-                u32::MAX,
-                crate::builder::BuilderKind::Normal,
-                specs,
-                lazy,
-            )?;
-            if let Some(error) = lazy.failed_demand() {
-                return Err(io::Error::other(format!(
-                    "filtered dependency build failed: {error}"
-                )));
+        let worker_count = self.workers.len().min(if shared_analysis_cache_enabled() {
+            roots.len()
+        } else {
+            roots.len().min(1)
+        });
+        let coordinator = FilteredDemandCoordinator::default();
+        let next_root = AtomicUsize::new(0);
+        let initial_overlay = overlay.clone();
+        let initial_deleted = deleted_overlay.clone();
+        let worker_states = (0..worker_count)
+            .map(|index| lazy.worker_state(index, coordinator.clone()))
+            .collect::<Vec<_>>();
+
+        let outcomes = thread::scope(|scope| {
+            let mut worker_states = worker_states.into_iter();
+            let handles = self
+                .workers
+                .iter_mut()
+                .take(worker_count)
+                .map(|worker| {
+                    let mut worker_lazy = worker_states
+                        .next()
+                        .expect("worker state count matches worker count");
+                    let mut worker_overlay = initial_overlay.clone();
+                    let mut worker_deleted = initial_deleted.clone();
+                    let coordinator = coordinator.clone();
+                    let next_root = &next_root;
+                    scope.spawn(move || {
+                        let result = (|| {
+                            loop {
+                                if let Some(error) = coordinator.failure() {
+                                    return Err(io::Error::other(error));
+                                }
+                                let index = next_root.fetch_add(1, Ordering::Relaxed);
+                                let Some(output) = roots.get(index) else {
+                                    break;
+                                };
+                                if let Err(error) = worker.ensure_optional_output(
+                                    workspace,
+                                    output,
+                                    &mut worker_overlay,
+                                    &mut worker_deleted,
+                                    visibility,
+                                    u32::MAX,
+                                    crate::builder::BuilderKind::Normal,
+                                    specs,
+                                    &mut worker_lazy,
+                                ) {
+                                    coordinator.fail_worker(error.to_string());
+                                    return Err(error);
+                                }
+                                if let Some(error) = worker_lazy.failed_demand() {
+                                    coordinator.fail_worker(error.to_owned());
+                                    return Err(io::Error::other(format!(
+                                        "filtered dependency build failed: {error}"
+                                    )));
+                                }
+                            }
+                            Ok(())
+                        })();
+                        if result.is_err() {
+                            coordinator.fail_worker("filtered worker failed".to_owned());
+                        }
+                        (result, worker_lazy)
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            let mut outcomes = Vec::with_capacity(handles.len());
+            let mut first_error = None;
+            for handle in handles {
+                match handle.join() {
+                    Ok((result, worker_lazy)) => {
+                        if let Err(error) = result {
+                            first_error.get_or_insert(error);
+                        }
+                        outcomes.push(worker_lazy);
+                    }
+                    Err(_) => {
+                        coordinator.fail_worker("filtered worker thread panicked".to_owned());
+                        first_error.get_or_insert_with(|| {
+                            io::Error::other("filtered worker thread panicked")
+                        });
+                    }
+                }
             }
+            (outcomes, first_error)
+        });
+
+        for worker_state in outcomes.0 {
+            lazy.merge_worker_state(worker_state);
+        }
+        coordinator.apply_outputs(overlay, deleted_overlay);
+        if let Some(error) = outcomes.1 {
+            return Err(error);
+        }
+        if let Some(error) = coordinator.failure() {
+            return Err(io::Error::other(format!(
+                "filtered dependency build failed: {error}"
+            )));
+        }
+        if let Some(error) = lazy.failed_demand() {
+            return Err(io::Error::other(format!(
+                "filtered dependency build failed: {error}"
+            )));
         }
         Ok(())
     }
 
-    /// Publishes one phase's committed overlay changes and joins every reset.
-    /// A single worker uses memory; missing update values fail before any RPC.
+    /// Applies one phase's source/cache delta to every initialized resolver and
+    /// joins all reset replies before releasing the shared blob. A single worker
+    /// uses memory after validating every updated ID; multi-worker data is held
+    /// until all RPCs finish. Any validation, write, RPC, or join error aborts
+    /// the caller's build even if some worker already reset successfully.
     #[expect(
         clippy::too_many_arguments,
         reason = "IPC operations pass workspace, visibility, and transaction state explicitly"
@@ -694,6 +913,8 @@ pub(super) fn validate_memory_overlay(
     Ok(())
 }
 
+/// Returns an instance key only when every request is the same normal builder
+/// instance; mixed or post-process requests cannot share resolver-use evidence.
 pub(super) fn homogeneous_resolver_usage_key(
     requests: &[BuildRequest],
 ) -> Option<(String, String)> {
@@ -710,6 +931,8 @@ pub(super) fn homogeneous_resolver_usage_key(
         .then_some(key)
 }
 
+/// Merges successful observations monotonically: one resolver-backed input is
+/// enough to classify the builder instance as resolver-backed for this session.
 pub(super) fn remember_resolver_usage(
     resolver_usage: &mut BTreeMap<(String, String), bool>,
     key: (String, String),

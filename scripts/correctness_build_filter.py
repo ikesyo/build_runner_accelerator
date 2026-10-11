@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compare build-filter bytes, deletion, status and real builder invocation history."""
 from collections import Counter
+import json
 import os
 from pathlib import Path
 import shutil
@@ -32,16 +33,75 @@ def history_path(root):
     return root.parent / (root.name + '-history.log')
 
 
-def fixture_env(root):
-    return {**ENV, 'BUILD_FILTER_HISTORY': str(history_path(root))}
+def activity_path(root):
+    return root.parent / (root.name + '-activity.jsonl')
+
+
+def fixture_env(root, extra_env=None):
+    env = {**ENV, 'BUILD_FILTER_HISTORY': str(history_path(root))}
+    env.pop('BUILD_FILTER_ACTIVITY_LOG', None)
+    env.pop('BUILD_FILTER_DELAY_MS', None)
+    if extra_env:
+        env.update(extra_env)
+    return env
 
 
 def execute(args, root, extra_env=None):
-    env = fixture_env(root)
-    env.update(extra_env or {})
-    result = subprocess.run(args, cwd=root, env=env, text=True, stdout=subprocess.PIPE,
+    result = subprocess.run(args, cwd=root, env=fixture_env(root, extra_env), text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=300)
     return result.returncode, result.stdout
+
+
+def activity_intervals(root):
+    path = activity_path(root)
+    assert path.exists(), f'missing builder activity log: {path}'
+    active = {}
+    intervals = []
+    for line in path.read_text().splitlines():
+        event = json.loads(line)
+        key = event['pid'], event['builder'], event['asset']
+        if event['event'] == 'start':
+            assert key not in active, event
+            active[key] = event['timestamp_us']
+        else:
+            assert event['event'] == 'end' and key in active, event
+            start = active.pop(key)
+            end = event['timestamp_us']
+            assert end >= start, (*key, start, end)
+            intervals.append({
+                'pid': event['pid'],
+                'builder': event['builder'],
+                'asset': event['asset'],
+                'start': start,
+                'end': end,
+            })
+    assert not active, ('unfinished builder activity intervals', active)
+    return intervals
+
+
+def has_cross_worker_overlap(intervals):
+    return any(
+        left['pid'] != right['pid']
+        and left['start'] < right['end']
+        and right['start'] < left['end']
+        for index, left in enumerate(intervals)
+        for right in intervals[index + 1:]
+    )
+
+
+def wall_events(output):
+    prefix = 'Rust wall trace: '
+    return [json.loads(line.split(prefix, 1)[1])
+            for line in output.splitlines() if prefix in line]
+
+
+def worker_metrics(output):
+    prefix = 'Rust metrics: '
+    line = next((line.split(prefix, 1)[1] for line in output.splitlines()
+                 if prefix in line), None)
+    assert line is not None, f'missing filtered worker metrics:\n{output}'
+    fields = dict(field.split('=', 1) for field in line.split() if '=' in field)
+    return {key: int(value) for key, value in fields.items()}
 
 
 def prepare(root):
@@ -55,8 +115,8 @@ def prepare(root):
 
 def add_external_fixture_package(root, contents):
     # Keep the package outside Workspace's package scan, but inside the watched
-    # workspace tree so its edit is a real watch event. Its source is first
-    # observed only when a builder requests it.
+    # workspace tree so its edit is a real watch event. Its source asset is
+    # observed only when the builder first reads it.
     package_root = root / 'external_fixture'
     (package_root / 'lib').mkdir(parents=True, exist_ok=True)
     (package_root / 'lib/shared.asset').write_text(contents)
@@ -96,11 +156,16 @@ def history(root):
     return Counter(line.removeprefix('build_filter_app|') for line in file.read_text().splitlines()) if file.exists() else Counter()
 
 
-def check(stock, native, flags=(), mode='rust', same_history=True, compile_flag='--force-jit', native_expected=False, extra_env=None):
+def check(stock, native, flags=(), mode='rust', same_history=True, compile_flag='--force-jit', native_expected=False,
+          jobs=1, extra_env=None):
     assert (stock / 'pubspec.lock').read_text() == (native / 'pubspec.lock').read_text()
     for root in (stock, native): history_path(root).unlink(missing_ok=True)
-    reference = execute([DART, 'run', 'build_runner', 'build', compile_flag, *flags], stock, extra_env)
-    actual = execute(launcher(native, mode, flags=[compile_flag, *flags]), native, extra_env)
+    # The pinned stock build_runner has no --jobs option; `jobs` controls the
+    # native scheduler while stock runs at its built-in concurrency.
+    reference = execute([DART, 'run', 'build_runner', 'build', compile_flag, *flags], stock)
+    args = launcher(native, mode, flags=[compile_flag, *flags])
+    args[args.index('--jobs=1')] = f'--jobs={jobs}'
+    actual = execute(args, native, extra_env)
     assert actual[0] == reference[0] == 0, (flags, reference, actual)
     assert outputs(stock) == outputs(native), (flags, outputs(stock), outputs(native), actual)
     if same_history: assert history(stock) == history(native), (flags, history(stock), history(native), actual)
@@ -118,28 +183,33 @@ def wait(predicate, proc, log, timeout=180):
 
 def watch(root, mode, flags, command=None, jobs=1, extra_env=None, wait_ready=True):
     log = root.parent / (root.name + '-watch.log')
-    args = command or ([DART, 'run', 'build_runner', 'watch', '--force-jit', *flags]
-                       if mode == 'stock' else launcher(root, mode, 'watch', ['--force-jit', *flags]))
-    if command is None and mode != 'stock':
+    if command is not None:
+        args = command
+    elif mode == 'stock':
+        args = [DART, 'run', 'build_runner', 'watch', '--force-jit']
+        # build_runner's watch command has no --jobs option; it uses its
+        # internal watch concurrency while the native side honors the value.
+        args.extend(flags)
+    else:
+        args = launcher(root, mode, 'watch', ['--force-jit', *flags])
         args[args.index('--jobs=1')] = f'--jobs={jobs}'
-    env = fixture_env(root)
-    env.update(extra_env or {})
+    environment = fixture_env(root, extra_env)
     stream = log.open('w')
     try:
-        proc = subprocess.Popen(args, cwd=root, env=env, stdout=stream, stderr=stream, start_new_session=True)
+        proc = subprocess.Popen(args, cwd=root, env=environment, stdout=stream, stderr=stream, start_new_session=True)
     except BaseException:
         stream.close()
         raise
     handle = proc, log, stream
-    if wait_ready:
-        try:
+    try:
+        if wait_ready:
             wait(lambda: ('Built with build_runner' in log.read_text() if mode == 'stock' else 'Watching ' in log.read_text()), proc, log)
-        except BaseException as failure:
-            try:
-                stop(handle)
-            except BaseException as cleanup_error:
-                raise failure from cleanup_error
-            raise
+    except BaseException as failure:
+        try:
+            stop(handle)
+        except BaseException as cleanup_error:
+            raise failure from cleanup_error
+        raise
     return handle
 
 
@@ -195,17 +265,30 @@ def process_handle(log, code):
 def native_waiting_for_fifo_writer(launcher_pid):
     # graph::save opens graph-v3.bin.tmp for writing. With a FIFO in that path
     # and no reader, Linux reports the Rust process in wait_for_partner while
-    # its open(2) is blocked.
-    for pid in descendants(launcher_pid):
+    # its open(2) is blocked. Some procfs configurations hide wchan or child
+    # process metadata; in that case the caller's committed-output, unchanged-
+    # graph, existing-FIFO, and live-launcher checks provide the fallback.
+    try:
+        children = descendants(launcher_pid)
+    except OSError:
+        return launcher_pid
+    if not children:
+        return launcher_pid
+    for pid in children:
         try:
             executable = os.readlink(f'/proc/{pid}/exe')
-            if Path(executable).name != NATIVE.name:
-                continue
-            wait_channel = Path(f'/proc/{pid}/wchan').read_text()
-            if 'wait_for_partner' in wait_channel:
-                return pid
-        except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+        except FileNotFoundError:
             continue
+        except OSError:
+            return pid
+        if Path(executable).name != NATIVE.name:
+            continue
+        try:
+            wait_channel = Path(f'/proc/{pid}/wchan').read_text().strip()
+        except OSError:
+            return pid
+        if 'wait_for_partner' in wait_channel or wait_channel in ('', '0', '0x0', '-'):
+            return pid
     return None
 
 
@@ -406,13 +489,66 @@ def resolver_generated_comparison(tmp):
         for name in ('one', 'two', 'shared'): (root / f'lib/{name}.src').write_text('source\n')
         (root / 'lib/transitive.dart').write_text('class Shared {}\n')
     flags = ['--build-filter=lib/one.final,lib/two.final']
-    assert check(stock, native, flags) == Counter({'lib/one.src': 1, 'lib/two.src': 1,
+    activity_path(native).unlink(missing_ok=True)
+    assert check(stock, native, flags, jobs=4, extra_env={
+        'BUILD_FILTER_ACTIVITY_LOG': str(activity_path(native)),
+        'BUILD_FILTER_DELAY_MS': '60',
+    }) == Counter({'lib/one.src': 1, 'lib/two.src': 1,
         'lib/shared.src': 1, 'lib/one.dart': 1, 'lib/two.dart': 1})
-    assert check(stock, native, flags) == Counter()
+    previous_resolver_bytes = {
+        name: outputs(native)[f'lib/{name}.final'] for name in ('one', 'two')
+    }
+    assert all(b'value' not in contents for contents in previous_resolver_bytes.values()), (
+        previous_resolver_bytes)
+    resolver_intervals = activity_intervals(native)
+    resolve_intervals = [item for item in resolver_intervals if item['builder'] == 'resolve']
+    shared_seed = [item for item in resolver_intervals
+                   if item['builder'] == 'dartSeed' and item['asset'].endswith('|lib/shared.src')]
+    assert len(resolve_intervals) == 2, resolve_intervals
+    assert len(shared_seed) == 1, shared_seed
+    assert has_cross_worker_overlap(resolve_intervals), (
+        'generated-Dart resolver roots overlap on separate workers', resolve_intervals)
+    assert any(root['pid'] != shared_seed[0]['pid']
+               and root['start'] < shared_seed[0]['end']
+               and shared_seed[0]['start'] < root['end'] for root in resolve_intervals), (
+        'a root resolver overlapped the generated secondary Dart producer on another worker',
+        resolve_intervals, shared_seed)
+    assert check(stock, native, flags, jobs=4) == Counter()
     for root in (stock, native): (root / 'lib/transitive.dart').write_text('class Shared { int get value => 1; }\n')
-    assert check(stock, native, flags) == Counter({'lib/one.dart': 1, 'lib/two.dart': 1})
+    assert check(stock, native, flags, jobs=4) == Counter({'lib/one.dart': 1, 'lib/two.dart': 1})
+    updated_resolver_bytes = outputs(native)
+    for name in ('one', 'two'):
+        current = updated_resolver_bytes[f'lib/{name}.final']
+        assert current != previous_resolver_bytes[name] and b'value' in current, (
+            name, previous_resolver_bytes[name], current)
+
+    # With the analyzer byte store disabled, two dirty resolver roots must
+    # obey the pool's single-worker boundary while retaining stock bytes and
+    # action history.
+    for root in (stock, native):
+        (root / 'lib/transitive.dart').write_text(
+            'class Shared { int get value => 2; int get extra => 3; }\n')
+        history_path(root).unlink(missing_ok=True)
+    stock_result = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
+    native_args = launcher(native, 'rust', flags=['--force-jit', *flags])
+    native_args[native_args.index('--jobs=1')] = '--jobs=4'
+    native_result = execute(native_args, native, {
+        'BUILD_RUNNER_ACCELERATOR_BYTE_STORE': 'off',
+        'BUILD_RUNNER_ACCELERATOR_METRICS': '1',
+    })
+    assert native_result[0] == stock_result[0] == 0, (stock_result, native_result)
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), native_result)
+    resolver_edit_history = Counter({'lib/one.dart': 1, 'lib/two.dart': 1})
+    assert history(stock) == history(native) == resolver_edit_history, (
+        history(stock), history(native), resolver_edit_history)
+    assert all(b'extra' in outputs(native)[f'lib/{name}.final'] for name in ('one', 'two'))
+    resolver_metrics = worker_metrics(native_result[1])
+    assert resolver_metrics.get('worker_starts_total', 5) <= 1, (
+        resolver_metrics, native_result)
+    assert resolver_metrics.get('workers_active', 5) <= 1, (resolver_metrics, native_result)
+
     for root in (stock, native): (root / 'lib/shared.src').write_text('edited producer, unchanged output\n')
-    assert check(stock, native, flags) == Counter({'lib/shared.src': 1})
+    assert check(stock, native, flags, jobs=4) == Counter({'lib/shared.src': 1})
 
 
 def watch_comparison(tmp, cache=False):
@@ -426,6 +562,8 @@ def watch_comparison(tmp, cache=False):
             file = root / 'build.yaml'
             file.write_text(file.read_text().replace('build_to: source', 'build_to: cache', 1))
     check(stock, native)
+    if not cache:
+        parallel_watch_comparison(stock, native)
     for pattern in ('lib/a.final', 'lib/b.final'):
         handles = []
         try:
@@ -442,7 +580,9 @@ def watch_comparison(tmp, cache=False):
                 marker = 'Built with build_runner' if index == 0 else 'Build completed (Rust frontend)'
                 wait(lambda handle=handle, index=index, marker=marker: marker in handle[1].read_text()[positions[index]:], handle[0], handle[1])
             assert outputs(stock) == outputs(native) == before
-            assert history(stock) == history(native) == Counter()
+            assert history(stock) == history(native) == Counter(), (
+                pattern, outputs(stock), outputs(native), history(stock), history(native),
+                handles[0][1].read_text(), handles[1][1].read_text())
             if pattern == 'lib/a.final':
                 before = outputs(stock)
                 for mutation in ('edit', 'delete'):
@@ -504,139 +644,109 @@ def watch_comparison(tmp, cache=False):
             stop_all(handles)
 
 
-def watch_resolver_failure_graph_comparison(tmp):
-    stock, native = tmp / 'resolver-failure-stock', tmp / 'resolver-failure-native'
-    prepare(stock); prepare(native)
-    for root in (stock, native):
-        (root / 'build.yaml').write_text(RESOLVER_BUILD_YAML)
-        (root / 'lib/one.src').write_text('import-old\n')
-        (root / 'lib/two.src').write_text('import-new\n')
-        (root / 'lib/old.dart').write_text('class Old {}\n')
-        (root / 'lib/new.dart').write_text('class New {}\n')
-
-    flags = ['--build-filter=lib/one.final,lib/two.final']
-    check(stock, native, flags)
-    before_stock_outputs = outputs(stock)
-    before_outputs = outputs(native)
-    assert before_stock_outputs == before_outputs, (before_stock_outputs, before_outputs)
-    graph_path = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
-    before_graph = graph_path.read_bytes()
-
+def parallel_watch_comparison(stock, native):
+    flags = ['--build-filter=lib/a.final,lib/b.final']
+    native_activity = activity_path(native)
+    native_log = native.parent / (native.name + '-watch.log')
+    native_env = {
+        'BUILD_FILTER_ACTIVITY_LOG': str(native_activity),
+        'BUILD_FILTER_DELAY_MS': '80',
+        'BUILD_RUNNER_ACCELERATOR_METRICS': '1',
+        'BUILD_RUNNER_ACCELERATOR_WALL_TRACE': '1',
+    }
     handles = []
-    barriers = {}
-    error_marker = 'intentional resolver fixture failure'
     try:
-        for root, mode in ((stock, 'stock'), (native, 'rust')):
-            arm = tmp / (root.name + '-resolver-failure-arm')
-            reached = tmp / (root.name + '-resolver-failure-reached')
-            release = tmp / (root.name + '-resolver-failure-release')
-            barriers[root] = (arm, reached, release)
-            arm.write_text('armed\n')
-            extras = {
-                'BUILD_FILTER_RESOLVER_FAILURE_ARM': str(arm),
-                'BUILD_FILTER_RESOLVER_FAILURE_REACHED': str(reached),
-                'BUILD_FILTER_RESOLVER_FAILURE_RELEASE': str(release),
-            }
-            handles.append(watch(root, mode, flags, extra_env=extras))
-        assert outputs(stock) == outputs(native) == before_outputs
-        for root in (stock, native):
-            history_path(root).unlink(missing_ok=True)
-
-        # Change the first root's resolver closure, then fail the second root
-        # after resolver work. The initial watch build succeeded, so watch keeps
-        # the filtered graph while processing this failed cycle and recovery.
-        for root in (stock, native):
-            (root / 'lib/one.src').write_text('import-new\n')
-            (root / 'lib/two.src').write_text(
-                'import-new fail-after-resolver\n')
-        for root, handle in zip((stock, native), handles):
-            reached = barriers[root][1]
-            wait(lambda reached=reached: reached.exists(), handle[0], handle[1])
-
-        attempted_actions = {
-            'lib/one.src': 1,
-            'lib/one.dart': 1,
-            'lib/two.src': 1,
-            'lib/two.dart': 1,
-        }
-        # Once released, watch may retry the failed cycle while the triggering
-        # edits are pending. Require each stage to have run, without prescribing
-        # a failure retry count.
-        for root in (stock, native):
-            failed_history = history(root)
-            assert all(failed_history[action] >= count
-                       for action, count in attempted_actions.items()), (
-                root, failed_history, attempted_actions)
-        assert outputs(native) == before_outputs, (outputs(native), before_outputs)
-        assert graph_path.read_bytes() == before_graph
-        # The barrier holds the failure after both resolver results are
-        # observed. Restore root one and queue root two's recovery before the
-        # failed build exits, so watch event retries cannot race these edits.
-        for root in (stock, native):
-            history_path(root).unlink(missing_ok=True)
-        recovery_positions = [handle[1].stat().st_size for handle in handles]
-        for root in (stock, native):
-            (root / 'lib/one.src').write_text('import-old\n')
-            (root / 'lib/two.src').write_text('import-new recovery-two\n')
-        for _, _, release in barriers.values():
-            release.write_text('release\n')
-        for handle in handles:
-            wait(lambda handle=handle:
-                 error_marker in handle[1].read_text(), handle[0], handle[1])
-
-        # Only the successful recovery can update the graph. It must restore
-        # root one's old edge while rebuilding root two.
-        markers = ('Built with build_runner', 'Build completed (Rust frontend)')
-        for index, (root, handle) in enumerate(zip((stock, native), handles)):
-            marker = markers[index]
-            wait(lambda root=root, handle=handle, index=index, marker=marker:
-                 marker in handle[1].read_text()[recovery_positions[index]:]
-                 and b"import 'old.dart'" in outputs(root).get('lib/one.dart', b'')
-                 and b'recovery-two' in outputs(root).get('lib/two.dart', b''),
+        for root in (stock, native): history_path(root).unlink(missing_ok=True)
+        native_activity.unlink(missing_ok=True)
+        handles.append(watch(stock, 'stock', flags, jobs=4))
+        handles.append(watch(native, 'rust', flags, jobs=4, extra_env=native_env))
+        for index, handle in enumerate(handles):
+            marker = 'Built with build_runner' if index == 0 else 'Build completed (Rust frontend)'
+            wait(lambda handle=handle, marker=marker: marker in handle[1].read_text(),
                  handle[0], handle[1])
-
         assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
-        assert b"import 'old.dart'" in outputs(native)['lib/one.dart'], outputs(native)
-        assert b"import 'new.dart'" in outputs(native)['lib/two.dart'], outputs(native)
-        assert outputs(native)['lib/one.final'] == before_outputs['lib/one.final']
-        assert b'resolved:Generated:Old:0' in outputs(native)['lib/one.final']
-        assert b'resolved:Generated:New:0' in outputs(native)['lib/two.final']
-        recovered_outputs = outputs(native)
-        assert history(stock) == Counter({
-            'lib/one.src': 1, 'lib/one.dart': 1,
-            'lib/two.src': 1, 'lib/two.dart': 1,
-        }), (history(stock), handles[0][1].read_text())
-        assert history(native) == Counter({
-            'lib/two.src': 1, 'lib/two.dart': 1,
-        }), (history(native), handles[1][1].read_text())
+        assert history(stock) == history(native) == Counter(), (history(stock), history(native))
+        initial_trace = wall_events(native_log.read_text())
+        assert not any(event.get('stage') in ('worker_start', 'worker_initialize', 'worker_build_lazy')
+                       for event in initial_trace), initial_trace
+        initial_metrics = worker_metrics(native_log.read_text())
+        assert initial_metrics.get('worker_starts_total') == 0, (initial_metrics, native_log.read_text())
+        assert initial_metrics.get('worker_initializes_total') == 0, (
+            initial_metrics, native_log.read_text())
+        assert not native_activity.exists() or not native_activity.read_text(), (
+            native_activity.read_text() if native_activity.exists() else '')
 
-        # Only the last successful resolver graph should drive invalidation.
-        # The old dependency belongs to the committed first root; if the failed
-        # new graph leaked into state, this edit would miss its rebuild.
-        for root in (stock, native):
-            history_path(root).unlink(missing_ok=True)
-        refresh_positions = [handle[1].stat().st_size for handle in handles]
-        for root in (stock, native):
-            (root / 'lib/old.dart').write_text('class Old { int get value => 1; }\n')
-        for index, (root, handle) in enumerate(zip((stock, native), handles)):
-            marker = markers[index]
-            wait(lambda root=root, handle=handle, index=index, marker=marker:
-                 marker in handle[1].read_text()[refresh_positions[index]:]
-                 and b'resolved:Generated:Old:1' in outputs(root).get(
-                     'lib/one.final', b''),
-                 handle[0], handle[1])
-
+        for root in (stock, native): history_path(root).unlink(missing_ok=True)
+        native_activity.unlink(missing_ok=True)
+        positions = [handle[1].stat().st_size for handle in handles]
+        value = 'parallel watch common edit\n'
+        for root in (stock, native): (root / 'lib/common.txt').write_text(value)
+        for index, handle in enumerate(handles):
+            marker = 'Built with build_runner' if index == 0 else 'Build completed (Rust frontend)'
+            wait(lambda handle=handle, index=index, marker=marker:
+                 marker in handle[1].read_text()[positions[index]:], handle[0], handle[1])
+        intervals = activity_intervals(native)
+        finish_intervals = [item for item in intervals if item['builder'] == 'finish'
+                            and item['asset'] in ('build_filter_app|lib/a.mid',
+                                                  'build_filter_app|lib/b.mid')]
+        common_seed = [item for item in intervals if item['builder'] == 'seed'
+                       and item['asset'] == 'build_filter_app|lib/common.txt']
+        assert len(finish_intervals) == 2 and has_cross_worker_overlap(finish_intervals), (
+            'filtered watch executes both selected roots concurrently', finish_intervals)
+        assert len(common_seed) == 1 and history(native)['lib/common.txt'] == 1, (
+            'filtered watch shares the common producer once', common_seed, history(native))
         assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
-        assert history(stock) == history(native) == Counter({'lib/one.dart': 1}), (
-            history(stock), history(native), handles[0][1].read_text(),
-            handles[1][1].read_text())
-        assert outputs(native)['lib/one.final'] != recovered_outputs['lib/one.final']
-        assert b'resolved:Generated:Old:1' in outputs(native)['lib/one.final']
-        assert outputs(native)['lib/two.final'] == recovered_outputs['lib/two.final']
+        expected_history = Counter({
+            'lib/common.txt': 1, 'lib/a.mid': 1, 'lib/b.mid': 1,
+        })
+        assert history(stock) == history(native) == expected_history, (
+            history(stock), history(native), expected_history)
+
+        for root in (stock, native): history_path(root).unlink(missing_ok=True)
+        positions = [handle[1].stat().st_size for handle in handles]
+        for root in (stock, native): (root / 'lib/a.txt').unlink()
+        for index, handle in enumerate(handles):
+            marker = 'Built with build_runner' if index == 0 else 'Build completed (Rust frontend)'
+            wait(lambda handle=handle, index=index, marker=marker:
+                 marker in handle[1].read_text()[positions[index]:], handle[0], handle[1])
+        after_delete = outputs(native)
+        assert outputs(stock) == after_delete, (outputs(stock), after_delete)
+        assert all(f'lib/a.{suffix}' not in after_delete for suffix in ('mid', 'side', 'final')), (
+            'deleted selected source removes its outputs', after_delete)
+        assert all(f'lib/b.{suffix}' in after_delete for suffix in ('mid', 'side', 'final')), (
+            'other selected root keeps its outputs', after_delete)
+        assert history(stock) == history(native), (history(stock), history(native))
+
+        for root in (stock, native): history_path(root).unlink(missing_ok=True)
+        activity_before_idle = native_activity.read_bytes() if native_activity.exists() else b''
+        log_before_idle = native_log.read_text()
+        trace_before_idle = wall_events(log_before_idle)
+        counts_before_idle = Counter(event.get('stage') for event in trace_before_idle)
+        positions = [handle[1].stat().st_size for handle in handles]
+        for root in (stock, native): (root / 'lib/other.noise').write_text('unrelated watch event\n')
+        for index, handle in enumerate(handles):
+            marker = 'Built with build_runner' if index == 0 else 'Build completed (Rust frontend)'
+            wait(lambda handle=handle, index=index, marker=marker:
+                 marker in handle[1].read_text()[positions[index]:], handle[0], handle[1])
+        assert outputs(stock) == outputs(native) == after_delete, (
+            outputs(stock), outputs(native), after_delete)
+        assert history(stock) == history(native) == Counter(), (history(stock), history(native))
+        activity_after_idle = native_activity.read_bytes() if native_activity.exists() else b''
+        assert activity_after_idle == activity_before_idle, (
+            'unrelated watch event invoked no builders', activity_before_idle, activity_after_idle)
+        trace_after_idle = wall_events(native_log.read_text())
+        counts_after_idle = Counter(event.get('stage') for event in trace_after_idle)
+        for stage in ('worker_start', 'worker_initialize', 'worker_build_lazy'):
+            assert counts_after_idle[stage] == counts_before_idle[stage], (
+                'unrelated watch event starts or initializes no worker and runs no build',
+                stage, counts_before_idle, counts_after_idle)
     finally:
-        for _, _, release in barriers.values():
-            release.write_text('release cleanup\n')
         stop_all(handles)
+
+    for root in (stock, native):
+        (root / 'lib/a.txt').write_text('a\n')
+        (root / 'lib/common.txt').write_text('common\n')
+    check(stock, native)
 
 
 def watch_midbuild_source_edit_comparison(tmp):
@@ -842,7 +952,8 @@ def writer_lock_watch_comparison(tmp):
         wait(lambda: reached.exists(), handle[0], handle[1])
 
         # The resident watcher is paused after the builder has read its shared
-        # input. Competing filters must fail before either outputs or graph move.
+        # input. Competing filters must fail before either the artifact tree or
+        # the committed graph can change.
         before_outputs = outputs(native)
         graph_path = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
         before_graph = graph_path.read_bytes()
@@ -869,7 +980,8 @@ def writer_lock_watch_comparison(tmp):
         assert history(stock) == history(native), (history(stock), history(native))
         assert trigger.encode() in outputs(native)['lib/a.final'], outputs(native)
 
-        # Ending watch releases the OS lock for a later native writer.
+        # Releasing the watch session releases the OS lock; a later native
+        # writer can build a different filter and still match stock.
         for root in (stock, native):
             (root / 'lib/b.txt').write_text('writer lock released build edit\n')
             history_path(root).unlink(missing_ok=True)
@@ -1062,10 +1174,7 @@ def watch_unknown_external_source_comparison(tmp):
                 'BUILD_FILTER_EXTERNAL_READ_NEXT_REACHED': str(next_reached),
                 'BUILD_FILTER_EXTERNAL_READ_NEXT_RELEASE': str(next_release),
             }
-            # The serial scheduler runs both roots in one transaction. The
-            # source observation cache must therefore span those sequential
-            # worker requests just as stock's build-step cache does.
-            handles.append(watch(root, mode, flags, jobs=1, extra_env=extra_env))
+            handles.append(watch(root, mode, flags, jobs=4, extra_env=extra_env))
 
         for index, handle in enumerate(handles):
             marker = marker_tokens[index]
@@ -1084,8 +1193,9 @@ def watch_unknown_external_source_comparison(tmp):
         for root, handle in zip((stock, native), handles):
             reached = barriers[root][2]
             wait(lambda reached=reached: (reached / 'a.mid').exists(), handle[0], handle[1])
-        # A has read v1 and is held after the read. Edit the source, then let A
-        # finish; B's later read checks the transaction-wide first observation.
+        # A has already read v1 and is held after the read. Edit the external
+        # source, then let A finish; stock runs primary inputs sequentially, so
+        # B's actual read reveals whether that build reuses A's source bytes.
         for root in (stock, native):
             (root / 'external_fixture/lib/shared.asset').write_text('external-version-2\n')
             barriers[root][1].write_text('allow b read\n')
@@ -1105,8 +1215,9 @@ def watch_unknown_external_source_comparison(tmp):
             assert b'external-version-1' in current['lib/b.final'], current
         assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
 
-        # The source edit is queued for another watch cycle. Hold A during that
-        # cycle so its pre-commit outputs still show v1 before release.
+        # The external source edit is itself a queued watch event. Hold A after
+        # its read so the pre-commit outputs and activity history remain
+        # inspectable; stock runs B only after A is released.
         for root, handle in zip((stock, native), handles):
             next_reached = barriers[root][4]
             wait(lambda next_reached=next_reached: (next_reached / 'a.mid').exists(),
@@ -1132,8 +1243,8 @@ def watch_unknown_external_source_comparison(tmp):
         assert history(stock) == history(native) == expected_history, (
             history(stock), history(native), expected_history)
 
-        # After v2 is committed, an unrelated event should not keep the
-        # selected consumers dirty.
+        # Once the next cycle records the shared source observation as v2,
+        # an unrelated watch event must not keep the consumers dirty.
         for root in (stock, native):
             history_path(root).unlink(missing_ok=True)
         before = outputs(stock)
@@ -1378,7 +1489,30 @@ def watch_source_classification_comparison(tmp):
     watch_failed_initial_recovery_generated_rename_comparison(tmp)
 
 
+def filtered_default_jobs_comparison(tmp):
+    stock, native = tmp / 'default-jobs-stock', tmp / 'default-jobs-native'
+    prepare(stock); prepare(native)
+    flags = ['--force-jit', '--build-filter=lib/a.final,lib/b.final']
+    reference = execute([DART, 'run', 'build_runner', 'build', *flags], stock)
+    native_args = launcher(native, 'rust', flags=flags)
+    native_args.remove('--jobs=1')
+    actual = execute(native_args, native, {'BUILD_RUNNER_ACCELERATOR_METRICS': '1'})
+    assert actual[0] == reference[0] == 0, (reference, actual)
+    assert '(Rust frontend)' in actual[1], actual
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), actual)
+    expected_history = Counter({
+        'lib/a.txt': 1, 'lib/b.txt': 1, 'lib/common.txt': 1,
+        'lib/a.mid': 1, 'lib/b.mid': 1,
+    })
+    assert history(stock) == history(native) == expected_history, (
+        history(stock), history(native), expected_history)
+    metrics = worker_metrics(actual[1])
+    assert metrics.get('worker_starts_total') == 1, (metrics, actual)
+    assert metrics.get('workers_active') == 1, (metrics, actual)
+
+
 def source_selection_comparison(tmp):
+    filtered_default_jobs_comparison(tmp)
     stock, native = tmp / 'stock', tmp / 'native'
     prepare(stock); prepare(native)
     # Clean selection requires both a primary chain and a shared secondary producer.
@@ -1482,64 +1616,6 @@ def cache_selection_comparison(tmp):
     parallel_history_comparison(tmp)
 
 
-def parallel_history_comparison(tmp):
-    stock, native = tmp / 'parallel-history-stock', tmp / 'parallel-history-native'
-    prepare(stock); prepare(native)
-    parallel_inputs = [f'parallel_{index:02}' for index in range(40)]
-    for root in (stock, native):
-        for name in parallel_inputs:
-            (root / f'lib/{name}.txt').write_text(f'{name} input\n')
-
-    # Each selected finish action requests the same generated secondary input.
-    # The common seed and each selected producer must be recorded once.
-    filtered_flags = ['--force-jit', '--build-filter=lib/parallel_*.final']
-
-    def rust_four_jobs(flags):
-        args = launcher(native, 'rust', flags=flags)
-        args[args.index('--jobs=1')] = '--jobs=4'
-        return args
-
-    for root in (stock, native): history_path(root).unlink(missing_ok=True)
-    reference = execute([DART, 'run', 'build_runner', 'build', *filtered_flags], stock)
-    actual = execute(rust_four_jobs(filtered_flags), native)
-    assert actual[0] == reference[0] == 0, (reference, actual)
-    assert '(Rust frontend)' in actual[1], actual
-    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), actual)
-    filtered_history = (
-        Counter({f'lib/{name}.txt': 1 for name in parallel_inputs})
-        + Counter({f'lib/{name}.mid': 1 for name in parallel_inputs})
-        + Counter({'lib/common.txt': 1})
-    )
-    assert history(stock) == history(native) == filtered_history, (
-        'filtered jobs=4 action history', history(stock), history(native), filtered_history)
-
-    # Start from empty action/output state and fan out enough actions to exercise
-    # concurrent writes from multiple workers to the shared history file.
-    generated_suffixes = {'.mid', '.side', '.final', '.ignored', '.post'}
-    for root in (stock, native):
-        history_path(root).unlink(missing_ok=True)
-        (root / '.dart_tool/build/asset_graph.json').unlink(missing_ok=True)
-        (root / '.dart_tool/build_runner_accelerator/graph-v3.bin').unlink(missing_ok=True)
-        for path in (root / 'lib').rglob('*'):
-            if path.is_file() and path.suffix in generated_suffixes:
-                path.unlink()
-
-    all_text_inputs = ['a', 'b', 'common', 'empty', *parallel_inputs]
-    full_history = (
-        Counter({f'lib/{name}.txt': 1 for name in all_text_inputs})
-        + Counter({f'lib/{name}.mid': 1 for name in all_text_inputs if name != 'empty'})
-        + Counter({'lib/other.noise': 1})
-    )
-    full_flags = ['--force-jit']
-    reference = execute([DART, 'run', 'build_runner', 'build', *full_flags], stock)
-    actual = execute(rust_four_jobs(full_flags), native)
-    assert actual[0] == reference[0] == 0, (reference, actual)
-    assert '(Rust frontend)' in actual[1], actual
-    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), actual)
-    assert history(stock) == history(native) == full_history, (
-        'unfiltered jobs=4 action history', history(stock), history(native), full_history)
-
-
 def root_cache_source_collision_comparison(tmp):
     stock, native = tmp / 'root-collision-stock', tmp / 'root-collision-native'
     prepare(stock); prepare(native)
@@ -1549,7 +1625,9 @@ def root_cache_source_collision_comparison(tmp):
         (root / 'lib/a.mid').write_text('root package source collision\n')
 
     # Stock classifies package-path files matching declared cache outputs as
-    # conflicts even when their producer is outside the selected roots.
+    # conflicts even when their producer is outside the selected roots. The
+    # conflicting source must be deleted, while the unselected cached output
+    # must remain absent.
     flags = ['--build-filter=lib/b.final']
     reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
     actual = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
@@ -1561,8 +1639,8 @@ def root_cache_source_collision_comparison(tmp):
     assert 'cache/build_filter_app/lib/a.mid' not in outputs(stock), outputs(stock)
     assert 'cache/build_filter_app/lib/a.mid' not in outputs(native), outputs(native)
 
-    # Once selected, the action publishes its logical asset in cache and still
-    # removes the conflicting package-path source.
+    # Once selected, the same action publishes the logical asset in the cache
+    # and still removes the conflicting package-path source.
     check(stock, native, ['--build-filter=lib/a.final'])
     for root in (stock, native):
         assert not (root / 'lib/a.mid').exists(), root
@@ -1578,8 +1656,9 @@ def artifact_commit_graph_save_crash_comparison(tmp):
         config.write_text(config.read_text().replace('build_to: source', 'build_to: cache', 1))
     check(stock, native)
 
-    # A source/cache transition cleans the old artifact tree. Block graph save
-    # after output publication to expose the documented crash boundary.
+    # A source/cache transition makes the native commit clean its old artifact
+    # tree. Block the later graph save so a forced process kill leaves the old
+    # graph beside already committed new source outputs.
     for root in (stock, native):
         config = root / 'build.yaml'
         config.write_text(config.read_text().replace('build_to: cache', 'build_to: source', 1))
@@ -1614,7 +1693,9 @@ def artifact_commit_graph_save_crash_comparison(tmp):
             return (
                 committed
                 and not any(path.startswith('cache/') for path in current)
+                and graph_temp.is_fifo()
                 and graph_path.read_bytes() == before_graph
+                and proc.poll() is None
                 and native_waiting_for_fifo_writer(proc.pid) is not None
             )
 
@@ -1623,8 +1704,8 @@ def artifact_commit_graph_save_crash_comparison(tmp):
         assert graph_temp.is_fifo(), graph_temp
         assert graph_path.read_bytes() == before_graph
 
-        # Kill the launcher group and supervised descendants while graph save
-        # is blocked opening the FIFO.
+        # Kill the launcher group and any supervised descendants while native
+        # graph::save is blocked opening the FIFO.
         children = descendants(proc.pid)
         try:
             os.killpg(proc.pid, signal.SIGKILL)
@@ -1673,6 +1754,171 @@ def artifact_commit_graph_save_crash_comparison(tmp):
     assert not any(path.startswith('cache/') for path in outputs(native)), outputs(native)
     assert graph_path.read_bytes() != before_graph
 
+
+def parallel_history_comparison(tmp):
+    stock, native = tmp / 'parallel-history-stock', tmp / 'parallel-history-native'
+    prepare(stock); prepare(native)
+    parallel_inputs = [f'parallel_{index:02}' for index in range(40)]
+    for root in (stock, native):
+        for name in parallel_inputs:
+            (root / f'lib/{name}.txt').write_text(f'{name} input\n')
+
+    # Each selected finish action requests the same generated secondary input.
+    # The common seed and each selected producer must be recorded once. The
+    # broad pattern also includes empty.final, whose primary currently emits
+    # no siblings but may begin doing so after an edit.
+    filtered_flags = ['--force-jit', '--build-filter=lib/*.final']
+
+    def rust_four_jobs(flags):
+        args = launcher(native, 'rust', flags=flags)
+        args[args.index('--jobs=1')] = '--jobs=4'
+        return args
+
+    def stock_build(flags):
+        return [DART, 'run', 'build_runner', 'build', *flags]
+
+    for root in (stock, native):
+        history_path(root).unlink(missing_ok=True)
+        activity_path(root).unlink(missing_ok=True)
+    reference = execute(stock_build(filtered_flags), stock)
+    actual = execute(rust_four_jobs(filtered_flags), native, {
+        'BUILD_FILTER_ACTIVITY_LOG': str(activity_path(native)),
+        'BUILD_FILTER_DELAY_MS': '60',
+    })
+    assert actual[0] == reference[0] == 0, (reference, actual)
+    assert '(Rust frontend)' in actual[1], actual
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), actual)
+    filtered_intervals = activity_intervals(native)
+    finish_intervals = [
+        interval for interval in filtered_intervals
+        if interval['builder'] == 'finish' and '|lib/parallel_' in interval['asset']
+    ]
+    assert len(finish_intervals) == len(parallel_inputs), (
+        'all filtered root builders ran', len(finish_intervals), len(parallel_inputs))
+    assert has_cross_worker_overlap(finish_intervals), (
+        'filtered jobs=4 ran distinct root builders concurrently', finish_intervals, actual)
+    initial_roots = ['a', 'b', *parallel_inputs]
+    filtered_history = (
+        Counter({f'lib/{name}.txt': 1 for name in initial_roots})
+        + Counter({f'lib/{name}.mid': 1 for name in initial_roots})
+        + Counter({'lib/empty.txt': 1, 'lib/common.txt': 1, 'lib/common.mid': 1})
+    )
+    assert history(stock) == history(native) == filtered_history, (
+        'filtered jobs=4 action history', history(stock), history(native), filtered_history)
+    filtered_outputs = outputs(native)
+    for name in parallel_inputs:
+        assert all(f'lib/{name}.{suffix}' in filtered_outputs for suffix in ('mid', 'side', 'final')), (
+            name, [path for path in filtered_outputs if f'lib/{name}.' in path])
+    assert all(f'lib/common.{suffix}' in filtered_outputs for suffix in ('mid', 'side')), (
+        [path for path in filtered_outputs if 'lib/common.' in path])
+
+    # A filtered no-op must not start or initialize any Dart workers.
+    for root in (stock, native): history_path(root).unlink(missing_ok=True)
+    no_op_reference = execute(stock_build(filtered_flags), stock)
+    no_op_actual = execute(rust_four_jobs(filtered_flags), native, {
+        'BUILD_RUNNER_ACCELERATOR_METRICS': '1',
+        'BUILD_RUNNER_ACCELERATOR_WALL_TRACE': '1',
+    })
+    assert no_op_actual[0] == no_op_reference[0] == 0, (no_op_reference, no_op_actual)
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), no_op_actual)
+    assert history(stock) == history(native) == Counter(), (
+        history(stock), history(native), no_op_actual)
+    no_op_metrics = worker_metrics(no_op_actual[1])
+    assert no_op_metrics.get('worker_starts_total') == 0, (no_op_metrics, no_op_actual)
+    assert no_op_metrics.get('worker_initializes_total') == 0, (no_op_metrics, no_op_actual)
+    no_op_trace = wall_events(no_op_actual[1])
+    assert not any(event.get('stage') in ('worker_start', 'worker_initialize', 'worker_build_lazy')
+                   for event in no_op_trace), no_op_trace
+
+    # Keep all 40 outputs selected while changing only one input. The scheduler
+    # must size its worker pool for dirty work instead of all matching roots.
+    for root in (stock, native):
+        (root / 'lib/parallel_00.txt').write_text('parallel_00 edited input\n')
+        history_path(root).unlink(missing_ok=True)
+    one_file_flags = filtered_flags
+    one_file_reference = execute(stock_build(one_file_flags), stock)
+    one_file_actual = execute(rust_four_jobs(one_file_flags), native, {
+        'BUILD_RUNNER_ACCELERATOR_METRICS': '1',
+        'BUILD_RUNNER_ACCELERATOR_WALL_TRACE': '1',
+    })
+    assert one_file_actual[0] == one_file_reference[0] == 0, (one_file_reference, one_file_actual)
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), one_file_actual)
+    one_file_history = Counter({'lib/parallel_00.txt': 1, 'lib/parallel_00.mid': 1})
+    assert history(stock) == history(native) == one_file_history, (
+        history(stock), history(native), one_file_history)
+    one_file_metrics = worker_metrics(one_file_actual[1])
+    assert one_file_metrics.get('worker_starts_total', 5) <= 1, (one_file_metrics, one_file_actual)
+    assert one_file_metrics.get('workers_active', 5) <= 1, (one_file_metrics, one_file_actual)
+
+    # The selected empty producer published no siblings in the initial broad
+    # build. After filtered reuse and an unrelated one-file edit above, the
+    # same broad demand must discover its newly materialized final.
+    assert not any(path.startswith('lib/empty.') for path in outputs(native)), outputs(native)
+    for root in (stock, native):
+        (root / 'lib/empty.txt').write_text('expanded from empty input\n')
+        history_path(root).unlink(missing_ok=True)
+    materialized_reference = execute(stock_build(filtered_flags), stock)
+    materialized_actual = execute(rust_four_jobs(filtered_flags), native)
+    assert materialized_actual[0] == materialized_reference[0] == 0, (
+        materialized_reference, materialized_actual)
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), materialized_actual)
+    assert all(f'lib/empty.{suffix}' in outputs(native) for suffix in ('mid', 'side', 'final')), (
+        [path for path in outputs(native) if path.startswith('lib/empty.')])
+    assert b'expanded from empty input' in outputs(native)['lib/empty.final']
+    expected_empty_history = Counter({'lib/empty.txt': 1, 'lib/empty.mid': 1})
+    assert history(stock) == history(native) == expected_empty_history, (
+        history(stock), history(native), expected_empty_history, materialized_actual)
+
+    # Start from empty action/output state and fan out enough actions to exercise
+    # concurrent writes from multiple workers to the shared history file.
+    generated_suffixes = {'.mid', '.side', '.final', '.ignored', '.post'}
+    for root in (stock, native):
+        history_path(root).unlink(missing_ok=True)
+        (root / 'lib/empty.txt').write_text('empty\n')
+        (root / '.dart_tool/build/asset_graph.json').unlink(missing_ok=True)
+        (root / '.dart_tool/build_runner_accelerator/graph-v3.bin').unlink(missing_ok=True)
+        for path in (root / 'lib').rglob('*'):
+            if path.is_file() and path.suffix in generated_suffixes:
+                path.unlink()
+
+    all_text_inputs = ['a', 'b', 'common', 'empty', *parallel_inputs]
+    full_history = (
+        Counter({f'lib/{name}.txt': 1 for name in all_text_inputs})
+        + Counter({f'lib/{name}.mid': 1 for name in all_text_inputs if name != 'empty'})
+        + Counter({'lib/other.noise': 1})
+    )
+    full_flags = ['--force-jit']
+    reference = execute(stock_build(full_flags), stock)
+    actual = execute(rust_four_jobs(full_flags), native)
+    assert actual[0] == reference[0] == 0, (reference, actual)
+    assert '(Rust frontend)' in actual[1], actual
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), actual)
+    assert history(stock) == history(native) == full_history, (
+        'unfiltered jobs=4 action history', history(stock), history(native), full_history)
+
+    # Matching both siblings of one source action schedules that producer
+    # once, even though two selected output roots point to it.
+    for root in (stock, native):
+        (root / 'lib/parallel_00.txt').write_text('parallel_00 sibling edit\n')
+        history_path(root).unlink(missing_ok=True)
+    sibling_flags = [
+        '--force-jit',
+        '--build-filter=lib/parallel_00.mid,lib/parallel_00.side',
+    ]
+    sibling_reference = execute(stock_build(sibling_flags), stock)
+    sibling_actual = execute(rust_four_jobs(sibling_flags), native, {
+        'BUILD_RUNNER_ACCELERATOR_METRICS': '1',
+    })
+    assert sibling_actual[0] == sibling_reference[0] == 0, (sibling_reference, sibling_actual)
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), sibling_actual)
+    sibling_history = Counter({'lib/parallel_00.txt': 1})
+    assert history(stock) == history(native) == sibling_history, (
+        history(stock), history(native), sibling_history)
+    assert all(f'lib/parallel_00.{suffix}' in outputs(native) for suffix in ('mid', 'side'))
+    sibling_metrics = worker_metrics(sibling_actual[1])
+    assert sibling_metrics.get('worker_starts_total', 5) <= 1, (
+        sibling_metrics, sibling_actual)
+    assert sibling_metrics.get('workers_active', 5) <= 1, (sibling_metrics, sibling_actual)
 
 def package_selection_comparison(tmp):
     # Explicit dependency targets exercise real package selection, not just
@@ -1762,11 +2008,13 @@ def caught_demand_failure_comparison(tmp):
         return {path: current[path] for path in selected if path in current}
 
     def recover(stock, native, flags, expected_stock_history, expected_native_history,
-                roots=('a',)):
+                jobs=1, roots=('a',)):
         for root in (stock, native):
             history_path(root).unlink(missing_ok=True)
         reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
-        actual = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
+        args = launcher(native, 'rust', flags=['--force-jit', *flags])
+        args[args.index('--jobs=1')] = f'--jobs={jobs}'
+        actual = execute(args, native)
         assert actual[0] == reference[0] == 0, (flags, reference, actual)
         assert selected_outputs(stock, roots) == selected_outputs(native, roots), (
             flags, selected_outputs(stock, roots), selected_outputs(native, roots), actual)
@@ -1805,15 +2053,46 @@ def caught_demand_failure_comparison(tmp):
 
         for root in (stock, native):
             (root / 'lib/common.txt').write_text('fail\n')
+            if rpc == 'read':
+                (root / 'lib/a.txt').write_text('changed primary a\n')
+                (root / 'lib/b.txt').write_text('changed primary b\n')
             history_path(root).unlink(missing_ok=True)
+        failure_env = None
+        if rpc == 'read':
+            activity_path(native).unlink(missing_ok=True)
+            failure_env = {
+                'BUILD_FILTER_ACTIVITY_LOG': str(activity_path(native)),
+                'BUILD_FILTER_DELAY_MS': '60',
+            }
         reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
-        actual = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
+        native_args = launcher(native, 'rust', flags=['--force-jit', *flags])
+        native_args[native_args.index('--jobs=1')] = '--jobs=4' if rpc == 'read' else '--jobs=1'
+        actual = execute(native_args, native, failure_env)
         assert reference[0] == actual[0] != 0, (rpc, reference, actual)
         assert 'intentional build-filter fixture failure' in actual[1], (rpc, actual)
         # Stock may write the consumer's caught-error output before reporting
         # its failed build. Native keeps its all-success transaction boundary.
         assert outputs(native) == previous_outputs, (rpc, outputs(native), previous_outputs)
         assert graph.read_bytes() == previous_graph, rpc
+        if rpc == 'read':
+            intervals = activity_intervals(native)
+            finish_intervals = [item for item in intervals
+                                if item['builder'] == 'finish' and item['asset'] in (
+                                    'build_filter_app|lib/a.mid', 'build_filter_app|lib/b.mid')]
+            common_seed = [item for item in intervals
+                           if item['builder'] == 'seed'
+                           and item['asset'] == 'build_filter_app|lib/common.txt']
+            assert len(finish_intervals) == 2, finish_intervals
+            assert len(common_seed) == 1 and history(native)['lib/common.txt'] == 1, (
+                common_seed, history(native))
+            assert has_cross_worker_overlap(finish_intervals), (
+                'both filtered consumers wait concurrently on the shared failing producer',
+                finish_intervals, actual)
+            assert any(root['pid'] != common_seed[0]['pid']
+                       and root['start'] < common_seed[0]['end']
+                       and common_seed[0]['start'] < root['end'] for root in finish_intervals), (
+                'a second worker waited while the common producer was failing',
+                finish_intervals, common_seed)
 
         for root in (stock, native):
             (root / 'lib/common.txt').write_text('recovered common\n')
@@ -1821,9 +2100,13 @@ def caught_demand_failure_comparison(tmp):
             Counter({f'lib/{name}.mid': 1 for name in roots})
             + Counter({'lib/common.txt': 1})
         )
+        recovered_native_history = recovered_stock_history.copy()
+        if rpc == 'read':
+            recovered_native_history.update({f'lib/{name}.txt': 1 for name in roots})
         rebuilt = recover(stock, native, flags,
-                          recovered_stock_history, recovered_stock_history, roots=roots)
-        assert rebuilt == recovered_stock_history, (rpc, rebuilt)
+                          recovered_stock_history, recovered_native_history,
+                          jobs=4 if rpc == 'read' else 1, roots=roots)
+        assert rebuilt == recovered_native_history, (rpc, rebuilt)
         for name in roots:
             assert b'recovered common' in (native / f'lib/{name}.final').read_bytes(), rpc
         restore_full_state(stock, native, flags)
@@ -1849,7 +2132,7 @@ def caught_demand_failure_comparison(tmp):
         first_success = recover(
             fresh_stock, fresh_native, fresh_flags,
             Counter({'lib/common.txt': 1, 'lib/a.mid': 1}),
-            Counter({'lib/a.txt': 1, 'lib/common.txt': 1, 'lib/a.mid': 1}))
+            Counter({'lib/a.txt': 1, 'lib/common.txt': 1, 'lib/a.mid': 1}), roots=('a',))
         assert first_success == Counter({
             'lib/a.txt': 1, 'lib/common.txt': 1, 'lib/a.mid': 1}), (rpc, first_success)
         assert b'recovered fresh common' in (fresh_native / 'lib/a.final').read_bytes(), rpc

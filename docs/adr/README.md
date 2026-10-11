@@ -44,6 +44,7 @@ Benchmarks and mechanical refactors do not need one.
 | [0030](0030-compatibility-cleanup-and-disposable-state.md) | Compatibility cleanup and disposable state |
 | [0031](0031-native-build-settings.md) | Native configuration and settings invalidation |
 | [0032](0032-native-build-filter-demand-and-output-state.md) | Filter demand, output state, and conservative fallback |
+| [0033](0033-filtered-demand-scheduler.md) | Parallel filtered demand coordination and lazy worker startup |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
 artifacts and launcher behavior are in

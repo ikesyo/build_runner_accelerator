@@ -329,9 +329,9 @@ fn asset_response_fits(byte_length: usize) -> io::Result<bool> {
     let metadata = json!({
         "v": 1,
         "type": "asset_response",
-        // The first observation is reused within one worker across different
-        // RPC ids. Budget for the largest serialized id so its transport
-        // remains valid for every later request using this publication.
+        // The first observation is shared across workers and RPC ids. Budget
+        // for the largest serialized id so its transport remains valid for
+        // every request using this publication.
         "id": u64::MAX,
         "ok": true,
         "encoding": "raw",
@@ -350,8 +350,8 @@ fn asset_response_fits(byte_length: usize) -> io::Result<bool> {
 
 static NEXT_SOURCE_SPOOL: AtomicU64 = AtomicU64::new(0);
 
-/// Stores an oversized filtered-source snapshot for the worker to read by path.
-/// Unix files are owner-only from their initial creation.
+/// Stores a filtered-source snapshot on disk when its binary response exceeds
+/// the IPC frame limit. Unix files are owner-only from their initial creation.
 fn spool_source_bytes(bytes: &[u8]) -> io::Result<Arc<FilteredSourceSpool>> {
     let directory = std::env::temp_dir();
     for _ in 0..16 {

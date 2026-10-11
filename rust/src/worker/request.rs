@@ -5,6 +5,9 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::io;
 
+/// Complete Rust-side context for one worker action. The phase, kind, and
+/// declared outputs drive visibility checks; `instance_key` distinguishes
+/// option/target instances of the same builder.
 #[derive(Clone)]
 pub struct BuildRequest {
     pub builder: String,
@@ -26,6 +29,9 @@ pub(super) fn build_request_kind(request: &BuildRequest) -> BuilderKind {
     }
 }
 
+/// Produces the one batch-level visibility hint shared by all requests.
+/// Mixed phases or normal/post-process kinds are rejected because one blocked
+/// set cannot describe two visibility policies.
 pub(super) fn batch_blocked_assets(
     requests: &[BuildRequest],
     visibility: &AssetVisibility,
@@ -45,6 +51,8 @@ pub(super) fn batch_blocked_assets(
     Ok(visibility.blocked_assets(first.phase, build_request_kind(first), deleted_overlay))
 }
 
+/// Forms the v1 JSON representation used only to report comparison size in
+/// diagnostics; build responses themselves require the binary capability.
 fn json_build_result_value(result: &BuildResult) -> io::Result<Value> {
     let mut value = serde_json::to_value(result).map_err(io::Error::other)?;
     let object = value.as_object_mut().ok_or_else(|| {
@@ -57,12 +65,14 @@ fn json_build_result_value(result: &BuildResult) -> io::Result<Value> {
     Ok(value)
 }
 
+/// Measures the hypothetical length-prefixed JSON frame without sending it.
 pub(super) fn json_build_result_frame_size(result: &BuildResult) -> io::Result<u64> {
     let value = json_build_result_value(result)?;
     let payload = serde_json::to_vec(&value).map_err(io::Error::other)?;
     Ok((payload.len() + 4) as u64)
 }
 
+/// Measures the hypothetical batch JSON frame for diagnostic comparison only.
 pub(super) fn json_build_batch_result_frame_size(
     id: u64,
     results: &[BuildResult],
