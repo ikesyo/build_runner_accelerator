@@ -94,16 +94,37 @@ def watch(root, mode, flags):
     log = root.parent / (root.name + '-watch.log')
     args = [DART, 'run', 'build_runner', 'watch', '--force-jit', *flags] if mode == 'stock' else launcher(root, mode, 'watch', ['--force-jit', *flags])
     stream = log.open('w')
-    proc = subprocess.Popen(args, cwd=root, env=fixture_env(root), stdout=stream, stderr=stream, start_new_session=True)
-    wait(lambda: ('Built with build_runner' in log.read_text() if mode == 'stock' else 'Watching ' in log.read_text()), proc, log)
-    return proc, log, stream
+    try:
+        proc = subprocess.Popen(args, cwd=root, env=fixture_env(root), stdout=stream, stderr=stream, start_new_session=True)
+    except BaseException:
+        stream.close()
+        raise
+    handle = proc, log, stream
+    try:
+        wait(lambda: ('Built with build_runner' in log.read_text() if mode == 'stock' else 'Watching ' in log.read_text()), proc, log)
+    except BaseException:
+        stop(handle)
+        raise
+    return handle
 
 
 def stop(handle):
     proc, _, stream = handle
-    os.killpg(proc.pid, signal.SIGINT)
-    proc.wait(timeout=15)
-    stream.close()
+    try:
+        try:
+            os.killpg(proc.pid, signal.SIGINT)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+    finally:
+        stream.close()
 
 
 def legacy_graph(root):
@@ -220,8 +241,10 @@ def watch_comparison(tmp, cache=False):
             file.write_text(file.read_text().replace('build_to: source', 'build_to: cache', 1))
     check(stock, native)
     for pattern in ('lib/a.final', 'lib/b.final'):
-        handles = [watch(stock, 'stock', ['--build-filter=' + pattern]), watch(native, 'rust', ['--build-filter=' + pattern])]
+        handles = []
         try:
+            handles.append(watch(stock, 'stock', ['--build-filter=' + pattern]))
+            handles.append(watch(native, 'rust', ['--build-filter=' + pattern]))
             assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
             for root in (stock, native): history_path(root).unlink(missing_ok=True)
             # An excluded source edit must trigger a watch cycle without
@@ -385,8 +408,10 @@ def watch_source_classification_comparison(tmp):
     check(stock, native, [define])
     flags = ['--build-filter=lib/a.final', define]
     for restart in (False, True):
-        handles = [watch(stock, 'stock', flags), watch(native, 'rust', flags)]
+        handles = []
         try:
+            handles.append(watch(stock, 'stock', flags))
+            handles.append(watch(native, 'rust', flags))
             assert outputs(stock) == outputs(native)
             if restart:
                 assert b'externally edited c' in (native / 'lib/a.final').read_bytes()
