@@ -866,7 +866,16 @@ def caught_demand_failure_comparison(tmp):
         prepare(native)
         catch_flag = f'--define=:finish={option}=true'
         check(stock, native, [catch_flag])
-        flags = ['--build-filter=lib/a.final', catch_flag]
+        roots = ('a', 'b') if rpc == 'read' else ('a',)
+        flags = [f"--build-filter={','.join(f'lib/{name}.final' for name in roots)}", catch_flag]
+        if rpc == 'read':
+            # Output digest changes dirty both consumers before their retained
+            # secondary read order can demand the shared producer. Stock stores
+            # read assets in a HashSet, so that order can place common.side
+            # before the generated primary and fail before either consumer runs.
+            for root in (stock, native):
+                for name in roots:
+                    (root / f'lib/{name}.final').unlink()
         previous_outputs = outputs(native)
         graph = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
         previous_graph = graph.read_bytes()
