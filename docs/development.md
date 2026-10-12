@@ -92,6 +92,9 @@ The CI workflow runs the same checks in functional groups:
 | Builder compatibility | Stock comparisons for supported builders and mappings |
 | Release | SDK bounds, package validation, signed artifact and platform checks |
 
+Watch logs and builder histories are stored outside watched workspaces, so test
+bookkeeping cannot trigger or mask a rebuild.
+
 CI splits long correctness suites into parallel jobs. Local full verification
 keeps each selected suite's state transitions ordered in isolated workspaces.
 

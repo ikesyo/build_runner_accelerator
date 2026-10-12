@@ -46,8 +46,9 @@ dart run build_runner_accelerator build --build-filter='lib/*.g.dart'
 ```
 
 Repeat the option or provide comma-separated patterns to select more outputs.
-A selected action may write its other declared outputs too. Filtered demand runs
-on one worker by default. A filter with no matches succeeds.
+A selected action may write its other declared outputs too. Filtered demand
+runs on one worker; `--jobs` does not parallelize filtered builds. A filter with
+no matches succeeds.
 
 Filters limit demand; they do not guarantee that unselected generated files
 remain on disk across later builds or watch restarts. Unsupported filter syntax,
@@ -57,17 +58,25 @@ for the selection, dependency, deletion, and failure rules.
 
 ## Compatibility and recovery
 
-The native frontend targets build_runner 2.16.2. Its supported manifest subset
-is checked against stock for byte-identical outputs and incremental, failure,
-deletion, and watch behavior. Use auto to retain stock compatibility outside
-that subset.
+The native frontend supports build_runner `>=2.16.2 <2.17.0`; correctness
+comparisons use stock build_runner 2.16.2. Its supported manifest subset is
+checked for byte-identical outputs and incremental, failure, deletion, and
+watch behavior. Use auto to retain stock compatibility outside that subset.
+
+Native build and watch commands acquire an exclusive workspace lock through
+late fallback; a competing native invocation fails. Direct stock runs,
+`--mode dart`, and auto fallback before native startup bypass that lock. Do not
+run those concurrently with a native command in the same workspace.
 
 A builder failure leaves native outputs and graph at their last successful
 state. The commit is not crash-atomic: interruption or I/O failure during commit
 can leave some files changed while the previous graph remains. See the
 [recovery guide](docs/compatibility-cleanup.md#safe-recovery) before clearing
-state or switching frontends. Native watch keeps source edits made during an
-active build pending for the next cycle.
+state or switching frontends. Successful native builds retain build-start
+evidence for existing sources, keeping edits or deletions during actions
+visible to the next build or watch cycle. Filtered builds also retain first
+worker observations of eligible external sources absent at build start; see
+[ADR 0032](docs/adr/0032-native-build-filter-demand-and-output-state.md).
 
 ## Project guides
 

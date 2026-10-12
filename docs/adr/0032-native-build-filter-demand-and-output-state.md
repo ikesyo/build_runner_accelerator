@@ -4,121 +4,74 @@
 - Date: 2026-10-10
 - Amends ADR 0029 and ADR 0031; extends the private state contract in ADR 0030.
 
-## Context
+## Context and decision
 
-Stock build_runner 2.16.2 selects steps whose declared outputs match a filter,
-then demands generated inputs as those steps read them. It does not limit a
-selected step to only the matched output. Deletion also depends on the last
-successful build state and whether outputs belong in the source or artifact
-tree. Path-only selection cannot preserve these rules.
-
-## Decision
-
-Keep the full phase-aware action graph. Filters choose roots; the worker
-recursively demands required producers. An action runs once per build and may
-write all its declared outputs.
+Stock build_runner selects actions by declared outputs, then demands producers
+as generated inputs are read. A selected action may write every declared
+output, so filtering follows the phase-aware graph and output lifecycle.
 
 ```mermaid
 flowchart TD
     F[Output filters] --> R[Matching action roots]
     R --> D[Demand required producers]
     D --> W[Dart worker actions]
-    W --> O[Transaction overlay and pending results]
+    W --> O[Transaction overlay]
     O --> S{All demanded actions succeed?}
-    S -- No --> X[Discard pending outputs and graph changes]
+    S -- No --> X[Keep prior committed outputs and graph]
     S -- Yes --> C[Commit output writes and deletions]
-    C --> G[Publish the new graph]
+    C --> G[Publish new graph]
 ```
 
-### Reuse evidence
+## Reuse and demand
 
-A prior action is reusable only when its recorded inputs still match:
+- Check ordered stock inputs, resolver dependencies, and full actual glob membership; byte equality alone cannot prove a glob unchanged.
+- Asset listings follow stock order: plain sources, then earlier-phase generated outputs, with Dart asset-ID order within each group.
+- A producer runs once and handles all declared outputs. Reuse hides ungenerated siblings; old state without ordered-input or glob evidence falls back to stock.
 
-- Ordered stock inputs, resolver dependencies, and actual glob membership are
-  checked against the current build.
-- Listing order matches stock: plain sources first, then earlier-phase
-  generated outputs, with Dart asset-ID ordering within each group.
-- Shared producers execute once. Reused actions hide declared sibling outputs
-  they did not actually generate, so stray files cannot satisfy a dependency.
+## Source evidence and watch
 
-Stock input order and complete glob membership are required evidence for
-filtered reuse. Older graph state without that evidence can still serve ordinary
-builds, but filtered builds fall back to stock.
+- Watch subscribes after plan validation and before the first build. Successful native builds retain build-start evidence for existing sources through commit, so edits or deletions during actions remain visible to the next cycle.
+- A filtered build's first worker `read` or `canRead` of an eligible external source absent from the snapshot keeps its first observed bytes or missing result and graph evidence; a post-build scan cannot replace it. Generated assets are excluded.
+- Large observations use a temporary spool: Unix requests mode 0600, Windows inherits the temp-directory ACL, and abrupt exit can leave an orphan.
 
-### Source reads and watch
+## Output state and deletion
 
-Native watch starts listening after plan validation and before the initial
-build. Events arriving during that build stay queued for the next cycle.
+- Only evaluated actions enter successful incremental state. Unselected outputs may remain temporarily, then conflict and be deleted on a later build or watch restart; filters do not preserve files.
+- Deletion uses the prior graph's recorded output location, not filesystem existence. A location transition needs recorded location plus proven stock-plan compatibility.
+- Input deletion removes outputs through the graph. Removed builder apps, dependency-package conflicts, or transitions without compatibility evidence fall back before native actions.
 
-The build-start snapshot is authoritative for sources it contains. If a worker's
-first read or canRead observes an eligible external source absent from that
-snapshot, native keeps that first byte or missing result through the transaction
-and records the matching source evidence. A post-build scan cannot overwrite
-it, so a later edit remains visible to the queued watch cycle. Generated assets
-and declared outputs do not use this rule.
+## Failure and commit boundary
 
-### Output state and deletion
+- A demanded producer failure fails the invocation even if a consumer catches its read or `canRead` error.
+- If an action fails, native applies no pending outputs or graph changes and retains the previous successful state; stock may already have changed files.
+- This is all-success commit behavior, not crash atomicity: interruption or I/O failure during writes/deletions can leave partial files with the old graph; no rollback journal exists.
 
-Only evaluated actions enter the successful incremental state. An unselected
-output may remain on disk for the current filtered build, then be treated as a
-conflict and removed on a later build or watch restart. Filters are runtime
-demand and do not change manifest or configuration identity; do not rely on
-them to preserve generated files.
+## Supported boundary
 
-Deletion uses recorded output locations, not path existence. When a supported
-source/cache transition changes output location, native uses the previous
-location to remove stale files. Stock 2.16.2 includes
-`outputsToArtifactTree` in `InBuildPhase.identity`, which supplies evidence
-that the prior plan is incompatible. If a deleted input removes an action, the
-ordinary graph deletion path removes its recorded outputs. Conflicts in a
-dependency package, removed prior builder applications, or transitions without
-compatible prior-state evidence route to stock before native actions.
-
-### Failure and commit boundary
-
-A demanded producer failure fails the invocation even if its consumer catches
-a read or canRead error. Native publishes neither pending outputs nor graph
-changes when an action fails; stock may already have written or removed files.
-
-This is an all-actions-success boundary, not crash atomicity. During commit,
-output writes and deletions happen before graph publication. Interruption or I/O
-failure can therefore leave partial files with the previous graph; there is no
-rollback journal.
-
-### Supported boundary
-
-| Request | auto | rust |
+| Request | `auto` | `rust` |
 | --- | --- | --- |
-| Supported filter syntax and compatible normal builders | Native | Native |
+| Supported syntax and compatible builders with declared outputs | Native | Native |
 | Unsupported syntax, builder combination, or prior-state transition | Stock for the whole invocation | Error before actions |
-| Filtered build/watch in dart mode | Stock build_runner | Stock build_runner |
-| Prewarm with a build filter | Error; prewarm has no filter mode | Error before actions |
 
-Native accepts repeated or comma-separated filters (OR), root-relative paths,
-package: paths relative to lib, and asset: paths relative to the package root.
-Package names may contain *; path globs support * and whole-segment **.
-Queries, fragments, percent encoding, escapes, non-ASCII, classes, braces, ?,
-absolute paths, and dot segments use stock. Optional, post-process, zero-output
-and trigger-only builders, and recorded cyclic resolver reuse also use stock.
-See the [launcher reference](../launcher-and-release.md) for CLI routing and
-[configuration guide](../configuration.md) for config transitions.
+Dart mode always uses stock. Filters are build/watch-only; prewarm rejects
+them. Native supports repeated or comma-separated OR filters, root-relative
+paths, `package:` paths under `lib`, `asset:` paths under the package root,
+`*`, and whole-segment `**`. Unsupported patterns and optional, post-process,
+zero-output, or trigger-only builders use stock in auto and error in rust;
+recorded cyclic resolver graphs also use stock for incremental reuse. Filtered
+demand runs on one worker; `--jobs` does not parallelize filtered builds.
+See the [launcher reference](../launcher-and-release.md) for CLI and mode
+behavior, and the [configuration guide](../configuration.md) for config
+transitions.
 
-### Evidence and consequences
+## Evidence
 
-The behavior is measured against stock build_runner 2.16.2:
-`build_plan/build_filter.dart`, `build_runner_command_line.dart`,
+Native supports build_runner `>=2.16.2 <2.17.0`; comparisons use stock 2.16.2.
+The pinned upstream evidence is in `build_plan/build_filter.dart`,
 `build/build.dart`, `build/build_series.dart`, and
-`build_plan/build_plan.dart` (incremental plan compatibility and deletion).
-These are version-pinned implementation sources, not a stable public API.
+`build_plan/build_plan.dart`; these are implementation sources, not stable API.
 
-`scripts/correctness_build_filter.sh` compares output bytes, existence and
-deletion, exit status, builder history, incremental transitions, and watch
-behavior. Unsupported combinations are compared through stock fallback and
-strict-mode rejection.
-
-Filtered roots and recursive demands currently run serially on one resident
-worker, even when --jobs is higher. The normal unfiltered scheduler is
-unchanged. Implementation details live in the
-[filtered evaluator](../../rust/src/build/filtered.rs),
-[worker request contract](../../rust/src/worker/request.rs), and
-[protocol v1](../../protocol/v1.md).
+`scripts/correctness_build_filter.sh` compares bytes, existence/deletion,
+exit status, builder history, incremental transitions, and watch behavior.
+Implementation details: [filtered evaluator](../../rust/src/build/filtered.rs),
+[commit path](../../rust/src/build/commit.rs), and [protocol v1](../../protocol/v1.md).
