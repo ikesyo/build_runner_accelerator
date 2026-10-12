@@ -2,12 +2,21 @@
 
 An experimental Rust frontend for [build_runner](https://pub.dev/packages/build_runner). Rust plans actions and manages incremental state; a Dart worker runs builders through build_runner APIs.
 
-## Install and run
+## Installation
+
+The current package version is `0.11.0`.
 
 Add the package to your application:
 
 ```bash
-dart pub add dev:build_runner_accelerator
+dart pub add dev:build_runner_accelerator:^0.11.0
+```
+
+Or add it to `pubspec.yaml`:
+
+```yaml
+dev_dependencies:
+  build_runner_accelerator: ^0.11.0
 ```
 
 Then use the project-local command:
