@@ -162,6 +162,10 @@ pub(super) fn run(
             )?);
         }
         let active = pool.or(owned_pool.as_mut()).expect("pool is available");
+        // A failed earlier filtered cycle may have left resolver metadata in
+        // the resident worker. Drain it before any operation can fail so it
+        // cannot be committed by a later build.
+        drop(active.take_dep_graph());
         active.initialize(
             &workspace.root,
             &workspace.root_package,
@@ -180,7 +184,7 @@ pub(super) fn run(
             BTreeSet::new(),
             false,
         )?;
-        active.build_filtered(
+        let built = active.build_filtered(
             workspace,
             &roots,
             &mut transaction.overlay,
@@ -188,8 +192,10 @@ pub(super) fn run(
             &plan.visibility,
             &specs,
             &mut lazy,
-        )?;
-        state.resolver_dep_graph.extend(active.take_dep_graph());
+        );
+        let dep_graph = active.take_dep_graph();
+        built?;
+        state.resolver_dep_graph.extend(dep_graph);
     }
     for result in lazy.take_results() {
         record_build_result(

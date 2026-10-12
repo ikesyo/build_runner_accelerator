@@ -61,6 +61,26 @@ Future<void> _waitBeforeExternalRead(AssetId input) async {
   }
 }
 
+Future<void> _waitAtResolverFailureBarrier(AssetId input) async {
+  if (input.path != 'lib/two.dart') return;
+  final armPath = Platform.environment['BUILD_FILTER_RESOLVER_FAILURE_ARM'];
+  final reachedPath =
+      Platform.environment['BUILD_FILTER_RESOLVER_FAILURE_REACHED'];
+  final releasePath =
+      Platform.environment['BUILD_FILTER_RESOLVER_FAILURE_RELEASE'];
+  if (armPath == null || reachedPath == null || releasePath == null) return;
+  if (!File(armPath).existsSync()) return;
+
+  File(reachedPath).writeAsStringSync('resolver completed before failure\n');
+  final deadline = DateTime.now().add(const Duration(seconds: 120));
+  while (!File(releasePath).existsSync()) {
+    if (DateTime.now().isAfter(deadline)) {
+      throw StateError('timed out waiting at resolver failure barrier');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
 Future<void> _waitAfterExternalRead(AssetId input, String contents) async {
   if (input.path != 'lib/a.mid' && input.path != 'lib/b.mid') return;
   final armPath = Platform.environment['BUILD_FILTER_EXTERNAL_READ_ARM'];
@@ -222,12 +242,22 @@ class DartSeed implements Builder {
   };
   Future<void> build(BuildStep step) async {
     _recordHistory('${step.inputId.package}|${step.inputId.path}');
-    await step.readAsString(step.inputId);
+    final source = await step.readAsString(step.inputId);
+    final generated = step.inputId.path.endsWith('shared.src')
+        ? "export 'transitive.dart';\n"
+        : source.contains('import-old')
+        ? "import 'old.dart';\nclass Generated extends Old {}\n"
+        : source.contains('import-new')
+        ? "import 'new.dart';\nclass Generated extends New {}\n"
+        : "import 'shared.dart';\nclass Generated extends Shared {}\n";
+    final sourceMarker = source.contains('fail-after-resolver')
+        ? '// fail-after-resolver\n'
+        : source.contains('recovery-two')
+        ? '// recovery-two\n'
+        : '';
     await step.writeAsString(
       step.allowedOutputs.single,
-      step.inputId.path.endsWith('shared.src')
-          ? "export 'transitive.dart';\n"
-          : "import 'shared.dart';\nclass Generated extends Shared {}\n",
+      '$generated$sourceMarker',
     );
   }
 }
@@ -238,7 +268,19 @@ class Resolve implements Builder {
   };
   Future<void> build(BuildStep step) async {
     _recordHistory('${step.inputId.package}|${step.inputId.path}');
-    await step.resolver.libraryFor(step.inputId);
-    await step.writeAsString(step.allowedOutputs.single, 'resolved\n');
+    final source = await step.readAsString(step.inputId);
+    final library = await step.resolver.libraryFor(step.inputId);
+    if (source.contains('fail-after-resolver')) {
+      await _waitAtResolverFailureBarrier(step.inputId);
+      throw StateError('intentional resolver fixture failure');
+    }
+    final generatedClass = library.getClass('Generated');
+    final dependencyClass = generatedClass?.supertype?.element;
+    final summary = <String>[
+      generatedClass?.name ?? 'no-generated-class',
+      dependencyClass?.name ?? 'missing-supertype',
+      '${dependencyClass?.getters.length ?? 0}',
+    ].join(':');
+    await step.writeAsString(step.allowedOutputs.single, 'resolved:$summary\n');
   }
 }
