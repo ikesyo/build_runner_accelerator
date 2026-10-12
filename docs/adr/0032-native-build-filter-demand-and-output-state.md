@@ -5,6 +5,8 @@
 - Amends ADR 0029 and ADR 0031; extends the private state contract in ADR 0030.
 - Amended by [ADR 0033](0033-filtered-demand-scheduler.md): filtered roots use
   shared parallel demand coordination and deferred workers.
+- Amended by [ADR 0033](0033-filtered-demand-scheduler.md): filtered roots use
+  shared parallel demand coordination and deferred workers.
 
 ## Context and decision
 
