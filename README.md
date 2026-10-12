@@ -39,7 +39,7 @@ including macOS Intel. See [launcher and release details](docs/launcher-and-rele
 
 ## Build selected outputs
 
-Use --build-filter to build matching outputs and the producers they need:
+Use `--build-filter` to build matching outputs and the producers they need:
 
 ```bash
 dart run build_runner_accelerator build --build-filter='lib/*.g.dart'
@@ -83,7 +83,7 @@ worker observations of eligible external sources absent at build start; see
 | If you need to… | See |
 | --- | --- |
 | Check supported CLI options, modes, and environment controls | [Launcher reference](docs/launcher-and-release.md) |
-| Understand build.yaml, --define, release, and named-config behavior | [Configuration guide](docs/configuration.md) |
+| Understand `build.yaml`, `--define`, release, and named-config behavior | [Configuration guide](docs/configuration.md) |
 | Review native build-filter guarantees and limits | [ADR 0032](docs/adr/0032-native-build-filter-demand-and-output-state.md) |
 | Understand Rust/Dart responsibilities and IPC | [Protocol v1](protocol/v1.md) and [ADR index](docs/adr/README.md) |
 | Contribute or run correctness checks | [Development guide](docs/development.md) |

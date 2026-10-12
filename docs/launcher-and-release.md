@@ -19,63 +19,64 @@ worker, not the launcher.
 
 | Mode | Native unavailable or unsupported request |
 | --- | --- |
-| auto (default) | Explain on stderr, then run stock build_runner. |
-| rust | Return an error before native actions. |
-| dart | Always run stock build_runner. |
+| `auto` (default) | Explain on stderr, then run stock `build_runner`. |
+| `rust` | Return an error before native actions. |
+| `dart` | Always run stock `build_runner`. |
 
 The launcher recognizes these options:
 
 | Option | Purpose |
 | --- | --- |
-| --mode auto\|rust\|dart | Select native/fallback policy. |
-| --root PATH, --dart PATH | Select workspace or Dart executable. |
-| --jobs N, --interval-ms N | Configure the native frontend. |
-| --force-aot, --force-jit | Select worker execution mode; mutually exclusive. |
-| --build-filter PATTERN | Select build/watch outputs; syntax and manifest limits are in [ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md). |
-| --define, --release, --no-release, --config | Resolve build_runner settings; see [configuration](configuration.md). |
-| --delete-conflicting-outputs, -d | Accepted retired flags in build_runner 2.16.2; they have no effect and are never added automatically. |
-| prewarm [--background] | Prepare caches without running builders. |
-| aot-cache-key | Print a native worker cache key; no stock equivalent. |
+| `--mode auto`, `--mode rust`, `--mode dart` | Select native/fallback policy. |
+| `--root PATH`, `--dart PATH` | Select workspace or Dart executable. |
+| `--jobs N`, `--interval-ms N` | Configure the native frontend. |
+| `--force-aot`, `--force-jit` | Select worker execution mode; mutually exclusive. |
+| `--build-filter PATTERN` | Select build/watch outputs; syntax and manifest limits are in [ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md). |
+| `--define`, `--release`, `--no-release`, `--config` | Resolve `build_runner` settings; see [configuration](configuration.md). |
+| `--delete-conflicting-outputs`, `-d` | Accepted retired flags in `build_runner` 2.16.2; they have no effect and are never added automatically. |
+| `prewarm [--background]` | Prepare caches without running builders. |
+| `aot-cache-key` | Print a native worker cache key; no stock equivalent. |
 
 Unsupported commands and options fall back before native download or
-workspace setup in auto; rust rejects them. Fallback retains the original
-argument order, values, -- separator, and explicit AOT/JIT flags, and preserves
+workspace setup in `auto`; `rust` rejects them. Fallback retains the original
+argument order, values, `--` separator, and explicit `--force-aot`/`--force-jit`
+flags, and preserves
 stock's exit status. Stock option values remain values even when they resemble
 accelerator options. Invalid accelerator values are errors in every mode.
 Leading help/version describe the accelerator; command help/version route to
-stock in auto and are rejected in rust. The internal --worker and transport
+stock in `auto` and are rejected in `rust`. The internal `--worker` and transport
 options are for tests and diagnostics, not third-party extension APIs.
 
-In auto, these option groups also route to stock:
+In `auto`, these option groups also route to stock:
 
 | Stock-only group | Examples |
 | --- | --- |
-| Output layout or build directory | --output / -o, --workspace, positional build directories |
-| Output lifecycle and logging | --keep-modified-outputs, --only-check, --symlink, --no-symlink, --verbose / -v, --verbose-durations |
-| Dart runtime or profiling | --enable-experiment, --dart-jit-vm-arg, --dart-aot-perf |
-| Serve and daemon | --hostname, --log-requests, --live-reload, --build-mode |
-| Other stock commands or arguments | clean, serve, run, test, stop, daemon, unknown arguments, invalid stock values |
+| Output layout or build directory | `--output` / `-o`, `--workspace`, positional build directories |
+| Output lifecycle and logging | `--keep-modified-outputs`, `--only-check`, `--symlink`, `--no-symlink`, `--verbose` / `-v`, `--verbose-durations` |
+| Dart runtime or profiling | `--enable-experiment`, `--dart-jit-vm-arg`, `--dart-aot-perf` |
+| Serve and daemon | `--hostname`, `--log-requests`, `--live-reload`, `--build-mode` |
+| Other stock commands or arguments | `clean`, `serve`, `run`, `test`, `stop`, `daemon`, unknown arguments, invalid stock values |
 
-Strict rust mode rejects these requests. Prewarm has no stock equivalent:
+Strict `rust` mode rejects these requests. Prewarm has no stock equivalent:
 it accepts supported configuration settings but rejects stock-only and
 build-only arguments.
 
 ## Environment controls
 
-Names below use the BUILD_RUNNER_ACCELERATOR_ prefix. Unknown names are
+Names below use the `BUILD_RUNNER_ACCELERATOR_` prefix. Unknown names are
 ignored. Public compatibility intent applies only to the Public row.
 
 | Class | Suffixes | Use |
 | --- | --- | --- |
-| Public | BIN, CACHE, RELEASE_BASE_URL, WORKER_AOT | Select a preinstalled binary, cache root, HTTPS release mirror, or worker compilation policy. |
-| Diagnostics | DEBUG, METRICS, ANALYSIS_TRACE, WALL_TRACE, PLAN_ONLY | Error details, worker metrics, analysis/timing traces, and plan inspection. Traces need METRICS; PLAN_ONLY exits before actions. Output schemas are not stable. |
-| Cache recovery | BYTE_STORE, DEP_CACHE, DEP_PREFETCH, MANIFEST_SNAPSHOT, EARLY_CATALOG, PART_FILTER, SDK_SUMMARY_PREWARM, ANALYSIS_PREWARM | Set the named optimization to 0 for diagnosis. BYTE_STORE and DEP_CACHE disable their shared caches; BYTE_STORE also accepts false/off. |
-| Experimental | ANALYSIS_SINGLE_FLIGHT, COMPILE_PREWARM, MANIFEST_PREWARM | Opt-in experiments; disabled by default and subject to change. |
-| Tuning | ANALYSIS_PREWARM_JOBS, ANALYSIS_PREWARM_DIRS, RESOLVER_CAP | Prewarm and resolver limits; no performance guarantee. |
-| Internal | WORKER_KERNEL, WORKER_AOT_PATH, WORKER_AOT_BACKGROUND_LOCK, MANIFEST_WORKER_AOT, SUPERVISED | Artifact overrides and process coordination. Do not set in ordinary builds. |
+| Public | `BIN`, `CACHE`, `RELEASE_BASE_URL`, `WORKER_AOT` | Select a preinstalled binary, cache root, HTTPS release mirror, or worker compilation policy. |
+| Diagnostics | `DEBUG`, `METRICS`, `ANALYSIS_TRACE`, `WALL_TRACE`, `PLAN_ONLY` | Error details, worker metrics, analysis/timing traces, and plan inspection. Traces need `METRICS`; `PLAN_ONLY` exits before actions. Output schemas are not stable. |
+| Cache recovery | `BYTE_STORE`, `DEP_CACHE`, `DEP_PREFETCH`, `MANIFEST_SNAPSHOT`, `EARLY_CATALOG`, `PART_FILTER`, `SDK_SUMMARY_PREWARM`, `ANALYSIS_PREWARM` | Set the named optimization to `0` for diagnosis. `BYTE_STORE` and `DEP_CACHE` disable their shared caches; `BYTE_STORE` also accepts `false`/`off`. |
+| Experimental | `ANALYSIS_SINGLE_FLIGHT`, `COMPILE_PREWARM`, `MANIFEST_PREWARM` | Opt-in experiments; disabled by default and subject to change. |
+| Tuning | `ANALYSIS_PREWARM_JOBS`, `ANALYSIS_PREWARM_DIRS`, `RESOLVER_CAP` | Prewarm and resolver limits; no performance guarantee. |
+| Internal | `WORKER_KERNEL`, `WORKER_AOT_PATH`, `WORKER_AOT_BACKGROUND_LOCK`, `MANIFEST_WORKER_AOT`, `SUPERVISED` | Artifact overrides and process coordination. Do not set in ordinary builds. |
 
-Toolchain variables such as DART_BIN, CARGO_BIN, PUB_CACHE, RUSTUP_HOME, and
-CARGO_HOME belong to repository scripts, not the launcher API. Retired names
+Toolchain variables such as `DART_BIN`, `CARGO_BIN`, `PUB_CACHE`, `RUSTUP_HOME`, and
+`CARGO_HOME` belong to repository scripts, not the launcher API. Retired names
 and recovery steps are in the [compatibility cleanup guide](compatibility-cleanup.md).
 
 ## Prewarm
@@ -89,19 +90,19 @@ dart run build_runner_accelerator prewarm --background
 ```
 
 Background prewarm returns promptly and logs to
-`.dart_tool/build_runner_accelerator/prewarm.log`. A workspace lock prevents
-duplicate worker AOT compiles. Prewarm runs no build actions. Under auto, it
-reports and exits successfully when native execution is unavailable; dart mode
-skips it and rust stays strict. Filters and other build-only arguments are
-rejected. Set `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` to skip its
-analysis sweep.
+`.dart_tool/build_runner_accelerator/prewarm.log`. A worker AOT compile lock
+prevents duplicate worker AOT compiles. Prewarm runs no build actions. Under
+`auto`, it reports and exits successfully when native execution is unavailable;
+`dart` mode skips it and `rust` stays strict. Filters and other build-only
+arguments are rejected. Set `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` to
+skip its analysis sweep.
 
 ## Binary selection and integrity
 
 Frontend resolution checks, in order:
 
 1. `BUILD_RUNNER_ACCELERATOR_BIN`.
-2. A workspace binary under .dart_tool/build_runner_accelerator/bin/.
+2. A workspace binary under `.dart_tool/build_runner_accelerator/bin/`.
 3. The versioned user cache.
 4. The matching GitHub Release artifact.
 5. Stock fallback in auto.
@@ -121,8 +122,8 @@ mirror.
 | windows-x64 | x86_64-pc-windows-msvc | zip |
 | windows-arm64 | aarch64-pc-windows-msvc | zip |
 
-macOS Intel uses stock in auto. The signed release workflow requires
-BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY in repository Actions secrets;
+macOS Intel uses stock in `auto`. The signed release workflow requires
+`BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY` in repository Actions secrets;
 the corresponding public key is pinned in the package.
 
 The release cache is separate from workspace state. It uses the platform
@@ -155,11 +156,11 @@ keeps the worker it started with. `BUILD_RUNNER_ACCELERATOR_WORKER_AOT` accepts:
 
 | Value | Behavior |
 | --- | --- |
-| 1 | Compile synchronously. |
-| background | Compile in a background process. |
-| force | Require AOT; compile failure is fatal. |
-| 0 or another value | Use the kernel/script worker. |
+| `1` | Compile synchronously. |
+| `background` | Compile in a background process. |
+| `force` | Require AOT; compile failure is fatal. |
+| `0` or another value | Use the kernel/script worker. |
 
-Explicit --force-aot/--force-jit take precedence. See the
+Explicit `--force-aot`/`--force-jit` take precedence. See the
 [development guide](development.md) for toolchain and release checks, and
 [protocol v1](../protocol/v1.md) for the internal worker contract.
