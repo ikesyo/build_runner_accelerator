@@ -749,6 +749,142 @@ def parallel_watch_comparison(stock, native):
     check(stock, native)
 
 
+def watch_resolver_failure_graph_comparison(tmp):
+    stock, native = tmp / 'resolver-failure-stock', tmp / 'resolver-failure-native'
+    prepare(stock); prepare(native)
+    for root in (stock, native):
+        (root / 'build.yaml').write_text(RESOLVER_BUILD_YAML)
+        (root / 'lib/one.src').write_text('import-old\n')
+        (root / 'lib/two.src').write_text('import-new\n')
+        (root / 'lib/old.dart').write_text('class Old {}\n')
+        (root / 'lib/new.dart').write_text('class New {}\n')
+
+    flags = ['--build-filter=lib/one.final,lib/two.final']
+    check(stock, native, flags)
+    before_stock_outputs = outputs(stock)
+    before_outputs = outputs(native)
+    assert before_stock_outputs == before_outputs, (before_stock_outputs, before_outputs)
+    graph_path = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+    before_graph = graph_path.read_bytes()
+
+    handles = []
+    barriers = {}
+    error_marker = 'intentional resolver fixture failure'
+    try:
+        for root, mode in ((stock, 'stock'), (native, 'rust')):
+            arm = tmp / (root.name + '-resolver-failure-arm')
+            reached = tmp / (root.name + '-resolver-failure-reached')
+            release = tmp / (root.name + '-resolver-failure-release')
+            barriers[root] = (arm, reached, release)
+            arm.write_text('armed\n')
+            extras = {
+                'BUILD_FILTER_RESOLVER_FAILURE_ARM': str(arm),
+                'BUILD_FILTER_RESOLVER_FAILURE_REACHED': str(reached),
+                'BUILD_FILTER_RESOLVER_FAILURE_RELEASE': str(release),
+            }
+            handles.append(watch(root, mode, flags, jobs=4, extra_env=extras))
+        assert outputs(stock) == outputs(native) == before_outputs
+        for root in (stock, native):
+            history_path(root).unlink(missing_ok=True)
+
+        # Change the first root's resolver closure, then fail the second root
+        # after resolver work. The initial watch build succeeded, so watch keeps
+        # the filtered graph while processing this failed cycle and recovery.
+        for root in (stock, native):
+            (root / 'lib/one.src').write_text('import-new\n')
+            (root / 'lib/two.src').write_text(
+                'import-new fail-after-resolver\n')
+        for root, handle in zip((stock, native), handles):
+            reached = barriers[root][1]
+            wait(lambda reached=reached: reached.exists(), handle[0], handle[1])
+
+        attempted_actions = {
+            'lib/one.src': 1,
+            'lib/one.dart': 1,
+            'lib/two.src': 1,
+            'lib/two.dart': 1,
+        }
+        # Once released, watch may retry the failed cycle while the triggering
+        # edits are pending. Require each stage to have run, without prescribing
+        # a failure retry count.
+        for root in (stock, native):
+            failed_history = history(root)
+            assert all(failed_history[action] >= count
+                       for action, count in attempted_actions.items()), (
+                root, failed_history, attempted_actions)
+        assert outputs(native) == before_outputs, (outputs(native), before_outputs)
+        assert graph_path.read_bytes() == before_graph
+        # The barrier holds the failure after both resolver results are
+        # observed. Restore root one and queue root two's recovery before the
+        # failed build exits, so watch event retries cannot race these edits.
+        for root in (stock, native):
+            history_path(root).unlink(missing_ok=True)
+        recovery_positions = [handle[1].stat().st_size for handle in handles]
+        for root in (stock, native):
+            (root / 'lib/one.src').write_text('import-old\n')
+            (root / 'lib/two.src').write_text('import-new recovery-two\n')
+        for _, _, release in barriers.values():
+            release.write_text('release\n')
+        for handle in handles:
+            wait(lambda handle=handle:
+                 error_marker in handle[1].read_text(), handle[0], handle[1])
+
+        # Only the successful recovery can update the graph. It must restore
+        # root one's old edge while rebuilding root two.
+        markers = ('Built with build_runner', 'Build completed (Rust frontend)')
+        for index, (root, handle) in enumerate(zip((stock, native), handles)):
+            marker = markers[index]
+            wait(lambda root=root, handle=handle, index=index, marker=marker:
+                 marker in handle[1].read_text()[recovery_positions[index]:]
+                 and b"import 'old.dart'" in outputs(root).get('lib/one.dart', b'')
+                 and b'recovery-two' in outputs(root).get('lib/two.dart', b''),
+                 handle[0], handle[1])
+
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+        assert b"import 'old.dart'" in outputs(native)['lib/one.dart'], outputs(native)
+        assert b"import 'new.dart'" in outputs(native)['lib/two.dart'], outputs(native)
+        assert outputs(native)['lib/one.final'] == before_outputs['lib/one.final']
+        assert b'resolved:Generated:Old:0' in outputs(native)['lib/one.final']
+        assert b'resolved:Generated:New:0' in outputs(native)['lib/two.final']
+        recovered_outputs = outputs(native)
+        assert history(stock) == Counter({
+            'lib/one.src': 1, 'lib/one.dart': 1,
+            'lib/two.src': 1, 'lib/two.dart': 1,
+        }), (history(stock), handles[0][1].read_text())
+        assert history(native) == Counter({
+            'lib/two.src': 1, 'lib/two.dart': 1,
+        }), (history(native), handles[1][1].read_text())
+
+        # Only the last successful resolver graph should drive invalidation.
+        # The old dependency belongs to the committed first root; if the failed
+        # new graph leaked into state, this edit would miss its rebuild.
+        for root in (stock, native):
+            history_path(root).unlink(missing_ok=True)
+        refresh_positions = [handle[1].stat().st_size for handle in handles]
+        for root in (stock, native):
+            (root / 'lib/old.dart').write_text('class Old { int get value => 1; }\n')
+        for index, (root, handle) in enumerate(zip((stock, native), handles)):
+            marker = markers[index]
+            wait(lambda root=root, handle=handle, index=index, marker=marker:
+                 marker in handle[1].read_text()[refresh_positions[index]:]
+                 and b'resolved:Generated:Old:1' in outputs(root).get(
+                     'lib/one.final', b''),
+                 handle[0], handle[1])
+
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+        assert history(stock) == history(native) == Counter({'lib/one.dart': 1}), (
+            history(stock), history(native), handles[0][1].read_text(),
+            handles[1][1].read_text())
+        assert outputs(native)['lib/one.final'] != recovered_outputs['lib/one.final']
+        assert b'resolved:Generated:Old:1' in outputs(native)['lib/one.final']
+        assert outputs(native)['lib/two.final'] == recovered_outputs['lib/two.final']
+    finally:
+        for _, _, release in barriers.values():
+            release.write_text('release cleanup\n')
+        stop_all(handles)
+
+
+
 def watch_midbuild_source_edit_comparison(tmp):
     stock, native = tmp / 'watch-midbuild-stock', tmp / 'watch-midbuild-native'
     prepare(stock); prepare(native)

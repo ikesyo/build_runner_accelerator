@@ -178,6 +178,10 @@ pub(super) fn run(
             .as_deref_mut()
             .or(owned_pool.as_mut())
             .expect("pool is available");
+        // Resolver metadata from a failed earlier filtered cycle must not be
+        // committed by a later successful build. Drain it before any operation
+        // on the resident pool can fail.
+        drop(active.take_dep_graph());
         active.prepare_for_filtered_roots(&workspace.root, dirty_roots.len())?;
         active.initialize(
             &workspace.root,
@@ -197,7 +201,7 @@ pub(super) fn run(
             BTreeSet::new(),
             false,
         )?;
-        active.build_filtered(
+        let built = active.build_filtered(
             workspace,
             &dirty_roots,
             &mut transaction.overlay,
@@ -205,8 +209,10 @@ pub(super) fn run(
             &plan.visibility,
             &specs,
             &mut lazy,
-        )?;
-        state.resolver_dep_graph.extend(active.take_dep_graph());
+        );
+        let dep_graph = active.take_dep_graph();
+        built?;
+        state.resolver_dep_graph.extend(dep_graph);
         pool_metrics = Some(active.metrics());
     } else if let Some(active) = pool.as_deref() {
         // A filtered watch pool may be resident but intentionally unstarted.
