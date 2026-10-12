@@ -30,6 +30,10 @@ pub(super) struct CommitInputs<'a> {
     pub(super) config_digest: String,
     pub(super) scanned_packages: &'a BTreeSet<String>,
     pub(super) expected_outputs: BTreeSet<String>,
+    /// Ordinary watch builds must keep source evidence from build start so
+    /// edits that arrive after an action read are still dirty next cycle.
+    pub(super) source_snapshot_evidence:
+        Option<(&'a crate::snapshot::Snapshot, &'a BTreeSet<String>)>,
     /// Filtered watch builds must not mark source changes that arrived after
     /// their initial snapshot as already incorporated by the completed build.
     pub(super) filtered_snapshot_evidence: Option<(
@@ -90,6 +94,7 @@ pub(super) fn commit(
         config_digest,
         scanned_packages,
         expected_outputs,
+        source_snapshot_evidence,
         filtered_snapshot_evidence,
         transaction,
     } = inputs;
@@ -189,6 +194,19 @@ pub(super) fn commit(
     let scan = crate::wall::Span::new("post_snapshot");
     let (mut post_snapshot, post_scan_us, post_assets_us) =
         snapshot::scan_committed(workspace, state, build_config, scanned_packages)?;
+    if let Some((initial_snapshot, generated_assets)) = source_snapshot_evidence {
+        // A watcher event can arrive after an action reads a source but before
+        // this post-build scan. Keep build-start digests for existing source
+        // files so the queued event still makes them dirty next cycle. Leave
+        // newly observed files and glob membership at their post-build values:
+        // ordinary workers can consume first-seen external assets or generated
+        // outputs during this transaction.
+        for (asset, initial) in initial_snapshot {
+            if !generated_assets.contains(asset) && !asset.starts_with("__glob__|") {
+                post_snapshot.insert(asset.clone(), initial.clone());
+            }
+        }
+    }
     if let Some((initial_snapshot, generated_assets, observed_snapshot_delta)) =
         filtered_snapshot_evidence
     {

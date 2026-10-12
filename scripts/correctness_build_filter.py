@@ -697,6 +697,67 @@ def watch_midbuild_source_edit_comparison(tmp):
         stop_all(handles)
 
 
+def watch_unfiltered_midbuild_source_edit_comparison(tmp):
+    stock, native = tmp / 'watch-unfiltered-postscan-stock', tmp / 'watch-unfiltered-postscan-native'
+    prepare(stock); prepare(native)
+    check(stock, native)
+
+    handles = []
+    barrier_paths = {}
+    markers = ('Built with build_runner', 'Build completed (Rust frontend)')
+    try:
+        for root, mode in ((stock, 'stock'), (native, 'rust')):
+            arm = tmp / (root.name + '-barrier-arm')
+            reached = tmp / (root.name + '-barrier-reached')
+            release = tmp / (root.name + '-barrier-release')
+            barrier_paths[root] = (arm, reached, release)
+            extras = {
+                'BUILD_FILTER_READ_BARRIER_ARM': str(arm),
+                'BUILD_FILTER_READ_BARRIER_REACHED': str(reached),
+                'BUILD_FILTER_READ_BARRIER_RELEASE': str(release),
+            }
+            # Exercise the ordinary native watch path, where the post-scan
+            # snapshot previously replaced source evidence from build start.
+            handles.append(watch(root, mode, [], extra_env=extras))
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+        for root in (stock, native): history_path(root).unlink(missing_ok=True)
+
+        positions = [handle[1].stat().st_size for handle in handles]
+        for arm, _, _ in barrier_paths.values(): arm.write_text('armed\n')
+        for root in (stock, native):
+            (root / 'lib/a.txt').write_text('unfiltered watch trigger edit\n')
+        for root, (_, reached, _), handle in zip((stock, native), barrier_paths.values(), handles):
+            wait(lambda reached=reached: reached.exists(), handle[0], handle[1])
+
+        value = 'unfiltered source changed after builder read\n'
+        for root in (stock, native): (root / 'lib/common.txt').write_text(value)
+        for _, _, release in barrier_paths.values(): release.write_text('release\n')
+
+        for index, handle in enumerate(handles):
+            marker = markers[index]
+            # The unfiltered bug produced a no-work cycle instead of a second
+            # successful build. Stop polling as soon as that failure is visible.
+            wait(lambda handle=handle, index=index, marker=marker:
+                 handle[1].read_text()[positions[index]:].count(marker) >= 2
+                 or (index == 1 and 'No work to do (Rust frontend)' in
+                     handle[1].read_text()[positions[index]:]),
+                 handle[0], handle[1], timeout=30)
+
+        stock_output = outputs(stock).get('lib/a.final', b'')
+        native_output = outputs(native).get('lib/a.final', b'')
+        assert value.encode() in stock_output, (
+            'stock watch must process a source edit that arrives after its builder read',
+            stock_output, history(stock), handles[0][1].read_text()[positions[0]:])
+        assert value.encode() in native_output, (
+            'unfiltered native watch must process a source edit that arrives after its builder read',
+            native_output, history(native), handles[1][1].read_text()[positions[1]:])
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+        assert history(stock) == history(native), (history(stock), history(native))
+    finally:
+        for _, _, release in barrier_paths.values(): release.write_text('release cleanup\n')
+        stop_all(handles)
+
+
 def watch_initial_build_source_edit_comparison(tmp):
     stock, native = tmp / 'watch-initial-stock', tmp / 'watch-initial-native'
     prepare(stock); prepare(native)
@@ -1667,6 +1728,7 @@ GROUPS = {
         watch_comparison(tmp),
         watch_resolver_failure_graph_comparison(tmp),
         watch_midbuild_source_edit_comparison(tmp),
+        watch_unfiltered_midbuild_source_edit_comparison(tmp),
         watch_initial_build_source_edit_comparison(tmp),
         watch_unknown_external_source_comparison(tmp),
         writer_lock_watch_comparison(tmp),

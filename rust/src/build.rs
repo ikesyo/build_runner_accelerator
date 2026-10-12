@@ -219,6 +219,16 @@ pub(crate) fn run_with_config_session(
         pool_metrics,
         part_filtered_actions,
     } = execution;
+    let mut generated_assets: std::collections::BTreeSet<String> =
+        state.output_locations.keys().cloned().collect();
+    generated_assets.extend(state.watch_generated_sources.iter().cloned());
+    generated_assets.extend(
+        state
+            .actions
+            .values()
+            .flat_map(|action| action.outputs.iter().cloned()),
+    );
+    generated_assets.extend(expected_outputs.iter().cloned());
     let committing = crate::wall::Span::new("commit");
     let graph_metrics = commit::commit(
         &mut state,
@@ -229,6 +239,7 @@ pub(crate) fn run_with_config_session(
             config_digest,
             scanned_packages: &scanned_packages,
             expected_outputs,
+            source_snapshot_evidence: Some((&current_snapshot, &generated_assets)),
             filtered_snapshot_evidence: None,
             transaction,
         },

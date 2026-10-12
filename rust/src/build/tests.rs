@@ -341,6 +341,7 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
             // Post-process outputs are dynamic, so the plan cannot protect
             // the reused asset through expected_outputs.
             expected_outputs: BTreeSet::new(),
+            source_snapshot_evidence: None,
             filtered_snapshot_evidence: None,
             transaction,
         },

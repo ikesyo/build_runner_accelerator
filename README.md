@@ -170,14 +170,14 @@ for lib paths or `asset:my_app/lib/a.g.dart` for package-root paths; package
 names support `*`. Native paths support `*` and whole `**` segments. Builders
 run with all their outputs, including siblings, and required primary/secondary
 producer actions run on demand. Filtered demand runs serially on one worker,
-even when `--jobs` is higher. No match is a successful build. During watch,
-source edits, additions, or deletions that arrive during an active build remain
-visible to the queued build cycle. If the first worker `read` or `canRead`
-observes an external source absent from the build-start snapshot, the
-transaction keeps the actual bytes or missing result and commits that first
-observation to the graph. This matches stock's source read cache and leaves a
-later edit visible to the queued cycle instead of absorbing it in the
-post-build scan.
+even when `--jobs` is higher. No match is a successful build. Successful
+native watch builds preserve build-start evidence for existing sources edited
+or deleted while actions are running, so a later post-build scan cannot absorb
+those events before the queued cycle processes them. Filtered builds also
+preserve additions and first observations of external sources. If a worker's
+first `read` or `canRead` observes an external source absent from the build-start
+snapshot, the transaction keeps the actual bytes or missing result and commits
+that observation to the graph, matching stock's source read cache.
 
 Classes/braces/escaping, `?`, complex URI syntax, non-ASCII, absolute/dot-segment
 paths and filters with optional/post-process/zero-output or trigger-only builders use stock

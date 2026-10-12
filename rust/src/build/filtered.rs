@@ -346,6 +346,7 @@ pub(super) fn run(
             config_digest: config_digest.to_owned(),
             scanned_packages,
             expected_outputs: plan.expected_outputs(),
+            source_snapshot_evidence: None,
             filtered_snapshot_evidence: Some((
                 current_snapshot,
                 &generated_assets,

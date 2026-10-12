@@ -177,7 +177,10 @@ def watch_json_poll_regression(temporary):
 
 
 def watch(root, args, edit, expected):
-    log = root / 'settings-watch.log'
+    # Keep redirected output outside the watched tree: native watch observes
+    # ordinary files, so appending its own log can otherwise trigger a no-op
+    # rebuild after every line it prints.
+    log = root.parent / f'{root.name}-settings-watch.log'
     with log.open('w') as stream:
         proc = subprocess.Popen(args, cwd=root, env=ENV, stdout=stream, stderr=stream,
                                 start_new_session=True)
@@ -216,7 +219,7 @@ def watch_topology_boundary(temporary):
     for mode in ('stock', 'rust', 'auto'):
         root = temporary / f'watch-topology-{mode}'
         prepare(root)
-        log = root / 'topology-watch.log'
+        log = root.parent / f'{root.name}-topology-watch.log'
         args = stock(root, flags, 'watch') if mode == 'stock' else launcher(root, mode, 'watch', flags)
         with log.open('w') as stream:
             proc = subprocess.Popen(args, cwd=root, env=ENV, stdout=stream, stderr=stream,
@@ -303,7 +306,7 @@ def watch_normalized_config_paths(temporary, only=None):
                     'dev_dependencies:\n  settings_configs:\n    path: build.dir\n'))
                 ok([DART, 'pub', 'get', '--offline'], root)
             flags = [f'-c{key}', '-rr', '--force-jit']
-            log = root / 'normalized-watch.log'
+            log = root.parent / f'{root.name}-normalized-watch.log'
             args = stock(root, flags, 'watch') if mode == 'stock' else launcher(root, mode, 'watch', flags)
             with log.open('w') as stream:
                 proc = subprocess.Popen(args, cwd=root, env=ENV, stdout=stream,
