@@ -79,14 +79,13 @@ pub(super) fn run(
         })
         .collect();
     let mut roots = Vec::new();
-    let mut selected_action_keys = BTreeSet::new();
     for spec in &plan.specs {
         let selected = spec.outputs.iter().any(|output| {
             filters
                 .iter()
                 .any(|filter| filter.matches(output, &workspace.root_package))
         });
-        if selected && selected_action_keys.insert(spec.action_key()) {
+        if selected {
             // One action publishes every sibling output as a single unit.
             // Multiple matched siblings must therefore schedule one root.
             roots.push(spec.outputs[0].clone());
