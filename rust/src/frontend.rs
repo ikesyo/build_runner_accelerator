@@ -695,7 +695,10 @@ fn select_dart_fallback(options: &Options, reason: &str) -> io::Result<Option<Ru
     Ok(None)
 }
 
-pub(crate) fn run_dart_fallback(options: &Options) -> io::Result<()> {
+pub(crate) fn run_dart_fallback(
+    options: &Options,
+    workspace_lock: Option<&crate::workspace_lock::WorkspaceLock>,
+) -> io::Result<()> {
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     let mut command = Command::new(dart_binary);
     command.env_remove(crate::process::SUPERVISION_CONTEXT);
@@ -709,10 +712,25 @@ pub(crate) fn run_dart_fallback(options: &Options) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        Err(command.current_dir(&options.root).exec())
+        let inheritance = workspace_lock
+            .map(crate::workspace_lock::WorkspaceLock::inherit_for_exec)
+            .transpose()?;
+        let exec_error = command.current_dir(&options.root).exec();
+        if let Some(inheritance) = inheritance
+            && let Err(restore_error) = inheritance.restore()
+        {
+            return Err(io::Error::new(
+                restore_error.kind(),
+                format!(
+                    "failed to restore workspace lock descriptor after stock exec failed ({exec_error}): {restore_error}"
+                ),
+            ));
+        }
+        Err(exec_error)
     }
     #[cfg(not(unix))]
     {
+        let _ = workspace_lock;
         let status = command.current_dir(&options.root).status()?;
         std::process::exit(status.code().unwrap_or(1));
     }

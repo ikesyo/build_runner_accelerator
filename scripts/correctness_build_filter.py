@@ -888,6 +888,149 @@ def writer_lock_watch_comparison(tmp):
             stop_all([handle])
 
 
+def late_fallback_writer_lock_comparison(tmp):
+    stock, native = tmp / 'late-lock-stock', tmp / 'late-lock-native'
+    prepare(stock); prepare(native)
+    flags = ['--build-filter=lib/a.final']
+    check(stock, native, flags, compile_flag='--force-jit')
+
+    barriers = {}
+    handles = []
+    try:
+        for root in (stock, native):
+            barriers[root] = tuple(
+                tmp / f'{root.name}-late-lock-{suffix}'
+                for suffix in ('arm', 'reached', 'release')
+            )
+        for root, mode in ((stock, 'stock'), (native, 'auto')):
+            arm, reached, release = barriers[root]
+            handles.append(watch(root, mode, flags, extra_env={
+                'BUILD_FILTER_READ_BARRIER_ARM': str(arm),
+                'BUILD_FILTER_READ_BARRIER_REACHED': str(reached),
+                'BUILD_FILTER_READ_BARRIER_RELEASE': str(release),
+                'BUILD_FILTER_READ_BARRIER_TIMEOUT_SECONDS': '120',
+            }))
+
+        stock_initial_handle, native_handle = handles
+        stop(stock_initial_handle)
+        handles = [native_handle]
+        config_position = native_handle[1].stat().st_size
+        noise_builder = """  noise:
+    import: 'package:build_filter_app/builder.dart'
+    builder_factories: [noise]
+    build_extensions: {'.noise': ['.ignored']}
+    auto_apply: root_package
+    build_to: source
+"""
+        for root in (stock, native):
+            config = root / 'build.yaml'
+            contents = config.read_text()
+            assert contents.count(noise_builder) == 1, contents
+            # An unrelated optional builder is enough to route filtered auto
+            # to stock while keeping the selected .txt -> .mid -> .final path.
+            config.write_text(contents.replace(
+                noise_builder,
+                noise_builder.replace(
+                    'build_to: source',
+                    'build_to: cache\n    is_optional: true',
+                ),
+                1,
+            ))
+
+        wait(lambda: 'using Dart fallback' in native_handle[1].read_text(),
+             native_handle[0], native_handle[1])
+        wait(lambda: 'Built with build_runner' in
+             native_handle[1].read_text()[config_position:],
+             native_handle[0], native_handle[1])
+
+        # A direct stock reference starts from the same optional config that
+        # the native watch handed off to. This avoids relying on stock's own
+        # hot-reload transition while still comparing the same watch behavior.
+        arm, reached, release = barriers[stock]
+        stock_handle = watch(stock, 'stock', flags, extra_env={
+            'BUILD_FILTER_READ_BARRIER_ARM': str(arm),
+            'BUILD_FILTER_READ_BARRIER_REACHED': str(reached),
+            'BUILD_FILTER_READ_BARRIER_RELEASE': str(release),
+            'BUILD_FILTER_READ_BARRIER_TIMEOUT_SECONDS': '120',
+        })
+        handles.insert(0, stock_handle)
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+
+        # The config-change cycle is complete in both stock watches. Compare
+        # only the next input-triggered cycle, with stock held after reading
+        # a.mid and before it publishes the dependent output.
+        for root in (stock, native):
+            history_path(root).unlink(missing_ok=True)
+            arm, _, _ = barriers[root]
+            arm.write_text('armed\n')
+            (root / 'lib/a.txt').write_text('late fallback lock watch edit\n')
+        positions = [handle[1].stat().st_size for handle in handles]
+        for root, handle in zip((stock, native), handles):
+            reached = barriers[root][1]
+            wait(lambda reached=reached: reached.exists(), handle[0], handle[1])
+
+        graph_path = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+        before_outputs = outputs(native)
+        before_graph = graph_path.read_bytes()
+        for mode in ('auto', 'rust'):
+            competing = execute(
+                launcher(native, mode, flags=['--force-jit', '--build-filter=lib/b.final']),
+                native,
+            )
+            assert competing[0] != 0 and 'workspace writer lock' in competing[1].lower(), (
+                mode, competing)
+            assert outputs(native) == before_outputs, (mode, outputs(native), before_outputs)
+            assert graph_path.read_bytes() == before_graph, mode
+
+        for _, _, release in barriers.values():
+            release.write_text('release\n')
+        for index, handle in enumerate(handles):
+            wait(lambda index=index, handle=handle:
+                 'Built with build_runner' in handle[1].read_text()[positions[index]:],
+                 handle[0], handle[1])
+        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+        assert history(stock) == history(native), (history(stock), history(native))
+        assert b'late fallback lock watch edit' in outputs(stock)['lib/a.mid']
+        assert b'late fallback lock watch edit' in outputs(native)['lib/a.mid']
+    finally:
+        for _, _, release in barriers.values():
+            release.write_text('release cleanup\n')
+        stop_all(handles)
+
+    # The lock must be released with the exec'd stock watch. Restore the
+    # supported plan, then compare the next native run with stock.
+    for root in (stock, native):
+        config = root / 'build.yaml'
+        config.write_text(config.read_text().replace(
+            'build_to: cache\n    is_optional: true', 'build_to: source', 1))
+        (root / 'lib/a.txt').write_text('native resumed after stock watch\n')
+        history_path(root).unlink(missing_ok=True)
+    stock_build = execute(
+        [DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
+    native_build = execute(
+        launcher(native, 'auto', flags=['--force-jit', *flags]), native)
+    assert stock_build[0] == native_build[0] == 0, (stock_build, native_build)
+    assert '(Rust frontend)' in native_build[1], native_build
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+    assert b'native resumed after stock watch' in outputs(native)['lib/a.final']
+
+    # The first rebuild also absorbs the optional-config graph transition on
+    # the stock control. A second stable-plan edit gives both engines the same
+    # incremental history to compare after the lock has been released.
+    for root in (stock, native):
+        (root / 'lib/a.txt').write_text('native stable lock released edit\n')
+        history_path(root).unlink(missing_ok=True)
+    stock_next = execute(
+        [DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
+    native_next = execute(
+        launcher(native, 'auto', flags=['--force-jit', *flags]), native)
+    assert stock_next[0] == native_next[0] == 0, (stock_next, native_next)
+    assert '(Rust frontend)' in native_next[1], native_next
+    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
+    assert history(stock) == history(native), (history(stock), history(native))
+    assert b'native stable lock released edit' in outputs(native)['lib/a.final']
+
+
 def watch_unknown_external_source_comparison(tmp):
     stock, native = tmp / 'watch-external-stock', tmp / 'watch-external-native'
     prepare(stock); prepare(native)
@@ -1732,6 +1875,7 @@ GROUPS = {
         watch_initial_build_source_edit_comparison(tmp),
         watch_unknown_external_source_comparison(tmp),
         writer_lock_watch_comparison(tmp),
+        late_fallback_writer_lock_comparison(tmp),
     ),
     'watch-cache': lambda tmp: watch_comparison(tmp, cache=True),
     'watch-classification': watch_source_classification_comparison,

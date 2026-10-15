@@ -69,12 +69,12 @@ fn main() -> io::Result<()> {
             eprintln!("Rust frontend unavailable or disabled; nothing to prewarm");
             return Ok(());
         }
-        return frontend::run_dart_fallback(&options);
+        return frontend::run_dart_fallback(&options, None);
     }
     // Reject a competing native writer instead of falling back to a stock
     // process which would mutate the same output tree. Keep this guard through
     // late fallback and throughout a resident watch session.
-    let _workspace_lock = match options.command.as_str() {
+    let workspace_lock = match options.command.as_str() {
         "build" | "watch" => Some(workspace_lock::WorkspaceLock::acquire(&options.root)?),
         _ => None,
     };
@@ -93,11 +93,11 @@ fn main() -> io::Result<()> {
         "build" => {
             let _wall = wall::Session::new();
             worker_kernel::apply_default_worker_aot_policy(&options.command);
-            build::run(&options, None)
+            build::run(&options, None, workspace_lock.as_ref())
         }
         "watch" => {
             worker_kernel::apply_default_worker_aot_policy(&options.command);
-            watch::run(&options)
+            watch::run(&options, workspace_lock.as_ref())
         }
         "aot-cache-key" => frontend::run_aot_cache_key(&options),
         "prewarm" => frontend::run_aot_prewarm(&options),

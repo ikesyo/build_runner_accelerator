@@ -20,6 +20,7 @@ use crate::metrics::{
 };
 use crate::worker::WorkerPool;
 use crate::workspace::Workspace;
+use crate::workspace_lock::WorkspaceLock;
 use std::io;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -30,7 +31,11 @@ pub(crate) fn graph_path(workspace: &Workspace) -> PathBuf {
         .join(".dart_tool/build_runner_accelerator/graph-v3.bin")
 }
 
-pub(crate) fn run(options: &Options, pool: Option<&mut WorkerPool>) -> io::Result<()> {
+pub(crate) fn run(
+    options: &Options,
+    pool: Option<&mut WorkerPool>,
+    workspace_lock: Option<&WorkspaceLock>,
+) -> io::Result<()> {
     let load = crate::wall::Span::new("workspace_load");
     let workspace = Workspace::load(options.root.clone())?;
     drop(load);
@@ -40,7 +45,7 @@ pub(crate) fn run(options: &Options, pool: Option<&mut WorkerPool>) -> io::Resul
         None => {
             drop(selection);
             let _fallback = crate::wall::Span::new("dart_fallback");
-            return run_dart_fallback(options);
+            return run_dart_fallback(options, workspace_lock);
         }
     };
     drop(selection);

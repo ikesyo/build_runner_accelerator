@@ -6,6 +6,7 @@ use crate::graph::GraphState;
 use crate::pattern::match_capture_pattern;
 use crate::worker::WorkerPool;
 use crate::workspace::Workspace;
+use crate::workspace_lock::WorkspaceLock;
 use notify::{
     Event, EventKind, RecursiveMode, Watcher,
     event::{ModifyKind, RenameMode},
@@ -64,9 +65,10 @@ impl WatchEvents {
 
 // These values survive native cycles; stock fallback owns its own watcher.
 #[derive(Default)]
-struct WatchState {
+struct WatchState<'a> {
     cached_configuration: Option<RustBuildConfig>,
     events: WatchEvents,
+    workspace_lock: Option<&'a WorkspaceLock>,
 }
 
 fn added_event_paths(event: &Event) -> Vec<PathBuf> {
@@ -85,11 +87,14 @@ fn added_event_paths(event: &Event) -> Vec<PathBuf> {
     }
 }
 
-pub(crate) fn run(options: &Options) -> io::Result<()> {
+pub(crate) fn run(options: &Options, workspace_lock: Option<&WorkspaceLock>) -> io::Result<()> {
     let mut pool = None;
     let mut pool_signature = None;
     let mut pool_shape = None;
-    let mut watch_state = WatchState::default();
+    let mut watch_state = WatchState {
+        workspace_lock,
+        ..WatchState::default()
+    };
     let settings = BuildSettings::parse(&options.stock_arguments)?;
     let stock_config_path = settings
         .config
@@ -200,7 +205,7 @@ fn run_watch_build(
     let Some(build_config) = selected else {
         pool.take();
         watch_state.events.stop();
-        run_dart_fallback(options)?;
+        run_dart_fallback(options, watch_state.workspace_lock)?;
         return Ok(false);
     };
     // A successful cold build can discover resolver cycles. Re-check the
@@ -217,7 +222,7 @@ fn run_watch_build(
         }
         eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
         watch_state.events.stop();
-        run_dart_fallback(options)?;
+        run_dart_fallback(options, watch_state.workspace_lock)?;
         return Ok(false);
     }
 
@@ -248,7 +253,7 @@ fn run_watch_build(
         }
         eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
         watch_state.events.stop();
-        run_dart_fallback(options)?;
+        run_dart_fallback(options, watch_state.workspace_lock)?;
         return Ok(false);
     }
     *pool_shape = Some(shape);
