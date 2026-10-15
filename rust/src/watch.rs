@@ -83,6 +83,12 @@ fn added_event_paths(event: &Event) -> Vec<PathBuf> {
             .last()
             .map(|path| vec![normalized_watch_path(path)])
             .unwrap_or_default(),
+        EventKind::Modify(ModifyKind::Name(RenameMode::Any)) => event
+            .paths
+            .iter()
+            .filter(|path| path.is_file())
+            .map(|path| normalized_watch_path(path))
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -109,7 +115,7 @@ pub(crate) fn run(options: &Options, workspace_lock: Option<&WorkspaceLock>) -> 
         .is_some_and(|raw| normalized_config_path.as_ref() != Some(raw));
     let mut source_post_process_outputs = BTreeSet::new();
 
-    let initial_native_build = match run_watch_build(
+    let mut native_build_succeeded = match run_watch_build(
         options,
         &mut pool,
         &mut pool_signature,
@@ -137,7 +143,7 @@ pub(crate) fn run(options: &Options, workspace_lock: Option<&WorkspaceLock>) -> 
         retain_configuration |= configuration_package_root(&workspace, &file)
             .is_some_and(|root| root != workspace.root);
     }
-    if initial_native_build {
+    if native_build_succeeded {
         source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
     }
     println!(
@@ -146,7 +152,7 @@ pub(crate) fn run(options: &Options, workspace_lock: Option<&WorkspaceLock>) -> 
     );
 
     loop {
-        let filtered_state = if initial_native_build && !settings.build_filters.is_empty() {
+        let filtered_state = if native_build_succeeded && !settings.build_filters.is_empty() {
             Some(GraphState::load(&build::graph_path(&workspace))?)
         } else {
             None
@@ -175,9 +181,13 @@ pub(crate) fn run(options: &Options, workspace_lock: Option<&WorkspaceLock>) -> 
             &changed_paths,
         ) {
             Ok(true) => {
+                native_build_succeeded = true;
                 source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
             }
-            Ok(false) => source_post_process_outputs.clear(),
+            Ok(false) => {
+                native_build_succeeded = false;
+                source_post_process_outputs.clear();
+            }
             Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
             Err(error) => {
                 eprintln!("watch build failed: {error}");
@@ -591,6 +601,65 @@ fn is_relevant_event(
 #[cfg(test)]
 mod manifest_tests {
     use super::*;
+
+    #[test]
+    fn rename_event_paths_preserve_modes_and_filter_any_to_existing_files() {
+        let root = std::env::temp_dir().join(format!(
+            "accelerator-watch-rename-paths-{}",
+            std::process::id()
+        ));
+        let directory = root.join("lib");
+        fs::create_dir_all(&directory).unwrap();
+        let old = directory.join("old.side");
+        let new = directory.join("new.side");
+        fs::write(&old, "old").unwrap();
+        fs::write(&new, "new").unwrap();
+        let missing = directory.join("missing.side");
+        let normalized_new = directory.join("new.side");
+
+        let any_event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Any)))
+            .add_path(directory.join(".").join("new.side"))
+            .add_path(directory.clone())
+            .add_path(missing.clone());
+        assert_eq!(added_event_paths(&any_event), vec![normalized_new.clone()]);
+        assert!(
+            added_event_paths(
+                &Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::From)))
+                    .add_path(old.clone())
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            added_event_paths(
+                &Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::To)))
+                    .add_path(old.clone())
+                    .add_path(new.clone())
+            ),
+            vec![old.clone(), new.clone()]
+        );
+        assert_eq!(
+            added_event_paths(
+                &Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+                    .add_path(old)
+                    .add_path(new.clone())
+            ),
+            vec![normalized_new]
+        );
+        assert_eq!(
+            added_event_paths(
+                &Event::new(EventKind::Create(notify::event::CreateKind::File))
+                    .add_path(new.clone())
+            ),
+            vec![new.clone()]
+        );
+        assert!(
+            added_event_paths(
+                &Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(new)
+            )
+            .is_empty()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn filtered_generated_events_suppress_committed_bytes_but_accept_conflicts() {

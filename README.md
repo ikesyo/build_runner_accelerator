@@ -69,8 +69,8 @@ for the selection, dependency, deletion, and failure rules.
 
 The native frontend supports build_runner `>=2.16.2 <2.17.0`; correctness
 comparisons use stock build_runner 2.16.2. Its supported manifest subset is
-checked for byte-identical outputs and incremental, failure, deletion, and
-watch behavior. Use auto to retain stock compatibility outside that subset.
+checked for byte-identical outputs and incremental, failure, deletion, rename,
+and watch behavior. Use auto to retain stock compatibility outside that subset.
 
 Native build and watch commands acquire an exclusive workspace lock through
 late fallback; a competing native invocation fails. Direct stock runs,

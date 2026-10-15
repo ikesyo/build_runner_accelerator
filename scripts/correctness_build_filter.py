@@ -1236,6 +1236,92 @@ def undeclared_artifact_comparison(tmp):
     assert not any(path.endswith('/orphan.side') for path in outputs(native))
 
 
+def watch_failed_initial_recovery_generated_rename_comparison(tmp):
+    stock, native = tmp / 'classification-failure-stock', tmp / 'classification-failure-native'
+    prepare(stock); prepare(native)
+    for root in (stock, native):
+        (root / 'lib/a.txt').write_text('use-glob\n')
+        (root / 'lib/c.txt').write_text('initial c source\n')
+    define = '--define=:finish=conditional_glob=true'
+    flags = ['--build-filter=lib/a.final', define]
+    check(stock, native, flags)
+    assert (native / 'lib/c.side').exists()
+    assert b'initial c source' in (native / 'lib/a.final').read_bytes()
+    for root in (stock, native):
+        history_path(root).unlink(missing_ok=True)
+        (root / 'lib/common.txt').write_text('fail\n')
+
+    handles = []
+    try:
+        handles.append(watch(stock, 'stock', flags, wait_ready=False))
+        handles.append(watch(native, 'rust', flags, wait_ready=False))
+        for index, (proc, log, _) in enumerate(handles):
+            if index == 0:
+                wait(lambda log=log:
+                     'intentional build-filter fixture failure' in log.read_text()
+                     and 'Failed to build with build_runner' in log.read_text(),
+                     proc, log, timeout=60)
+            else:
+                wait(lambda log=log:
+                     'initial watch build failed:' in log.read_text()
+                     and 'Watching ' in log.read_text(),
+                     proc, log, timeout=60)
+        for root in (stock, native):
+            assert history(root)['lib/common.txt'] > 0
+            history_path(root).unlink(missing_ok=True)
+
+        recovery_positions = [handle[1].stat().st_size for handle in handles]
+        for root in (stock, native):
+            (root / 'lib/common.txt').write_text('recovered shared source\n')
+        for index, handle in enumerate(handles):
+            marker = 'Built with build_runner' if index == 0 else 'Build completed (Rust frontend)'
+            wait(lambda handle=handle, index=index, marker=marker:
+                 marker in handle[1].read_text()[recovery_positions[index]:],
+                 handle[0], handle[1])
+        for root in (stock, native):
+            assert b'recovered shared source' in (root / 'lib/a.final').read_bytes()
+            assert history(root)['lib/common.txt'] > 0
+        assert outputs(stock) == outputs(native)
+        assert history(stock) == history(native), (history(stock), history(native))
+
+        # Removing the producer and its artifact leaves c.side classified as
+        # generated in the retained filtered graph until an ADD reclassifies it.
+        for root in (stock, native): history_path(root).unlink(missing_ok=True)
+        delete_positions = [handle[1].stat().st_size for handle in handles]
+        for root in (stock, native):
+            (root / 'lib/c.txt').unlink()
+            (root / 'lib/c.side').unlink(missing_ok=True)
+        for index, handle in enumerate(handles):
+            marker = 'Built with build_runner' if index == 0 else 'Build completed (Rust frontend)'
+            wait(lambda handle=handle, index=index, marker=marker:
+                 marker in handle[1].read_text()[delete_positions[index]:],
+                 handle[0], handle[1])
+        assert outputs(stock) == outputs(native)
+        assert history(stock) == history(native), (history(stock), history(native))
+        assert not (stock / 'lib/c.side').exists()
+        assert not (native / 'lib/c.side').exists()
+
+        for root in (stock, native): history_path(root).unlink(missing_ok=True)
+        rename_positions = [handle[1].stat().st_size for handle in handles]
+        for root in (stock, native):
+            destination = root / 'lib/c.side'
+            staged = root.parent / (root.name + '-external-c.side')
+            staged.write_text('renamed external c source\n')
+            staged.replace(destination)
+        for index, handle in enumerate(handles):
+            marker = 'Built with build_runner' if index == 0 else 'Build completed (Rust frontend)'
+            wait(lambda handle=handle, index=index, marker=marker:
+                 marker in handle[1].read_text()[rename_positions[index]:],
+                 handle[0], handle[1])
+        for root in (stock, native):
+            assert b'renamed external c source' in (root / 'lib/a.final').read_bytes()
+            assert (root / 'lib/c.side').read_bytes() == b'renamed external c source\n'
+        assert outputs(stock) == outputs(native)
+        assert history(stock) == history(native), (history(stock), history(native))
+    finally:
+        stop_all(handles)
+
+
 def watch_source_classification_comparison(tmp):
     watch_process_cleanup_comparison(tmp)
     stock, native = tmp / 'classification-stock', tmp / 'classification-native'
@@ -1289,6 +1375,7 @@ def watch_source_classification_comparison(tmp):
             assert b'externally edited c' not in (native / 'lib/a.final').read_bytes()
         finally:
             stop_all(handles)
+    watch_failed_initial_recovery_generated_rename_comparison(tmp)
 
 
 def source_selection_comparison(tmp):
