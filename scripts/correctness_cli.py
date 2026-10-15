@@ -205,15 +205,15 @@ def main():
             run(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
             assert files(stock) == files(native)
         print('cli-compatibility: conflict flags/no-op/incremental/dependency chain passed', flush=True)
-        # build-filter must select stock before even trying the invalid binary.
+        # Unsupported build-filter syntax selects stock before binary acquisition.
         fallback = base / 'fallback'
         prepare(fallback)
         bad_native = {**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/bin/false'}
-        args = launcher(fallback, 'auto', flags=['--force-jit', '--build-filter=lib/a.final'])
+        args = launcher(fallback, 'auto', flags=['--force-jit', '--build-filter=package:cli_fixture/[a].final'])
         run(args, fallback, env=bad_native)
         assert not (fallback / '.dart_tool/build_runner_accelerator').exists()
         assert (fallback / 'lib/a.final').read_bytes() == (stock / 'lib/b.final').read_bytes().replace(b'b\n', b'a\n')
-        run(launcher(fallback, 'rust', flags=['--build-filter=lib/a.final']), fallback, expected=1)
+        run(launcher(fallback, 'rust', flags=['--build-filter=package:cli_fixture/[a].final']), fallback, expected=1)
         # clean/unknown arguments/help/invalid stock values and separator status
         # agree with direct stock, and never resolve the invalid native binary.
         for command, flags in [('clean', []), ('build', ['--help']), ('build', ['--version']),
@@ -239,9 +239,9 @@ def main():
         shutil.copytree(native / '.dart_tool', empty / '.dart_tool')
         shutil.copy(native / 'pubspec.yaml', empty / 'pubspec.yaml')
         for command in ('build', 'watch'):
-            run([*LAUNCHER, command, '--root', str(empty), '--dart', str(fake_dart), '--force-jit', '-d'],
+            run([*LAUNCHER, command, '--root', str(empty), '--dart', str(fake_dart), '--force-jit', '-d', '--build-filter', 'lib/a.final,lib/b.final', '--build-filter=package:cli_fixture/**'],
                 empty, expected=23)
-            assert json.loads(capture.read_text()) == ['--suppress-analytics', 'run', 'build_runner', command, '--force-jit', '-d']
+            assert json.loads(capture.read_text()) == ['--suppress-analytics', 'run', 'build_runner', command, '--force-jit', '-d', '--build-filter', 'lib/a.final,lib/b.final', '--build-filter=package:cli_fixture/**']
             output = run([str(NATIVE), command, '--mode=rust', '--root', str(empty), '--dart', str(fake_dart)], empty, expected=1)
             assert 'Watching' not in output
         notice = run([str(NATIVE), 'prewarm', '--mode=dart', '--root', str(base / 'missing')], base)
@@ -254,9 +254,9 @@ def main():
         aot_root = base / 'aot-root'
         aot_root.mkdir()
         run([str(compiled_launcher), 'build', '--mode=dart', '--dart', str(fake_dart),
-             '--root', str(aot_root), '--force-jit', '-d'], aot_root, expected=23)
+             '--root', str(aot_root), '--force-jit', '-d', '--build-filter=lib/a.final'], aot_root, expected=23)
         assert not (aot_root / '.dart_tool').exists()
-        assert json.loads(capture.read_text()) == ['run', 'build_runner', 'build', '--force-jit', '-d']
+        assert json.loads(capture.read_text()) == ['run', 'build_runner', 'build', '--force-jit', '-d', '--build-filter=lib/a.final']
         # Direct native CLI routes stock without loading a workspace at all.
         for command, arguments in [('clean', []), ('build', ['--unknown']),
                                    ('build', ['--', '--mode', 'rust'])]:

@@ -6,7 +6,11 @@ use crate::graph::GraphState;
 use crate::pattern::match_capture_pattern;
 use crate::worker::WorkerPool;
 use crate::workspace::Workspace;
-use notify::{Event, EventKind, RecursiveMode, Watcher};
+use crate::workspace_lock::WorkspaceLock;
+use notify::{
+    Event, EventKind, RecursiveMode, Watcher,
+    event::{ModifyKind, RenameMode},
+};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
@@ -14,11 +18,89 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-pub(crate) fn run(options: &Options) -> io::Result<()> {
+#[derive(Default)]
+pub(crate) struct WatchChanges {
+    pub(crate) paths: BTreeSet<PathBuf>,
+    pub(crate) added_paths: BTreeSet<PathBuf>,
+}
+
+#[derive(Default)]
+struct WatchEvents {
+    watcher: Option<notify::RecommendedWatcher>,
+    receiver: Option<Receiver<notify::Result<Event>>>,
+}
+
+impl WatchEvents {
+    // Subscribe once after native-plan validation. The channel is left unread
+    // until the initial build completes so in-build edits queue for the loop.
+    fn start(&mut self, workspace: &Workspace) -> io::Result<()> {
+        if self.watcher.is_some() {
+            return Ok(());
+        }
+
+        let (sender, receiver) = mpsc::channel();
+        let mut watcher = notify::recommended_watcher(move |result| {
+            let _ = sender.send(result);
+        })
+        .map_err(io::Error::other)?;
+        for package_root in workspace.package_roots() {
+            if package_root != workspace.root && package_root.starts_with(&workspace.root) {
+                continue;
+            }
+            watcher
+                .watch(&package_root, RecursiveMode::Recursive)
+                .map_err(io::Error::other)?;
+        }
+        self.watcher = Some(watcher);
+        self.receiver = Some(receiver);
+        Ok(())
+    }
+
+    // Drop both the backend and receiver before handing watch ownership to stock.
+    fn stop(&mut self) {
+        self.receiver.take();
+        self.watcher.take();
+    }
+}
+
+// These values survive native cycles; stock fallback owns its own watcher.
+#[derive(Default)]
+struct WatchState<'a> {
+    cached_configuration: Option<RustBuildConfig>,
+    events: WatchEvents,
+    workspace_lock: Option<&'a WorkspaceLock>,
+}
+
+fn added_event_paths(event: &Event) -> Vec<PathBuf> {
+    match event.kind {
+        EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(RenameMode::To)) => event
+            .paths
+            .iter()
+            .map(|path| normalized_watch_path(path))
+            .collect(),
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => event
+            .paths
+            .last()
+            .map(|path| vec![normalized_watch_path(path)])
+            .unwrap_or_default(),
+        EventKind::Modify(ModifyKind::Name(RenameMode::Any)) => event
+            .paths
+            .iter()
+            .filter(|path| path.is_file())
+            .map(|path| normalized_watch_path(path))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) fn run(options: &Options, workspace_lock: Option<&WorkspaceLock>) -> io::Result<()> {
     let mut pool = None;
     let mut pool_signature = None;
     let mut pool_shape = None;
-    let mut cached_configuration = None;
+    let mut watch_state = WatchState {
+        workspace_lock,
+        ..WatchState::default()
+    };
     let settings = BuildSettings::parse(&options.stock_arguments)?;
     let stock_config_path = settings
         .config
@@ -33,13 +115,14 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         .is_some_and(|raw| normalized_config_path.as_ref() != Some(raw));
     let mut source_post_process_outputs = BTreeSet::new();
 
-    let initial_native_build = match run_watch_build(
+    let mut native_build_succeeded = match run_watch_build(
         options,
         &mut pool,
         &mut pool_signature,
         &mut pool_shape,
-        &mut cached_configuration,
+        &mut watch_state,
         false,
+        &WatchChanges::default(),
     ) {
         Ok(native_build) => native_build,
         Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
@@ -50,6 +133,9 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     };
 
     let workspace = Workspace::load(options.root.clone())?;
+    // Preserve watch recovery when the first native attempt fails before plan
+    // selection reaches the early subscription point.
+    watch_state.events.start(&workspace)?;
     if let Some(path) = &normalized_config_path {
         let file = workspace.root.join(path);
         // Stock attributes an event to the deepest package. A selected root
@@ -57,21 +143,8 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         retain_configuration |= configuration_package_root(&workspace, &file)
             .is_some_and(|root| root != workspace.root);
     }
-    if initial_native_build {
+    if native_build_succeeded {
         source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
-    }
-    let (sender, receiver) = mpsc::channel();
-    let mut watcher = notify::recommended_watcher(move |result| {
-        let _ = sender.send(result);
-    })
-    .map_err(io::Error::other)?;
-    for package_root in workspace.package_roots() {
-        if package_root != workspace.root && package_root.starts_with(&workspace.root) {
-            continue;
-        }
-        watcher
-            .watch(&package_root, RecursiveMode::Recursive)
-            .map_err(io::Error::other)?;
     }
     println!(
         "Watching {} (native filesystem events)",
@@ -79,12 +152,22 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     );
 
     loop {
-        let configuration_changed = wait_for_relevant_event(
-            &receiver,
+        let filtered_state = if native_build_succeeded && !settings.build_filters.is_empty() {
+            Some(GraphState::load(&build::graph_path(&workspace))?)
+        } else {
+            None
+        };
+        let (configuration_changed, changed_paths) = wait_for_relevant_event(
+            watch_state
+                .events
+                .receiver
+                .as_ref()
+                .ok_or_else(|| io::Error::other("native watch was not initialized"))?,
             &workspace,
             &source_post_process_outputs,
             options.interval_ms,
             stock_config_path.as_deref(),
+            filtered_state.as_ref(),
         )?;
 
         eprintln!("Change detected; rebuilding");
@@ -93,13 +176,18 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
             &mut pool,
             &mut pool_signature,
             &mut pool_shape,
-            &mut cached_configuration,
+            &mut watch_state,
             retain_configuration && !configuration_changed,
+            &changed_paths,
         ) {
             Ok(true) => {
+                native_build_succeeded = true;
                 source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
             }
-            Ok(false) => source_post_process_outputs.clear(),
+            Ok(false) => {
+                native_build_succeeded = false;
+                source_post_process_outputs.clear();
+            }
             Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
             Err(error) => {
                 eprintln!("watch build failed: {error}");
@@ -113,20 +201,40 @@ fn run_watch_build(
     pool: &mut Option<WorkerPool>,
     pool_signature: &mut Option<String>,
     pool_shape: &mut Option<Vec<ConfiguredBuilder>>,
-    cached_configuration: &mut Option<RustBuildConfig>,
+    watch_state: &mut WatchState,
     reuse_configuration: bool,
+    changed_paths: &WatchChanges,
 ) -> io::Result<bool> {
     let workspace = Workspace::load(options.root.clone())?;
-    let selected = if reuse_configuration && cached_configuration.is_some() {
-        cached_configuration.clone()
+    let session_start = watch_state.cached_configuration.is_none();
+    let selected = if reuse_configuration && watch_state.cached_configuration.is_some() {
+        watch_state.cached_configuration.clone()
     } else {
         select_frontend(options, &workspace)?
     };
     let Some(build_config) = selected else {
         pool.take();
-        run_dart_fallback(options)?;
+        watch_state.events.stop();
+        run_dart_fallback(options, watch_state.workspace_lock)?;
         return Ok(false);
     };
+    // A successful cold build can discover resolver cycles. Re-check the
+    // incremental evidence even when filesystem events reuse the manifest.
+    if reuse_configuration
+        && !crate::cli::BuildSettings::parse(&options.stock_arguments)?
+            .build_filters
+            .is_empty()
+        && let Some(reason) = build::filtered_transition_reason(&workspace, &build_config)?
+    {
+        pool.take();
+        if options.mode == FrontendMode::Rust {
+            return Err(io::Error::new(io::ErrorKind::Unsupported, reason));
+        }
+        eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
+        watch_state.events.stop();
+        run_dart_fallback(options, watch_state.workspace_lock)?;
+        return Ok(false);
+    }
 
     // Stock 2.16.2 reloads the plan in watch, but changing application/output
     // topology does not behave like a fresh build. Do not partially emulate
@@ -154,15 +262,22 @@ fn run_watch_build(
             return Err(io::Error::new(io::ErrorKind::Unsupported, reason));
         }
         eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
-        run_dart_fallback(options)?;
+        watch_state.events.stop();
+        run_dart_fallback(options, watch_state.workspace_lock)?;
         return Ok(false);
     }
     *pool_shape = Some(shape);
-    *cached_configuration = Some(build_config.clone());
+    watch_state.cached_configuration = Some(build_config.clone());
     if *pool_signature != build_config.manifest_signature {
         pool.take();
         *pool_signature = build_config.manifest_signature.clone();
     }
+    // Subscribe only after the native plan is known to be supported, and before
+    // worker startup or the initial build can observe source files. Events are
+    // consumed by run() after the initial build so edits made during it remain
+    // queued for the next watch cycle. Stock fallback keeps sole ownership of
+    // its own watchers.
+    watch_state.events.start(&workspace)?;
     if pool.is_none() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
         let worker_command = worker_executable(options, &build_config)?;
@@ -176,7 +291,14 @@ fn run_watch_build(
         worker_pool.pin_worker_artifact();
         *pool = Some(worker_pool);
     }
-    build::run_with_config(options, pool.as_mut(), workspace, build_config)?;
+    build::run_with_config_session(
+        options,
+        pool.as_mut(),
+        workspace,
+        build_config,
+        session_start,
+        changed_paths,
+    )?;
     Ok(true)
 }
 
@@ -186,7 +308,8 @@ fn wait_for_relevant_event(
     source_post_process_outputs: &BTreeSet<String>,
     debounce_ms: u64,
     stock_config_path: Option<&str>,
-) -> io::Result<bool> {
+    filtered_state: Option<&GraphState>,
+) -> io::Result<(bool, WatchChanges)> {
     loop {
         let event = receiver.recv().map_err(io::Error::other)?;
         let event = event.map_err(io::Error::other)?;
@@ -195,12 +318,19 @@ fn wait_for_relevant_event(
             &event,
             source_post_process_outputs,
             stock_config_path,
+            filtered_state,
         ) {
             continue;
         }
 
         let mut configuration_changed =
             is_configuration_event(workspace, &event, stock_config_path);
+        let mut changed_paths: BTreeSet<_> = event
+            .paths
+            .iter()
+            .map(|path| normalized_watch_path(path))
+            .collect();
+        let mut added_paths: BTreeSet<_> = added_event_paths(&event).into_iter().collect();
         // Coalesce the burst from one save/atomic rename into one build.
         // Only relevant events extend the quiet window, and an absolute
         // deadline caps the total wait, so sustained unrelated writes (for
@@ -224,9 +354,13 @@ fn wait_for_relevant_event(
                         &event,
                         source_post_process_outputs,
                         stock_config_path,
+                        filtered_state,
                     ) {
                         configuration_changed |=
                             is_configuration_event(workspace, &event, stock_config_path);
+                        changed_paths
+                            .extend(event.paths.iter().map(|path| normalized_watch_path(path)));
+                        added_paths.extend(added_event_paths(&event));
                         quiet_until = Instant::now() + debounce;
                     }
                 }
@@ -234,13 +368,19 @@ fn wait_for_relevant_event(
                 Err(_) => break,
             }
         }
-        return Ok(configuration_changed);
+        return Ok((
+            configuration_changed,
+            WatchChanges {
+                paths: changed_paths,
+                added_paths,
+            },
+        ));
     }
 }
 
 // Package-config relative URIs are stored as joined paths by Workspace. Stock
 // resolves URI dot segments before assigning an event to the deepest package.
-fn normalized_watch_path(path: &Path) -> PathBuf {
+pub(crate) fn normalized_watch_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
@@ -375,6 +515,7 @@ fn is_relevant_event(
     event: &Event,
     source_post_process_outputs: &BTreeSet<String>,
     selected: Option<&str>,
+    filtered_state: Option<&GraphState>,
 ) -> bool {
     if !matches!(
         event.kind,
@@ -431,6 +572,24 @@ fn is_relevant_event(
                 source_post_process_outputs,
             )
         {
+            if let Some(state) = filtered_state {
+                let asset = format!("{}|{}", workspace.root_package, relative.replace('\\', "/"));
+                // Filtered state omits undemanded outputs. Their external
+                // writes must reach conflict classification, even when the
+                // filename also matches a generated-output suffix. Only
+                // suppress source writes whose bytes match a committed result.
+                if state.output_locations.get(&asset) == Some(&false)
+                    && let Some(expected) = state
+                        .actions
+                        .values()
+                        .find_map(|action| action.output_digests.get(&asset))
+                    && let Ok(bytes) = fs::read(path)
+                    && crate::digest::digest_bytes(&bytes) == *expected
+                {
+                    return false;
+                }
+                return true;
+            }
             // Ignore our own generated writes, but rebuild if a generated
             // source file was removed by the user.
             return matches!(event.kind, EventKind::Remove(_));
@@ -442,6 +601,142 @@ fn is_relevant_event(
 #[cfg(test)]
 mod manifest_tests {
     use super::*;
+
+    #[test]
+    fn rename_event_paths_preserve_modes_and_filter_any_to_existing_files() {
+        let root = std::env::temp_dir().join(format!(
+            "accelerator-watch-rename-paths-{}",
+            std::process::id()
+        ));
+        let directory = root.join("lib");
+        fs::create_dir_all(&directory).unwrap();
+        let old = directory.join("old.side");
+        let new = directory.join("new.side");
+        fs::write(&old, "old").unwrap();
+        fs::write(&new, "new").unwrap();
+        let missing = directory.join("missing.side");
+        let normalized_new = directory.join("new.side");
+
+        let any_event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Any)))
+            .add_path(directory.join(".").join("new.side"))
+            .add_path(directory.clone())
+            .add_path(missing.clone());
+        assert_eq!(added_event_paths(&any_event), vec![normalized_new.clone()]);
+        assert!(
+            added_event_paths(
+                &Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::From)))
+                    .add_path(old.clone())
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            added_event_paths(
+                &Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::To)))
+                    .add_path(old.clone())
+                    .add_path(new.clone())
+            ),
+            vec![old.clone(), new.clone()]
+        );
+        assert_eq!(
+            added_event_paths(
+                &Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+                    .add_path(old)
+                    .add_path(new.clone())
+            ),
+            vec![normalized_new]
+        );
+        assert_eq!(
+            added_event_paths(
+                &Event::new(EventKind::Create(notify::event::CreateKind::File))
+                    .add_path(new.clone())
+            ),
+            vec![new.clone()]
+        );
+        assert!(
+            added_event_paths(
+                &Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(new)
+            )
+            .is_empty()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn filtered_generated_events_suppress_committed_bytes_but_accept_conflicts() {
+        let root = std::env::temp_dir().join(format!(
+            "accelerator-filtered-watch-events-{}",
+            std::process::id()
+        ));
+        let directory = root.join(".dart_tool/build_runner_accelerator");
+        fs::create_dir_all(&directory).unwrap();
+        fs::create_dir_all(root.join("lib")).unwrap();
+        fs::write(root.join("pubspec.yaml"), "name: app\n").unwrap();
+        fs::write(
+            root.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[{"name":"app","rootUri":"../"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            directory.join("builder-manifest.json"),
+            r#"{"builders":[{"build_to":"source","extensions":[{"output_suffixes":[".final"]}]}]}"#,
+        )
+        .unwrap();
+        let output = root.join("lib/a.final");
+        fs::write(&output, "generated").unwrap();
+        let workspace = Workspace::load(root.clone()).unwrap();
+        let event = Event::new(EventKind::Modify(ModifyKind::Any)).add_path(output.clone());
+        let mut state = GraphState::default();
+        state
+            .output_locations
+            .insert("app|lib/a.final".into(), false);
+        state.actions.insert(
+            "producer".into(),
+            crate::graph::ActionState {
+                outputs: vec!["app|lib/a.final".into()],
+                output_digests: [(
+                    "app|lib/a.final".into(),
+                    crate::digest::digest_bytes(b"generated"),
+                )]
+                .into(),
+                ..Default::default()
+            },
+        );
+        assert!(!is_relevant_event(
+            &workspace,
+            &event,
+            &BTreeSet::new(),
+            None,
+            Some(&state)
+        ));
+        fs::write(&output, "external edit").unwrap();
+        assert!(is_relevant_event(
+            &workspace,
+            &event,
+            &BTreeSet::new(),
+            None,
+            Some(&state)
+        ));
+        // An undemanded output has no committed digest, even when an external
+        // write leaves the same bytes on disk. It must reach conflict cleanup.
+        state.actions.clear();
+        state.output_locations.clear();
+        assert!(is_relevant_event(
+            &workspace,
+            &event,
+            &BTreeSet::new(),
+            None,
+            Some(&state)
+        ));
+        // Ordinary watch retains its existing event contract.
+        assert!(!is_relevant_event(
+            &workspace,
+            &event,
+            &BTreeSet::new(),
+            None,
+            None
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn selected_config_uses_deepest_package_with_parent_and_child_dependencies() {

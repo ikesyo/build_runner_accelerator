@@ -171,10 +171,19 @@ and verifies the matching signed release artifact.
 Native commands: build, watch, prewarm, aot-cache-key.
 Other stock commands (clean, serve, run, test, stop) and unsupported options
 use stock in auto/dart; rust reports an error before downloading a frontend.
-Stock --build-filter, --output, --workspace,
+Stock --output, --workspace,
 --keep-modified-outputs, --only-check and logging options use fallback.
 --delete-conflicting-outputs / -d are accepted by native build/watch as retired
 stock compatibility flags: they have no effect. They are never auto-added.
+Build/watch filters support repeated/comma-separated relative, package: and
+asset: paths, package * and path */whole ** globs. Required producer builders
+run on demand; all sibling outputs remain allowed. No match succeeds.
+Optional/post-process/zero-output/trigger-only builders and complex URI/glob syntax use stock
+(or error in rust). Removed prior output applications or legacy state without
+ordered stock inputs/glob evidence also use fallback. Incremental cyclic resolver reuse uses stock. Other filtered
+configuration changes without stock plan-compatibility evidence use stock.
+Prewarm rejects filters. Unselected outputs may be deleted
+on later builds or watch restarts depending on previous incremental state.
 Config/define/release apply to native build/watch/prewarm for supported manifests.
 Define duplicates are errors. -cNAME and grouped -rd/-dr follow stock parsing.
 Config resolves build.<name>.yaml using stock AssetId path normalization.

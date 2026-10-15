@@ -202,7 +202,7 @@ class LauncherOptions {
     try {
       final settings = BuildSettings.parse(passthrough);
       if (!const {'build', 'watch'}.contains(command) &&
-          settings.deletionFlag) {
+          (settings.deletionFlag || settings.buildFilters.isNotEmpty)) {
         nativeUnsupported = true;
       }
     } on FormatException {

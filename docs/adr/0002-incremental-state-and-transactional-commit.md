@@ -26,7 +26,24 @@ Dirty propagation uses the recorded observations and the resolved phase order.
 The overlay is visible to later phases according to the build contract, while
 same-phase outputs remain hidden from the action that owns them. Rust commits
 outputs, deletions, and the graph only after every dirty action succeeds. A
-failure leaves the last committed output and graph state intact.
+builder/worker failure before commit leaves the last committed output and graph
+state intact. This is an all-success execution boundary, not a crash-atomic
+filesystem transaction: output deletions and individual atomic output writes
+precede the graph rename. An I/O error or process interruption during that
+sequence can leave partially committed files with the previous graph. There is
+no commit journal, rollback or durability guarantee for this sequence.
+
+Native build and watch commands acquire a nonblocking OS file lock under
+`.dart_tool/build_runner_accelerator/.workspace.lock` before manifest generation
+and hold it for the entire command, including late stock fallback. A second
+native command, even with another filter or auto mode, reports an error instead
+of starting a competing fallback. The OS releases ownership on process exit;
+the file is never unlinked. Prewarm does not write outputs or graph and does
+not take this lock. Direct stock commands and dart-mode commands do not share
+the native lock, and an early fallback that bypasses the native binary does
+not acquire it; callers must serialize those against native build/watch too.
+Different workspaces may run concurrently. The in-process worker coordinator
+is not a substitute for this command-level writer exclusion.
 
 The graph format is an implementation-owned versioned binary under
 .dart_tool/build_runner_accelerator/. It is not build-runner's private

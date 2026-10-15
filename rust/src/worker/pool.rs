@@ -539,6 +539,48 @@ impl WorkerPool {
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Demand execution shares transaction and visibility state with nested IPC"
+    )]
+    /// Filtered normal phases share the resident worker's recursive demand path.
+    pub(crate) fn build_filtered(
+        &mut self,
+        workspace: &Workspace,
+        roots: &[String],
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
+        deleted_overlay: &mut BTreeSet<String>,
+        visibility: &AssetVisibility,
+        specs: &BTreeMap<String, BuildSpec>,
+        lazy: &mut LazyBuildState,
+    ) -> io::Result<()> {
+        self.prepare_for_requests(&workspace.root, 1)?;
+        let (root, package, _, phase_count, _) = self
+            .initialized
+            .clone()
+            .ok_or_else(|| io::Error::other("worker pool must be initialized"))?;
+        self.initialize_pending_workers(&root, &package, phase_count, true)?;
+        for output in roots {
+            self.workers[0].ensure_optional_output(
+                workspace,
+                output,
+                overlay,
+                deleted_overlay,
+                visibility,
+                u32::MAX,
+                crate::builder::BuilderKind::Normal,
+                specs,
+                lazy,
+            )?;
+            if let Some(error) = lazy.failed_demand() {
+                return Err(io::Error::other(format!(
+                    "filtered dependency build failed: {error}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Publishes one phase's committed overlay changes and joins every reset.
     /// A single worker uses memory; missing update values fail before any RPC.
     #[expect(

@@ -88,7 +88,34 @@ pub(crate) fn select_frontend(
     };
 
     match rust_build_config_from_manifest(manifest) {
-        Ok(config) => Ok(Some(config)),
+        Ok(config) => {
+            let filters = crate::cli::BuildSettings::parse(&options.stock_arguments)?.build_filters;
+            if !filters.is_empty()
+                && config.builders.iter().any(|b| {
+                    b.definition.is_optional
+                        || b.options
+                            .get("run_only_if_triggered")
+                            .and_then(serde_json::Value::as_bool)
+                            == Some(true)
+                        || b.definition.kind == crate::builder::BuilderKind::PostProcess
+                        || b.effective_definition()
+                            .extensions
+                            .iter()
+                            .any(|e| e.output_suffixes.is_empty())
+                })
+            {
+                return select_dart_fallback(
+                    options,
+                    "build filters with optional, post-process, trigger-only or zero-output builders are outside the supported subset",
+                );
+            }
+            if !filters.is_empty()
+                && let Some(reason) = crate::build::filtered_transition_reason(workspace, &config)?
+            {
+                return select_dart_fallback(options, reason);
+            }
+            Ok(Some(config))
+        }
         Err(error) => select_dart_fallback(
             options,
             &format!("dynamic builder manifest is outside the supported subset: {error}"),
@@ -103,7 +130,10 @@ fn settings_fingerprint(options: &Options, workspace: &Workspace) -> io::Result<
     let mut bytes = b"native-settings-v3\0".to_vec();
     bytes.extend_from_slice(workspace.builder_manifest_fingerprint()?.as_bytes());
     bytes.extend_from_slice(
-        &serde_json::to_vec(&options.stock_arguments).map_err(io::Error::other)?,
+        &serde_json::to_vec(&crate::build_filter::configuration_arguments(
+            &options.stock_arguments,
+        )?)
+        .map_err(io::Error::other)?,
     );
     let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
     let mut paths = std::collections::BTreeSet::new();
@@ -665,7 +695,10 @@ fn select_dart_fallback(options: &Options, reason: &str) -> io::Result<Option<Ru
     Ok(None)
 }
 
-pub(crate) fn run_dart_fallback(options: &Options) -> io::Result<()> {
+pub(crate) fn run_dart_fallback(
+    options: &Options,
+    workspace_lock: Option<&crate::workspace_lock::WorkspaceLock>,
+) -> io::Result<()> {
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     let mut command = Command::new(dart_binary);
     command.env_remove(crate::process::SUPERVISION_CONTEXT);
@@ -679,10 +712,15 @@ pub(crate) fn run_dart_fallback(options: &Options) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        Err(command.current_dir(&options.root).exec())
+        command.current_dir(&options.root);
+        match workspace_lock {
+            Some(lock) => lock.exec(&mut command),
+            None => Err(command.exec()),
+        }
     }
     #[cfg(not(unix))]
     {
+        let _ = workspace_lock;
         let status = command.current_dir(&options.root).status()?;
         std::process::exit(status.code().unwrap_or(1));
     }

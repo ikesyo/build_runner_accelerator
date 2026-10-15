@@ -1,16 +1,12 @@
 # Architecture Decision Records
 
-This directory is the release-oriented decision index for
-build_runner_accelerator. It was consolidated on 2026-09-07: the previous
-commit-level experiment log was intentionally reduced to the durable
-architecture and distribution boundaries. Detailed implementation history
-remains available in Git, but it is not part of the public decision index.
+These ADRs record durable compatibility, correctness, protocol, performance,
+and distribution decisions. They are a release baseline, not a commit history.
+Implementation details belong in source comments, the worker protocol, or
+focused guides.
 
-An ADR should describe one durable boundary that affects compatibility,
-protocol, correctness, performance policy, or distribution. A benchmark result,
-mechanical refactor, or isolated implementation step does not need its own
-ADR. When a decision changes, add a new ADR that explains the replacement
-boundary rather than restoring commit-level history.
+Add or replace an ADR when a compatibility or architectural boundary changes.
+Benchmarks and mechanical refactors do not need one.
 
 ## Decisions
 
@@ -26,29 +22,29 @@ boundary rather than restoring commit-level history.
 | [0008](0008-runtime-expected-output-mappings.md) | Runtime expected-output mappings and conservative fallback |
 | [0009](0009-shared-analyzer-byte-store.md) | Shared analyzer byte store across workers and builds |
 | [0010](0010-path-based-asset-reads.md) | Path-based asset reads |
-| [0011](0011-analysis-prewarm-in-aot-prewarm.md) | Analysis prewarm (command renamed to `prewarm` by ADR 0030) |
-| [0012](0012-machine-wide-cache.md) | Machine-wide cache for the worker AOT and analyzer byte store |
-| [0013](0013-part-directive-prefilter.md) | `part` directive pre-filter for part-family builders |
-| [0014](0014-manifest-probe-caching-and-compile-overlap.md) | Factory-probe caching and compile overlap in manifest generation |
+| [0011](0011-analysis-prewarm-in-aot-prewarm.md) | Analysis prewarm; command renamed to prewarm by ADR 0030 |
+| [0012](0012-machine-wide-cache.md) | Machine-wide cache for worker AOT and analyzer byte store |
+| [0013](0013-part-directive-prefilter.md) | part directive pre-filter |
+| [0014](0014-manifest-probe-caching-and-compile-overlap.md) | Factory-probe caching and compile overlap |
 | [0015](0015-manifest-generator-kernel-cache.md) | Compiled manifest generator cache and source fallback |
-| [0016](0016-early-worker-catalog.md) | Shared builder selection before cold generator compilation |
+| [0016](0016-early-worker-catalog.md) | Builder selection before cold generator compilation |
 | [0017](0017-manifest-window-analysis-prewarm.md) | Manifest-window analysis prewarm and SDK summary auto-prewarm |
-| [0018](0018-cross-workspace-cold-start-sharing.md) | Cross-workspace manifest kernel reuse and shared SDK summary lock |
-| [0019](0019-directive-deps-parse-cache.md) | Content-keyed directive-deps parse cache for the library cycle walk |
-| [0020](0020-batch-dep-read-resolve.md) | Batch dep-read resolution for the library cycle walk |
-| [0021](0021-packed-shared-cache-stores.md) | Packed shared cache stores and digest-keyed dep lookups |
-| [0022](0022-packed-cache-write-and-migration-lifecycle.md) | Deduplicated packed writes and deletion of migrated legacy entries |
-| [0023](0023-manifest-trigger-parser-isolation.md) | Official trigger parsing in the compiled worker keeps Analyzer out of the manifest generator |
-| [0024](0024-cold-analysis-single-flight.md) | Single-flight cold worker analysis and packed reader visibility |
-| [0025](0025-packed-cache-publication-without-fsync.md) | Publish packed cache records without per-record disk synchronization |
-| [0026](0026-byte-store-publication-index.md) | Persistent metadata publication index and lazy payload validation |
-| [0027](0027-reset-overlay-blob-transport.md) | Immutable per-reset overlay blob transport |
-| [0028](0028-setup-time-prewarm-command.md) | Setup-time `prewarm` command and single-flight worker AOT compiles |
-| [0029](0029-cli-routing-and-fallback.md) | CLI capability routing, lossless stock fallback and process lifecycle |
-| [0030](0030-compatibility-cleanup-and-disposable-state.md) | 0.x compatibility cleanup, internal worker IPC and disposable state |
-| [0031](0031-native-build-settings.md) | Native configuration resolution, CLI overrides and cache/watch invalidation |
+| [0018](0018-cross-workspace-cold-start-sharing.md) | Cross-workspace kernel reuse and shared SDK summary lock |
+| [0019](0019-directive-deps-parse-cache.md) | Content-keyed directive-deps cache |
+| [0020](0020-batch-dep-read-resolve.md) | Batched dependency reads for the cycle walk |
+| [0021](0021-packed-shared-cache-stores.md) | Packed shared stores and digest-keyed dep lookups |
+| [0022](0022-packed-cache-write-and-migration-lifecycle.md) | Packed writes and legacy-entry cleanup |
+| [0023](0023-manifest-trigger-parser-isolation.md) | Trigger parser isolation |
+| [0024](0024-cold-analysis-single-flight.md) | Single-flight cold analysis |
+| [0025](0025-packed-cache-publication-without-fsync.md) | Packed cache publication policy |
+| [0026](0026-byte-store-publication-index.md) | Byte-store publication index |
+| [0027](0027-reset-overlay-blob-transport.md) | Overlay blob transport |
+| [0028](0028-setup-time-prewarm-command.md) | Setup-time prewarm and single-flight AOT compiles |
+| [0029](0029-cli-routing-and-fallback.md) | CLI routing, stock fallback, and process lifecycle |
+| [0030](0030-compatibility-cleanup-and-disposable-state.md) | Compatibility cleanup and disposable state |
+| [0031](0031-native-build-settings.md) | Native configuration and settings invalidation |
+| [0032](0032-native-build-filter-demand-and-output-state.md) | Filter demand, output state, and conservative fallback |
 
-The wire-level details for ADR 0003 live in
-[protocol/v1.md](../../protocol/v1.md). Release matrix and cache details for
-ADR 0006 live in
+The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
+artifacts and launcher behavior are in
 [launcher-and-release.md](../launcher-and-release.md).

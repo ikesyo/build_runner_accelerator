@@ -3,6 +3,10 @@
 - Status: Accepted
 - Date: 2026-10-09
 - Amends ADR 0029.
+- Amended by [ADR 0032](0032-native-build-filter-demand-and-output-state.md):
+  runtime filters and artifact/deletion flags are excluded from configuration
+  identity; filtered incremental settings transitions have a conservative
+  stock plan-compatibility boundary.
 
 ## Context
 

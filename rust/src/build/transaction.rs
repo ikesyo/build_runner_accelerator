@@ -38,7 +38,11 @@ pub(super) struct PendingTransaction {
     pub(super) deleted_overlay: BTreeSet<String>,
     pub(super) pending_outputs: Vec<(Arc<BuilderDefinition>, String, Arc<[u8]>)>,
     pub(super) pending_deletions: Vec<(Arc<BuilderDefinition>, String)>,
+    pub(super) pending_location_deletions: Vec<(crate::builder::BuildTo, String)>,
+    pub(super) clean_artifact_tree: bool,
     pub(super) pending_actions: Vec<(String, ActionState)>,
+    pub(super) pending_stock_inputs: BTreeMap<String, Option<Vec<String>>>,
+    pub(super) pending_stock_globs: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     pub(super) deleted_actions: Vec<(String, ActionState)>,
     pub(super) resolver: ResolverChanges,
 }
@@ -62,7 +66,11 @@ impl PendingTransaction {
             deleted_overlay,
             pending_outputs: Vec::new(),
             pending_deletions: Vec::new(),
+            pending_location_deletions: Vec::new(),
+            clean_artifact_tree: false,
             pending_actions: Vec::new(),
+            pending_stock_inputs: BTreeMap::new(),
+            pending_stock_globs: BTreeMap::new(),
             deleted_actions,
             resolver: ResolverChanges::default(),
         }

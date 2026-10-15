@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 
@@ -39,6 +40,10 @@ pub struct BuildResult {
     pub deleted: Vec<String>,
     #[serde(default)]
     pub reads: Vec<String>,
+    #[serde(default)]
+    pub stock_inputs: Option<Vec<String>>,
+    #[serde(default)]
+    pub stock_globs: Option<BTreeMap<String, Vec<String>>>,
     #[serde(default)]
     pub resolver_reads: Vec<String>,
     #[serde(default)]
@@ -205,6 +210,10 @@ struct BinaryBuildResultMetadata {
     outputs: Vec<BinaryBuildOutput>,
     deleted: Vec<String>,
     reads: Vec<String>,
+    #[serde(default)]
+    stock_inputs: Option<Vec<String>>,
+    #[serde(default)]
+    stock_globs: Option<BTreeMap<String, Vec<String>>>,
     resolver_reads: Vec<String>,
     resolver_entrypoints: Vec<String>,
     resolver_used: bool,
@@ -264,6 +273,8 @@ impl BinaryBuildResultMetadata {
             outputs,
             deleted: self.deleted,
             reads: self.reads,
+            stock_inputs: self.stock_inputs,
+            stock_globs: self.stock_globs,
             resolver_reads: self.resolver_reads,
             resolver_entrypoints: self.resolver_entrypoints,
             resolver_used: self.resolver_used,

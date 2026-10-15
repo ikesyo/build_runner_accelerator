@@ -1,13 +1,13 @@
 use crate::protocol::GlobRead;
 use crate::snapshot::{AssetSnapshot, Snapshot, glob_asset_key};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::Path;
 
 pub const GRAPH_SCHEMA_VERSION: u32 = 4;
 const GRAPH_MAGIC: &[u8; 4] = b"BRAG";
-const GRAPH_FORMAT_VERSION: u8 = 1;
+const GRAPH_FORMAT_VERSION: u8 = 2;
 const GRAPH_HEADER_LENGTH: usize = GRAPH_MAGIC.len() + 1 + 4;
 const GRAPH_MAX_BYTES: usize = 256 * 1024 * 1024;
 const GRAPH_MAX_COLLECTION_ITEMS: usize = 4_000_000;
@@ -38,9 +38,47 @@ pub struct GraphState {
     /// Actions that resolve an already-loaded library cycle observe no new
     /// IO, so their dependency edges cannot be recovered from reads alone.
     pub resolver_dep_graph: BTreeMap<String, Vec<String>>,
+    /// Actual output location at the successful commit (true means cache).
+    /// Format 1 graphs have no such evidence; never infer it across config changes.
+    pub output_locations: BTreeMap<String, bool>,
+    /// Stock InputTracker input order, distinct from broader observed reads.
+    pub stock_input_order: BTreeMap<String, Vec<String>>,
+    /// Actual glob results by action and glob, preserving source/generated order.
+    pub stock_glob_members: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    /// Source-path generated files excluded from plain sources in this watch.
+    pub watch_generated_sources: BTreeSet<String>,
 }
 
 impl GraphState {
+    pub(crate) fn has_resolver_cycle(&self) -> bool {
+        let mut degrees = BTreeMap::new();
+        for (asset, edges) in &self.resolver_dep_graph {
+            degrees.entry(asset.as_str()).or_insert(0usize);
+            for edge in edges {
+                *degrees.entry(edge.as_str()).or_insert(0) += 1;
+            }
+        }
+        let mut ready: Vec<_> = degrees
+            .iter()
+            .filter(|(_, degree)| **degree == 0)
+            .map(|(asset, _)| *asset)
+            .collect();
+        let mut processed = 0;
+        while let Some(asset) = ready.pop() {
+            processed += 1;
+            if let Some(edges) = self.resolver_dep_graph.get(asset) {
+                for edge in edges {
+                    let degree = degrees.get_mut(edge.as_str()).expect("edge was indexed");
+                    *degree -= 1;
+                    if *degree == 0 {
+                        ready.push(edge.as_str());
+                    }
+                }
+            }
+        }
+        processed != degrees.len()
+    }
+
     pub fn load(path: &Path) -> io::Result<Self> {
         match Self::load_checked(path) {
             Err(error) if error.kind() == io::ErrorKind::InvalidData => {
@@ -77,7 +115,8 @@ impl GraphState {
         if &contents[..GRAPH_MAGIC.len()] != GRAPH_MAGIC {
             return Err(invalid_graph("graph file has an unknown magic"));
         }
-        if contents[GRAPH_MAGIC.len()] != GRAPH_FORMAT_VERSION {
+        let format_version = contents[GRAPH_MAGIC.len()];
+        if !matches!(format_version, 1 | GRAPH_FORMAT_VERSION) {
             return Err(invalid_graph(
                 "graph file has an unsupported format version",
             ));
@@ -105,7 +144,7 @@ impl GraphState {
                 ..Self::default()
             });
         }
-        let state = decoder.read_graph_state(schema_version)?;
+        let state = decoder.read_graph_state(schema_version, format_version)?;
         decoder.finish()?;
         Ok(state)
     }
@@ -364,6 +403,25 @@ impl Encoder {
             self.write_action(action)?;
         }
         self.write_string_list_map(&state.resolver_dep_graph)?;
+        self.write_count(state.output_locations.len(), "output locations")?;
+        for (asset, cache) in &state.output_locations {
+            self.write_string(asset)?;
+            self.write_u8(u8::from(*cache))?;
+        }
+        self.write_string_list_map(&state.stock_input_order)?;
+        self.write_count(state.stock_glob_members.len(), "stock glob actions")?;
+        for (key, globs) in &state.stock_glob_members {
+            self.write_string(key)?;
+            self.write_string_list_map(globs)?;
+        }
+        self.write_strings(
+            &state
+                .watch_generated_sources
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            "watch generated sources",
+        )?;
         Ok(())
     }
 
@@ -521,7 +579,11 @@ impl<'a> Decoder<'a> {
         Ok(values)
     }
 
-    fn read_graph_state(&mut self, schema_version: u32) -> io::Result<GraphState> {
+    fn read_graph_state(
+        &mut self,
+        schema_version: u32,
+        format_version: u8,
+    ) -> io::Result<GraphState> {
         let config_digest = self.read_string()?;
         let assets = self.read_snapshot()?;
         let action_count = self.read_count("action graph")?;
@@ -534,12 +596,46 @@ impl<'a> Decoder<'a> {
             }
         }
         let resolver_dep_graph = self.read_string_list_map()?;
+        let mut output_locations = BTreeMap::new();
+        let mut stock_input_order = BTreeMap::new();
+        let mut stock_glob_members = BTreeMap::new();
+        let mut watch_generated_sources = BTreeSet::new();
+        if format_version >= 2 {
+            let count = self.read_count("output locations")?;
+            for _ in 0..count {
+                let asset = self.read_string()?;
+                let cache = self.read_bool()?;
+                if output_locations.insert(asset, cache).is_some() {
+                    return Err(invalid_graph("graph contains a duplicate output location"));
+                }
+            }
+            stock_input_order = self.read_string_list_map()?;
+            for _ in 0..self.read_count("stock glob actions")? {
+                let key = self.read_string()?;
+                let globs = self.read_string_list_map()?;
+                if stock_glob_members.insert(key, globs).is_some() {
+                    return Err(invalid_graph(
+                        "graph contains a duplicate stock glob action",
+                    ));
+                }
+            }
+            if self.offset < self.bytes.len() {
+                watch_generated_sources = self
+                    .read_strings("watch generated sources")?
+                    .into_iter()
+                    .collect();
+            }
+        }
         Ok(GraphState {
             schema_version,
             config_digest,
             assets,
             actions,
             resolver_dep_graph,
+            output_locations,
+            stock_input_order,
+            stock_glob_members,
+            watch_generated_sources,
         })
     }
 
@@ -554,10 +650,26 @@ impl<'a> Decoder<'a> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resolver_cycle_detection_handles_shared_children_and_missing_leaves() {
+        let mut state = super::GraphState {
+            resolver_dep_graph: std::collections::BTreeMap::from([
+                ("a".to_owned(), vec!["c".to_owned()]),
+                ("b".to_owned(), vec!["c".to_owned()]),
+                ("c".to_owned(), vec!["leaf".to_owned()]),
+            ]),
+            ..super::GraphState::default()
+        };
+        assert!(!state.has_resolver_cycle());
+        state
+            .resolver_dep_graph
+            .insert("leaf".to_owned(), vec!["a".to_owned()]);
+        assert!(state.has_resolver_cycle());
+    }
     use super::{ActionState, GraphState};
     use crate::protocol::GlobRead;
     use crate::snapshot::{AssetSnapshot, Snapshot, glob_asset_key};
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn state_with_glob(glob: &GlobRead, digest: &str) -> GraphState {
         let mut assets = Snapshot::new();
@@ -575,6 +687,10 @@ mod tests {
             assets,
             actions: BTreeMap::new(),
             resolver_dep_graph: BTreeMap::new(),
+            output_locations: BTreeMap::new(),
+            stock_input_order: BTreeMap::new(),
+            stock_glob_members: BTreeMap::new(),
+            watch_generated_sources: BTreeSet::new(),
         }
     }
 
@@ -666,6 +782,22 @@ mod tests {
         let state = GraphState {
             schema_version: super::GRAPH_SCHEMA_VERSION,
             config_digest: "config".to_owned(),
+            watch_generated_sources: BTreeSet::from(["app|lib/omitted.mid".to_owned()]),
+            stock_glob_members: BTreeMap::from([(
+                "step".to_owned(),
+                BTreeMap::from([(
+                    "app|lib/*.dart".to_owned(),
+                    vec![
+                        "app|lib/source.dart".to_owned(),
+                        "app|lib/generated.dart".to_owned(),
+                    ],
+                )]),
+            )]),
+            stock_input_order: BTreeMap::from([(
+                "step".to_owned(),
+                vec!["app|lib/b.dart".to_owned(), "app|lib/a.dart".to_owned()],
+            )]),
+            output_locations: BTreeMap::from([("app|lib/model.g.dart".to_owned(), true)]),
             assets: Snapshot::from([(
                 "app|lib/model.dart".to_owned(),
                 AssetSnapshot {
@@ -719,6 +851,39 @@ mod tests {
     }
 
     #[test]
+    fn format_one_graphs_load_without_guessing_output_locations() {
+        let state = GraphState {
+            schema_version: super::GRAPH_SCHEMA_VERSION,
+            config_digest: "legacy".to_owned(),
+            actions: BTreeMap::from([(
+                "step".to_owned(),
+                ActionState {
+                    builder: "app:builder".to_owned(),
+                    outputs: vec!["app|lib/a.out".to_owned()],
+                    ..ActionState::default()
+                },
+            )]),
+            ..GraphState::default()
+        };
+        let mut encoder = super::Encoder::new();
+        encoder.write_graph_state(&state).unwrap();
+        let mut payload = encoder.finish();
+        // Format 1 ends after resolver edges, before the empty location map.
+        payload.truncate(payload.len() - 16);
+        let mut bytes = super::GRAPH_MAGIC.to_vec();
+        bytes.push(1);
+        bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        bytes.extend(payload);
+        let path = std::env::temp_dir().join(format!(
+            "accelerator-legacy-locations-{}.bin",
+            std::process::id()
+        ));
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(GraphState::load(&path).unwrap(), state);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn old_binary_format_and_schema_are_discarded_without_removing_files() {
         let root =
             std::env::temp_dir().join(format!("accelerator-old-graph-{}", std::process::id()));
@@ -729,7 +894,7 @@ mod tests {
         std::fs::write(&source, b"user source").unwrap();
         std::fs::write(&output, b"existing output").unwrap();
         for (format, schema) in [
-            (2, super::GRAPH_SCHEMA_VERSION),
+            (99, super::GRAPH_SCHEMA_VERSION),
             (super::GRAPH_FORMAT_VERSION, 1),
         ] {
             let mut bytes = super::GRAPH_MAGIC.to_vec();

@@ -1,273 +1,166 @@
 # Launcher and release contract
 
-`build_runner_accelerator` is the single project-facing Dart package. It
-contains the launcher, manifest generator, worker runtime, and protocol
-libraries so the generated worker and native frontend share one versioned
-contract.
+The Dart package contains the launcher, manifest generator, and worker. The
+launcher selects a matching Rust frontend when available and otherwise follows
+the mode-specific fallback rules below.
 
-## Invocation
-
-Add the package to a target project's `dev_dependencies`:
+## Install and invoke
 
 ```bash
 dart pub add dev:build_runner_accelerator
-```
-
-Invoke the project-local executable:
-
-```bash
 dart run build_runner_accelerator build
 dart run build_runner_accelerator watch
 ```
 
-These are the normal invocations: `dart run` starts the project-facing
-launcher as a Dart program. Launcher execution and worker execution are
-separate layers. The AOT options below select the generated Dart worker; they
-do not compile the launcher itself.
+`dart run` starts the launcher. Worker AOT settings control the generated Dart
+worker, not the launcher.
 
-The launcher consumes `--mode`, `--root`, `--dart`, `--force-aot`, and
-`--force-jit`. Native frontend options such as `--jobs` and `--interval-ms`
-are passed to the native frontend. The internal `--worker` artifact override
-is also forwarded for repository tests, benchmarks and diagnostics; it is not
-a supported third-party extension API. The compile-mode options use the
-stock build_runner names, are mutually exclusive, and are retained when the
-stock Dart path is selected. Other arguments are retained for the stock Dart
-path.
-Unsupported commands and options select stock immediately in `auto`, before
-binary resolution, download, workspace loading, or manifest generation.
-`rust` rejects them explicitly. Stock option values and `--` are retained,
-including values that look like accelerator flags; argument order is preserved.
-Both direct Dart fallback and manifest-time native fallback retain the same
-stock invocation, including explicit force flags, and propagate stock's status.
-The native bridge carries a JSON argument vector internally; it is not a
-user-facing option.
+## Modes and CLI
 
-Native build/watch also accept `--delete-conflicting-outputs` and `-d`.
-In the supported build_runner 2.16.2 window these are retired, non-negatable,
-non-operational flags. No path automatically adds them. `--build-filter`,
-output directories, build directories, workspace,
-keep-modified-outputs, only-check, logging, serve options and other stock
-options remain on fallback. See the complete [CLI table](../README.md).
+| Mode | Native unavailable or unsupported request |
+| --- | --- |
+| `auto` (default) | Explain on stderr, then run stock `build_runner`. |
+| `rust` | Return an error before native actions. |
+| `dart` | Always run stock `build_runner`. |
 
-Native build/watch/prewarm also support `--define`, `--release` / `-r`,
-`--no-release`, and `--config NAME` / `-c NAME` / `-cNAME`. Grouped `-rd`
-flags and config names with path separators use stock parsing and AssetId
-normalization. Settings are carried in the
-same original stock vector through early and manifest-time fallback. Prewarm
-resolves these settings in both foreground and detached execution; dart skips.
-See [configuration resolution and cache reuse](configuration.md).
+The launcher recognizes these options:
 
-Leading help/version belong to the accelerator; command-level help/version
-belong to stock. `prewarm` rejects unsupported stock-only arguments in every mode.
-`aot-cache-key` is a native utility with no stock equivalent.
-Stock clean does not remove accelerator graph/worker caches.
+| Option | Purpose |
+| --- | --- |
+| `--mode auto`, `--mode rust`, `--mode dart` | Select native/fallback policy. |
+| `--root PATH`, `--dart PATH` | Select workspace or Dart executable. |
+| `--jobs N`, `--interval-ms N` | Configure the native frontend. |
+| `--force-aot`, `--force-jit` | Select worker execution mode; mutually exclusive. |
+| `--build-filter PATTERN` | Select build/watch outputs; syntax and manifest limits are in [ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md). |
+| `--define`, `--release`, `--no-release`, `--config` | Resolve `build_runner` settings; see [configuration](configuration.md). |
+| `--delete-conflicting-outputs`, `-d` | Accepted retired flags in `build_runner` 2.16.2; they have no effect and are never added automatically. |
+| `prewarm [--background]` | Prepare caches without running builders. |
+| `aot-cache-key` | Print a native worker cache key; no stock equivalent. |
 
-Direct stock execution on Unix uses a small source/AOT launcher re-entry that
-creates a session and execs the selected Dart command. This preserves its PID,
-argument vector, stdio and status while allowing launcher-only Ctrl-C to reach
-the inner stock build process. Shutdown is bounded to five seconds.
+Unsupported commands and options fall back before native download or
+workspace setup in `auto`; `rust` rejects them. Fallback retains the original
+argument order, values, `--` separator, and explicit `--force-aot`/`--force-jit`
+flags, and preserves
+stock's exit status. Stock option values remain values even when they resemble
+accelerator options. Invalid accelerator values are errors in every mode.
+Leading help/version describe the accelerator; command help/version route to
+stock in `auto` and are rejected in `rust`. The internal `--worker` and transport
+options are for tests and diagnostics, not third-party extension APIs.
 
-On Unix the native process supervises a separate process group containing its
-workers, generator, probes and compilers. Launcher signals are forwarded to the
-selected child; native forwards them to the whole group, waits up to five
-seconds, and kills remaining members. Ctrl-C returns 130; terminal/SSH hangup
-(SIGHUP) is forwarded in both native and stock paths and returns 129. Internal AOT helpers
-share the supervisor context; an intentional background compile can finish
-after a successful build, but is cleaned up on interruption or failure. Detached prewarm has its own session and intentionally survives
-the setup hook. Windows native execution uses a kill-on-close job and forwards
-console interruption to the child group; the Windows execution path requires CI
-validation on that platform. Detached Windows prewarm retries without job
-breakaway only for ERROR_ACCESS_DENIED. It then remains subject to any enclosing
-job's lifetime, while the accelerator job permits it to survive successful setup.
+In `auto`, these option groups also route to stock:
 
-Mode behavior is part of the release contract:
+| Stock-only group | Examples |
+| --- | --- |
+| Output layout or build directory | `--output` / `-o`, `--workspace`, positional build directories |
+| Output lifecycle and logging | `--keep-modified-outputs`, `--only-check`, `--symlink`, `--no-symlink`, `--verbose` / `-v`, `--verbose-durations` |
+| Dart runtime or profiling | `--enable-experiment`, `--dart-jit-vm-arg`, `--dart-aot-perf` |
+| Serve and daemon | `--hostname`, `--log-requests`, `--live-reload`, `--build-mode` |
+| Other stock commands or arguments | `clean`, `serve`, `run`, `test`, `stop`, `daemon`, unknown arguments, invalid stock values |
 
-| Mode | Native frontend unavailable | Unsupported manifest |
-| --- | --- | --- |
-| `auto` | Report on stderr, then run stock Dart `build_runner`. | Report on stderr, then run stock Dart `build_runner`. |
-| `rust` | Return an error. | Return an error. |
-| `dart` | Always run stock Dart `build_runner`. | Always run stock Dart `build_runner`. |
-
-The launcher keeps the selected build process's standard streams intact. Its
-own diagnostics are written to standard error.
-
-When a native frontend is selected, the launcher enables the workspace-local
-worker AOT cache unless `BUILD_RUNNER_ACCELERATOR_WORKER_AOT` is already set.
-The default policy depends on the command: `build` and other one-shot
-commands compile the AOT worker synchronously, because running a large cold
-build on the script worker costs more than the one-time compile, while
-`watch` starts the Dart script worker immediately and compiles the AOT
-binary in the background so the session is not held up. A long-running
-`watch` session keeps the artifact it
-started with so the resident worker is not replaced mid-session; a later
-invocation can use the completed AOT cache. Set the variable to `1` for a
-synchronous compile on the first build (`auto` has the same behavior), to
-`background` for background compilation, to `force` for mandatory AOT, or to
-`0` for the kernel/script worker path. Other values select the non-AOT path.
-Explicit
-`--force-aot` and `--force-jit` take precedence over the environment variable;
-`--force-aot` also makes an AOT compilation failure fatal, matching stock
-build_runner's force semantics.
+Strict `rust` mode rejects these requests. Prewarm has no stock equivalent:
+it accepts supported configuration settings but rejects stock-only and
+build-only arguments.
 
 ## Environment controls
 
-Names below have the `BUILD_RUNNER_ACCELERATOR_` prefix. Unknown environment
-names are ignored. Retired controls and upgrade steps are listed in
-[the cleanup guide](compatibility-cleanup.md). Platform cache selection also
-honors LOCALAPPDATA, XDG_CACHE_HOME and platform home/cache conventions.
+Names below use the `BUILD_RUNNER_ACCELERATOR_` prefix. Unknown names are
+ignored. Public compatibility intent applies only to the Public row.
 
-| Class | Names | Contract |
+| Class | Suffixes | Use |
 | --- | --- | --- |
-| Public, intended to remain supported | `BIN`, `CACHE`, `RELEASE_BASE_URL`, `WORKER_AOT` | Preinstalled frontend, cache root, signed HTTPS release mirror and worker compilation policy. |
-| Diagnostic, supported but output/schema not stable | `DEBUG`, `METRICS`, `ANALYSIS_TRACE`, `WALL_TRACE`, `PLAN_ONLY` | Error stack, worker metrics, analysis details, frontend timing, and non-building plan inspection. Trace needs METRICS; PLAN_ONLY exits before executing actions. |
-| Diagnostic recovery controls | `BYTE_STORE`, `DEP_CACHE`, `DEP_PREFETCH`, `MANIFEST_SNAPSHOT`, `EARLY_CATALOG`, `PART_FILTER`, `SDK_SUMMARY_PREWARM`, `ANALYSIS_PREWARM` | Set `0` to disable the corresponding optimization; BYTE_STORE=0 disables shared analyzer storage; DEP_CACHE=0 disables directive caches. BYTE_STORE also accepts false/off. |
-| Experimental, opt-in | `ANALYSIS_SINGLE_FLIGHT`, `COMPILE_PREWARM`, `MANIFEST_PREWARM` | Set `1` to enable; disabled by default, may change or be removed in a later release. |
-| Experimental tuning | `ANALYSIS_PREWARM_JOBS`, `ANALYSIS_PREWARM_DIRS`, `RESOLVER_CAP` | Prewarm shard count/directories and resolver concurrency cap; no stable performance guarantee. |
-| Internal | `WORKER_KERNEL`, `WORKER_AOT_PATH`, `WORKER_AOT_BACKGROUND_LOCK`, `MANIFEST_WORKER_AOT`, `SUPERVISED` | Artifact overrides and subprocess coordination; no public compatibility guarantee. Do not set in normal CI. |
+| Public | `BIN`, `CACHE`, `RELEASE_BASE_URL`, `WORKER_AOT` | Select a preinstalled binary, cache root, HTTPS release mirror, or worker compilation policy. |
+| Diagnostics | `DEBUG`, `METRICS`, `ANALYSIS_TRACE`, `WALL_TRACE`, `PLAN_ONLY` | Error details, worker metrics, analysis/timing traces, and plan inspection. Traces need `METRICS`; `PLAN_ONLY` exits before actions. Output schemas are not stable. |
+| Cache recovery | `BYTE_STORE`, `DEP_CACHE`, `DEP_PREFETCH`, `MANIFEST_SNAPSHOT`, `EARLY_CATALOG`, `PART_FILTER`, `SDK_SUMMARY_PREWARM`, `ANALYSIS_PREWARM` | Set the named optimization to `0` for diagnosis. `BYTE_STORE` and `DEP_CACHE` disable their shared caches; `BYTE_STORE` also accepts `false`/`off`. |
+| Experimental | `ANALYSIS_SINGLE_FLIGHT`, `COMPILE_PREWARM`, `MANIFEST_PREWARM` | Opt-in experiments; disabled by default and subject to change. |
+| Tuning | `ANALYSIS_PREWARM_JOBS`, `ANALYSIS_PREWARM_DIRS`, `RESOLVER_CAP` | Prewarm and resolver limits; no performance guarantee. |
+| Internal | `WORKER_KERNEL`, `WORKER_AOT_PATH`, `WORKER_AOT_BACKGROUND_LOCK`, `MANIFEST_WORKER_AOT`, `SUPERVISED` | Artifact overrides and process coordination. Do not set in ordinary builds. |
 
-The internal `--stock-arguments-json` / `--accelerator-process-group` transport
-options are not public CLI. Toolchain variables DART_BIN, DART_SDK,
-CARGO_BIN, PUB_CACHE, CARGO_HOME and RUSTUP_HOME belong to repository scripts,
-not the project-facing launcher option API.
+Toolchain variables such as `DART_BIN`, `CARGO_BIN`, `PUB_CACHE`, `RUSTUP_HOME`, and
+`CARGO_HOME` belong to repository scripts, not the launcher API. Retired names
+and recovery steps are in the [compatibility cleanup guide](compatibility-cleanup.md).
 
-The classification describes the current support intent during 0.x development.
+## Prewarm
 
-## Setup-time prewarm
-
-The `prewarm` command exists so the one-time worker AOT compile can happen at
-setup time — right after `dart pub get` — instead of inside the first `build`:
+Run prewarm after dependency resolution to prepare the manifest, worker, and
+analysis cache before the first build:
 
 ```bash
 dart pub get
 dart run build_runner_accelerator prewarm --background
 ```
 
-It drives the same manifest-generation, worker-selection, and compile stages
-as a cold `build`, without running build actions, and leaves every populated
-cache where the next `build` finds it. With `--background` the command returns
-immediately: a detached copy (new process group, lowered scheduling priority)
-does the work and logs to
-`.dart_tool/build_runner_accelerator/prewarm.log`. `--background` is accepted
-only with `prewarm`.
+Background prewarm returns promptly and logs to
+`.dart_tool/build_runner_accelerator/prewarm.log`. A worker AOT compile lock
+prevents duplicate worker AOT compiles. Prewarm runs no build actions. Under
+`auto`, it reports and exits successfully when native execution is unavailable;
+`dart` mode skips it and `rust` stays strict. Filters and other build-only
+arguments are rejected. Set `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` to
+skip its analysis sweep.
 
-A workspace-local single-flight lock
-(`.dart_tool/build_runner_accelerator/.aot-background.lock`) serializes all
-worker AOT compiles: a `prewarm` in flight and a `build` (or a second
-`prewarm`, which exits as a no-op) never run two compiles — the loser waits
-for the winner's atomically published artifact up to a bounded interval and
-then compiles itself. `prewarm` is a setup hook, not a contract: under
-`--mode dart` or when no native frontend can run it reports on stderr and
-exits 0, so a dependency-resolution hook cannot fail for lack of a frontend.
-`--mode rust` keeps strict semantics.
+## Binary selection and integrity
 
-Beyond the AOT compile, `prewarm` also resolves the workspace's sources into
-the shared analyzer byte store (the `analysis prewarm[prewarm]` shards),
-which is what makes the first build's action phase faster — not just the
-compile-free startup. On a large workspace that sweep roughly doubles the
-command's serial time, so `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` opts
-out for foreground or CI runs where it has nothing to hide behind; it stays
-on by default because a detached `prewarm --background` hides the cost
-entirely.
+Frontend resolution checks, in order:
 
-## Frontend resolution
+1. `BUILD_RUNNER_ACCELERATOR_BIN`.
+2. A workspace binary under `.dart_tool/build_runner_accelerator/bin/`.
+3. The versioned user cache.
+4. The matching GitHub Release artifact.
+5. Stock fallback in auto.
 
-Resolution is version-pinned and ordered:
+A release manifest and detached Ed25519 signature are verified before
+downloaded code is used. The launcher checks target, package version, protocol
+major, archive size, and SHA-256; cache entries are re-hashed before execution.
+Temporary files, atomic renames, and per-target locks protect installation.
+`BUILD_RUNNER_ACCELERATOR_RELEASE_BASE_URL` may select an HTTPS-compatible
+mirror.
 
-1. `BUILD_RUNNER_ACCELERATOR_BIN`;
-2. a workspace binary under
-   `.dart_tool/build_runner_accelerator/bin/`;
-3. the versioned user cache;
-4. the matching GitHub Release artifact;
-5. the Dart fallback in `auto` mode.
+| Target | Rust target | Archive |
+| --- | --- | --- |
+| macos-arm64 | aarch64-apple-darwin | tar.gz |
+| linux-x64 | x86_64-unknown-linux-gnu | tar.gz |
+| linux-arm64 | aarch64-unknown-linux-gnu | tar.gz |
+| windows-x64 | x86_64-pc-windows-msvc | zip |
+| windows-arm64 | aarch64-pc-windows-msvc | zip |
 
-On a cache miss, the launcher downloads the versioned manifest and detached
-Ed25519 signature, verifies the signature with the public key shipped in the
-Dart package, validates the target, package version, and protocol major, then
-downloads the matching archive. The archive size and SHA-256 are checked before
-the executable is extracted or run. No unverified network binary is executed.
+macOS Intel uses stock in `auto`. The signed release workflow requires
+`BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY` in repository Actions secrets;
+the corresponding public key is pinned in the package.
 
-Installation uses temporary files, atomic renames, and a per-version/per-target
-lock. Existing cache entries are re-hashed before execution; an incomplete or
-modified entry is treated as a cache miss. The
-`BUILD_RUNNER_ACCELERATOR_RELEASE_BASE_URL` environment variable may point to
-an HTTPS-compatible mirror. `BUILD_RUNNER_ACCELERATOR_CACHE` overrides the
-local frontend cache root.
+The release cache is separate from workspace state. It uses the platform
+cache directory or `BUILD_RUNNER_ACCELERATOR_CACHE` override:
 
-The launcher keeps the archive, crypto, and signature-verification dependency
-graph out of the normal Dart startup path. On a valid release-cache hit it
-checks the small metadata file and re-hashes the executable using the
-platform's SHA-256 command, then launches the native frontend immediately.
-Only a cache miss starts `release_downloader_entrypoint.dart` in a short-lived
-isolate; that isolate performs the signed manifest, archive, and atomic install
-work. If the platform hash utility is unavailable, the conservative downloader
-path performs the full validation instead.
+| Platform | Default cache root |
+| --- | --- |
+| Linux | `XDG_CACHE_HOME/build_runner_accelerator` or `~/.cache/build_runner_accelerator` |
+| macOS | `~/Library/Caches/build_runner_accelerator` |
+| Windows | `%LOCALAPPDATA%/build_runner_accelerator` |
 
-### Optional precompiled launcher
+Manifests, graphs, generated workers, and workspace AOT artifacts live under
+`.dart_tool/build_runner_accelerator/`. `dart compile exe` for the launcher is
+a compatibility path for cache misses; `dart run` is the normal invocation.
 
-The release package distributes a Dart launcher, not a native AOT launcher.
-An advanced user can nevertheless run `dart compile exe` against the launcher
-entrypoint. In that form Dart cannot spawn the source downloader directly as an
-isolate, so a release-cache miss invokes the same downloader entrypoint through
-the configured `--dart` executable as a short-lived child process. This is a
-compatibility path; normal installation and the launcher-inclusive benchmark
-use `dart run`.
+## Worker lifecycle and signals
 
-The frontend cache is separate from workspace-generated state:
+Native build/watch supervises its worker, generator, and compiler processes.
+On Unix, the launcher forwards Ctrl-C to the selected child and forwards SIGHUP
+to native or stock execution; they return 130 and 129 after bounded cleanup.
+Windows native execution uses a kill-on-close job and forwards console
+interruption. Detached prewarm intentionally survives successful setup;
+interrupted or failed work is cleaned up. Direct stock and native execution
+preserve the selected process's standard streams; launcher diagnostics go to
+stderr.
 
-```text
-Linux:   $XDG_CACHE_HOME/build_runner_accelerator/<version>/<target>/
-         or ~/.cache/build_runner_accelerator/<version>/<target>/
-macOS:   ~/Library/Caches/build_runner_accelerator/<version>/<target>/
-Windows: %LOCALAPPDATA%\build_runner_accelerator\<version>\<target>\
-```
+Worker AOT policy is command-specific: one-shot builds compile synchronously;
+watch starts the script worker and compiles AOT in the background. The session
+keeps the worker it started with. `BUILD_RUNNER_ACCELERATOR_WORKER_AOT` accepts:
 
-The workspace manifest, generated worker, graph, SDK facade, and AOT cache
-remain under `.dart_tool/build_runner_accelerator/`. They are not part of a
-portable frontend archive.
+| Value | Behavior |
+| --- | --- |
+| `1` | Compile synchronously. |
+| `background` | Compile in a background process. |
+| `force` | Require AOT; compile failure is fatal. |
+| `0` or another value | Use the kernel/script worker. |
 
-## Artifact matrix
-
-Each release is built as five independent native cells:
-
-| Target ID | Rust target | Archive | Runner |
-| --- | --- | --- | --- |
-| `macos-arm64` | `aarch64-apple-darwin` | `.tar.gz` | `macos-14` |
-| `linux-x64` | `x86_64-unknown-linux-gnu` | `.tar.gz` | `ubuntu-24.04` |
-| `linux-arm64` | `aarch64-unknown-linux-gnu` | `.tar.gz` | `ubuntu-24.04-arm` |
-| `windows-x64` | `x86_64-pc-windows-msvc` | `.zip` | `windows-2022` |
-| `windows-arm64` | `aarch64-pc-windows-msvc` | `.zip` | `windows-11-arm` |
-
-macOS Intel is intentionally not a release target; in `auto` mode the launcher
-falls back to stock Dart `build_runner` on that platform.
-
-Archives contain the native executable, `VERSION`, and release notice files.
-The publish job emits `release-manifest.json`, `SHA256SUMS`, and detached
-Ed25519 signatures. The signed manifest records package version, protocol
-major, target, filename, byte size, and SHA-256.
-
-### Release signing setup
-
-The release workflow expects the repository Actions secret
-`BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY` to contain the PEM-encoded
-Ed25519 private key corresponding to the public key pinned in
-`lib/src/release_downloader.dart`. The workflow verifies that correspondence
-before signing and never checks the private key into the repository.
-
-## Launcher overhead
-
-The launcher adds one Dart process launch plus target detection and local cache
-metadata work. It does not proxy Rust/Dart worker IPC, scan build inputs, or
-schedule actions. A workspace or valid release-cache hit therefore adds only
-lightweight startup overhead; a release cache miss starts the downloader
-isolate, and a worker AOT cache miss additionally compiles the workspace-local
-worker before the first dirty build. Direct binary selection through
-`BUILD_RUNNER_ACCELERATOR_BIN` remains available for benchmarking, offline
-environments, and CI images that preinstall the frontend.
-
-## Workspace state and updates
-
-The generated worker and Rust/Dart IPC are internal package components;
-[protocol/v1.md](../protocol/v1.md) defines their version and validation checks.
-Manifest, graph, worker AOT and analysis cache formats are disposable internal
-state. See [the cleanup/update guide](compatibility-cleanup.md) for retired
-interfaces, regeneration and safe recovery.
+Explicit `--force-aot`/`--force-jit` take precedence. See the
+[development guide](development.md) for toolchain and release checks, and
+[protocol v1](../protocol/v1.md) for the internal worker contract.

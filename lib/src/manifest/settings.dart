@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'package:build_config/src/key_normalization.dart';
 import 'package:path/path.dart' as p;
 
+import '../build_filter.dart';
+
 /// The native CLI subset of build_runner 2.16.x. Keep spelling/order in the
 /// fallback vector; this value is only used for configuration resolution.
 class BuildSettings {
@@ -13,12 +15,14 @@ class BuildSettings {
     this.config,
     this.defines = const [],
     this.deletionFlag = false,
+    this.buildFilters = const [],
   });
 
   final bool release;
   final String? config;
   final List<String> defines;
   final bool deletionFlag;
+  final List<String> buildFilters;
 
   /// Stock constructs an AssetId from the prefixed/suffixed name, then
   /// converts backslashes and normalizes POSIX segments inside the package.
@@ -36,7 +40,12 @@ class BuildSettings {
     final expanded = <String>[];
     for (var i = 0; i < arguments.length; i++) {
       final argument = arguments[i];
-      if (const {'--config', '-c', '--define'}.contains(argument)) {
+      if (const {
+        '--config',
+        '-c',
+        '--define',
+        '--build-filter',
+      }.contains(argument)) {
         expanded.add(argument);
         if (i + 1 < arguments.length) expanded.add(arguments[++i]);
       } else if (argument.startsWith('-c') &&
@@ -57,6 +66,7 @@ class BuildSettings {
     var deletionFlag = false;
     String? config;
     final defines = <String>[];
+    final buildFilters = <String>[];
     final pairs = <(bool, String, String)>{};
     for (var i = 0; i < arguments.length; i++) {
       final argument = arguments[i];
@@ -74,7 +84,12 @@ class BuildSettings {
           final name = separator < 0
               ? argument
               : argument.substring(0, separator);
-          if (!const {'--config', '-c', '--define'}.contains(name)) {
+          if (!const {
+            '--config',
+            '-c',
+            '--define',
+            '--build-filter',
+          }.contains(name)) {
             throw FormatException('Unsupported native argument: $argument');
           }
           final String value;
@@ -91,7 +106,12 @@ class BuildSettings {
             }
             value = arguments[i];
           }
-          if (name == '--define') {
+          if (name == '--build-filter') {
+            for (final filter in value.split(',')) {
+              NativeBuildFilter.parse(filter);
+              buildFilters.add(filter);
+            }
+          } else if (name == '--define') {
             if (value.split('=').length < 3) {
               throw FormatException(
                 'Expected --define <builder>=<option>=<value>',
@@ -120,6 +140,7 @@ class BuildSettings {
       config: config,
       defines: defines,
       deletionFlag: deletionFlag,
+      buildFilters: buildFilters,
     );
   }
 
