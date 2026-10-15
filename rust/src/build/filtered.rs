@@ -162,7 +162,7 @@ pub(super) fn run(
         &plan.visibility,
         &specs,
     )?;
-    let mut pool_metrics = None;
+    let mut pool_metrics = PoolMetrics::default();
     if !dirty_roots.is_empty() {
         if pool.is_none() {
             let worker = worker_executable(options, config)?;
@@ -213,10 +213,10 @@ pub(super) fn run(
         let dep_graph = active.take_dep_graph();
         built?;
         state.resolver_dep_graph.extend(dep_graph);
-        pool_metrics = Some(active.metrics());
+        pool_metrics = active.metrics();
     } else if let Some(active) = pool.as_deref() {
         // A filtered watch pool may be resident but intentionally unstarted.
-        pool_metrics = Some(active.metrics());
+        pool_metrics = active.metrics();
     }
     for result in lazy.take_results() {
         record_build_result(
@@ -377,7 +377,7 @@ pub(super) fn run(
         },
     )?;
     if runtime_metrics_enabled() {
-        print_pool_metrics(pool_metrics.unwrap_or_else(PoolMetrics::default));
+        print_pool_metrics(pool_metrics);
     }
     println!("Build completed (Rust frontend)");
     Ok(())
