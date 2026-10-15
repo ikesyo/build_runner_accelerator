@@ -49,68 +49,31 @@ impl WorkspaceLock {
     /// Allow the lock descriptor to survive only the immediate late-fallback
     /// exec. It remains close-on-exec during native startup and worker launch.
     #[cfg(unix)]
-    pub(crate) fn inherit_for_exec(&self) -> io::Result<ExecInheritance<'_>> {
+    pub(crate) fn exec(&self, command: &mut std::process::Command) -> io::Result<()> {
         use std::os::fd::AsRawFd;
+        use std::os::unix::process::CommandExt;
 
         let fd = self._file.as_raw_fd();
-        // SAFETY: `fd` is borrowed from the live lock file for the guard's
-        // lifetime, and both fcntl operations use the descriptor-only commands.
+        // SAFETY: this borrow keeps the descriptor open throughout exec and
+        // restoration; fcntl only reads or updates this descriptor's flags.
         let flags = unsafe { fcntl(fd, F_GETFD, 0) };
         if flags == -1 {
             return Err(io::Error::last_os_error());
         }
-        if flags & FD_CLOEXEC == 0 {
-            return Ok(ExecInheritance {
-                lock: self,
-                flags,
-                restore_needed: false,
-            });
-        }
         if unsafe { fcntl(fd, F_SETFD, flags & !FD_CLOEXEC) } == -1 {
             return Err(io::Error::last_os_error());
         }
-        Ok(ExecInheritance {
-            lock: self,
-            flags,
-            restore_needed: true,
-        })
-    }
-}
-
-#[cfg(unix)]
-pub(crate) struct ExecInheritance<'a> {
-    lock: &'a WorkspaceLock,
-    flags: std::os::raw::c_int,
-    restore_needed: bool,
-}
-
-#[cfg(unix)]
-impl ExecInheritance<'_> {
-    pub(crate) fn restore(mut self) -> io::Result<()> {
-        self.restore_flags()
-    }
-
-    fn restore_flags(&mut self) -> io::Result<()> {
-        if !self.restore_needed {
-            return Ok(());
+        let exec_error = command.exec();
+        if unsafe { fcntl(fd, F_SETFD, flags) } == -1 {
+            let restore_error = io::Error::last_os_error();
+            return Err(io::Error::new(
+                restore_error.kind(),
+                format!(
+                    "failed to restore workspace lock descriptor after stock exec failed ({exec_error}): {restore_error}"
+                ),
+            ));
         }
-        use std::os::fd::AsRawFd;
-
-        // SAFETY: the guard borrows the lock, so its file descriptor stays open.
-        if unsafe { fcntl(self.lock._file.as_raw_fd(), F_SETFD, self.flags) } == -1 {
-            return Err(io::Error::last_os_error());
-        }
-        self.restore_needed = false;
-        Ok(())
-    }
-}
-
-#[cfg(unix)]
-impl Drop for ExecInheritance<'_> {
-    fn drop(&mut self) {
-        // `restore` reports errors explicitly; this retry also covers early
-        // returns and keeps CLOEXEC set whenever the OS still permits it.
-        let _ = self.restore_flags();
+        Err(exec_error)
     }
 }
 
@@ -134,7 +97,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn lock_descriptor_is_inheritable_only_inside_exec_guard() {
+    fn failed_exec_restores_descriptor_flags_and_keeps_lock() {
         use std::os::fd::AsRawFd;
 
         let root = std::env::temp_dir().join(format!(
@@ -150,10 +113,17 @@ mod tests {
             result
         };
         assert_ne!(flags() & FD_CLOEXEC, 0);
-        let inheritance = lock.inherit_for_exec().unwrap();
-        assert_eq!(flags() & FD_CLOEXEC, 0);
-        inheritance.restore().unwrap();
+        let error = lock
+            .exec(&mut std::process::Command::new(
+                root.join("missing-executable"),
+            ))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
         assert_ne!(flags() & FD_CLOEXEC, 0);
+        assert_eq!(
+            WorkspaceLock::acquire(&root).err().unwrap().kind(),
+            io::ErrorKind::WouldBlock
+        );
         drop(lock);
         fs::remove_dir_all(root).unwrap();
     }

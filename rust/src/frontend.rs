@@ -712,21 +712,11 @@ pub(crate) fn run_dart_fallback(
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        let inheritance = workspace_lock
-            .map(crate::workspace_lock::WorkspaceLock::inherit_for_exec)
-            .transpose()?;
-        let exec_error = command.current_dir(&options.root).exec();
-        if let Some(inheritance) = inheritance
-            && let Err(restore_error) = inheritance.restore()
-        {
-            return Err(io::Error::new(
-                restore_error.kind(),
-                format!(
-                    "failed to restore workspace lock descriptor after stock exec failed ({exec_error}): {restore_error}"
-                ),
-            ));
+        command.current_dir(&options.root);
+        match workspace_lock {
+            Some(lock) => lock.exec(&mut command),
+            None => Err(command.exec()),
         }
-        Err(exec_error)
     }
     #[cfg(not(unix))]
     {
