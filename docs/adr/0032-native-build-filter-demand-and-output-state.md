@@ -60,8 +60,7 @@ them. Native supports repeated or comma-separated OR filters, root-relative
 paths, `package:` paths under `lib`, `asset:` paths under the package root,
 `*`, and whole-segment `**`. Unsupported patterns and optional, post-process,
 zero-output, or trigger-only builders use stock in auto and error in rust;
-recorded cyclic resolver graphs also use stock for incremental reuse. Filtered
-demand runs on one worker; `--jobs` does not parallelize filtered builds.
+recorded cyclic resolver graphs also use stock for incremental reuse.
 See the [launcher reference](../launcher-and-release.md) for CLI and mode
 behavior, and the [configuration guide](../configuration.md) for config
 transitions.
