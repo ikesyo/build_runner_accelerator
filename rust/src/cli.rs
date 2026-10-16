@@ -48,11 +48,10 @@ impl Options {
         let mut dart_binary = None;
         let mut worker = None;
         let mut interval_ms = 200;
-        // Worker processes each carry a full analyzer instance (~1 GiB on
-        // large workspaces), so the default follows the machine's parallelism
-        // capped by the memory that is actually available. --jobs overrides
-        // it (including down to 1 on small runners).
-        let mut jobs = default_worker_count();
+        // Use a conservative placeholder until the command and filter options
+        // are known. Unfiltered work gets the machine-based default below.
+        let mut jobs = 1;
+        let mut jobs_explicit = false;
         let mut mode = FrontendMode::Auto;
         let mut background = false;
         let mut stock_arguments = Vec::new();
@@ -106,6 +105,7 @@ impl Options {
                         if jobs == 0 {
                             return Err(io::Error::other("--jobs must be greater than zero"));
                         }
+                        jobs_explicit = true;
                     }
                     "--interval-ms" => {
                         interval_ms = value.parse().map_err(|_| {
@@ -184,6 +184,15 @@ impl Options {
         }
         if !command_seen {
             direct_invocation.insert(0, command.clone());
+        }
+        let filtered_command = matches!(command.as_str(), "build" | "watch")
+            && BuildSettings::parse(&stock_arguments)
+                .is_ok_and(|settings| !settings.build_filters.is_empty());
+        if !jobs_explicit && !filtered_command {
+            // Worker processes each carry a full analyzer instance (~1 GiB on
+            // large workspaces), so unfiltered default parallelism follows
+            // machine CPUs capped by available memory where detectable.
+            jobs = default_worker_count();
         }
         let stock_invocation = Some(stock_invocation.unwrap_or(direct_invocation));
         Ok(Self {
@@ -655,6 +664,38 @@ mod tests {
         )
         .unwrap();
         assert!(!options.native_supported());
+    }
+
+    #[test]
+    fn filtered_jobs_default_to_one_but_honor_explicit_values() {
+        for command in ["build", "watch"] {
+            let default = super::Options::parse(
+                [command, "--build-filter=lib/a.final,lib/b.final"]
+                    .into_iter()
+                    .map(str::to_owned),
+            )
+            .unwrap();
+            assert_eq!(default.jobs, 1, "{command}");
+
+            let explicit = super::Options::parse(
+                [
+                    command,
+                    "--build-filter=lib/a.final,lib/b.final",
+                    "--jobs=4",
+                ]
+                .into_iter()
+                .map(str::to_owned),
+            )
+            .unwrap();
+            assert_eq!(explicit.jobs, 4, "{command}");
+        }
+
+        let unfiltered =
+            super::Options::parse(["build", "--jobs=3"].into_iter().map(str::to_owned)).unwrap();
+        assert_eq!(unfiltered.jobs, 3);
+        let prewarm =
+            super::Options::parse(["prewarm", "--jobs=2"].into_iter().map(str::to_owned)).unwrap();
+        assert_eq!(prewarm.jobs, 2);
     }
 
     #[test]

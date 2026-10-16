@@ -9,6 +9,8 @@ pub(crate) struct BuildFilter {
 }
 
 impl BuildFilter {
+    /// Parses the supported URI/path glob subset. Unsupported spellings are
+    /// errors so the caller can preserve stock `build_runner` diagnostics.
     pub(crate) fn parse(value: &str) -> io::Result<Self> {
         let unsupported = || io::Error::other(format!("Unsupported native build filter: {value}"));
         if value.is_empty()
@@ -58,6 +60,9 @@ impl BuildFilter {
         Ok(Self { package, path })
     }
 
+    /// Matches a logical `package|path` output, defaulting unqualified paths
+    /// to the root package. This selects roots only; it does not restrict the
+    /// outputs an action may publish.
     pub(crate) fn matches(&self, asset: &str, root: &str) -> bool {
         asset.split_once('|').is_some_and(|(package, path)| {
             matches_glob(self.package.as_deref().unwrap_or(root), package)

@@ -195,7 +195,9 @@ Launcher options:
   --mode auto|rust|dart  Select frontend policy (default: auto)
   --root PATH            Build workspace (default: current directory)
   --dart PATH            Dart executable used by the frontend/fallback
-  --jobs N               Rust worker count (default: logical CPUs)
+  --jobs N               Rust worker count (unfiltered default: machine CPU count,
+                         memory-capped where supported;
+                         filtered default: 1)
   --interval-ms N        Rust watch debounce interval
   --worker VALUE         Internal worker artifact override (tests/diagnostics)
   --background           prewarm only: detach and compile in the background

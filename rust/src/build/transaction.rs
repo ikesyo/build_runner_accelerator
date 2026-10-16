@@ -16,6 +16,7 @@ pub(super) struct ResolverChanges {
 }
 
 impl ResolverChanges {
+    /// Whether a resolver reset has any source or artifact-tree delta to apply.
     pub(super) fn has_changes(&self) -> bool {
         !self.resolver_updated.is_empty()
             || !self.resolver_deleted.is_empty()
@@ -23,6 +24,8 @@ impl ResolverChanges {
             || !self.resolver_cache_deleted.is_empty()
     }
 
+    /// Clears deltas after a resolver reset or worker reinitialization consumes
+    /// their baseline.
     pub(super) fn clear(&mut self) {
         self.resolver_updated.clear();
         self.resolver_deleted.clear();
@@ -31,6 +34,9 @@ impl ResolverChanges {
     }
 }
 
+/// In-memory output, deletion, graph, and resolver-reset state for one build
+/// attempt. Staging changes here does not alter workspace files; callers must
+/// reach `commit` only after every required action has succeeded.
 pub(super) struct PendingTransaction {
     // Immutable output allocations are shared with pending_outputs (and lazy
     // results); deleting an overlay entry only releases that entry's reference.
@@ -48,6 +54,9 @@ pub(super) struct PendingTransaction {
 }
 
 impl PendingTransaction {
+    /// Seeds logical deletions from outputs of dirty and removed actions.
+    /// This hides stale bytes during the attempt without deleting them from
+    /// disk; current results and filesystem mutations are staged separately.
     pub(super) fn new(
         dirty: &[BuildSpec],
         state: &GraphState,

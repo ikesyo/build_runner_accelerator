@@ -55,9 +55,19 @@ dart run build_runner_accelerator build --build-filter='lib/*.g.dart'
 ```
 
 Repeat the option or provide comma-separated patterns to select more outputs.
-A selected action may write its other declared outputs too. Filtered demand
-runs on one worker; `--jobs` does not parallelize filtered builds. A filter with
-no matches succeeds.
+A selected action may write its other declared outputs too. A filter with no
+matches succeeds.
+
+| Filtered build state | Worker policy |
+| --- | --- |
+| No demanded changes | No artifact resolution, worker start, or initialization |
+| Dirty roots, default | One worker |
+| Explicit `--jobs N` | Up to N workers, capped by dirty-root count, when the shared byte store is enabled |
+| `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0` | One worker, even when `--jobs` is set |
+| Unfiltered build | Existing machine-based default |
+
+See [ADR 0033](docs/adr/0033-filtered-demand-scheduler.md) for worker ownership,
+failure, and scaling limits.
 
 Filters limit demand; they do not guarantee that unselected generated files
 remain on disk across later builds or watch restarts. Unsupported filter syntax,

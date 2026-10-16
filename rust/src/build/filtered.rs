@@ -8,8 +8,9 @@ use crate::{
     cli::Options,
     frontend::worker_executable,
     graph::GraphState,
+    metrics::{print_pool_metrics, runtime_metrics_enabled},
     plan::BuildSpec,
-    worker::{LazyBuildState, WorkerPool},
+    worker::{LazyBuildState, PoolMetrics, WorkerPool},
     workspace::Workspace,
 };
 use std::{
@@ -20,11 +21,11 @@ use std::{
 
 /// Executes selected output roots against the complete planned action graph.
 /// The starting snapshot and compatible graph provide reuse evidence; recorded
-/// output locations provide old-path evidence for cleanup across configuration
+/// output locations provide the old-path evidence for cleanup across config
 /// changes. Only demanded actions enter the next graph, while each demanded
-/// action publishes all sibling outputs together. Worker or probe errors return
-/// before filesystem commit; an error during commit can still leave partial
-/// filesystem changes because the commit sequence is not crash-atomic.
+/// action publishes all of its sibling outputs together. A worker/probe error
+/// returns before filesystem commit; an error during commit can still leave
+/// partial filesystem changes because the commit sequence is not crash-atomic.
 #[expect(
     clippy::too_many_arguments,
     reason = "Filtered execution consumes the same planned transaction inputs as ordinary execution"
@@ -44,6 +45,7 @@ pub(super) fn run(
     current_snapshot: &crate::snapshot::Snapshot,
     changed_paths: &BTreeSet<std::path::PathBuf>,
 ) -> io::Result<()> {
+    let mut pool = pool;
     // Preserve only source-state evidence from the start of a filtered build.
     // Old and current outputs are refreshed from the committed filesystem,
     // including outputs removed by this transition.
@@ -76,18 +78,19 @@ pub(super) fn run(
                 .map(move |output| (output.clone(), spec.clone()))
         })
         .collect();
-    let roots: Vec<String> = plan
-        .specs
-        .iter()
-        .filter(|spec| {
-            spec.outputs.iter().any(|output| {
-                filters
-                    .iter()
-                    .any(|filter| filter.matches(output, &workspace.root_package))
-            })
-        })
-        .map(|spec| spec.outputs[0].clone())
-        .collect();
+    let mut roots = Vec::new();
+    for spec in &plan.specs {
+        let selected = spec.outputs.iter().any(|output| {
+            filters
+                .iter()
+                .any(|filter| filter.matches(output, &workspace.root_package))
+        });
+        if selected {
+            // One action publishes every sibling output as a single unit.
+            // Multiple matched siblings must therefore schedule one root.
+            roots.push(spec.outputs[0].clone());
+        }
+    }
     let expected_keys: BTreeSet<String> = plan.specs.iter().map(|spec| spec.action_key()).collect();
     let deleted_actions = state
         .actions
@@ -150,22 +153,35 @@ pub(super) fn run(
         state.is_compatible(config_digest),
     );
     let mut owned_pool = None;
-    if !roots.is_empty() {
+    let dirty_roots = lazy.probe_filtered_roots(
+        workspace,
+        &roots,
+        &mut transaction.overlay,
+        &mut transaction.deleted_overlay,
+        &plan.visibility,
+        &specs,
+    )?;
+    let mut pool_metrics = PoolMetrics::default();
+    if !dirty_roots.is_empty() {
         if pool.is_none() {
             let worker = worker_executable(options, config)?;
             owned_pool = Some(WorkerPool::start(
                 &workspace.root,
                 options.dart_binary.as_deref().unwrap_or("dart"),
                 &worker,
-                1,
+                options.jobs,
                 options.worker.is_none(),
             )?);
         }
-        let active = pool.or(owned_pool.as_mut()).expect("pool is available");
-        // A failed earlier filtered cycle may have left resolver metadata in
-        // the resident worker. Drain it before any operation can fail so it
-        // cannot be committed by a later build.
+        let active = pool
+            .as_deref_mut()
+            .or(owned_pool.as_mut())
+            .expect("pool is available");
+        // Resolver metadata from a failed earlier filtered cycle must not be
+        // committed by a later successful build. Drain it before any operation
+        // on the resident pool can fail.
         drop(active.take_dep_graph());
+        active.prepare_for_filtered_roots(&workspace.root, dirty_roots.len())?;
         active.initialize(
             &workspace.root,
             &workspace.root_package,
@@ -186,7 +202,7 @@ pub(super) fn run(
         )?;
         let built = active.build_filtered(
             workspace,
-            &roots,
+            &dirty_roots,
             &mut transaction.overlay,
             &mut transaction.deleted_overlay,
             &plan.visibility,
@@ -196,6 +212,10 @@ pub(super) fn run(
         let dep_graph = active.take_dep_graph();
         built?;
         state.resolver_dep_graph.extend(dep_graph);
+        pool_metrics = active.metrics();
+    } else if let Some(active) = pool.as_deref() {
+        // A filtered watch pool may be resident but intentionally unstarted.
+        pool_metrics = active.metrics();
     }
     for result in lazy.take_results() {
         record_build_result(
@@ -355,6 +375,9 @@ pub(super) fn run(
             transaction,
         },
     )?;
+    if runtime_metrics_enabled() {
+        print_pool_metrics(pool_metrics);
+    }
     println!("Build completed (Rust frontend)");
     Ok(())
 }

@@ -12,6 +12,8 @@ const GRAPH_HEADER_LENGTH: usize = GRAPH_MAGIC.len() + 1 + 4;
 const GRAPH_MAX_BYTES: usize = 256 * 1024 * 1024;
 const GRAPH_MAX_COLLECTION_ITEMS: usize = 4_000_000;
 
+/// Persisted observations for one builder action, used to decide reuse and
+/// retain the actual output set from its last successful execution.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ActionState {
     pub builder: String,
@@ -28,6 +30,10 @@ pub struct ActionState {
     pub status: String,
 }
 
+/// Incremental evidence committed after a successful build. In particular,
+/// `output_locations` records where outputs were actually written; old format
+/// data without that evidence must not be assigned a location by guessing from
+/// whichever path currently exists.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GraphState {
     pub schema_version: u32,
@@ -50,6 +56,9 @@ pub struct GraphState {
 }
 
 impl GraphState {
+    /// Reports a cycle in the recorded resolver dependency edges.
+    /// Missing leaf nodes are included as ordinary vertices; the check is
+    /// based on recorded resolver evidence, not action-graph dependencies.
     pub(crate) fn has_resolver_cycle(&self) -> bool {
         let mut degrees = BTreeMap::new();
         for (asset, edges) in &self.resolver_dep_graph {
@@ -79,6 +88,9 @@ impl GraphState {
         processed != degrees.len()
     }
 
+    /// Loads persisted incremental evidence, or starts with an empty graph if
+    /// the file is absent or invalid. Invalid bytes are diagnosed and left in
+    /// place until a later save; unrelated filesystem errors propagate.
     pub fn load(path: &Path) -> io::Result<Self> {
         match Self::load_checked(path) {
             Err(error) if error.kind() == io::ErrorKind::InvalidData => {
@@ -95,6 +107,10 @@ impl GraphState {
         }
     }
 
+    /// Validates the graph header, schema, bounds, and complete payload before
+    /// constructing state. Older supported wire format is decoded without
+    /// inventing fields it did not store; malformed payloads return
+    /// `InvalidData` to `load` for conservative invalidation.
     fn load_checked(path: &Path) -> io::Result<Self> {
         let contents = match fs::read(path) {
             Ok(contents) => contents,
@@ -149,6 +165,9 @@ impl GraphState {
         Ok(state)
     }
 
+    /// Encodes to a sibling temporary file and renames it over the graph only
+    /// after encoding and writing succeed. This protects the graph file from a
+    /// partial write, but does not fsync it or make output-file commits atomic.
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let parent = path
             .parent()
@@ -169,6 +188,8 @@ impl GraphState {
         fs::rename(temporary, path)
     }
 
+    /// Updates compatibility metadata and the filesystem snapshot together.
+    /// Returns true exactly when the persisted graph now needs a save.
     pub fn update_metadata_if_changed(&mut self, config_digest: &str, snapshot: Snapshot) -> bool {
         let changed = self.schema_version != GRAPH_SCHEMA_VERSION
             || self.config_digest != config_digest
@@ -235,6 +256,10 @@ impl GraphState {
         self.changed_since_previous_with(action, &context, current_assets, current_output_digests)
     }
 
+    /// Compares a recorded action with the old/current snapshots and the
+    /// precomputed resolver closure. Reads and input are compared by presence
+    /// and digest, glob dependencies by membership snapshot, and outputs by
+    /// recorded/current output digest; any difference requires execution.
     pub fn changed_since_previous_with(
         &self,
         action: &ActionState,
@@ -274,6 +299,8 @@ impl GraphState {
         self.assets = snapshot;
     }
 
+    /// Whether this graph's schema and builder configuration match the plan.
+    /// A false result means prior action/output evidence cannot authorize reuse.
     pub fn is_compatible(&self, config_digest: &str) -> bool {
         self.schema_version == GRAPH_SCHEMA_VERSION && self.config_digest == config_digest
     }
@@ -305,6 +332,7 @@ impl Encoder {
         self.bytes
     }
 
+    /// Appends only if checked length arithmetic stays within the graph limit.
     fn append(&mut self, bytes: &[u8]) -> io::Result<()> {
         let new_length = self
             .bytes
@@ -445,6 +473,8 @@ impl<'a> Decoder<'a> {
         Self { bytes, offset: 0 }
     }
 
+    /// Returns the next range and advances the cursor; truncation and offset
+    /// overflow are invalid persisted data rather than panics.
     fn take(&mut self, length: usize) -> io::Result<&'a [u8]> {
         let end = self
             .offset
@@ -579,6 +609,8 @@ impl<'a> Decoder<'a> {
         Ok(values)
     }
 
+    /// Decodes the schema payload, leaving fields absent in format 1 empty so
+    /// callers can distinguish missing evidence from recorded values.
     fn read_graph_state(
         &mut self,
         schema_version: u32,
@@ -639,6 +671,7 @@ impl<'a> Decoder<'a> {
         })
     }
 
+    /// Rejects trailing bytes so a valid prefix cannot hide an unknown payload.
     fn finish(&self) -> io::Result<()> {
         if self.offset == self.bytes.len() {
             Ok(())

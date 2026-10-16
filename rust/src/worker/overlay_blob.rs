@@ -8,14 +8,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-/// Owned until every reset RPC has joined, including errors. Never reused.
+/// Immutable reset payload owned until every reset RPC has joined, including
+/// errors. A fresh exclusive path is used for each reset and never reused.
 pub(super) struct OverlayBlob {
     path: PathBuf,
     pub metadata: Value,
 }
 impl OverlayBlob {
-    /// Writes available updated values into a new reset-owned blob.
-    /// Publication follows successful writes/flush/close; dropping removes it.
+    /// Writes available updated source/cache values in asset-ID order. IDs
+    /// absent from the current overlay have no index entry, while deletions
+    /// carry no bytes. The descriptor is returned only after flush and close;
+    /// any write error drops the partial file before a reset can be published.
+    /// Drop cleanup is best effort, so abrupt process exit can leave an ignored
+    /// orphan; the blob is ephemeral and is not fsynced or reused.
     pub fn create(
         root: &Path,
         overlay: &BTreeMap<String, Arc<[u8]>>,
@@ -71,6 +76,8 @@ impl OverlayBlob {
     }
 }
 impl Drop for OverlayBlob {
+    /// Removes this reset's file after the caller has joined its reset RPCs.
+    /// Cleanup failure is ignored because the blob is not persistent build state.
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
     }

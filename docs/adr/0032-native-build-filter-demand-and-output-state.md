@@ -3,6 +3,8 @@
 - Status: Accepted
 - Date: 2026-10-10
 - Amends ADR 0029 and ADR 0031; extends the private state contract in ADR 0030.
+- Amended by [ADR 0033](0033-filtered-demand-scheduler.md): filtered roots use
+  shared parallel demand coordination and deferred workers.
 
 ## Context and decision
 
@@ -58,8 +60,7 @@ them. Native supports repeated or comma-separated OR filters, root-relative
 paths, `package:` paths under `lib`, `asset:` paths under the package root,
 `*`, and whole-segment `**`. Unsupported patterns and optional, post-process,
 zero-output, or trigger-only builders use stock in auto and error in rust;
-recorded cyclic resolver graphs also use stock for incremental reuse. Filtered
-demand runs on one worker; `--jobs` does not parallelize filtered builds.
+recorded cyclic resolver graphs also use stock for incremental reuse.
 See the [launcher reference](../launcher-and-release.md) for CLI and mode
 behavior, and the [configuration guide](../configuration.md) for config
 transitions.

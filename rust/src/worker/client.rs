@@ -25,11 +25,15 @@ const OPTIONAL_BUILD_CAPABILITY: &str = "optional-builder-demand-v1";
 const OVERLAY_BLOB_CAPABILITY: &str = "reset-overlay-blob-v1";
 const SHARED_BLOCKED_ASSETS_CAPABILITY: &str = "shared-blocked-assets-v1";
 
+/// Distinguishes a path to a Dart source script from a package executable name
+/// so the launcher can select the correct Dart invocation form.
 pub(super) fn is_worker_script(worker_executable: &str) -> bool {
     let path = Path::new(worker_executable);
     path.is_absolute() || path.extension().and_then(|extension| extension.to_str()) == Some("dart")
 }
 
+/// Owns one child process and its framed stdin/stdout streams. The protocol
+/// reserves stdout for IPC; worker diagnostics are inherited from stderr.
 pub struct WorkerClient {
     child: Child,
     input: BufWriter<ChildStdin>,
@@ -96,6 +100,9 @@ impl WorkerClientMetrics {
 }
 
 impl WorkerClient {
+    /// Starts one worker in the workspace root with piped IPC and inherited
+    /// diagnostics. Spawn and pipe setup errors propagate before a client is
+    /// returned; dropping a returned client terminates and reaps its child.
     pub fn start(
         root: &Path,
         dart_binary: &str,
@@ -160,6 +167,9 @@ impl WorkerClient {
         })
     }
 
+    /// Performs the versioned handshake and enforces the capabilities required
+    /// by this execution path. A stale or partial worker is rejected before
+    /// build requests can rely on binary results, asset RPC, or reset blobs.
     pub fn initialize(
         &mut self,
         root: &Path,
@@ -210,6 +220,8 @@ impl WorkerClient {
         Ok(())
     }
 
+    /// Resets worker-local build state and requires an acknowledgement carrying
+    /// the request ID; a mismatched reply is a protocol error.
     pub fn reset(&mut self) -> io::Result<()> {
         let _wall = self.wall_span("worker_reset", None);
         let started = Instant::now();
@@ -229,7 +241,9 @@ impl WorkerClient {
         Ok(())
     }
 
-    /// Sends reset deltas and their transport descriptor, then awaits the reply.
+    /// Sends source/cache deltas and the overlay transport descriptor, then
+    /// awaits the matching reset reply. The caller owns the descriptor's bytes
+    /// until this method returns; transport and protocol failures propagate.
     pub fn reset_resolver(
         &mut self,
         updated_sources: &Value,
@@ -267,6 +281,10 @@ impl WorkerClient {
         Ok(())
     }
 
+    /// Sends one phase/kind batch and serves its nested asset RPCs until a
+    /// validated binary result arrives. The blocked-asset hint is computed from
+    /// Rust visibility plus pending deletions; JSON result fallback, wrong IDs,
+    /// and result-count mismatches fail the request.
     pub fn build_batch(
         &mut self,
         workspace: &Workspace,
@@ -386,6 +404,8 @@ impl WorkerClient {
         Ok(())
     }
 
+    /// Reads one complete frame and rejects EOF or any protocol version other
+    /// than v1 before dispatching the message to a build/reset handler.
     pub(super) fn receive(&mut self) -> io::Result<IncomingFrame> {
         let _receive = self.wall_span("receive_frame", None);
         let (message, frame_size) = read_message_with_size(&mut self.output)?
@@ -412,6 +432,8 @@ impl WorkerClient {
         Ok(message)
     }
 
+    /// Requires a JSON control frame; binary input is invalid at handshake and
+    /// reset boundaries.
     pub(super) fn receive_json(&mut self) -> io::Result<Value> {
         match self.receive()? {
             IncomingFrame::Json(message) => Ok(message),
@@ -449,6 +471,8 @@ impl WorkerClient {
 }
 
 impl Drop for WorkerClient {
+    /// Ensure the subprocess cannot outlive its owning pool, even after a
+    /// protocol or worker error. The exit status is intentionally best effort.
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -461,6 +485,8 @@ fn metrics_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Converts a worker error frame into an I/O error while retaining its detail
+/// and optional stack for the command's diagnostic path.
 pub(super) fn protocol_error(prefix: &str, value: &Value) -> io::Error {
     let detail = value
         .get("error")
@@ -498,6 +524,8 @@ pub(super) fn require_overlay_blob_capability(response: &Value) -> io::Result<()
     }
 }
 
+/// Requires the handshake reply to match both the request ID and this exact
+/// package build; protocol version alone does not establish worker compatibility.
 fn validate_initialized(response: &Value, id: u64) -> io::Result<()> {
     if response.get("id").and_then(Value::as_u64) != Some(id) {
         return Err(protocol_error(
