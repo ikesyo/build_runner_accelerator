@@ -7,7 +7,7 @@ import 'launcher_process.dart';
 import 'release_cache_metadata.dart';
 import 'release_downloader_api.dart';
 
-const buildRunnerAcceleratorVersion = '0.11.0';
+const buildRunnerAcceleratorVersion = '0.12.0';
 
 /// Resolves the native frontend in the same order as the launcher contract:
 /// explicit override, workspace output, user cache, then release download.
