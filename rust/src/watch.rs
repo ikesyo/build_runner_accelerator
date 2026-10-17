@@ -205,7 +205,9 @@ fn run_watch_build(
     reuse_configuration: bool,
     changed_paths: &WatchChanges,
 ) -> io::Result<bool> {
+    let _wall = crate::wall::Session::new();
     let workspace = Workspace::load(options.root.clone())?;
+    let loaded_graph = build::LoadedGraph::load(&workspace)?;
     let session_start = watch_state.cached_configuration.is_none();
     let filtered = !BuildSettings::parse(&options.stock_arguments)?
         .build_filters
@@ -213,27 +215,39 @@ fn run_watch_build(
     let selected = if reuse_configuration && watch_state.cached_configuration.is_some() {
         watch_state.cached_configuration.clone()
     } else {
-        select_frontend(options, &workspace)?
+        select_frontend(options, &workspace, &loaded_graph.state)?
     };
     let Some(build_config) = selected else {
         pool.take();
         watch_state.events.stop();
-        run_dart_fallback(options, watch_state.workspace_lock)?;
+        run_dart_fallback(
+            options,
+            watch_state.workspace_lock,
+            Some(loaded_graph.state.retained_output_state),
+        )?;
         return Ok(false);
     };
     // A successful cold build can discover resolver cycles. Re-check the
     // incremental evidence even when filesystem events reuse the manifest.
-    if reuse_configuration
-        && filtered
-        && let Some(reason) = build::filtered_transition_reason(&workspace, &build_config)?
-    {
+    let transition_reason = if !reuse_configuration {
+        None
+    } else if filtered {
+        build::filtered_transition_reason(&workspace, &build_config, false, &loaded_graph.state)?
+    } else {
+        build::dependency_output_conflict_reason(&workspace, &build_config, &loaded_graph.state)?
+    };
+    if let Some(reason) = transition_reason {
         pool.take();
         if options.mode == FrontendMode::Rust {
             return Err(io::Error::new(io::ErrorKind::Unsupported, reason));
         }
         eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
         watch_state.events.stop();
-        run_dart_fallback(options, watch_state.workspace_lock)?;
+        run_dart_fallback(
+            options,
+            watch_state.workspace_lock,
+            Some(loaded_graph.state.retained_output_state),
+        )?;
         return Ok(false);
     }
 
@@ -264,7 +278,11 @@ fn run_watch_build(
         }
         eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
         watch_state.events.stop();
-        run_dart_fallback(options, watch_state.workspace_lock)?;
+        run_dart_fallback(
+            options,
+            watch_state.workspace_lock,
+            Some(loaded_graph.state.retained_output_state),
+        )?;
         return Ok(false);
     }
     *pool_shape = Some(shape);
@@ -307,6 +325,7 @@ fn run_watch_build(
         pool.as_mut(),
         workspace,
         build_config,
+        loaded_graph,
         session_start,
         changed_paths,
     )?;

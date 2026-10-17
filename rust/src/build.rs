@@ -31,6 +31,27 @@ pub(crate) fn graph_path(workspace: &Workspace) -> PathBuf {
         .join(".dart_tool/build_runner_accelerator/graph-v3.bin")
 }
 
+/// One validated graph load shared by selection, execution and late fallback.
+pub(crate) struct LoadedGraph {
+    pub state: GraphState,
+    load_us: u128,
+    load_bytes: u64,
+}
+
+impl LoadedGraph {
+    pub fn load(workspace: &Workspace) -> io::Result<Self> {
+        let _load = crate::wall::Span::new("graph_load");
+        let started = Instant::now();
+        let path = graph_path(workspace);
+        let state = GraphState::load(&path)?;
+        Ok(Self {
+            state,
+            load_us: started.elapsed().as_micros(),
+            load_bytes: graph_file_size(&path),
+        })
+    }
+}
+
 pub(crate) fn run(
     options: &Options,
     pool: Option<&mut WorkerPool>,
@@ -39,17 +60,39 @@ pub(crate) fn run(
     let load = crate::wall::Span::new("workspace_load");
     let workspace = Workspace::load(options.root.clone())?;
     drop(load);
+    let loaded_graph = LoadedGraph::load(&workspace)?;
+    let retained_output_state = loaded_graph.state.retained_output_state;
     let selection = crate::wall::Span::new("manifest_select");
-    let build_config = match select_frontend(options, &workspace)? {
+    let build_config = match select_frontend(options, &workspace, &loaded_graph.state)? {
         Some(config) => config,
         None => {
             drop(selection);
             let _fallback = crate::wall::Span::new("dart_fallback");
-            return run_dart_fallback(options, workspace_lock);
+            return run_dart_fallback(options, workspace_lock, Some(retained_output_state));
         }
     };
     drop(selection);
-    run_with_config(options, pool, workspace, build_config)
+    let result = run_with_config(options, pool, workspace, build_config, loaded_graph);
+    if options.mode == crate::cli::FrontendMode::Auto
+        && let Err(error) = &result
+        && error
+            .to_string()
+            .contains(crate::cli::OUTPUT_POLICY_UNSUPPORTED)
+    {
+        // Retry only after workers and staged outputs have been dropped.
+        // Pin stock history: native cannot import its logical digests.
+        mark_stock_output_state(&options.root)?;
+        eprintln!("Rust frontend falling back to stock: {error}");
+        return run_dart_fallback(options, workspace_lock, Some(retained_output_state));
+    }
+    result
+}
+
+pub(crate) fn mark_stock_output_state(root: &std::path::Path) -> io::Result<()> {
+    crate::assets::write_atomic(
+        &root.join(crate::frontend::STOCK_OUTPUT_POLICY_STATE),
+        b"Stock owns output-policy history; reset both build states before native reuse.\n",
+    )
 }
 
 pub(crate) fn run_with_config(
@@ -57,12 +100,14 @@ pub(crate) fn run_with_config(
     pool: Option<&mut WorkerPool>,
     workspace: Workspace,
     build_config: crate::builder::RustBuildConfig,
+    loaded_graph: LoadedGraph,
 ) -> io::Result<()> {
     run_with_config_session(
         options,
         pool,
         workspace,
         build_config,
+        loaded_graph,
         true,
         &crate::watch::WatchChanges::default(),
     )
@@ -73,6 +118,7 @@ pub(crate) fn run_with_config_session(
     pool: Option<&mut WorkerPool>,
     workspace: Workspace,
     build_config: crate::builder::RustBuildConfig,
+    loaded_graph: LoadedGraph,
     session_start: bool,
     changed_paths: &crate::watch::WatchChanges,
 ) -> io::Result<()> {
@@ -81,12 +127,11 @@ pub(crate) fn run_with_config_session(
     let _wall = crate::wall::Session::new();
     let _build = crate::wall::Span::new("build_with_config");
     let state_path = graph_path(&workspace);
-    let load = crate::wall::Span::new("graph_load");
-    let graph_load_started = Instant::now();
-    let mut state = GraphState::load(&state_path)?;
-    let graph_load_us = graph_load_started.elapsed().as_micros();
-    let graph_load_bytes = graph_file_size(&state_path);
-    drop(load);
+    let LoadedGraph {
+        mut state,
+        load_us: graph_load_us,
+        load_bytes: graph_load_bytes,
+    } = loaded_graph;
     let digest = crate::wall::Span::new("config_digest");
     let config_digest = snapshot::config_digest(&workspace, &build_config)?;
     drop(digest);
@@ -94,7 +139,7 @@ pub(crate) fn run_with_config_session(
 
     let scanned_packages = snapshot::scanned_packages(&workspace, &build_config);
     let scan = crate::wall::Span::new("initial_snapshot");
-    let current_snapshot = snapshot::scan_initial(
+    let mut current_snapshot = snapshot::scan_initial(
         &workspace,
         &state,
         &build_config,
@@ -102,7 +147,29 @@ pub(crate) fn run_with_config_session(
         &mut filesystem_metrics,
     )?;
     drop(scan);
-    let filters = crate::cli::BuildSettings::parse(&options.stock_arguments)?.build_filters;
+    let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
+    let mut filters = settings.build_filters.clone();
+    let mut retained_output_guard = false;
+    if settings.only_check || settings.keep_modified_outputs || state.retained_output_state {
+        if filters.is_empty() {
+            filters.push(crate::build_filter::BuildFilter::parse("asset:**/**")?);
+        }
+        if settings.keep_modified_outputs && state.is_compatible(&config_digest) {
+            // Stock retains existing output bytes with their previous digest.
+            // Missing outputs are NOT retained and must trigger their producer.
+            for action in state.actions.values() {
+                for output in &action.outputs {
+                    if let Some(current) = current_snapshot.get(output)
+                        && current.exists
+                        && let Some(previous) = state.assets.get(output)
+                    {
+                        retained_output_guard |= current.digest != previous.digest;
+                        current_snapshot.insert(output.clone(), previous.clone());
+                    }
+                }
+            }
+        }
+    }
     let mut planning_snapshot = None;
     if !filters.is_empty() {
         if session_start || !state.is_compatible(&config_digest) {
@@ -168,6 +235,7 @@ pub(crate) fn run_with_config_session(
             session_start,
             &current_snapshot,
             &changed_paths.paths,
+            retained_output_guard,
         );
     }
     let dirty = crate::wall::Span::new("dirty_check");
@@ -181,7 +249,22 @@ pub(crate) fn run_with_config_session(
         &mut filesystem_metrics,
     )?;
     drop(dirty);
-    if !dirty_plan.has_work() {
+    // Cache outputs own their package paths too. Verify deliberately leaves
+    // conflicts there, so an ordinary build must stage their removal even
+    // when every action is reusable. Do not delete until all actions succeed.
+    let mut cache_source_conflicts = std::collections::BTreeSet::new();
+    for spec in &plan.specs {
+        if spec.instance.builder.build_to == crate::builder::BuildTo::Cache
+            && !spec.instance.builder.is_optional
+        {
+            for output in &spec.outputs {
+                if workspace.asset_exists_at(output, crate::builder::BuildTo::Source)? {
+                    cache_source_conflicts.insert(output.clone());
+                }
+            }
+        }
+    }
+    if !dirty_plan.has_work() && cache_source_conflicts.is_empty() {
         println!("No work to do (Rust frontend)");
         let graph_metrics = commit::save_no_work(
             &mut state,
@@ -219,11 +302,16 @@ pub(crate) fn run_with_config_session(
     )?;
     drop(executing);
     let execution::ExecutionResult {
-        transaction,
+        mut transaction,
         expected_outputs,
         pool_metrics,
         part_filtered_actions,
     } = execution;
+    transaction.pending_location_deletions.extend(
+        cache_source_conflicts
+            .into_iter()
+            .map(|asset| (crate::builder::BuildTo::Source, asset)),
+    );
     let mut generated_assets: std::collections::BTreeSet<String> =
         state.output_locations.keys().cloned().collect();
     generated_assets.extend(state.watch_generated_sources.iter().cloned());
@@ -238,6 +326,8 @@ pub(crate) fn run_with_config_session(
     let graph_metrics = commit::commit(
         &mut state,
         commit::CommitInputs {
+            only_check: false,
+            keep_modified_outputs: false,
             workspace: &workspace,
             state_path: &state_path,
             build_config: &build_config,
@@ -283,8 +373,9 @@ pub(crate) fn empty_filtered_result(spec: &crate::plan::BuildSpec) -> crate::pro
 pub(crate) fn filtered_transition_reason(
     workspace: &Workspace,
     config: &crate::builder::RustBuildConfig,
+    output_policy: bool,
+    state: &GraphState,
 ) -> io::Result<Option<&'static str>> {
-    let state = GraphState::load(&graph_path(workspace))?;
     if state.has_resolver_cycle() {
         return Ok(Some(
             "filtered incremental resolver cycles are outside the supported subset",
@@ -321,33 +412,13 @@ pub(crate) fn filtered_transition_reason(
         ));
     }
     let digest = snapshot::config_digest(workspace, config)?;
-    if config
-        .builders
-        .iter()
-        .any(|builder| builder.package != workspace.root_package)
-    {
-        let packages = snapshot::scanned_packages(workspace, config);
-        let current = snapshot::scan_initial(
-            workspace,
-            &state,
-            config,
-            &packages,
-            &mut FilesystemMetrics::default(),
-        )?;
-        let plan = planning::create(workspace, &state, config, &current)?;
-        for spec in &plan.specs {
-            for output in &spec.outputs {
-                if output
-                    .split_once('|')
-                    .is_some_and(|(package, _)| package != workspace.root_package)
-                    && workspace.asset_exists_at(output, crate::builder::BuildTo::Source)?
-                {
-                    return Ok(Some(
-                        "filtered package-path output conflicts in dependencies are outside the supported subset",
-                    ));
-                }
-            }
-        }
+    if output_policy && !state.config_digest.is_empty() && state.config_digest != digest {
+        return Ok(Some(
+            "output-policy configuration transitions require stock",
+        ));
+    }
+    if let Some(reason) = dependency_output_conflict_reason(workspace, config, state)? {
+        return Ok(Some(reason));
     }
     if state.config_digest.is_empty() || state.is_compatible(&digest) {
         return Ok(None);
@@ -365,12 +436,12 @@ pub(crate) fn filtered_transition_reason(
     let packages = snapshot::scanned_packages(workspace, config);
     let current = snapshot::scan_initial(
         workspace,
-        &state,
+        state,
         config,
         &packages,
         &mut FilesystemMetrics::default(),
     )?;
-    let plan = planning::create(workspace, &state, config, &current)?;
+    let plan = planning::create(workspace, state, config, &current)?;
     let declared = plan.expected_outputs();
     if state
         .actions
@@ -393,6 +464,42 @@ pub(crate) fn filtered_transition_reason(
         return Ok(Some(
             "filtered configuration changes without a source/cache layout transition are outside the supported subset",
         ));
+    }
+    Ok(None)
+}
+
+pub(crate) fn dependency_output_conflict_reason(
+    workspace: &Workspace,
+    config: &crate::builder::RustBuildConfig,
+    state: &GraphState,
+) -> io::Result<Option<&'static str>> {
+    if config
+        .builders
+        .iter()
+        .any(|builder| builder.package != workspace.root_package)
+    {
+        let packages = snapshot::scanned_packages(workspace, config);
+        let current = snapshot::scan_initial(
+            workspace,
+            state,
+            config,
+            &packages,
+            &mut FilesystemMetrics::default(),
+        )?;
+        let plan = planning::create(workspace, state, config, &current)?;
+        for spec in &plan.specs {
+            for output in &spec.outputs {
+                if output
+                    .split_once('|')
+                    .is_some_and(|(package, _)| package != workspace.root_package)
+                    && workspace.asset_exists_at(output, crate::builder::BuildTo::Source)?
+                {
+                    return Ok(Some(
+                        "package-path output conflicts in dependencies are outside the supported subset",
+                    ));
+                }
+            }
+        }
     }
     Ok(None)
 }

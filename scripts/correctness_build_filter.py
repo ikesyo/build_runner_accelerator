@@ -396,60 +396,44 @@ def watch_process_cleanup_comparison(tmp):
         stop_all(pair)
 
 
-def legacy_graph(root):
-    """Remove format-2 location evidence while preserving real action history."""
-    path = root / '.dart_tool/build_runner_accelerator/graph-v3.bin'
-    data = bytearray(path.read_bytes())
-    assert data[:5] == b'BRAG\x02', data[:5]
-    offset = 9
-    def integer():
-        nonlocal offset
-        value = int.from_bytes(data[offset:offset + 4], 'big'); offset += 4
-        return value
-    def string():
-        nonlocal offset
-        length = integer(); offset += length
-    def strings():
-        for _ in range(integer()): string()
-    integer(); string()  # schema/config
-    for _ in range(integer()):
-        string(); offset += 1; string(); offset += 8
-    for _ in range(integer()):
-        string(); string(); string()  # key/builder/input
-        strings(); strings(); strings()
-        for _ in range(integer()): string(); string()
-        strings()
-        for _ in range(integer()): string(); string()
-        string()
-    for _ in range(integer()): string(); strings()
-    data = data[:offset]
-    data[4] = 1
-    data[5:9] = (len(data) - 9).to_bytes(4, 'big')
-    path.write_bytes(data)
-
-
-def legacy_comparison(tmp):
-    stock, native = tmp / 'legacy-stock', tmp / 'legacy-native'
-    prepare(stock); prepare(native)
-    flags = ['--build-filter=lib/a.final']
-    check(stock, native, flags)
-    # Populate stock's separate cache before exercising an unsupported
-    # legacy transition; fallback remains a complete stock invocation.
-    code, log = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], native)
-    assert code == 0, log
-    legacy_graph(native)
-    before = outputs(native), history(native)
-    code, log = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
-    assert code != 0 and 'legacy state' in log, log
-    assert (outputs(native), history(native)) == before
-    assert check(stock, native, flags, mode='auto') == Counter()
-    for root in (stock, native):
-        file = root / 'build.yaml'; file.write_text(file.read_text() + '\n# new configuration\n')
-    before = outputs(native), history(native)
-    code, log = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
-    assert code != 0 and 'legacy state' in log, log
-    assert (outputs(native), history(native)) == before
-    check(stock, native, flags, mode='auto')
+def obsolete_graph_comparison(tmp):
+    """Obsolete private graphs reset natively, with transactional publication."""
+    for version, mode, filtered in ((1, 'rust', False), (2, 'auto', True)):
+        name = f'obsolete-{version}-{filtered}'
+        stock, native = tmp / (name + '-stock'), tmp / (name + '-native')
+        prepare(stock); prepare(native)
+        flags = ['--build-filter=lib/a.final'] if filtered else []
+        check(stock, native, flags)
+        graph = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+        data = bytearray(graph.read_bytes())
+        assert data[:5] == b'BRAG\x03', data[:5]
+        data[4] = version
+        if version == 2:
+            # Format 2 lacks the trailing retained-history field.
+            data.pop()
+            data[5:9] = (len(data) - 9).to_bytes(4, 'big')
+        graph.write_bytes(data)
+        # Resetting private state follows cold-build semantics, just as
+        # stock does when its own independent graph is unavailable.
+        (stock / '.dart_tool/build/asset_graph.json').unlink()
+        for root in (stock, native):
+            (root / 'lib/a.txt').write_text('changed after format update\n')
+        before = outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns
+        reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit',
+                             '--only-check', *flags], stock)
+        actual = execute(launcher(native, mode, flags=['--force-jit', '--only-check', *flags]), native)
+        assert reference[0] == actual[0] == 1, (reference, actual)
+        assert actual[1].count('invalidating graph') == 1 and 'unsupported format' in actual[1], actual
+        assert (outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns) == before
+        (native / 'lib/common.txt').write_text('fail\n')
+        actual = execute(launcher(native, mode, flags=['--force-jit', *flags]), native)
+        assert actual[0] == 1, actual
+        assert (outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns) == before
+        (native / 'lib/common.txt').write_text('common\n')
+        check(stock, native, flags, mode=mode, native_expected=True)
+        assert graph.read_bytes()[:5] == b'BRAG\x03'
+        assert check(stock, native, flags, mode=mode, native_expected=True) == Counter()
+        print(f'build-filter: PASS {name} native reset, verification/failure recovery and no-op', flush=True)
 
 
 def removed_declaration_comparison(tmp):
@@ -2075,14 +2059,22 @@ def package_selection_comparison(tmp):
     check(ps, pn, ['--build-filter=asset:filter_dep/lib/a.final'])
     for root in (ps, pn): (root / 'dep/lib/a.mid').write_text('dependency source conflict\n')
     before = outputs(pn)
-    conflict_flags = ['--build-filter=package:filter_dep/a.final']
-    reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *conflict_flags], ps)
-    actual = execute(launcher(pn, 'auto', flags=['--force-jit', *conflict_flags]), pn)
-    assert reference[0] == actual[0] != 0, (reference, actual)
-    assert 'using Dart fallback' in actual[1], actual
-    assert outputs(ps) == outputs(pn) == before
-    rejected = execute(launcher(pn, 'rust', flags=conflict_flags), pn)
-    assert rejected[0] != 0 and 'output conflicts in dependencies' in rejected[1], rejected
+    graph = pn / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+    committed_graph = graph.read_bytes()
+    for conflict_flags in (['--build-filter=package:filter_dep/a.final'], []):
+        flags = ['--force-jit', *conflict_flags]
+        for command in ('build', 'watch'):
+            rejected = execute(launcher(pn, 'rust', command, flags), pn)
+            assert rejected[0] != 0 and 'output conflicts in dependencies' in rejected[1], rejected
+            assert graph.read_bytes() == committed_graph and outputs(pn) == before
+        reference = execute([DART, 'run', 'build_runner', 'build', *flags], ps)
+        actual = execute(launcher(pn, 'auto', flags=flags), pn)
+        assert reference[0] == actual[0] != 0, (reference, actual)
+        assert 'using Dart fallback' in actual[1], actual
+        assert outputs(ps) == outputs(pn) == before
+        assert graph.read_bytes() == committed_graph
+        for root in (ps, pn):
+            assert (root / 'dep/lib/a.mid').read_bytes() == b'dependency source conflict\n'
     for root in (ps, pn): (root / 'dep/lib/a.mid').unlink()
     # Globs demand all visible producing steps, including excluded roots,
     # and a no-op reuses consumers after reevaluating generated candidates.
@@ -2123,7 +2115,7 @@ def resolver_comparison(tmp):
 
 
 def state_comparison(tmp):
-    legacy_comparison(tmp)
+    obsolete_graph_comparison(tmp)
     removed_declaration_comparison(tmp)
     ats, atn = tmp / 'aot-stock', tmp / 'aot-native'
     prepare(ats); prepare(atn)

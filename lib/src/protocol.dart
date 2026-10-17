@@ -50,6 +50,7 @@ class WorkerInitializeMessage extends WorkerMessage {
     required this.package,
     required this.root,
     required this.phaseCount,
+    this.retainedOutputGuard = false,
   }) : super(id: id);
 
   factory WorkerInitializeMessage.fromJson(JsonMap message) {
@@ -76,12 +77,16 @@ class WorkerInitializeMessage extends WorkerMessage {
       package: package,
       root: root,
       phaseCount: phaseCount,
+      retainedOutputGuard: message.containsKey('retained_output_guard')
+          ? _requiredBool(message, 'retained_output_guard', 'initialize')
+          : false,
     );
   }
 
   final String package;
   final String root;
   final int phaseCount;
+  final bool retainedOutputGuard;
 }
 
 class WorkerResetMessage extends WorkerMessage {

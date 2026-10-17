@@ -76,6 +76,51 @@ void main() {
     );
   });
 
+  test('stock keep ownership follows parsed tokens and excludes help', () {
+    expect(
+      LauncherOptions.parse([
+        'build',
+        '--keep-modified-outputs',
+      ]).stockKeepRequested,
+      isTrue,
+    );
+    for (final arguments in [
+      ['build', '--define', '--keep-modified-outputs'],
+      ['build', '--', '--keep-modified-outputs'],
+      ['build', '--keep-modified-outputs', '--help'],
+    ]) {
+      expect(LauncherOptions.parse(arguments).stockKeepRequested, isFalse);
+    }
+  });
+
+  test('stock verify/help do not claim publishing ownership', () {
+    for (final flags in [
+      ['--only-check'],
+      ['--keep-modified-outputs', '--only-check'],
+      ['--keep-modified-outputs', '--help'],
+    ]) {
+      expect(
+        LauncherOptions.parse(['build', ...flags]).stockMayPublishOutputs,
+        isFalse,
+      );
+    }
+    expect(
+      LauncherOptions.parse([
+        'build',
+        '--keep-modified-outputs',
+      ]).stockMayPublishOutputs,
+      isTrue,
+    );
+    expect(
+      LauncherOptions.parse([
+        'build',
+        '--define',
+        '--only-check',
+      ]).stockMayPublishOutputs,
+      isTrue,
+    );
+  });
+
   test('supported filters retain the complete late fallback invocation', () {
     for (final command in ['build', 'watch']) {
       final arguments = [

@@ -9,6 +9,8 @@ class LauncherOptions {
   LauncherOptions._({
     required this.command,
     required this.nativeUnsupported,
+    required this.stockKeepRequested,
+    required this.stockMayPublishOutputs,
     required this.mode,
     required this.root,
     required this.dartBinary,
@@ -33,6 +35,9 @@ class LauncherOptions {
     var showHelp = false;
     var showVersion = false;
     var separated = false;
+    var stockKeepRequested = false;
+    var stockHelpRequested = false;
+    var stockVerifyRequested = false;
     final rustArguments = <String>[];
     final dartArguments = <String>[];
     final passthrough = <String>[];
@@ -141,6 +146,9 @@ class LauncherOptions {
         rustArguments.addAll([option, value]);
       } else {
         passthrough.add(argument);
+        if (argument == '--keep-modified-outputs') stockKeepRequested = true;
+        if (argument == '--only-check') stockVerifyRequested = true;
+        if (argument == '--help' || argument == '-h') stockHelpRequested = true;
         // Values belong to stock, even when they look like launcher flags.
         const stockValueOptions = {
           '--build-filter',
@@ -201,6 +209,10 @@ class LauncherOptions {
         !const {'build', 'watch', 'prewarm', 'aot-cache-key'}.contains(command);
     try {
       final settings = BuildSettings.parse(passthrough);
+      if (command != 'build' &&
+          (settings.onlyCheck || settings.keepModifiedOutputs)) {
+        nativeUnsupported = true;
+      }
       if (!const {'build', 'watch'}.contains(command) &&
           (settings.deletionFlag || settings.buildFilters.isNotEmpty)) {
         nativeUnsupported = true;
@@ -230,6 +242,8 @@ class LauncherOptions {
     return LauncherOptions._(
       command: command,
       nativeUnsupported: nativeUnsupported,
+      stockKeepRequested: stockKeepRequested && !stockHelpRequested,
+      stockMayPublishOutputs: !stockHelpRequested && !stockVerifyRequested,
       mode: mode,
       root: root,
       dartBinary: dartBinary,
@@ -243,6 +257,8 @@ class LauncherOptions {
   }
 
   final bool nativeUnsupported;
+  final bool stockKeepRequested;
+  final bool stockMayPublishOutputs;
   final String command;
   final String mode;
   final String root;

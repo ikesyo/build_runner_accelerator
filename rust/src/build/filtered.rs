@@ -44,7 +44,9 @@ pub(super) fn run(
     session_start: bool,
     current_snapshot: &crate::snapshot::Snapshot,
     changed_paths: &BTreeSet<std::path::PathBuf>,
+    retained_output_guard: bool,
 ) -> io::Result<()> {
+    let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
     let mut pool = pool;
     // Preserve only source-state evidence from the start of a filtered build.
     // Old and current outputs are refreshed from the committed filesystem,
@@ -152,6 +154,7 @@ pub(super) fn run(
         demand_snapshot,
         state.is_compatible(config_digest),
     );
+    lazy.keep_modified_outputs = settings.keep_modified_outputs;
     let mut owned_pool = None;
     let dirty_roots = lazy.probe_filtered_roots(
         workspace,
@@ -182,6 +185,7 @@ pub(super) fn run(
         // on the resident pool can fail.
         drop(active.take_dep_graph());
         active.prepare_for_filtered_roots(&workspace.root, dirty_roots.len())?;
+        active.set_retained_output_guard(retained_output_guard);
         active.initialize(
             &workspace.root,
             &workspace.root_package,
@@ -360,6 +364,8 @@ pub(super) fn run(
     commit::commit(
         state,
         commit::CommitInputs {
+            only_check: settings.only_check,
+            keep_modified_outputs: settings.keep_modified_outputs,
             workspace,
             state_path,
             build_config: config,

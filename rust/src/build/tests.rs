@@ -333,6 +333,8 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
     commit(
         &mut state,
         CommitInputs {
+            only_check: false,
+            keep_modified_outputs: false,
             workspace: &workspace,
             state_path: &state_path,
             build_config: &build_config,

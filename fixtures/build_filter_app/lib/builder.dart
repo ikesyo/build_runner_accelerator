@@ -160,6 +160,9 @@ Builder finish(BuilderOptions options) => Recorder(
   conditionalGlob: options.config['conditional_glob'] == true,
   catchCanReadError: options.config['catch_can_read_error'] == true,
   catchReadError: options.config['catch_read_error'] == true,
+  digestCommon: options.config['digest_common'] == true,
+  resolverApi: options.config['resolver_api'] == true,
+  catchRetainedApi: options.config['catch_retained_api'] == true,
 );
 Builder seedGlob(BuilderOptions options) => Recorder(
   '.txt',
@@ -186,6 +189,9 @@ class Recorder implements Builder {
     this.conditionalGlob = false,
     this.catchCanReadError = false,
     this.catchReadError = false,
+    this.digestCommon = false,
+    this.resolverApi = false,
+    this.catchRetainedApi = false,
   });
   final bool glob;
   final bool readInput;
@@ -194,6 +200,9 @@ class Recorder implements Builder {
   final bool conditionalGlob;
   final bool catchCanReadError;
   final bool catchReadError;
+  final bool digestCommon;
+  final bool resolverApi;
+  final bool catchRetainedApi;
   final String activityName;
   final String input;
   final List<String> outputs;
@@ -239,6 +248,24 @@ class Recorder implements Builder {
         } else if (await step.canRead(common)) {
           text += await step.readAsString(common);
           await _waitAfterCommonRead(step.inputId);
+        }
+      }
+      if (input == '.mid' && digestCommon) {
+        try {
+          final common = AssetId(step.inputId.package, 'lib/common.side');
+          text += 'digest:${await step.digest(common)}\n';
+        } catch (_) {
+          if (!catchRetainedApi) rethrow;
+          text += 'caught digest error\n';
+        }
+      }
+      if (input == '.mid' && resolverApi && text.contains('retained-api')) {
+        try {
+          final library = AssetId(step.inputId.package, 'lib/builder.dart');
+          text += 'resolver:${await step.resolver.isLibrary(library)}\n';
+        } catch (_) {
+          if (!catchRetainedApi) rethrow;
+          text += 'caught resolver error\n';
         }
       }
       if (input == '.mid' &&
