@@ -195,13 +195,21 @@ jobs:
               fi
 
   integration-output-policies:
-    name: 'Integration: output policies (${{ matrix.group }})'
+    name: 'Integration: output policies (${{ matrix.id }})'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        group: [routing, modes, source, cache, failure, api]
+        include:
+          - id: lifecycle
+            first: source
+            second: cache
+            third: failure
+          - id: frontend
+            first: routing
+            second: modes
+            third: api
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
@@ -218,10 +226,19 @@ jobs:
           build-frontend: 'true'
       - name: Prime output-policy fixture dependencies
         run: (cd fixtures/build_filter_app && dart --suppress-analytics pub get)
-      - name: Compare stock and native output policy lifecycle
-        env:
-          OUTPUT_POLICY_CASE_GROUP: ${{ matrix.group }}
-        run: bash scripts/correctness_output_policies.sh
+      - parallel:
+          - name: 'Output policies: ${{ matrix.first }}'
+            env:
+              OUTPUT_POLICY_CASE_GROUP: ${{ matrix.first }}
+            run: bash scripts/correctness_output_policies.sh
+          - name: 'Output policies: ${{ matrix.second }}'
+            env:
+              OUTPUT_POLICY_CASE_GROUP: ${{ matrix.second }}
+            run: bash scripts/correctness_output_policies.sh
+          - name: 'Output policies: ${{ matrix.third }}'
+            env:
+              OUTPUT_POLICY_CASE_GROUP: ${{ matrix.third }}
+            run: bash scripts/correctness_output_policies.sh
 
   integration-baseline:
     name: 'Integration: baseline smoke'

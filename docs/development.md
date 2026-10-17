@@ -104,8 +104,11 @@ bookkeeping cannot trigger or mask a rebuild.
 `OUTPUT_POLICY_CASE_GROUP` selects `routing`, `modes`, `source`, `cache`,
 `failure`, or `api` in the output-policy comparison script; the default runs all groups.
 
-CI splits long correctness suites into parallel jobs. Local full verification
-keeps each selected suite's state transitions ordered in isolated workspaces.
+CI uses parallel steps within a small number of jobs for long correctness suites.
+Output-policy checks use two jobs with three parallel groups each, sharing runner
+setup. Avoid a separate matrix job per group: job concurrency limits add queue
+time. Local full verification keeps each selected suite's state transitions
+ordered in isolated workspaces.
 
 ## Benchmarks
 
