@@ -244,15 +244,14 @@ fn run_watch_build(
     }
     // A successful cold build can discover resolver cycles. Re-check the
     // incremental evidence even when filesystem events reuse the manifest.
-    if reuse_configuration
-        && filtered
-        && let Some(reason) = build::filtered_transition_reason(
-            &workspace,
-            &build_config,
-            false,
-            &loaded_graph.state,
-        )?
-    {
+    let transition_reason = if !reuse_configuration {
+        None
+    } else if filtered {
+        build::filtered_transition_reason(&workspace, &build_config, false, &loaded_graph.state)?
+    } else {
+        build::dependency_output_conflict_reason(&workspace, &build_config, &loaded_graph.state)?
+    };
+    if let Some(reason) = transition_reason {
         pool.take();
         if options.mode == FrontendMode::Rust {
             return Err(io::Error::new(io::ErrorKind::Unsupported, reason));

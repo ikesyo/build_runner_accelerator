@@ -138,14 +138,14 @@ pub(crate) fn select_frontend(
                     "output policies/build filters with optional, post-process, trigger-only or zero-output builders are outside the supported subset",
                 );
             }
-            if (demand_policy || !filters.is_empty())
-                && let Some(reason) = crate::build::filtered_transition_reason(
-                    workspace,
-                    &config,
-                    demand_policy,
-                    state,
-                )?
-            {
+            let transition_reason = if demand_policy || !filters.is_empty() {
+                crate::build::filtered_transition_reason(workspace, &config, demand_policy, state)?
+            } else if matches!(options.command.as_str(), "build" | "watch") {
+                crate::build::dependency_output_conflict_reason(workspace, &config, state)?
+            } else {
+                None
+            };
+            if let Some(reason) = transition_reason {
                 return select_dart_fallback(options, reason);
             }
             Ok(Some(config))

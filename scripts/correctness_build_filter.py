@@ -2063,14 +2063,22 @@ def package_selection_comparison(tmp):
     check(ps, pn, ['--build-filter=asset:filter_dep/lib/a.final'])
     for root in (ps, pn): (root / 'dep/lib/a.mid').write_text('dependency source conflict\n')
     before = outputs(pn)
-    conflict_flags = ['--build-filter=package:filter_dep/a.final']
-    reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *conflict_flags], ps)
-    actual = execute(launcher(pn, 'auto', flags=['--force-jit', *conflict_flags]), pn)
-    assert reference[0] == actual[0] != 0, (reference, actual)
-    assert 'using Dart fallback' in actual[1], actual
-    assert outputs(ps) == outputs(pn) == before
-    rejected = execute(launcher(pn, 'rust', flags=conflict_flags), pn)
-    assert rejected[0] != 0 and 'output conflicts in dependencies' in rejected[1], rejected
+    graph = pn / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+    committed_graph = graph.read_bytes()
+    for conflict_flags in (['--build-filter=package:filter_dep/a.final'], []):
+        flags = ['--force-jit', *conflict_flags]
+        for command in ('build', 'watch'):
+            rejected = execute(launcher(pn, 'rust', command, flags), pn)
+            assert rejected[0] != 0 and 'output conflicts in dependencies' in rejected[1], rejected
+            assert graph.read_bytes() == committed_graph and outputs(pn) == before
+        reference = execute([DART, 'run', 'build_runner', 'build', *flags], ps)
+        actual = execute(launcher(pn, 'auto', flags=flags), pn)
+        assert reference[0] == actual[0] != 0, (reference, actual)
+        assert 'using Dart fallback' in actual[1], actual
+        assert outputs(ps) == outputs(pn) == before
+        assert graph.read_bytes() == committed_graph
+        for root in (ps, pn):
+            assert (root / 'dep/lib/a.mid').read_bytes() == b'dependency source conflict\n'
     for root in (ps, pn): (root / 'dep/lib/a.mid').unlink()
     # Globs demand all visible producing steps, including excluded roots,
     # and a no-op reuses consumers after reevaluating generated candidates.

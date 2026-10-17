@@ -305,6 +305,32 @@ def routing(tmp):
                          f'open({str(capture)!r}, "w").write(json.dumps(sys.argv[1:]))\n'
                          'sys.exit(23)\n')
     fake_dart.chmod(0o755)
+    if os.name == 'posix' and os.geteuid() != 0:
+        graph = root / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+        graph.parent.mkdir(parents=True, exist_ok=True)
+        graph.write_bytes(b'unreadable native history')
+        graph.chmod(0)
+        try:
+            flags = ['--force-jit', '--build-filter=lib/*.final']
+            for mode in ('rust', 'auto', 'dart'):
+                args = launcher(root, mode, 'watch', flags)
+                args[args.index('--dart') + 1] = str(fake_dart)
+                capture.unlink(missing_ok=True)
+                result = execute(args, root, {'BUILD_RUNNER_ACCELERATOR_BIN': '/bin/false'})
+                if mode == 'rust':
+                    assert result[0] == 1 and 'watch after retained output state' in result[1], result
+                    assert not capture.exists()
+                else:
+                    assert result[0] == 23, result
+                    assert json.loads(capture.read_text())[-5:] == ['run', 'build_runner', 'watch', *flags]
+                assert not (graph.parent / 'builder-manifest.json').exists()
+                marker = graph.parent / 'stock-output-policy-state'
+                assert marker.exists() == (mode != 'rust')
+                marker.unlink(missing_ok=True)
+        finally:
+            graph.chmod(0o600)
+        assert graph.read_bytes() == b'unreadable native history'
+        graph.unlink()
     for policy in (VERIFY, KEEP):
         for compile_flag in ('--force-jit', '--force-aot'):
             flags = [compile_flag, '-d', policy, policy, '--release',

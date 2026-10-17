@@ -24,6 +24,8 @@ including on success and no-work builds. Artifact-tree differences are not
 compared; setup/compilation caches may change. The next ordinary build reads the
 last committed graph and applies uncommitted changes normally. Its dirty analysis
 also handles files at previously omitted outputs that verification left intact.
+Dependency-package output conflicts require stock, including in ordinary builds;
+native must not delete dependency sources.
 
 ## Retained bytes and reuse
 
@@ -68,8 +70,10 @@ rust errors until both disposable states are reset using the
 Check this marker before native acquisition or manifest preparation. For
 retained-history preflight, the launcher accepts only fully validated current
 format/schema graphs. Native selection, transition checks, execution and fallback
-share one graph load per attempt. Stock uses its own graph, including cold-build
-semantics when absent; discarded native attempts publish nothing.
+share one graph load per attempt. Unreadable history also prevents native watch;
+readable obsolete/malformed history still resets natively. Stock uses its own
+graph, including cold-build semantics when absent; discarded native attempts
+publish nothing.
 
 Read-only verify/help does not claim ownership. Once claimed, ownership persists
 until explicit recovery, including after usage errors: another stock invocation

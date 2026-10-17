@@ -46,12 +46,17 @@ Future<int> runLauncher(List<String> arguments) async {
   bool? retainedNativeOutputState;
   if (unsupportedReason == null &&
       options.mode != 'dart' &&
-      options.command == 'watch' &&
-      (retainedNativeOutputState = hasRetainedNativeOutputState(
-        options.root,
-      ))) {
-    unsupportedReason = 'watch after retained output state requires stock';
-    if (options.mode == 'rust') throw StateError(unsupportedReason);
+      options.command == 'watch') {
+    try {
+      retainedNativeOutputState = hasRetainedNativeOutputState(options.root);
+    } on FileSystemException {
+      // Unreadable history cannot safely resume native watch.
+      retainedNativeOutputState = true;
+    }
+    if (retainedNativeOutputState) {
+      unsupportedReason = 'watch after retained output state requires stock';
+      if (options.mode == 'rust') throw StateError(unsupportedReason);
+    }
   }
   if (unsupportedReason == null && options.mode != 'dart') {
     final config = BuildSettings.parse(

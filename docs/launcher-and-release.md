@@ -60,7 +60,8 @@ In `auto`, these option groups also route to stock:
 
 Strict `rust` mode rejects these requests. Prewarm has no stock equivalent:
 it accepts supported configuration settings but rejects stock-only and
-build-only arguments.
+build-only arguments. Package-path output conflicts in dependencies also require
+stock, including ordinary builds and watches; native delegates before actions.
 
 ## Output policies
 

@@ -437,33 +437,8 @@ pub(crate) fn filtered_transition_reason(
             "output-policy configuration transitions require stock",
         ));
     }
-    if config
-        .builders
-        .iter()
-        .any(|builder| builder.package != workspace.root_package)
-    {
-        let packages = snapshot::scanned_packages(workspace, config);
-        let current = snapshot::scan_initial(
-            workspace,
-            state,
-            config,
-            &packages,
-            &mut FilesystemMetrics::default(),
-        )?;
-        let plan = planning::create(workspace, state, config, &current)?;
-        for spec in &plan.specs {
-            for output in &spec.outputs {
-                if output
-                    .split_once('|')
-                    .is_some_and(|(package, _)| package != workspace.root_package)
-                    && workspace.asset_exists_at(output, crate::builder::BuildTo::Source)?
-                {
-                    return Ok(Some(
-                        "filtered package-path output conflicts in dependencies are outside the supported subset",
-                    ));
-                }
-            }
-        }
+    if let Some(reason) = dependency_output_conflict_reason(workspace, config, state)? {
+        return Ok(Some(reason));
     }
     if state.config_digest.is_empty() || state.is_compatible(&digest) {
         return Ok(None);
@@ -509,6 +484,42 @@ pub(crate) fn filtered_transition_reason(
         return Ok(Some(
             "filtered configuration changes without a source/cache layout transition are outside the supported subset",
         ));
+    }
+    Ok(None)
+}
+
+pub(crate) fn dependency_output_conflict_reason(
+    workspace: &Workspace,
+    config: &crate::builder::RustBuildConfig,
+    state: &GraphState,
+) -> io::Result<Option<&'static str>> {
+    if config
+        .builders
+        .iter()
+        .any(|builder| builder.package != workspace.root_package)
+    {
+        let packages = snapshot::scanned_packages(workspace, config);
+        let current = snapshot::scan_initial(
+            workspace,
+            state,
+            config,
+            &packages,
+            &mut FilesystemMetrics::default(),
+        )?;
+        let plan = planning::create(workspace, state, config, &current)?;
+        for spec in &plan.specs {
+            for output in &spec.outputs {
+                if output
+                    .split_once('|')
+                    .is_some_and(|(package, _)| package != workspace.root_package)
+                    && workspace.asset_exists_at(output, crate::builder::BuildTo::Source)?
+                {
+                    return Ok(Some(
+                        "package-path output conflicts in dependencies are outside the supported subset",
+                    ));
+                }
+            }
+        }
     }
     Ok(None)
 }
