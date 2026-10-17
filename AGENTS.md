@@ -71,6 +71,10 @@ granularity.
 
 ## Verification
 
+For CI changes, prefer parallel steps within existing jobs over expanding the
+matrix for each test group. Keep runner concurrency bounded and share setup;
+additional jobs consume concurrency slots and can increase queue time.
+
 Use the same toolchain and cache for a comparison. The scripts accept DART_BIN,
 CARGO_BIN, PUB_CACHE, RUSTUP_HOME, and CARGO_HOME overrides.
 
