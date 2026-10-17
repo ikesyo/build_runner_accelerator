@@ -93,9 +93,14 @@ by the discarded attempt. Fallback uses stock's own graph; without one, stock
 performs its normal cold build, including regenerating existing files. We do
 not import native graph history into stock. Reset both disposable build states using the recovery
 guide before requiring native again; prewarm does not consume this marker.
-The launcher reads format 3's validated header/trailing history byte without
-loading the whole graph. It can also route retained-history watch before binary
-acquisition. A read-only stock verify/help invocation does not claim ownership.
+The launcher validates the complete current-format/current-schema graph before
+using its retained-history flag for stock transitions or routing watch before
+binary acquisition. Obsolete, oversized and malformed graphs are not retained
+history; native invalidation handles them. Native selection, transition checks,
+build execution and fallback reuse one validated graph load per build attempt.
+A read-only stock verify/help invocation does not claim ownership. Once claimed,
+stock ownership remains until explicit recovery, even after usage errors: a
+concurrent stock invocation may already have relied on that claim.
 
 ## Compatibility boundary
 

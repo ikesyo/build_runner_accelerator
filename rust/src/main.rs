@@ -69,7 +69,7 @@ fn main() -> io::Result<()> {
             eprintln!("Rust frontend unavailable or disabled; nothing to prewarm");
             return Ok(());
         }
-        return frontend::run_dart_fallback(&options, None);
+        return frontend::run_dart_fallback(&options, None, None);
     }
     // Reject a competing native writer instead of falling back to a stock
     // process which would mutate the same output tree. Keep this guard through
