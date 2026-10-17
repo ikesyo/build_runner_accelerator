@@ -31,9 +31,8 @@ pub struct ActionState {
 }
 
 /// Incremental evidence committed after a successful build. In particular,
-/// `output_locations` records where outputs were actually written; old format
-/// data without that evidence must not be assigned a location by guessing from
-/// whichever path currently exists.
+/// `output_locations` records where outputs were actually written, rather than
+/// guessing from whichever path currently exists.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GraphState {
     pub schema_version: u32,
@@ -45,7 +44,6 @@ pub struct GraphState {
     /// IO, so their dependency edges cannot be recovered from reads alone.
     pub resolver_dep_graph: BTreeMap<String, Vec<String>>,
     /// Actual output location at the successful commit (true means cache).
-    /// Format 1 graphs have no such evidence; never infer it across config changes.
     pub output_locations: BTreeMap<String, bool>,
     /// Stock InputTracker input order, distinct from broader observed reads.
     pub stock_input_order: BTreeMap<String, Vec<String>>,
@@ -113,9 +111,9 @@ impl GraphState {
     }
 
     /// Validates the graph header, schema, bounds, and complete payload before
-    /// constructing state. Older supported wire format is decoded without
-    /// inventing fields it did not store; malformed payloads return
-    /// `InvalidData` to `load` for conservative invalidation.
+    /// constructing state. Only the current private format is decoded; obsolete
+    /// formats and malformed payloads return `InvalidData` to `load` for
+    /// automatic invalidation, without deleting generated files.
     fn load_checked(path: &Path) -> io::Result<Self> {
         let contents = match fs::read(path) {
             Ok(contents) => contents,
@@ -137,7 +135,7 @@ impl GraphState {
             return Err(invalid_graph("graph file has an unknown magic"));
         }
         let format_version = contents[GRAPH_MAGIC.len()];
-        if !matches!(format_version, 1 | 2 | GRAPH_FORMAT_VERSION) {
+        if format_version != GRAPH_FORMAT_VERSION {
             return Err(invalid_graph(
                 "graph file has an unsupported format version",
             ));
@@ -165,7 +163,7 @@ impl GraphState {
                 ..Self::default()
             });
         }
-        let state = decoder.read_graph_state(schema_version, format_version)?;
+        let state = decoder.read_graph_state(schema_version)?;
         decoder.finish()?;
         Ok(state)
     }
@@ -615,13 +613,8 @@ impl<'a> Decoder<'a> {
         Ok(values)
     }
 
-    /// Decodes the schema payload, leaving fields absent in format 1 empty so
-    /// callers can distinguish missing evidence from recorded values.
-    fn read_graph_state(
-        &mut self,
-        schema_version: u32,
-        format_version: u8,
-    ) -> io::Result<GraphState> {
+    /// Decodes all required fields of the current private format.
+    fn read_graph_state(&mut self, schema_version: u32) -> io::Result<GraphState> {
         let config_digest = self.read_string()?;
         let assets = self.read_snapshot()?;
         let action_count = self.read_count("action graph")?;
@@ -635,36 +628,30 @@ impl<'a> Decoder<'a> {
         }
         let resolver_dep_graph = self.read_string_list_map()?;
         let mut output_locations = BTreeMap::new();
-        let mut stock_input_order = BTreeMap::new();
-        let mut stock_glob_members = BTreeMap::new();
-        let mut watch_generated_sources = BTreeSet::new();
-        if format_version >= 2 {
-            let count = self.read_count("output locations")?;
-            for _ in 0..count {
-                let asset = self.read_string()?;
-                let cache = self.read_bool()?;
-                if output_locations.insert(asset, cache).is_some() {
-                    return Err(invalid_graph("graph contains a duplicate output location"));
-                }
-            }
-            stock_input_order = self.read_string_list_map()?;
-            for _ in 0..self.read_count("stock glob actions")? {
-                let key = self.read_string()?;
-                let globs = self.read_string_list_map()?;
-                if stock_glob_members.insert(key, globs).is_some() {
-                    return Err(invalid_graph(
-                        "graph contains a duplicate stock glob action",
-                    ));
-                }
-            }
-            if self.offset < self.bytes.len() {
-                watch_generated_sources = self
-                    .read_strings("watch generated sources")?
-                    .into_iter()
-                    .collect();
+        let count = self.read_count("output locations")?;
+        for _ in 0..count {
+            let asset = self.read_string()?;
+            let cache = self.read_bool()?;
+            if output_locations.insert(asset, cache).is_some() {
+                return Err(invalid_graph("graph contains a duplicate output location"));
             }
         }
-        let retained_output_state = format_version >= 3 && self.read_bool()?;
+        let stock_input_order = self.read_string_list_map()?;
+        let mut stock_glob_members = BTreeMap::new();
+        for _ in 0..self.read_count("stock glob actions")? {
+            let key = self.read_string()?;
+            let globs = self.read_string_list_map()?;
+            if stock_glob_members.insert(key, globs).is_some() {
+                return Err(invalid_graph(
+                    "graph contains a duplicate stock glob action",
+                ));
+            }
+        }
+        let watch_generated_sources = self
+            .read_strings("watch generated sources")?
+            .into_iter()
+            .collect();
+        let retained_output_state = self.read_bool()?;
         Ok(GraphState {
             retained_output_state,
             schema_version,
@@ -894,60 +881,6 @@ mod tests {
     }
 
     #[test]
-    fn format_two_defaults_to_no_retained_output_state() {
-        let state = GraphState {
-            schema_version: super::GRAPH_SCHEMA_VERSION,
-            ..GraphState::default()
-        };
-        let mut encoder = super::Encoder::new();
-        encoder.write_graph_state(&state).unwrap();
-        let mut payload = encoder.finish();
-        assert_eq!(payload.pop(), Some(0));
-        let mut bytes = super::GRAPH_MAGIC.to_vec();
-        bytes.push(2);
-        bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-        bytes.extend(payload);
-        let path =
-            std::env::temp_dir().join(format!("accelerator-format-two-{}.bin", std::process::id()));
-        std::fs::write(&path, bytes).unwrap();
-        assert_eq!(GraphState::load_checked(&path).unwrap(), state);
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn format_one_graphs_load_without_guessing_output_locations() {
-        let state = GraphState {
-            schema_version: super::GRAPH_SCHEMA_VERSION,
-            config_digest: "legacy".to_owned(),
-            actions: BTreeMap::from([(
-                "step".to_owned(),
-                ActionState {
-                    builder: "app:builder".to_owned(),
-                    outputs: vec!["app|lib/a.out".to_owned()],
-                    ..ActionState::default()
-                },
-            )]),
-            ..GraphState::default()
-        };
-        let mut encoder = super::Encoder::new();
-        encoder.write_graph_state(&state).unwrap();
-        let mut payload = encoder.finish();
-        // Format 1 ends after resolver edges, before the empty location map.
-        payload.truncate(payload.len() - 17);
-        let mut bytes = super::GRAPH_MAGIC.to_vec();
-        bytes.push(1);
-        bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-        bytes.extend(payload);
-        let path = std::env::temp_dir().join(format!(
-            "accelerator-legacy-locations-{}.bin",
-            std::process::id()
-        ));
-        std::fs::write(&path, bytes).unwrap();
-        assert_eq!(GraphState::load(&path).unwrap(), state);
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
     fn old_binary_format_and_schema_are_discarded_without_removing_files() {
         let root =
             std::env::temp_dir().join(format!("accelerator-old-graph-{}", std::process::id()));
@@ -958,16 +891,35 @@ mod tests {
         std::fs::write(&source, b"user source").unwrap();
         std::fs::write(&output, b"existing output").unwrap();
         for (format, schema) in [
+            (1, super::GRAPH_SCHEMA_VERSION),
+            (2, super::GRAPH_SCHEMA_VERSION),
             (99, super::GRAPH_SCHEMA_VERSION),
             (super::GRAPH_FORMAT_VERSION, 1),
         ] {
+            let previous = GraphState {
+                schema_version: schema,
+                config_digest: "obsolete configuration".to_owned(),
+                ..GraphState::default()
+            };
+            let mut encoder = super::Encoder::new();
+            encoder.write_graph_state(&previous).unwrap();
+            let mut payload = encoder.finish();
+            match format {
+                // Empty format-1 metadata ends after resolver edges.
+                1 => payload.truncate(payload.len() - 17),
+                2 => {
+                    payload.pop();
+                }
+                _ => {}
+            }
             let mut bytes = super::GRAPH_MAGIC.to_vec();
             bytes.push(format);
-            bytes.extend_from_slice(&4_u32.to_be_bytes());
-            bytes.extend_from_slice(&schema.to_be_bytes());
+            bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+            bytes.extend_from_slice(&payload);
             std::fs::write(&path, &bytes).unwrap();
             let state = GraphState::load(&path).unwrap();
             assert!(state.actions.is_empty());
+            assert!(state.config_digest.is_empty());
             assert_eq!(state.schema_version, super::GRAPH_SCHEMA_VERSION);
             assert_eq!(std::fs::read(&path).unwrap(), bytes);
             assert_eq!(std::fs::read(&source).unwrap(), b"user source");
