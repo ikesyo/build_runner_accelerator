@@ -32,6 +32,23 @@ Future<int> runLauncher(List<String> arguments) async {
   var unsupportedReason = options.nativeUnsupported
       ? 'unsupported native CLI'
       : null;
+  if (unsupportedReason == null &&
+      options.mode != 'dart' &&
+      const {'build', 'watch'}.contains(options.command) &&
+      File(
+        '${options.root}/.dart_tool/build_runner_accelerator/stock-output-policy-state',
+      ).existsSync()) {
+    unsupportedReason =
+        'stock output-policy state requires stock until both build states are reset';
+    if (options.mode == 'rust') throw StateError(unsupportedReason);
+  }
+  if (unsupportedReason == null &&
+      options.mode != 'dart' &&
+      options.command == 'watch' &&
+      _hasRetainedNativeOutputState(options.root)) {
+    unsupportedReason = 'watch after retained output state requires stock';
+    if (options.mode == 'rust') throw StateError(unsupportedReason);
+  }
   if (unsupportedReason == null && options.mode != 'dart') {
     final config = BuildSettings.parse(
       options.dartArguments.skip(3).toList(),
@@ -65,12 +82,7 @@ Future<int> runLauncher(List<String> arguments) async {
         'using Dart build_runner fallback.',
       );
     }
-    return processRunner.run(
-      options.dartBinary,
-      options.dartArguments,
-      options.root,
-      isolatedProcessGroup: true,
-    );
+    return _runStock(options, processRunner);
   }
 
   String? binary;
@@ -94,12 +106,7 @@ Future<int> runLauncher(List<String> arguments) async {
       'build_runner_accelerator: Rust frontend unavailable ($error); '
       'using Dart build_runner fallback.',
     );
-    return processRunner.run(
-      options.dartBinary,
-      options.dartArguments,
-      options.root,
-      isolatedProcessGroup: true,
-    );
+    return _runStock(options, processRunner);
   }
   if (binary == null) {
     if (options.mode == 'rust' || options.command == 'aot-cache-key') {
@@ -119,12 +126,7 @@ Future<int> runLauncher(List<String> arguments) async {
       'build_runner_accelerator: Rust frontend unavailable; '
       'using Dart build_runner fallback.',
     );
-    return processRunner.run(
-      options.dartBinary,
-      options.dartArguments,
-      options.root,
-      isolatedProcessGroup: true,
-    );
+    return _runStock(options, processRunner);
   }
   final environment = Map<String, String>.from(Platform.environment);
   // AOT startup is substantially faster for dirty builds. Long-running
@@ -150,6 +152,83 @@ Future<int> runLauncher(List<String> arguments) async {
   );
 }
 
+// Private format 3 ends with the retained-history byte. Read only its header
+// and trailer so the launcher can route watch/stock transitions before setup.
+// Unknown/malformed headers require stock; formats 1/2 predate keep.
+bool _hasRetainedNativeOutputState(String root) {
+  final graph = File('$root/.dart_tool/build_runner_accelerator/graph-v3.bin');
+  if (!graph.existsSync()) return false;
+  try {
+    final input = graph.openSync();
+    try {
+      final header = input.readSync(9);
+      if (header.length != 9 ||
+          header[0] != 0x42 ||
+          header[1] != 0x52 ||
+          header[2] != 0x41 ||
+          header[3] != 0x47)
+        return true;
+      if (header[4] == 1 || header[4] == 2) return false;
+      if (header[4] != 3) return true;
+      final payloadLength =
+          (header[5] << 24) | (header[6] << 16) | (header[7] << 8) | header[8];
+      if (payloadLength < 1 || input.lengthSync() != 9 + payloadLength)
+        return true;
+      input.setPositionSync(8 + payloadLength);
+      return input.readByteSync() != 0;
+    } finally {
+      input.closeSync();
+    }
+  } on FileSystemException {
+    return true;
+  }
+}
+
+// Stock keep can publish logical digests that the native graph cannot import.
+// Claim ownership before starting it, including when the process is interrupted.
+Future<int> _runStock(
+  LauncherOptions options,
+  LauncherProcessRunner runner,
+) async {
+  final marker = File(
+    '${options.root}/.dart_tool/build_runner_accelerator/stock-output-policy-state',
+  );
+  var created = false;
+  var createdDirectory = false;
+  if (options.stockMayPublishOutputs &&
+      (options.stockKeepRequested ||
+          (const {'build', 'watch'}.contains(options.command) &&
+              _hasRetainedNativeOutputState(options.root))) &&
+      !marker.existsSync()) {
+    try {
+      createdDirectory = !marker.parent.existsSync();
+      marker.parent.createSync(recursive: true);
+      marker.writeAsStringSync('Stock owns output-policy history.\n');
+      created = true;
+    } on FileSystemException catch (error) {
+      if (options.mode != 'dart') rethrow;
+      stderr.writeln(
+        'build_runner_accelerator: cannot record stock output-policy history '
+        '($error); reset both build states before native reuse.',
+      );
+    }
+  }
+  final result = await runner.run(
+    options.dartBinary,
+    options.dartArguments,
+    options.root,
+    isolatedProcessGroup: true,
+  );
+  if (created && result == 64) {
+    // Usage failures did not publish stock state.
+    marker.deleteSync();
+    if (createdDirectory && marker.parent.listSync().isEmpty) {
+      marker.parent.deleteSync();
+    }
+  }
+  return result;
+}
+
 /// `prewarm` only
 /// warms frontend caches; when no frontend can run there is nothing to do.
 bool _isPrewarmCommand(String command) => command == 'prewarm';
@@ -171,8 +250,13 @@ and verifies the matching signed release artifact.
 Native commands: build, watch, prewarm, aot-cache-key.
 Other stock commands (clean, serve, run, test, stop) and unsupported options
 use stock in auto/dart; rust reports an error before downloading a frontend.
-Stock --output, --workspace,
---keep-modified-outputs, --only-check and logging options use fallback.
+Stock --output, --workspace and logging options use fallback.
+Build --only-check verifies package outputs without writes/deletes or graph saves;
+I/M/U differences fail with status 1. --keep-modified-outputs retains edits until
+producer rerun; missing outputs regenerate. Mutually exclusive, non-negatable;
+watch uses stock and prewarm rejects both. Normal-builder demand subset only.
+Keep with modified outputs and digest/resolver API use requires stock (rust errors).
+After stock keep/history fallback, build/watch stay on stock until both states reset.
 --delete-conflicting-outputs / -d are accepted by native build/watch as retired
 stock compatibility flags: they have no effect. They are never auto-added.
 Build/watch filters support repeated/comma-separated relative, package: and
@@ -205,6 +289,8 @@ Launcher options:
   --release, -r          Use release options (default: development)
   --no-release           Use development options; last release flag wins
   --config NAME, -c NAME Use build.NAME.yaml; last config wins
+  --only-check           Verify outputs without publishing outputs or graph
+  --keep-modified-outputs Keep edits until input changes rerun their producer
   --force-aot             Force the AOT worker (stock-compatible)
   --force-jit             Force the non-AOT worker (stock-compatible)
   BUILD_RUNNER_ACCELERATOR_BIN   Use a preinstalled frontend binary

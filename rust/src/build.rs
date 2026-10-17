@@ -49,7 +49,29 @@ pub(crate) fn run(
         }
     };
     drop(selection);
-    run_with_config(options, pool, workspace, build_config)
+    let result = run_with_config(options, pool, workspace, build_config);
+    if options.mode == crate::cli::FrontendMode::Auto
+        && let Err(error) = &result
+        && error
+            .to_string()
+            .contains(crate::cli::OUTPUT_POLICY_UNSUPPORTED)
+    {
+        // The failed attempt has dropped its workers and transaction. No
+        // generated file or graph was published; retry the entire stock call.
+        // Stock may now retain logical digests that the discarded native
+        // attempt cannot import. Preserve stock ownership on later commands.
+        mark_stock_output_state(&options.root)?;
+        eprintln!("Rust frontend falling back to stock: {error}");
+        return run_dart_fallback(options, workspace_lock);
+    }
+    result
+}
+
+pub(crate) fn mark_stock_output_state(root: &std::path::Path) -> io::Result<()> {
+    crate::assets::write_atomic(
+        &root.join(crate::frontend::STOCK_OUTPUT_POLICY_STATE),
+        b"Stock owns output-policy history; reset both build states before native reuse.\n",
+    )
 }
 
 pub(crate) fn run_with_config(
@@ -95,7 +117,7 @@ pub(crate) fn run_with_config_session(
 
     let scanned_packages = snapshot::scanned_packages(&workspace, &build_config);
     let scan = crate::wall::Span::new("initial_snapshot");
-    let current_snapshot = snapshot::scan_initial(
+    let mut current_snapshot = snapshot::scan_initial(
         &workspace,
         &state,
         &build_config,
@@ -103,7 +125,32 @@ pub(crate) fn run_with_config_session(
         &mut filesystem_metrics,
     )?;
     drop(scan);
-    let filters = crate::cli::BuildSettings::parse(&options.stock_arguments)?.build_filters;
+    let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
+    let mut filters = settings.build_filters.clone();
+    let mut retained_output_guard = false;
+    if settings.only_check || settings.keep_modified_outputs || state.retained_output_state {
+        if filters.is_empty() {
+            filters.push(crate::build_filter::BuildFilter::parse("asset:**/**")?);
+        }
+        if settings.keep_modified_outputs && state.is_compatible(&config_digest) {
+            // Stock retains existing output bytes with their previous digest.
+            // Missing outputs are NOT retained and must trigger their producer.
+            for action in state.actions.values() {
+                for output in &action.outputs {
+                    if current_snapshot
+                        .get(output)
+                        .is_some_and(|entry| entry.exists)
+                        && let Some(previous) = state.assets.get(output)
+                    {
+                        retained_output_guard |= current_snapshot
+                            .get(output)
+                            .is_some_and(|current| current.digest != previous.digest);
+                        current_snapshot.insert(output.clone(), previous.clone());
+                    }
+                }
+            }
+        }
+    }
     let mut planning_snapshot = None;
     if !filters.is_empty() {
         if session_start || !state.is_compatible(&config_digest) {
@@ -169,6 +216,7 @@ pub(crate) fn run_with_config_session(
             session_start,
             &current_snapshot,
             &changed_paths.paths,
+            retained_output_guard,
         );
     }
     let dirty = crate::wall::Span::new("dirty_check");
@@ -253,6 +301,8 @@ pub(crate) fn run_with_config_session(
     let graph_metrics = commit::commit(
         &mut state,
         commit::CommitInputs {
+            only_check: false,
+            keep_modified_outputs: false,
             workspace: &workspace,
             state_path: &state_path,
             build_config: &build_config,
@@ -302,6 +352,7 @@ pub(crate) fn empty_filtered_result(spec: &crate::plan::BuildSpec) -> crate::pro
 pub(crate) fn filtered_transition_reason(
     workspace: &Workspace,
     config: &crate::builder::RustBuildConfig,
+    output_policy: bool,
 ) -> io::Result<Option<&'static str>> {
     workspace.configure_sources(config.asset_sources.as_ref());
     let state = GraphState::load(&graph_path(workspace))?;
@@ -341,6 +392,11 @@ pub(crate) fn filtered_transition_reason(
         ));
     }
     let digest = snapshot::config_digest(workspace, config)?;
+    if output_policy && !state.config_digest.is_empty() && state.config_digest != digest {
+        return Ok(Some(
+            "output-policy configuration transitions require stock",
+        ));
+    }
     if config
         .builders
         .iter()

@@ -68,6 +68,91 @@ void main() {
     }
   });
 
+  test(
+    'output policies agree with stock and retain the entire invocation',
+    () async {
+      for (final flags in <List<String>>[
+        [],
+        ['--only-check'],
+        ['--only-check', '--only-check'],
+        ['--keep-modified-outputs'],
+        ['--keep-modified-outputs', '--keep-modified-outputs', '-rd'],
+        ['--only-check', '--build-filter=lib/*.final', '--force-jit'],
+      ]) {
+        final settings = BuildSettings.parse(flags);
+        final cli = (await BuildRunnerCommandLine.parse(['build', ...flags]))!;
+        expect(settings.onlyCheck, cli.outputStrategy.name == 'verify');
+        expect(settings.keepModifiedOutputs, cli.outputStrategy.name == 'keep');
+        final options = LauncherOptions.parse([
+          'build',
+          '--mode=rust',
+          ...flags,
+        ]);
+        expect(options.nativeUnsupported, isFalse);
+        expect(options.dartArguments, [
+          'run',
+          'build_runner',
+          'build',
+          ...flags,
+        ]);
+      }
+      for (final flags in <List<String>>[
+        ['--only-check', '--keep-modified-outputs'],
+        ['--no-only-check'],
+        ['--no-keep-modified-outputs'],
+        ['--only-check=true'],
+        ['--keep-modified-outputs=false'],
+      ]) {
+        expect(() => BuildSettings.parse(flags), throwsFormatException);
+        // Stock's mutually exclusive strategy is checked on access, after parsing.
+        await expectLater(() async {
+          final cli = (await BuildRunnerCommandLine.parse([
+            'build',
+            ...flags,
+          ]))!;
+          cli.outputStrategy;
+        }, throwsA(anything));
+        final options = LauncherOptions.parse(['build', ...flags]);
+        expect(options.nativeUnsupported, isTrue);
+        expect(options.dartArguments, [
+          'run',
+          'build_runner',
+          'build',
+          ...flags,
+        ]);
+        expect(
+          () => LauncherOptions.parse(['build', '--mode=rust', ...flags]),
+          throwsFormatException,
+        );
+      }
+      // Stock treats a separate "false" as a positional build directory.
+      // Native leaves directory selection to stock rather than consuming a value.
+      expect(
+        LauncherOptions.parse([
+          'build',
+          '--only-check',
+          'false',
+        ]).nativeUnsupported,
+        isTrue,
+      );
+      for (final command in ['watch', 'prewarm', 'aot-cache-key']) {
+        for (final policy in ['--only-check', '--keep-modified-outputs']) {
+          if (command == 'prewarm') {
+            expect(
+              () => LauncherOptions.parse([command, policy]),
+              throwsFormatException,
+            );
+          } else {
+            expect(
+              LauncherOptions.parse([command, policy]).nativeUnsupported,
+              isTrue,
+            );
+          }
+        }
+      }
+    },
+  );
+
   test('build-filter multi-option parsing agrees with stock', () async {
     for (final flags in <List<String>>[
       ['--build-filter=lib/a.final'],

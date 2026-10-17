@@ -65,7 +65,7 @@ VERIFY_LEVEL=full VERIFY_FULL_SUITES=compatibility-graph bash scripts/verify.sh
 git diff --check
 ```
 
-The full level includes core, code generation, compatibility lifecycle,
+The full level includes output policies, core, code generation, compatibility lifecycle,
 compatibility graph, and compatibility mapping. VERIFY_FULL_SUITES accepts a
 comma-separated subset for local runs or CI shards.
 
@@ -77,6 +77,7 @@ Run the closest comparison script when changing a boundary:
 | --- | --- |
 | Filter selection, graph, deletion, or watch | `BUILD_FILTER_CASE_GROUP=watch-source bash scripts/correctness_build_filter.sh` |
 | Settings and config reload | `SETTINGS_CASE_GROUP=paths bash scripts/correctness_settings.sh` |
+| Output verification, retention, or policy routing | `bash scripts/correctness_output_policies.sh` |
 | CLI routing, fallback, or process signals | `bash scripts/correctness_cli.sh` |
 | Watch lifecycle | `bash scripts/watch_smoke.sh` |
 | Freezed/Riverpod compatibility | `scripts/correctness_freezed.sh`, `scripts/watch_smoke_freezed.sh`, `scripts/correctness_riverpod.sh`, `scripts/watch_smoke_riverpod.sh` |
@@ -99,6 +100,9 @@ The CI workflow runs the same checks in functional groups:
 
 Watch logs and builder histories are stored outside watched workspaces, so test
 bookkeeping cannot trigger or mask a rebuild.
+
+`OUTPUT_POLICY_CASE_GROUP` selects `routing`, `modes`, `source`, `cache`,
+`failure`, or `api` in the output-policy comparison script; the default runs all groups.
 
 CI splits long correctness suites into parallel jobs. Local full verification
 keeps each selected suite's state transitions ordered in isolated workspaces.

@@ -45,6 +45,7 @@ Benchmarks and mechanical refactors do not need one.
 | [0031](0031-native-build-settings.md) | Native configuration and settings invalidation |
 | [0032](0032-native-build-filter-demand-and-output-state.md) | Filter demand, output state, and conservative fallback |
 | [0033](0033-filtered-demand-scheduler.md) | Parallel filtered demand coordination and lazy worker startup |
+| [0034](0034-native-output-policies.md) | Output verification, retained generated digests, and policy fallback |
 | [0035](0035-package-source-identity.md) | Package source sets, nested asset identities and watch boundary |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release

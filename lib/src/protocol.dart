@@ -51,6 +51,7 @@ class WorkerInitializeMessage extends WorkerMessage {
     required this.root,
     required this.phaseCount,
     required this.inputRestrictions,
+    this.retainedOutputGuard = false,
   }) : super(id: id);
 
   factory WorkerInitializeMessage.fromJson(JsonMap message) {
@@ -84,6 +85,9 @@ class WorkerInitializeMessage extends WorkerMessage {
         ).entries)
           entry.key: _stringList(entry.value, 'input restriction patterns'),
       },
+      retainedOutputGuard: message.containsKey('retained_output_guard')
+          ? _requiredBool(message, 'retained_output_guard', 'initialize')
+          : false,
     );
   }
 
@@ -91,6 +95,7 @@ class WorkerInitializeMessage extends WorkerMessage {
   final String root;
   final int phaseCount;
   final Map<String, List<String>> inputRestrictions;
+  final bool retainedOutputGuard;
 }
 
 class WorkerResetMessage extends WorkerMessage {

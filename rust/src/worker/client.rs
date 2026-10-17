@@ -177,6 +177,7 @@ impl WorkerClient {
         phase_count: usize,
         requires_optional_builder: bool,
         input_restrictions: &BTreeMap<String, Vec<String>>,
+        retained_output_guard: bool,
     ) -> io::Result<()> {
         let _wall = self.wall_span("worker_initialize", None);
         let started = Instant::now();
@@ -190,13 +191,20 @@ impl WorkerClient {
             "package": package,
             "phase_count": phase_count,
             "input_restrictions": input_restrictions,
-            "resolver_mode": "dart_local"
+            "resolver_mode": "dart_local",
+            "retained_output_guard": retained_output_guard
         }))?;
         let response = self.receive_json()?;
         if response.get("type").and_then(Value::as_str) != Some("initialized") {
             return Err(protocol_error("worker initialization failed", &response));
         }
         validate_initialized(&response, id)?;
+        if retained_output_guard && !has_capability(&response, "retained-output-guard-v1") {
+            return Err(io::Error::other(format!(
+                "{} worker lacks retained-output-guard-v1",
+                crate::cli::OUTPUT_POLICY_UNSUPPORTED
+            )));
+        }
         if !has_capability(&response, BINARY_READ_CAPABILITY) {
             return Err(io::Error::other(format!(
                 "worker does not support required capability: {BINARY_READ_CAPABILITY}"

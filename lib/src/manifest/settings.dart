@@ -16,8 +16,12 @@ class BuildSettings {
     this.defines = const [],
     this.deletionFlag = false,
     this.buildFilters = const [],
+    this.onlyCheck = false,
+    this.keepModifiedOutputs = false,
   });
 
+  final bool onlyCheck;
+  final bool keepModifiedOutputs;
   final bool release;
   final String? config;
   final List<String> defines;
@@ -62,6 +66,8 @@ class BuildSettings {
       }
     }
     arguments = expanded;
+    var onlyCheck = false;
+    var keepModifiedOutputs = false;
     var release = false;
     var deletionFlag = false;
     String? config;
@@ -71,6 +77,10 @@ class BuildSettings {
     for (var i = 0; i < arguments.length; i++) {
       final argument = arguments[i];
       switch (argument) {
+        case '--only-check':
+          onlyCheck = true;
+        case '--keep-modified-outputs':
+          keepModifiedOutputs = true;
         case '--release' || '-r':
           release = true;
         case '--no-release':
@@ -134,8 +144,15 @@ class BuildSettings {
           }
       }
     }
+    if (onlyCheck && keepModifiedOutputs) {
+      throw const FormatException(
+        'Cannot specify both --only-check and --keep-modified-outputs',
+      );
+    }
     if (config != null) configPath(config);
     return BuildSettings(
+      onlyCheck: onlyCheck,
+      keepModifiedOutputs: keepModifiedOutputs,
       release: release,
       config: config,
       defines: defines,
