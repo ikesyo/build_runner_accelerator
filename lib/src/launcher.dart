@@ -3,6 +3,7 @@ import 'dart:io';
 import 'frontend_binary_resolver.dart';
 import 'launcher_options.dart';
 import 'manifest/settings.dart';
+import 'native_graph.dart';
 import 'launcher_process.dart';
 import 'process_group.dart';
 
@@ -42,10 +43,13 @@ Future<int> runLauncher(List<String> arguments) async {
         'stock output-policy state requires stock until both build states are reset';
     if (options.mode == 'rust') throw StateError(unsupportedReason);
   }
+  bool? retainedNativeOutputState;
   if (unsupportedReason == null &&
       options.mode != 'dart' &&
       options.command == 'watch' &&
-      _hasRetainedNativeOutputState(options.root)) {
+      (retainedNativeOutputState = hasRetainedNativeOutputState(
+        options.root,
+      ))) {
     unsupportedReason = 'watch after retained output state requires stock';
     if (options.mode == 'rust') throw StateError(unsupportedReason);
   }
@@ -82,7 +86,11 @@ Future<int> runLauncher(List<String> arguments) async {
         'using Dart build_runner fallback.',
       );
     }
-    return _runStock(options, processRunner);
+    return _runStock(
+      options,
+      processRunner,
+      retainedNativeOutputState: retainedNativeOutputState,
+    );
   }
 
   String? binary;
@@ -152,59 +160,38 @@ Future<int> runLauncher(List<String> arguments) async {
   );
 }
 
-// Private format 3 ends with the retained-history byte. Read only its header
-// and trailer so the launcher can route watch/stock transitions before setup.
-// Unknown/malformed headers require stock; formats 1/2 predate keep.
-bool _hasRetainedNativeOutputState(String root) {
-  final graph = File('$root/.dart_tool/build_runner_accelerator/graph-v3.bin');
-  if (!graph.existsSync()) return false;
-  try {
-    final input = graph.openSync();
-    try {
-      final header = input.readSync(9);
-      if (header.length != 9 ||
-          header[0] != 0x42 ||
-          header[1] != 0x52 ||
-          header[2] != 0x41 ||
-          header[3] != 0x47)
-        return true;
-      if (header[4] == 1 || header[4] == 2) return false;
-      if (header[4] != 3) return true;
-      final payloadLength =
-          (header[5] << 24) | (header[6] << 16) | (header[7] << 8) | header[8];
-      if (payloadLength < 1 || input.lengthSync() != 9 + payloadLength)
-        return true;
-      input.setPositionSync(8 + payloadLength);
-      return input.readByteSync() != 0;
-    } finally {
-      input.closeSync();
-    }
-  } on FileSystemException {
-    return true;
-  }
-}
-
 // Stock keep can publish logical digests that the native graph cannot import.
 // Claim ownership before starting it, including when the process is interrupted.
+// Claims remain until explicit recovery: another invocation may have adopted one.
 Future<int> _runStock(
   LauncherOptions options,
-  LauncherProcessRunner runner,
-) async {
+  LauncherProcessRunner runner, {
+  bool? retainedNativeOutputState,
+}) async {
   final marker = File(
     '${options.root}/.dart_tool/build_runner_accelerator/stock-output-policy-state',
   );
-  var created = false;
-  var createdDirectory = false;
-  if (options.stockMayPublishOutputs &&
-      (options.stockKeepRequested ||
-          (const {'build', 'watch'}.contains(options.command) &&
-              _hasRetainedNativeOutputState(options.root))) &&
-      !marker.existsSync()) {
+  var claimOwnership = options.stockKeepRequested;
+  if (!marker.existsSync() &&
+      options.stockMayPublishOutputs &&
+      !claimOwnership &&
+      const {'build', 'watch'}.contains(options.command)) {
     try {
-      createdDirectory = !marker.parent.existsSync();
+      claimOwnership =
+          retainedNativeOutputState ??
+          hasRetainedNativeOutputState(options.root);
+    } on FileSystemException {
+      // Stock was already selected. Unreadable native history must not block
+      // it or let a subsequent native build reuse history stock may replace.
+      claimOwnership = true;
+    }
+  }
+  if (!marker.existsSync() &&
+      options.stockMayPublishOutputs &&
+      claimOwnership) {
+    try {
       marker.parent.createSync(recursive: true);
       marker.writeAsStringSync('Stock owns output-policy history.\n');
-      created = true;
     } on FileSystemException catch (error) {
       if (options.mode != 'dart') rethrow;
       stderr.writeln(
@@ -213,20 +200,12 @@ Future<int> _runStock(
       );
     }
   }
-  final result = await runner.run(
+  return runner.run(
     options.dartBinary,
     options.dartArguments,
     options.root,
     isolatedProcessGroup: true,
   );
-  if (created && result == 64) {
-    // Usage failures did not publish stock state.
-    marker.deleteSync();
-    if (createdDirectory && marker.parent.listSync().isEmpty) {
-      marker.parent.deleteSync();
-    }
-  }
-  return result;
 }
 
 /// `prewarm` only

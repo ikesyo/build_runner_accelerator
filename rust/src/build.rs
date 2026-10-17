@@ -31,6 +31,27 @@ pub(crate) fn graph_path(workspace: &Workspace) -> PathBuf {
         .join(".dart_tool/build_runner_accelerator/graph-v3.bin")
 }
 
+/// One validated graph load shared by selection, execution and late fallback.
+pub(crate) struct LoadedGraph {
+    pub state: GraphState,
+    load_us: u128,
+    load_bytes: u64,
+}
+
+impl LoadedGraph {
+    pub fn load(workspace: &Workspace) -> io::Result<Self> {
+        let _load = crate::wall::Span::new("graph_load");
+        let started = Instant::now();
+        let path = graph_path(workspace);
+        let state = GraphState::load(&path)?;
+        Ok(Self {
+            state,
+            load_us: started.elapsed().as_micros(),
+            load_bytes: graph_file_size(&path),
+        })
+    }
+}
+
 pub(crate) fn run(
     options: &Options,
     pool: Option<&mut WorkerPool>,
@@ -39,17 +60,19 @@ pub(crate) fn run(
     let load = crate::wall::Span::new("workspace_load");
     let workspace = Workspace::load(options.root.clone())?;
     drop(load);
+    let loaded_graph = LoadedGraph::load(&workspace)?;
+    let retained_output_state = loaded_graph.state.retained_output_state;
     let selection = crate::wall::Span::new("manifest_select");
-    let build_config = match select_frontend(options, &workspace)? {
+    let build_config = match select_frontend(options, &workspace, &loaded_graph.state)? {
         Some(config) => config,
         None => {
             drop(selection);
             let _fallback = crate::wall::Span::new("dart_fallback");
-            return run_dart_fallback(options, workspace_lock);
+            return run_dart_fallback(options, workspace_lock, Some(retained_output_state));
         }
     };
     drop(selection);
-    let result = run_with_config(options, pool, workspace, build_config);
+    let result = run_with_config(options, pool, workspace, build_config, loaded_graph);
     if options.mode == crate::cli::FrontendMode::Auto
         && let Err(error) = &result
         && error
@@ -62,7 +85,7 @@ pub(crate) fn run(
         // attempt cannot import. Preserve stock ownership on later commands.
         mark_stock_output_state(&options.root)?;
         eprintln!("Rust frontend falling back to stock: {error}");
-        return run_dart_fallback(options, workspace_lock);
+        return run_dart_fallback(options, workspace_lock, Some(retained_output_state));
     }
     result
 }
@@ -79,12 +102,14 @@ pub(crate) fn run_with_config(
     pool: Option<&mut WorkerPool>,
     workspace: Workspace,
     build_config: crate::builder::RustBuildConfig,
+    loaded_graph: LoadedGraph,
 ) -> io::Result<()> {
     run_with_config_session(
         options,
         pool,
         workspace,
         build_config,
+        loaded_graph,
         true,
         &crate::watch::WatchChanges::default(),
     )
@@ -95,6 +120,7 @@ pub(crate) fn run_with_config_session(
     pool: Option<&mut WorkerPool>,
     workspace: Workspace,
     build_config: crate::builder::RustBuildConfig,
+    loaded_graph: LoadedGraph,
     session_start: bool,
     changed_paths: &crate::watch::WatchChanges,
 ) -> io::Result<()> {
@@ -104,12 +130,11 @@ pub(crate) fn run_with_config_session(
     let _build = crate::wall::Span::new("build_with_config");
     let state_path = graph_path(&workspace);
     workspace.configure_sources(build_config.asset_sources.as_ref());
-    let load = crate::wall::Span::new("graph_load");
-    let graph_load_started = Instant::now();
-    let mut state = GraphState::load(&state_path)?;
-    let graph_load_us = graph_load_started.elapsed().as_micros();
-    let graph_load_bytes = graph_file_size(&state_path);
-    drop(load);
+    let LoadedGraph {
+        mut state,
+        load_us: graph_load_us,
+        load_bytes: graph_load_bytes,
+    } = loaded_graph;
     let digest = crate::wall::Span::new("config_digest");
     let config_digest = snapshot::config_digest(&workspace, &build_config)?;
     drop(digest);
@@ -373,9 +398,9 @@ pub(crate) fn filtered_transition_reason(
     workspace: &Workspace,
     config: &crate::builder::RustBuildConfig,
     output_policy: bool,
+    state: &GraphState,
 ) -> io::Result<Option<&'static str>> {
     workspace.configure_sources(config.asset_sources.as_ref());
-    let state = GraphState::load(&graph_path(workspace))?;
     if state.has_resolver_cycle() {
         return Ok(Some(
             "filtered incremental resolver cycles are outside the supported subset",
@@ -425,12 +450,12 @@ pub(crate) fn filtered_transition_reason(
         let packages = snapshot::scanned_packages(workspace, config);
         let current = snapshot::scan_initial(
             workspace,
-            &state,
+            state,
             config,
             &packages,
             &mut FilesystemMetrics::default(),
         )?;
-        let plan = planning::create(workspace, &state, config, &current)?;
+        let plan = planning::create(workspace, state, config, &current)?;
         for spec in &plan.specs {
             for output in &spec.outputs {
                 if output
@@ -461,12 +486,12 @@ pub(crate) fn filtered_transition_reason(
     let packages = snapshot::scanned_packages(workspace, config);
     let current = snapshot::scan_initial(
         workspace,
-        &state,
+        state,
         config,
         &packages,
         &mut FilesystemMetrics::default(),
     )?;
-    let plan = planning::create(workspace, &state, config, &current)?;
+    let plan = planning::create(workspace, state, config, &current)?;
     let declared = plan.expected_outputs();
     if state
         .actions

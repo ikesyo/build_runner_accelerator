@@ -23,6 +23,7 @@ const EARLY_WORKER_MARKER_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 
 pub(crate) fn select_frontend(
     options: &Options,
     workspace: &Workspace,
+    state: &crate::graph::GraphState,
 ) -> io::Result<Option<RustBuildConfig>> {
     if options.mode == FrontendMode::Dart {
         return Ok(None);
@@ -37,9 +38,8 @@ pub(crate) fn select_frontend(
         );
     }
     // Detect the state-dependent watch boundary before preparing a manifest.
-    let retained_output_state = matches!(options.command.as_str(), "build" | "watch")
-        && crate::graph::GraphState::load(&crate::build::graph_path(workspace))?
-            .retained_output_state;
+    let retained_output_state =
+        matches!(options.command.as_str(), "build" | "watch") && state.retained_output_state;
     if retained_output_state && options.command == "watch" {
         return select_dart_fallback(options, "watch after retained output state requires stock");
     }
@@ -139,8 +139,12 @@ pub(crate) fn select_frontend(
                 );
             }
             if (demand_policy || !filters.is_empty())
-                && let Some(reason) =
-                    crate::build::filtered_transition_reason(workspace, &config, demand_policy)?
+                && let Some(reason) = crate::build::filtered_transition_reason(
+                    workspace,
+                    &config,
+                    demand_policy,
+                    state,
+                )?
             {
                 return select_dart_fallback(options, reason);
             }
@@ -504,9 +508,10 @@ pub(crate) fn worker_executable(options: &Options, config: &RustBuildConfig) -> 
 
 pub(crate) fn run_aot_cache_key(options: &Options) -> io::Result<()> {
     let workspace = Workspace::load(options.root.clone())?;
-    let build_config = select_frontend(options, &workspace)?.ok_or_else(|| {
-        io::Error::other("AOT cache key requires a Rust-compatible builder manifest")
-    })?;
+    let build_config = select_frontend(options, &workspace, &crate::graph::GraphState::default())?
+        .ok_or_else(|| {
+            io::Error::other("AOT cache key requires a Rust-compatible builder manifest")
+        })?;
     let worker = worker_executable(options, &build_config)?;
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     println!(
@@ -526,15 +531,16 @@ pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
     }
     let _background_lock = take_background_aot_lock();
     let workspace = load_prewarm_workspace(options)?;
-    let build_config = match select_frontend(options, &workspace)? {
-        Some(config) => config,
-        // Unreachable under --mode rust (select_frontend already failed); the
-        // stock Dart path has no caches to warm, so skipping is not an error.
-        None => {
-            eprintln!("Rust frontend would not run this workspace; nothing to prewarm");
-            return Ok(());
-        }
-    };
+    let build_config =
+        match select_frontend(options, &workspace, &crate::graph::GraphState::default())? {
+            Some(config) => config,
+            // Unreachable under --mode rust (select_frontend already failed); the
+            // stock Dart path has no caches to warm, so skipping is not an error.
+            None => {
+                eprintln!("Rust frontend would not run this workspace; nothing to prewarm");
+                return Ok(());
+            }
+        };
     let worker = worker_executable(options, &build_config)?;
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     // Warm the shared analyzer byte store alongside the worker AOT compile:
@@ -728,6 +734,7 @@ fn select_dart_fallback(options: &Options, reason: &str) -> io::Result<Option<Ru
 pub(crate) fn run_dart_fallback(
     options: &Options,
     workspace_lock: Option<&crate::workspace_lock::WorkspaceLock>,
+    retained_output_state: Option<bool>,
 ) -> io::Result<()> {
     if matches!(options.command.as_str(), "build" | "watch") {
         let settings = crate::cli::BuildSettings::parse(&options.stock_arguments).ok();
@@ -737,12 +744,17 @@ pub(crate) fn run_dart_fallback(
         let verify = settings
             .as_ref()
             .is_some_and(|settings| settings.only_check);
-        let retained = crate::graph::GraphState::load(
-            &options
-                .root
-                .join(".dart_tool/build_runner_accelerator/graph-v3.bin"),
-        )
-        .is_ok_and(|state| state.retained_output_state);
+        let retained = match retained_output_state {
+            // Keep already claims ownership; verify cannot publish it.
+            _ if keep || verify => false,
+            Some(retained) => retained,
+            None => crate::graph::GraphState::load(
+                &options
+                    .root
+                    .join(".dart_tool/build_runner_accelerator/graph-v3.bin"),
+            )
+            .is_ok_and(|state| state.retained_output_state),
+        };
         if keep || (retained && !verify) {
             crate::build::mark_stock_output_state(&options.root)?;
         }

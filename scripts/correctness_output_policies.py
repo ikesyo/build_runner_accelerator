@@ -256,7 +256,50 @@ def failure_and_interrupt(tmp, policy):
     pair.check()
 
 
+def ownership_race(tmp):
+    """A usage failure cannot unpin history published by another stock call."""
+    pair = Pair(tmp, 'ownership-race')
+    ready, release = tmp / 'stock-ready', tmp / 'stock-release'
+    fake = tmp / 'delayed-usage-dart'
+    fake.write_text('#!/usr/bin/env python3\nimport pathlib,time\n'
+                    f'pathlib.Path({str(ready)!r}).touch()\n'
+                    'deadline = time.monotonic() + 300\n'
+                    f'while not pathlib.Path({str(release)!r}).exists():\n'
+                    '    if time.monotonic() > deadline: raise SystemExit(99)\n'
+                    '    time.sleep(0.05)\n'
+                    'raise SystemExit(64)\n')
+    fake.chmod(0o755)
+    args = launcher(pair.native, 'dart', flags=[KEEP, '--unknown-option'])
+    args[args.index('--dart') + 1] = str(fake)
+    with (tmp / 'ownership-race.log').open('w') as log:
+        first = subprocess.Popen(args, cwd=pair.native, env=fixture_env(pair.native),
+                                 stdout=log, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 30
+            while not ready.exists():
+                assert first.poll() is None and time.monotonic() < deadline
+                time.sleep(0.05)
+            marker = pair.native / '.dart_tool/build_runner_accelerator/stock-output-policy-state'
+            assert marker.exists()
+            # This real stock build adopts the existing claim and publishes
+            # generated outputs and stock's independent incremental graph.
+            pair.check(KEEP, mode='auto')
+            assert (pair.native / '.dart_tool/build/asset_graph.json').exists()
+            release.touch()
+            assert first.wait(timeout=30) == 64
+            assert marker.exists(), 'usage-error cleanup removed another build ownership'
+            result = execute(launcher(pair.native, 'rust'), pair.native)
+            assert result[0] == 1 and 'stock output-policy state' in result[1], result
+            pair.check(mode='auto')
+        finally:
+            release.touch()
+            if first.poll() is None:
+                first.wait(timeout=30)
+    print('output-policies: PASS concurrent stock ownership survives usage error', flush=True)
+
+
 def routing(tmp):
+    ownership_race(tmp)
     # Capturing the actual process argv checks both fallback boundaries without
     # depending on diagnostic wording or a downloadable native artifact.
     root = tmp / 'routing'
@@ -442,6 +485,28 @@ def modes(tmp):
                                                   '--build-filter=lib/*.final']
     assert snapshot(pair.native) == before
     assert (manifest.read_bytes(), manifest.stat().st_mtime_ns) == manifest_stamp
+    # The fake watch published no stock history; discard its synthetic claim
+    # before testing routing from invalid native graphs.
+    (pair.native / '.dart_tool/build_runner_accelerator/stock-output-policy-state').unlink()
+    graph = pair.native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+    committed = graph.read_bytes()
+    assert committed[-1] == 1
+    fake_native = tmp / 'probe-native'
+    fake_native.write_text('#!/usr/bin/env python3\nimport json,sys\n'
+                           f'open({str(capture)!r}, "w").write(json.dumps(sys.argv[1:]))\n'
+                           'sys.exit(23)\n')
+    fake_native.chmod(0o755)
+    bad_schema = bytearray(committed); bad_schema[9:13] = (1).to_bytes(4, 'big')
+    bad_payload = bytearray(committed); bad_payload[13:17] = (0xffffffff).to_bytes(4, 'big')
+    for invalid in (committed[:4] + bytes([99]) + committed[5:], bad_schema, bad_payload):
+        graph.write_bytes(invalid)
+        for mode in ('auto', 'rust'):
+            result = execute(launcher(pair.native, mode, 'watch'), pair.native,
+                             {'BUILD_RUNNER_ACCELERATOR_BIN': str(fake_native)})
+            assert result[0] == 23 and 'watch after retained' not in result[1], result
+            assert json.loads(capture.read_text())[0] == 'watch', result
+        assert not (pair.native / '.dart_tool/build_runner_accelerator/stock-output-policy-state').exists()
+    graph.write_bytes(committed)
     for mode in ('auto', 'dart'):
         pair = Pair(tmp, 'mode-' + mode)
         pair.check(VERIFY, expected=1, mode=mode)

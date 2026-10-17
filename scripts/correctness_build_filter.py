@@ -428,7 +428,7 @@ def obsolete_graph_comparison(tmp):
                                  '--only-check', *flags], stock)
             actual = execute(launcher(native, mode, flags=['--force-jit', '--only-check', *flags]), native)
             assert reference[0] == actual[0] == 1, (reference, actual)
-            assert 'invalidating graph' in actual[1] and 'unsupported format' in actual[1], actual
+            assert actual[1].count('invalidating graph') == 1 and 'unsupported format' in actual[1], actual
             assert (outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns) == before
             (native / 'lib/common.txt').write_text('fail\n')
             actual = execute(launcher(native, mode, flags=['--force-jit', *flags]), native)
