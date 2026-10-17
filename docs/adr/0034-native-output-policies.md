@@ -57,8 +57,13 @@ until the private graph is discarded. Repairing a producer to identical logical
 content must not rerun a consumer that previously read retained manual bytes;
 such legitimate consumer results can survive multiple ordinary builds. This
 marker changes reuse, not output policy: ordinary builds still repair manually
-modified outputs. Formats 1/2 load with the marker false because they predate
-native keep support. Watch from this state routes to stock before actions,
+modified outputs. Only the current private format is read: formats 1/2 are
+automatically invalidated and rebuilt natively, following ADR 0030. This does
+not trigger stock fallback or delete existing generated files. The old graph
+is replaced only by a successful publishing build; verification and failed
+actions leave it intact. Prior action/output history is not migrated, so this
+is a cold build, not incremental continuation of the obsolete graph.
+Watch from retained-output state routes to stock before actions,
 including after an ordinary build; prewarm does not consume the state.
 
 ## Retained bytes and worker APIs
