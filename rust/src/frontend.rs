@@ -20,11 +20,25 @@ const MANIFEST_PATH: &str = ".dart_tool/build_runner_accelerator/builder-manifes
 const WORKER_ENTRYPOINT_PATH: &str = ".dart_tool/build_runner_accelerator/dynamic_worker.dart";
 const EARLY_WORKER_MARKER_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
+pub(crate) struct NativeFrontend {
+    pub config: RustBuildConfig,
+    pub preflight: Option<crate::build::Preflight>,
+}
+
+impl NativeFrontend {
+    pub fn new(config: RustBuildConfig) -> Self {
+        Self {
+            config,
+            preflight: None,
+        }
+    }
+}
+
 pub(crate) fn select_frontend(
     options: &Options,
     workspace: &Workspace,
     state: &crate::graph::GraphState,
-) -> io::Result<Option<RustBuildConfig>> {
+) -> io::Result<Option<NativeFrontend>> {
     if options.mode == FrontendMode::Dart {
         return Ok(None);
     }
@@ -138,17 +152,29 @@ pub(crate) fn select_frontend(
                     "output policies/build filters with optional, post-process, trigger-only or zero-output builders are outside the supported subset",
                 );
             }
+            let mut preflight = None;
             let transition_reason = if demand_policy || !filters.is_empty() {
-                crate::build::filtered_transition_reason(workspace, &config, demand_policy, state)?
+                crate::build::filtered_transition_reason(
+                    workspace,
+                    &config,
+                    demand_policy,
+                    state,
+                    &mut preflight,
+                )?
             } else if matches!(options.command.as_str(), "build" | "watch") {
-                crate::build::dependency_output_conflict_reason(workspace, &config, state)?
+                crate::build::dependency_output_conflict_reason(
+                    workspace,
+                    &config,
+                    state,
+                    &mut preflight,
+                )?
             } else {
                 None
             };
             if let Some(reason) = transition_reason {
                 return select_dart_fallback(options, reason);
             }
-            Ok(Some(config))
+            Ok(Some(NativeFrontend { config, preflight }))
         }
         Err(error) => select_dart_fallback(
             options,
@@ -512,6 +538,7 @@ pub(crate) fn run_aot_cache_key(options: &Options) -> io::Result<()> {
         .ok_or_else(|| {
             io::Error::other("AOT cache key requires a Rust-compatible builder manifest")
         })?;
+    let build_config = build_config.config;
     let worker = worker_executable(options, &build_config)?;
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     println!(
@@ -541,6 +568,7 @@ pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
                 return Ok(());
             }
         };
+    let build_config = build_config.config;
     let worker = worker_executable(options, &build_config)?;
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     // Warm the shared analyzer byte store alongside the worker AOT compile:
@@ -720,7 +748,7 @@ fn detached_prewarm_command() -> io::Result<Command> {
     Ok(Command::new(std::env::current_exe()?))
 }
 
-fn select_dart_fallback(options: &Options, reason: &str) -> io::Result<Option<RustBuildConfig>> {
+fn select_dart_fallback(options: &Options, reason: &str) -> io::Result<Option<NativeFrontend>> {
     if options.mode == FrontendMode::Rust {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,

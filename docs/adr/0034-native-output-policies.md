@@ -70,7 +70,11 @@ rust errors until both disposable states are reset using the
 Check this marker before native acquisition or manifest preparation. For
 retained-history preflight, the launcher accepts only fully validated current
 format/schema graphs. Native selection, transition checks, execution and fallback
-share one graph load per attempt. Unreadable history also prevents native watch;
+share one graph load per attempt. Selection passes its preflight snapshot and
+plan to that attempt; ordinary builds reuse them. Watch rescans after subscription
+and worker startup, reusing the plan only when the snapshot still matches.
+Filtered evaluation replans after its source/retention adjustments. Preflight is
+not retained between attempts. Unreadable history also prevents native watch;
 readable obsolete/malformed history still resets natively. Stock uses its own
 graph, including cold-build semantics when absent; discarded native attempts
 publish nothing.

@@ -12,7 +12,7 @@ mod transaction;
 mod tests;
 
 use crate::cli::Options;
-use crate::frontend::{run_dart_fallback, select_frontend};
+use crate::frontend::{NativeFrontend, run_dart_fallback, select_frontend};
 use crate::graph::GraphState;
 use crate::metrics::{
     FilesystemMetrics, graph_file_size, print_filesystem_metrics, print_graph_metrics,
@@ -49,6 +49,47 @@ impl LoadedGraph {
             load_us: started.elapsed().as_micros(),
             load_bytes: graph_file_size(&path),
         })
+    }
+}
+
+/// Scoped to one selection attempt and its unchanged workspace/config/graph.
+/// Watch revalidates the snapshot after subscribing and starting its workers.
+pub(crate) struct Preflight {
+    config_digest: String,
+    snapshot: crate::snapshot::Snapshot,
+    plan: planning::PlannedActions,
+    packages: std::collections::BTreeSet<String>,
+    filesystem_metrics: FilesystemMetrics,
+}
+
+impl Preflight {
+    fn prepare<'a>(
+        slot: &'a mut Option<Self>,
+        workspace: &Workspace,
+        config: &crate::builder::RustBuildConfig,
+        state: &GraphState,
+    ) -> io::Result<&'a Self> {
+        if slot.is_none() {
+            let config_digest = snapshot::config_digest(workspace, config)?;
+            let packages = snapshot::scanned_packages(workspace, config);
+            let mut filesystem_metrics = FilesystemMetrics::default();
+            let current = snapshot::scan_initial(
+                workspace,
+                state,
+                config,
+                &packages,
+                &mut filesystem_metrics,
+            )?;
+            let plan = planning::create(workspace, state, config, &current)?;
+            *slot = Some(Self {
+                config_digest,
+                snapshot: current,
+                plan,
+                packages,
+                filesystem_metrics,
+            });
+        }
+        Ok(slot.as_ref().unwrap())
     }
 }
 
@@ -99,14 +140,14 @@ pub(crate) fn run_with_config(
     options: &Options,
     pool: Option<&mut WorkerPool>,
     workspace: Workspace,
-    build_config: crate::builder::RustBuildConfig,
+    frontend: NativeFrontend,
     loaded_graph: LoadedGraph,
 ) -> io::Result<()> {
     run_with_config_session(
         options,
         pool,
         workspace,
-        build_config,
+        frontend,
         loaded_graph,
         true,
         &crate::watch::WatchChanges::default(),
@@ -117,7 +158,7 @@ pub(crate) fn run_with_config_session(
     options: &Options,
     pool: Option<&mut WorkerPool>,
     workspace: Workspace,
-    build_config: crate::builder::RustBuildConfig,
+    frontend: NativeFrontend,
     loaded_graph: LoadedGraph,
     session_start: bool,
     changed_paths: &crate::watch::WatchChanges,
@@ -126,6 +167,10 @@ pub(crate) fn run_with_config_session(
     // reuse its worker pool. Keep that resolution alive for the build itself.
     let _wall = crate::wall::Session::new();
     let _build = crate::wall::Span::new("build_with_config");
+    let NativeFrontend {
+        config: build_config,
+        preflight,
+    } = frontend;
     let state_path = graph_path(&workspace);
     workspace.configure_sources(build_config.asset_sources.as_ref());
     let LoadedGraph {
@@ -136,17 +181,32 @@ pub(crate) fn run_with_config_session(
     let digest = crate::wall::Span::new("config_digest");
     let config_digest = snapshot::config_digest(&workspace, &build_config)?;
     drop(digest);
-    let mut filesystem_metrics = FilesystemMetrics::default();
-
-    let scanned_packages = snapshot::scanned_packages(&workspace, &build_config);
+    let preflight = preflight.filter(|preflight| preflight.config_digest == config_digest);
+    let scanned_packages = preflight.as_ref().map_or_else(
+        || snapshot::scanned_packages(&workspace, &build_config),
+        |preflight| preflight.packages.clone(),
+    );
     let scan = crate::wall::Span::new("initial_snapshot");
-    let mut current_snapshot = snapshot::scan_initial(
-        &workspace,
-        &state,
-        &build_config,
-        &scanned_packages,
-        &mut filesystem_metrics,
-    )?;
+    let (mut current_snapshot, mut filesystem_metrics, reusable_plan) = match preflight {
+        Some(preflight) if options.command != "watch" => (
+            preflight.snapshot,
+            preflight.filesystem_metrics,
+            Some(preflight.plan),
+        ),
+        preflight => {
+            let mut metrics = FilesystemMetrics::default();
+            let current = snapshot::scan_initial(
+                &workspace,
+                &state,
+                &build_config,
+                &scanned_packages,
+                &mut metrics,
+            )?;
+            let plan = preflight
+                .and_then(|preflight| (preflight.snapshot == current).then_some(preflight.plan));
+            (current, metrics, plan)
+        }
+    };
     drop(scan);
     let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
     let mut filters = settings.build_filters.clone();
@@ -208,14 +268,15 @@ pub(crate) fn run_with_config_session(
             planning_snapshot = Some(sources);
         }
     }
-    let planning = crate::wall::Span::new("planning");
-    let plan = planning::create(
-        &workspace,
-        &state,
-        &build_config,
-        planning_snapshot.as_ref().unwrap_or(&current_snapshot),
-    )?;
-    drop(planning);
+    let plan = match reusable_plan.filter(|_| filters.is_empty()) {
+        Some(plan) => plan,
+        None => planning::create(
+            &workspace,
+            &state,
+            &build_config,
+            planning_snapshot.as_ref().unwrap_or(&current_snapshot),
+        )?,
+    };
     planning::report_metrics(&plan, &state, &build_config);
     if planning::report_plan_only(&workspace, &plan) {
         return Ok(());
@@ -394,6 +455,7 @@ pub(crate) fn filtered_transition_reason(
     config: &crate::builder::RustBuildConfig,
     output_policy: bool,
     state: &GraphState,
+    preflight: &mut Option<Preflight>,
 ) -> io::Result<Option<&'static str>> {
     workspace.configure_sources(config.asset_sources.as_ref());
     if state.has_resolver_cycle() {
@@ -437,7 +499,7 @@ pub(crate) fn filtered_transition_reason(
             "output-policy configuration transitions require stock",
         ));
     }
-    if let Some(reason) = dependency_output_conflict_reason(workspace, config, state)? {
+    if let Some(reason) = dependency_output_conflict_reason(workspace, config, state, preflight)? {
         return Ok(Some(reason));
     }
     if state.config_digest.is_empty() || state.is_compatible(&digest) {
@@ -453,15 +515,7 @@ pub(crate) fn filtered_transition_reason(
             "filtered configuration change requires previous output locations missing from legacy state",
         ));
     }
-    let packages = snapshot::scanned_packages(workspace, config);
-    let current = snapshot::scan_initial(
-        workspace,
-        state,
-        config,
-        &packages,
-        &mut FilesystemMetrics::default(),
-    )?;
-    let plan = planning::create(workspace, state, config, &current)?;
+    let plan = &Preflight::prepare(preflight, workspace, config, state)?.plan;
     let declared = plan.expected_outputs();
     if state
         .actions
@@ -492,21 +546,14 @@ pub(crate) fn dependency_output_conflict_reason(
     workspace: &Workspace,
     config: &crate::builder::RustBuildConfig,
     state: &GraphState,
+    preflight: &mut Option<Preflight>,
 ) -> io::Result<Option<&'static str>> {
     if config
         .builders
         .iter()
         .any(|builder| builder.package != workspace.root_package)
     {
-        let packages = snapshot::scanned_packages(workspace, config);
-        let current = snapshot::scan_initial(
-            workspace,
-            state,
-            config,
-            &packages,
-            &mut FilesystemMetrics::default(),
-        )?;
-        let plan = planning::create(workspace, state, config, &current)?;
+        let plan = &Preflight::prepare(preflight, workspace, config, state)?.plan;
         for spec in &plan.specs {
             for output in &spec.outputs {
                 if output

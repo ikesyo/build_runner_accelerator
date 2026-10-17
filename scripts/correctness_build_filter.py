@@ -2055,7 +2055,9 @@ def package_selection_comparison(tmp):
         (dep / 'build.yaml').write_text('targets:\n  $default:\n    builders:\n      build_filter_app:seed:\n        enabled: true\n      build_filter_app:finish:\n        enabled: true\n')
         for name in ('a', 'common'): (dep / f'lib/{name}.txt').write_text('dependency ' + name + '\n')
         pub = root / 'pubspec.yaml'; pub.write_text(pub.read_text().replace('dependencies:\n', 'dependencies:\n  filter_dep:\n    path: dep\n', 1))
-        cfg = root / 'build.yaml'; cfg.write_text(cfg.read_text().replace('build_to: source', 'build_to: cache'))
+        cfg = root / 'build.yaml'
+        cfg.write_text(cfg.read_text().replace('build_to: source', 'build_to: cache') +
+                       '\ntargets:\n  $default:\n    sources: ["lib/**", "$package$"]\n')
         code, log = execute([DART, 'pub', 'get', '--offline'], root); assert code == 0, log
     ph = check(ps, pn, ['--build-filter=package:filter_*/a.final'])
     assert ph == Counter({'filter_dep|lib/a.txt': 1, 'filter_dep|lib/common.txt': 1, 'filter_dep|lib/a.mid': 1}), ph
@@ -2080,8 +2082,75 @@ def package_selection_comparison(tmp):
         for root in (ps, pn):
             assert (root / 'dep/lib/a.mid').read_bytes() == b'dependency source conflict\n'
     for root in (ps, pn): (root / 'dep/lib/a.mid').unlink()
-    # Globs demand all visible producing steps, including excluded roots,
-    # and a no-op reuses consumers after reevaluating generated candidates.
+    # One-shot dependency builds share the initial scan and plan with selection.
+    for root in (ps, pn):
+        (root / '.dart_tool/build/asset_graph.json').unlink(missing_ok=True)
+        (root / '.dart_tool/build_runner_accelerator/graph-v3.bin').unlink(missing_ok=True)
+    for case in ('clean', 'no-op', 'one-file', 'broad'):
+        if case in ('one-file', 'broad'):
+            names = ('dep/lib/a.txt',) if case == 'one-file' else (
+                'lib/a.txt', 'lib/b.txt', 'lib/common.txt', 'dep/lib/a.txt', 'dep/lib/common.txt')
+            for root in (ps, pn):
+                for name in names: (root / name).write_text(case + ' edit\n')
+        for root in (ps, pn): history_path(root).unlink(missing_ok=True)
+        reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit'], ps)
+        actual = execute(launcher(pn, 'rust', flags=['--force-jit']), pn, {
+            'BUILD_RUNNER_ACCELERATOR_WALL_TRACE': '1',
+        })
+        assert reference[0] == actual[0] == 0, (case, reference, actual)
+        assert outputs(ps) == outputs(pn), (case, outputs(ps), outputs(pn))
+        assert history(ps) == history(pn), (case, history(ps), history(pn))
+        stages = Counter(event['stage'] for event in wall_events(actual[1]))
+        assert stages['workspace_scan'] == stages['planning'] == 1, (case, stages, actual)
+    dependency_preflight_watch(ps, pn, tmp)
+
+
+def dependency_preflight_watch(stock, native, tmp):
+    # Force synchronous kernel preparation so the edit lands after preflight
+    # and before the watch session takes its final snapshot.
+    (native / '.dart_tool/build_runner_accelerator/dynamic_worker.dill').unlink(missing_ok=True)
+    reached, release = tmp / 'worker-start-reached', tmp / 'worker-start-release'
+    wrapper = tmp / 'worker-start-dart'
+    wrapper.write_text('#!/usr/bin/env python3\nimport os,sys,time\n'
+                       f'from pathlib import Path\nreached=Path({str(reached)!r})\n'
+                       f'release=Path({str(release)!r})\n'
+                       "if any(arg.endswith('dynamic_worker.dart') for arg in sys.argv[1:]):\n"
+                       '    reached.touch()\n    deadline=time.monotonic()+120\n'
+                       '    while not release.exists():\n'
+                       '        assert time.monotonic()<deadline\n        time.sleep(.05)\n'
+                       f'os.execv({DART!r}, [{DART!r}, *sys.argv[1:]])\n')
+    wrapper.chmod(0o755)
+    args = launcher(native, 'rust', 'watch', ['--force-jit'])
+    args[args.index('--dart') + 1] = str(wrapper)
+    for root in (stock, native): history_path(root).unlink(missing_ok=True)
+    handle = watch(native, 'rust', [], command=args, wait_ready=False,
+                   extra_env={'BUILD_RUNNER_ACCELERATOR_WALL_TRACE': '1'})
+    try:
+        proc, log, _ = handle
+        wait(reached.exists, proc, log)
+        for root in (stock, native):
+            (root / 'dep/lib/startup.txt').write_text('added during worker startup\n')
+        release.touch()
+        wait(lambda: 'Watching ' in log.read_text() and 'No work to do' in log.read_text(), proc, log)
+        reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit'], stock)
+        assert reference[0] == 0 and outputs(stock) == outputs(native), (reference, log.read_text())
+        assert history(stock) == history(native), (history(stock), history(native), log.read_text())
+        initial = log.read_text().split('Watching ', 1)[0]
+        assert Counter(event['stage'] for event in wall_events(initial))['planning'] == 2, initial
+
+        position = log.stat().st_size
+        for root in (stock, native):
+            history_path(root).unlink(missing_ok=True)
+            (root / 'dep/lib/startup.txt').write_text('edited after startup\n')
+        wait(lambda: 'Build completed (Rust frontend)' in log.read_text()[position:], proc, log)
+        reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit'], stock)
+        assert reference[0] == 0 and outputs(stock) == outputs(native), (reference, log.read_text())
+        assert history(stock) == history(native), (history(stock), history(native), log.read_text())
+        stages = Counter(event['stage'] for event in wall_events(log.read_text()[position:]))
+        assert stages['planning'] == 1, (stages, log.read_text()[position:])
+    finally:
+        release.touch()
+        stop(handle)
 
 
 def glob_comparison(tmp):

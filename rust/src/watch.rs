@@ -1,7 +1,7 @@
 use crate::build;
 use crate::builder::{ConfiguredBuilder, RustBuildConfig};
 use crate::cli::{BuildSettings, FrontendMode, Options};
-use crate::frontend::{run_dart_fallback, select_frontend, worker_executable};
+use crate::frontend::{NativeFrontend, run_dart_fallback, select_frontend, worker_executable};
 use crate::graph::GraphState;
 use crate::pattern::match_capture_pattern;
 use crate::worker::WorkerPool;
@@ -217,11 +217,14 @@ fn run_watch_build(
         .build_filters
         .is_empty();
     let selected = if reuse_configuration && watch_state.cached_configuration.is_some() {
-        watch_state.cached_configuration.clone()
+        watch_state
+            .cached_configuration
+            .clone()
+            .map(NativeFrontend::new)
     } else {
         select_frontend(options, &workspace, &loaded_graph.state)?
     };
-    let Some(build_config) = selected else {
+    let Some(mut frontend) = selected else {
         pool.take();
         watch_state.events.stop();
         run_dart_fallback(
@@ -231,6 +234,7 @@ fn run_watch_build(
         )?;
         return Ok(false);
     };
+    let build_config = &frontend.config;
     workspace.configure_sources(build_config.asset_sources.as_ref());
     if let Some(reason) = workspace.overlapping_watch_sources()? {
         pool.take();
@@ -239,7 +243,7 @@ fn run_watch_build(
         }
         eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
         watch_state.events.stop();
-        run_dart_fallback(options, watch_state.workspace_lock)?;
+        run_dart_fallback(options, watch_state.workspace_lock, Some(loaded_graph.state.retained_output_state))?;
         return Ok(false);
     }
     // A successful cold build can discover resolver cycles. Re-check the
@@ -247,9 +251,20 @@ fn run_watch_build(
     let transition_reason = if !reuse_configuration {
         None
     } else if filtered {
-        build::filtered_transition_reason(&workspace, &build_config, false, &loaded_graph.state)?
+        build::filtered_transition_reason(
+            &workspace,
+            build_config,
+            false,
+            &loaded_graph.state,
+            &mut frontend.preflight,
+        )?
     } else {
-        build::dependency_output_conflict_reason(&workspace, &build_config, &loaded_graph.state)?
+        build::dependency_output_conflict_reason(
+            &workspace,
+            build_config,
+            &loaded_graph.state,
+            &mut frontend.preflight,
+        )?
     };
     if let Some(reason) = transition_reason {
         pool.take();
@@ -318,7 +333,7 @@ fn run_watch_build(
     watch_state.events.start(&workspace)?;
     if pool.is_none() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
-        let worker_command = worker_executable(options, &build_config)?;
+        let worker_command = worker_executable(options, build_config)?;
         let mut worker_pool = if filtered {
             WorkerPool::start_deferred(
                 &workspace.root,
@@ -343,7 +358,7 @@ fn run_watch_build(
         options,
         pool.as_mut(),
         workspace,
-        build_config,
+        frontend,
         loaded_graph,
         session_start,
         changed_paths,
