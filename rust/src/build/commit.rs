@@ -89,8 +89,7 @@ pub(super) fn commit(
     state: &mut GraphState,
     inputs: CommitInputs<'_>,
 ) -> io::Result<GraphSaveMetrics> {
-    // Verify before any file mutation or graph publication. Stock verify does
-    // not persist intermediate outputs or incremental graph, even on success.
+    // Stock verify publishes neither artifacts nor graph, even on success.
     if inputs.only_check {
         verify_outputs(state, &inputs)?;
         return Ok(GraphSaveMetrics {
@@ -117,11 +116,15 @@ pub(super) fn commit(
 
     // No phase or asset RPC can read the overlay once all actions have succeeded.
     // Release its references so committing each output can free its buffer.
-    let written_outputs: BTreeSet<_> = transaction
-        .pending_outputs
-        .iter()
-        .map(|(_, asset, _)| asset.clone())
-        .collect();
+    let written_outputs: BTreeSet<_> = if keep_modified_outputs {
+        transaction
+            .pending_outputs
+            .iter()
+            .map(|(_, asset, _)| asset.clone())
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
     drop(transaction.overlay);
     let outputs = crate::wall::Span::new("output_commit");
     // Commit only after every dirty action succeeded. Cache-built part files
@@ -209,9 +212,7 @@ pub(super) fn commit(
     drop(outputs);
     let metadata = crate::wall::Span::new("commit_metadata");
     workspace.clear_asset_caches()?;
-    // A consumer can retain legitimate bytes produced from manual upstream
-    // content even after that upstream output is repaired. Future overwrite
-    // builds must still use digest-based demand reuse, not eager invalidation.
+    // Retain demand reuse even after ordinary builds repair upstream bytes.
     state.retained_output_state |= keep_modified_outputs;
     state.schema_version = GRAPH_SCHEMA_VERSION;
     state.config_digest = config_digest;

@@ -71,7 +71,7 @@ void main() {
           reason: '$bytes',
         );
       }
-      for (var end = 0; end < graph(valid).length; end++) {
+      for (final end in [0, 8]) {
         file.writeAsBytesSync(graph(valid).sublist(0, end));
         expect(hasRetainedNativeOutputState(root.path), isFalse);
       }

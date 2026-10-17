@@ -81,15 +81,15 @@ They support multiple outputs, dependency chains, source/cache intermediates,
 and supported build filters. Optional/post-process/trigger-only/zero-output
 builders and unsupported prior-state transitions route to stock in auto and
 error in rust. Starting native watch from a graph with retained output history
-also requires stock fallback, including after ordinary builds. Watch with either flag routes before native setup; prewarm
-rejects both. Dart delegates all policy behavior to stock. See
+also requires stock fallback, including after ordinary builds. Watch with either
+flag routes before native setup; prewarm rejects both. Dart delegates all policy behavior to stock. See
 [ADR 0034](adr/0034-native-output-policies.md) for state and commit guarantees.
 
 When keep finds modified generated outputs, builders using digest/resolver APIs
 use stock in auto and error before publication in rust; stock exposes old digest
 values alongside retained bytes. Builders cannot suppress this boundary by
-catching the API exception. After stock keep or fallback from retained history, later build/watch
-commands stay on stock until both disposable states are reset using the
+catching the API exception. After stock keep or fallback from retained history,
+later build/watch commands stay on stock until both disposable states are reset using the
 [recovery guide](compatibility-cleanup.md#safe-recovery). This avoids reusing an
 older native graph against stock's newer keep history; the launcher routes this
 state before native acquisition. A publishing dart-mode build/watch after native

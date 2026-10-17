@@ -7,133 +7,88 @@
 ## Decision
 
 Implement build_runner 2.16.2's `--only-check` and
-`--keep-modified-outputs` for one-shot builds in the existing normal-builder
-filtered-demand subset. An unfiltered policy build demands every declared
-output using the same evaluator. Multiple-output actions, dependent builders,
-source/cache outputs, and supported build filters use the same phase, reuse,
-and deletion rules. Policy flags are runtime inputs, excluded from manifest
-configuration identity. They do not change BuilderOptions. Protocol v1 gains an optional internal
-worker initialization guard and capability.
+`--keep-modified-outputs` for one-shot builds using the existing normal-builder
+filtered-demand evaluator. Without a filter, demand every declared output.
+Policies do not affect manifest identity or BuilderOptions. The
+[CLI reference](../launcher-and-release.md#output-policies) defines flag syntax,
+command support and fallback boundaries.
 
-Both flags are non-negatable; repeated identical flags are accepted. Specifying
-both is a stock usage error, not a precedence rule. Auto/dart delegate invalid
-stock syntax to stock with the original invocation; rust rejects it before
-setup. The retired deletion flag and `-d` remain accepted no-ops.
+## Verification at commit
 
-## Verification
+After all demanded actions succeed, compare the transaction's final package-path
+writes/deletions with disk, including conflicts at cache outputs' package paths.
+Report stock's sorted `I`/`M`/`U` diagnostics and exit 1 on differences.
 
-After all demanded actions succeed, compare the transaction's final source-path
-writes/deletions with disk. Missing/new outputs produce `M`, incorrect bytes
-produce `I`, and existing outputs scheduled for deletion produce `U`. Sort and
-report `Verify failed due to Incorrect|Missing|Unexpected:` and fail with status
-1 on any difference. Source-path conflicts with cache outputs are also checked.
-Artifact-tree outputs are not compared. No output, intermediate artifact, or
-graph is published on either successful or failed verification. Manifest,
-compiled-worker, analyzer, and other setup caches may still be prepared.
+Verification publishes no generated files, intermediate artifacts or graph,
+including on success and no-work builds. Artifact-tree differences are not
+compared; setup/compilation caches may change. The next ordinary build reads the
+last committed graph and applies uncommitted changes normally. Its dirty analysis
+also handles files at previously omitted outputs that verification left intact.
 
-The in-memory graph used during verification is disposable. A later normal
-build reads the last committed graph, so uncommitted results cannot be reused
-as if they were reflected on disk. A no-work verification follows this same
-boundary and does not save graph metadata. Ordinary dirty analysis also handles
-files at declared but previously omitted outputs, so the following normal build
-can remove conflicts that verification deliberately left untouched.
+## Retained bytes and reuse
 
-## Keeping modifications
+Keep preserves existing manual bytes with the previous generated digest. Reads
+serve real bytes; dependency comparisons use the logical digest. Missing outputs
+invalidate their producer. Rerunning a producer can overwrite modified siblings;
+omitted outputs and deleted inputs remove old files, including manual edits.
+Commit preserves the logical snapshot of untouched outputs and records new
+digests only for successfully rebuilt outputs.
 
-Keep is a reuse policy, not a veto on commit writes. Existing generated files
-are retained with their previous logical digest even when their bytes differ.
-Reads serve the real retained bytes; dependency comparisons use the previous
-digest. A missing output invalidates its producer. Input/configuration changes
-can rerun the producer and overwrite modified sibling outputs. Removed inputs
-or newly omitted outputs delete their old files, including manual modifications.
+Private graph format 3 records `retained_output_state`. Subsequent ordinary builds
+continue demand evaluation even after repairing upstream files: a consumer that
+previously read retained bytes must remain reusable when the producer regenerates
+identical logical bytes. This marker changes reuse, not the output policy.
 
-Persist the logical snapshot of retained outputs separately from actual bytes,
-using existing action digests and snapshot metadata; never bless manual bytes
-as newly generated content. Rebuilt outputs receive new digests only on a
-successful transaction commit. Switching to overwrite or verify detects those
-retained modifications against the generated digests. Private graph format 3
-adds `retained_output_state`: subsequent ordinary builds use demand evaluation
-until the private graph is discarded. Repairing a producer to identical logical
-content must not rerun a consumer that previously read retained manual bytes;
-such legitimate consumer results can survive multiple ordinary builds. This
-marker changes reuse, not output policy: ordinary builds still repair manually
-modified outputs. Only the current private format is read: formats 1/2 are
-automatically invalidated and rebuilt natively, following ADR 0030. This does
-not trigger stock fallback or delete existing generated files. The old graph
-is replaced only by a successful publishing build; verification and failed
-actions leave it intact. Prior action/output history is not migrated, so this
-is a cold build, not incremental continuation of the obsolete graph.
-Watch from retained-output state routes to stock before actions,
-including after an ordinary build; prewarm does not consume the state.
+Only the current private format is read. As specified by ADR 0030, obsolete or
+malformed graphs reset to a native cold build without migrating history or
+removing existing files. Verification and failed actions leave the old graph
+intact; a successful publishing build replaces it.
 
-## Retained bytes and worker APIs
+## Worker API boundary
 
-Stock also exposes the old MD5 through `BuildStep.digest`, even while reads
-return retained manual bytes. Native reuse hashes do not encode that MD5, and
-resolver content/cache semantics cannot be assumed equivalent. When keep finds
-modified recorded outputs, initialize opts into `retained_output_guard` and
-requires `retained-output-guard-v1`. A stale worker lacking this capability is
-unsupported before actions. Clean/unmodified API use remains native.
+Stock exposes the old MD5 through `BuildStep.digest` alongside retained manual
+bytes. Native reuse hashes cannot supply that MD5, and resolver cache equivalence
+is unproven. When keep finds modified outputs, enable `retained_output_guard` and
+require `retained-output-guard-v1`; see [protocol v1](../../protocol/v1.md).
+Clean/unmodified API use remains native-compatible.
 
-Guarded digest/resolver API use latches an unsupported result even if a builder
-catches the exception and writes a fallback value. Rust discards the complete
-transaction. Auto retries the complete original stock invocation after workers
-are dropped; rust errors with no output/graph publication. This is runtime
-capability routing, not a JSON alternative to the binary protocol.
+Guarded digest/resolver calls latch an unsupported result even when the builder
+catches the exception. Discard workers and the complete transaction before auto
+retries the original stock invocation; rust errors without publication.
 
-After runtime auto fallback, any late fallback with native retained history,
-or invoking a publishing stock build/watch from native retained history
-(including explicit dart mode), a private `stock-output-policy-state` marker
-keeps subsequent build/watch commands on stock in auto and makes rust explicit
-about the unsupported history. Stock can now hold logical digest history that
-cannot be imported into the previous native graph. The launcher checks this
-marker before native acquisition, and the binary checks it before manifest
-preparation. The native graph and generated artifact cache are not rewritten
-by the discarded attempt. Fallback uses stock's own graph; without one, stock
-performs its normal cold build, including regenerating existing files. We do
-not import native graph history into stock. Reset both disposable build states using the recovery
-guide before requiring native again; prewarm does not consume this marker.
-The launcher validates the complete current-format/current-schema graph before
-using its retained-history flag for stock transitions or routing watch before
-binary acquisition. Obsolete, oversized and malformed graphs are not retained
-history; native invalidation handles them. Native selection, transition checks,
-build execution and fallback reuse one validated graph load per build attempt.
-A read-only stock verify/help invocation does not claim ownership. Once claimed,
-stock ownership remains until explicit recovery, even after usage errors: a
-concurrent stock invocation may already have relied on that claim.
+## Stock ownership
 
-## Compatibility boundary
+Stock's logical digest history cannot be imported into an older native graph.
+Before stock keep or a publishing stock transition from native retained history,
+record `stock-output-policy-state`. This includes runtime/late fallback and
+explicit dart builds or watches. Later auto build/watch commands stay on stock;
+rust errors until both disposable states are reset using the
+[recovery guide](../compatibility-cleanup.md#safe-recovery).
 
-Native watch with either policy is unsupported and routes before native
-acquisition or manifest generation. Stock's resident keep event filtering and
-verify's in-memory state after a failed verification need separate lifecycle
-validation before enabling native watch. Prewarm rejects these build-only flags.
+Check this marker before native acquisition or manifest preparation. For
+retained-history preflight, the launcher accepts only fully validated current
+format/schema graphs. Native selection, transition checks, execution and fallback
+share one graph load per attempt. Stock uses its own graph, including cold-build
+semantics when absent; discarded native attempts publish nothing.
 
-Optional, post-process, trigger-only and zero-output builders, unsupported filter
-syntax, cyclic resolver reuse, and configuration changes from recorded policy
-state route the whole request to stock in auto and error before actions in rust. Late fallback retains both
-policy and compile-mode flags. Dart always runs stock.
+Read-only verify/help does not claim ownership. Once claimed, ownership persists
+until explicit recovery, including after usage errors: another stock invocation
+may already have adopted the claim. Prewarm does not inspect output-policy history.
 
-All-success commit remains stronger than stock's partial publication after a
-builder failure. Cancellation during actions leaves outputs and graph unchanged.
-The existing commit sequence remains **not crash-atomic**: interruption or I/O
-failure after filesystem commit begins can leave changed files with the old
-graph. This change adds no rollback journal or crash durability guarantee.
+## Failure and validation
 
-## Evidence and validation
+Keep the existing all-success commit boundary: builder failure or interruption
+during actions leaves native outputs and graph unchanged. Stock can publish
+partial results on failure. Filesystem commit remains non-crash-atomic as defined
+in ADR 0002; this change adds no rollback journal.
 
-The supported version window remains `>=2.16.2 <2.17.0`. Upstream evidence:
-`build_runner_command_line.dart` (`outputStrategy`, flag definitions),
-`build_plan/output_strategy.dart`, `build_plan/build_plan.dart` (retained bytes
-with old digests and invalid missing outputs), `build/build.dart` (step reuse),
-and `build/build_series.dart` (verification, deletion, graph persistence, watch
-filtering). These private APIs are version-specific compatibility evidence.
+The supported version window remains `>=2.16.2 <2.17.0`. Stock evidence comes from
+`build_runner_command_line.dart`, `build_plan/output_strategy.dart`,
+`build_plan/build_plan.dart`, `build/build.dart` and `build/build_series.dart`.
 
-`scripts/correctness_output_policies.sh` uses the tracked `build_filter_app`
-fixture, whose inputs control bytes, omitted outputs, and failure. It compares
-stock/native output bytes and existence, intermediate artifacts, diagnostic
-categories, exit codes, graph immutability during verify, normal-build recovery,
-keep/restart transitions, filters, multi-output chains, failure, and Ctrl-C
-before commit. CLI tests compare official stock parsing and exercise lossless
-early/manifest/runtime fallback and compile modes. Watch policy requests test routing;
-watch execution remains stock-owned.
+`scripts/correctness_output_policies.sh` compares stock/native bytes, existence,
+diagnostics, status and subsequent builds using the input-controlled
+`build_filter_app` fixture. Coverage includes policy transitions, filters,
+source/cache multi-output chains, failure, interruption before commit, lossless
+fallback and compile modes. Watch policies test delegation; native watch support
+requires separate validation of stock's resident event/reuse behavior.
