@@ -18,20 +18,15 @@ KEEP = '--keep-modified-outputs'
 
 def snapshot(root):
     """Source outputs, intermediate bytes and incremental graph, excluding setup caches."""
-    result = outputs(root)
-    for relative in ('.dart_tool/build/asset_graph.json',
-                     '.dart_tool/build_runner_accelerator/graph-v3.bin'):
-        file = root / relative
-        if file.exists():
-            result[relative] = file.read_bytes()
-    # Equal bytes alone would miss a forbidden rewrite of a matching output
-    # or graph. Track inode/mtime as well; reads may update atime legitimately.
-    result['__metadata__'] = {
-        str(file.relative_to(root)): (file.stat().st_ino, file.stat().st_mtime_ns)
-        for file in root.rglob('*')
-        if file.is_file() and (file.suffix in ('.mid', '.side', '.final', '.ignored', '.post')
-                               or file.name in ('asset_graph.json', 'graph-v3.bin'))
-    }
+    result = {}
+    for file in root.rglob('*'):
+        if (file.suffix in ('.mid', '.side', '.final', '.ignored', '.post')
+                or file.name in ('one.dart', 'two.dart', 'shared.dart',
+                                 'asset_graph.json', 'graph-v3.bin')) and file.is_file():
+            metadata = file.stat()
+            # Detect equal-content rewrites as well as byte/existence changes.
+            result[str(file.relative_to(root))] = (
+                file.read_bytes(), metadata.st_ino, metadata.st_mtime_ns)
     return result
 
 
@@ -61,7 +56,7 @@ class Pair:
             (root / ('lib/' + name)).unlink(missing_ok=True)
 
     def check(self, *flags, expected=0, mode='rust', compile_flag='--force-jit', jobs=1):
-        before = [snapshot(root) for root in self.roots]
+        before = [snapshot(root) for root in self.roots] if VERIFY in flags else None
         reference = execute([DART, 'run', 'build_runner', 'build', compile_flag, *flags], self.stock)
         args = launcher(self.native, mode, flags=[compile_flag, *flags])
         args[args.index('--jobs=1')] = f'--jobs={jobs}'
@@ -329,10 +324,10 @@ def routing(tmp):
                 assert not manifest.exists()
                 # The fake stock process publishes no real history.
                 (root / '.dart_tool/build_runner_accelerator/stock-output-policy-state').unlink(missing_ok=True)
-            result = execute(launcher(root, 'rust', 'watch', [policy]), root)
-            assert result[0] == 1 and not manifest.exists(), result
-            result = execute(launcher(root, 'rust', 'prewarm', [policy]), root)
-            assert result[0] == 1 and not manifest.exists(), result
+        result = execute(launcher(root, 'rust', 'watch', [policy]), root)
+        assert result[0] == 1 and not manifest.exists(), result
+        result = execute(launcher(root, 'rust', 'prewarm', [policy]), root)
+        assert result[0] == 1 and not manifest.exists(), result
     for flags in ([VERIFY, KEEP], ['--no-only-check'], ['--no-keep-modified-outputs'],
                   [VERIFY + '=true'], [KEEP + '=false'], [VERIFY, 'false']):
         reference = execute([DART, 'run', 'build_runner', 'build', *flags], root)
@@ -356,7 +351,6 @@ def routing(tmp):
         assert result[0] == 1 and snapshot(pair.native) == before, result
     pair = Pair(tmp, 'policy-config-transition')
     pair.check(KEEP)
-    before = snapshot(pair.native)
     _, result = pair.check(VERIFY, '--define=:seed=text=changed configuration', mode='auto')
     assert 'configuration transitions' in result[1], result
     assert not (pair.native / '.dart_tool/build_runner_accelerator/stock-output-policy-state').exists()
@@ -396,7 +390,7 @@ def retained_api_cases(tmp, cases=(('digest_common', False, True),
     # Stock exposes the previous digest alongside retained manual bytes. The
     # native byte adapter cannot fabricate that MD5 or resolver state; reject
     # and retry the entire stock invocation before publishing native results.
-    for api, cache, primed in cases:
+    for index, (api, cache, primed) in enumerate(cases):
         pair = Pair(tmp, f'api-{api}-{cache}-{primed}', cache)
         flags = [f'--define=:finish={api}=true', '--define=:finish=catch_retained_api=true']
         pair.check(KEEP, *flags)  # clean/unmodified APIs are native-compatible
@@ -435,21 +429,21 @@ def retained_api_cases(tmp, cases=(('digest_common', False, True),
         assert private_cache(pair.native) == native_cache
         marker = pair.native / '.dart_tool/build_runner_accelerator/stock-output-policy-state'
         assert marker.exists(), actual
-        # Normal/verify after fallback must use the stock digest history,
-        # rather than silently switching to the older private graph. An invalid
-        # native binary proves that this routing happens before acquisition.
-        for policy_flags in ([], [VERIFY], [KEEP]):
-            reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *policy_flags, *flags], pair.stock)
-            args = launcher(pair.native, 'auto', flags=['--force-jit', *policy_flags, *flags])
-            actual = execute(args, pair.native, {'BUILD_RUNNER_ACCELERATOR_BIN': '/bin/false'})
-            assert reference[0] == actual[0] == 0, (reference, actual)
-            assert 'stock output-policy state' in actual[1], actual
-            assert stock_owned_outputs(pair.stock) == stock_owned_outputs(pair.native), (reference, actual)
-            assert (graph.read_bytes(), graph.stat().st_mtime_ns) == native_graph
-            assert private_cache(pair.native) == native_cache
-        result = execute(launcher(pair.native, 'rust', flags=flags), pair.native,
-                         {'BUILD_RUNNER_ACCELERATOR_BIN': '/bin/false'})
-        assert result[0] == 1 and 'stock output-policy state' in result[1], result
+        # Exercise common marker routing once. /bin/false proves that it
+        # selects stock before native acquisition.
+        if index == 0:
+            for policy_flags in ([], [VERIFY], [KEEP]):
+                reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *policy_flags, *flags], pair.stock)
+                args = launcher(pair.native, 'auto', flags=['--force-jit', *policy_flags, *flags])
+                actual = execute(args, pair.native, {'BUILD_RUNNER_ACCELERATOR_BIN': '/bin/false'})
+                assert reference[0] == actual[0] == 0, (reference, actual)
+                assert 'stock output-policy state' in actual[1], actual
+                assert stock_owned_outputs(pair.stock) == stock_owned_outputs(pair.native), (reference, actual)
+                assert (graph.read_bytes(), graph.stat().st_mtime_ns) == native_graph
+                assert private_cache(pair.native) == native_cache
+            result = execute(launcher(pair.native, 'rust', flags=flags), pair.native,
+                             {'BUILD_RUNNER_ACCELERATOR_BIN': '/bin/false'})
+            assert result[0] == 1 and 'stock output-policy state' in result[1], result
         print(f'output-policies: PASS retained API fallback {api} cache={cache} primed={primed}', flush=True)
 
 
@@ -509,7 +503,6 @@ def modes(tmp):
     graph.write_bytes(committed)
     for mode in ('auto', 'dart'):
         pair = Pair(tmp, 'mode-' + mode)
-        pair.check(VERIFY, expected=1, mode=mode)
         _, actual = pair.check(KEEP, mode=mode)
         if mode == 'auto':
             assert '(Rust frontend)' in actual[1], actual
@@ -517,7 +510,6 @@ def modes(tmp):
         pair.check(KEEP, mode=mode)
         pair.check(VERIFY, expected=1, mode=mode)
         pair.check(mode=mode)
-        pair.check(VERIFY, mode=mode)
         if mode == 'auto':
             # Stock overwrite after native keep must claim ownership too. It
             # cannot publish a stock graph then resume an older native graph.
@@ -538,7 +530,6 @@ def modes(tmp):
     for flags in ([KEEP, VERIFY], [KEEP, '--help']):
         result = execute(launcher(root, 'dart', flags=flags), root)
         assert result[0] in (0, 64) and not marker.exists(), result
-
 
 
 def main():

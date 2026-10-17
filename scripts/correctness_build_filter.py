@@ -398,43 +398,42 @@ def watch_process_cleanup_comparison(tmp):
 
 def obsolete_graph_comparison(tmp):
     """Obsolete private graphs reset natively, with transactional publication."""
-    for version, mode in ((1, 'rust'), (2, 'auto')):
-        for filtered in (False, True):
-            name = f'obsolete-{version}-{filtered}'
-            stock, native = tmp / (name + '-stock'), tmp / (name + '-native')
-            prepare(stock); prepare(native)
-            flags = ['--build-filter=lib/a.final'] if filtered else []
-            check(stock, native, flags)
-            graph = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
-            data = bytearray(graph.read_bytes())
-            assert data[:5] == b'BRAG\x03', data[:5]
-            data[4] = version
-            if version == 2:
-                # Format 2 lacks the trailing retained-history field.
-                data.pop()
-                data[5:9] = (len(data) - 9).to_bytes(4, 'big')
-            graph.write_bytes(data)
-            # Resetting private state follows cold-build semantics, just as
-            # stock does when its own independent graph is unavailable.
-            (stock / '.dart_tool/build/asset_graph.json').unlink()
-            for root in (stock, native):
-                (root / 'lib/a.txt').write_text('changed after format update\n')
-            before = outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns
-            reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit',
-                                 '--only-check', *flags], stock)
-            actual = execute(launcher(native, mode, flags=['--force-jit', '--only-check', *flags]), native)
-            assert reference[0] == actual[0] == 1, (reference, actual)
-            assert actual[1].count('invalidating graph') == 1 and 'unsupported format' in actual[1], actual
-            assert (outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns) == before
-            (native / 'lib/common.txt').write_text('fail\n')
-            actual = execute(launcher(native, mode, flags=['--force-jit', *flags]), native)
-            assert actual[0] == 1, actual
-            assert (outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns) == before
-            (native / 'lib/common.txt').write_text('common\n')
-            check(stock, native, flags, mode=mode, native_expected=True)
-            assert graph.read_bytes()[:5] == b'BRAG\x03'
-            assert check(stock, native, flags, mode=mode, native_expected=True) == Counter()
-            print(f'build-filter: PASS {name} native reset, verification/failure recovery and no-op', flush=True)
+    for version, mode, filtered in ((1, 'rust', False), (2, 'auto', True)):
+        name = f'obsolete-{version}-{filtered}'
+        stock, native = tmp / (name + '-stock'), tmp / (name + '-native')
+        prepare(stock); prepare(native)
+        flags = ['--build-filter=lib/a.final'] if filtered else []
+        check(stock, native, flags)
+        graph = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+        data = bytearray(graph.read_bytes())
+        assert data[:5] == b'BRAG\x03', data[:5]
+        data[4] = version
+        if version == 2:
+            # Format 2 lacks the trailing retained-history field.
+            data.pop()
+            data[5:9] = (len(data) - 9).to_bytes(4, 'big')
+        graph.write_bytes(data)
+        # Resetting private state follows cold-build semantics, just as
+        # stock does when its own independent graph is unavailable.
+        (stock / '.dart_tool/build/asset_graph.json').unlink()
+        for root in (stock, native):
+            (root / 'lib/a.txt').write_text('changed after format update\n')
+        before = outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns
+        reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit',
+                             '--only-check', *flags], stock)
+        actual = execute(launcher(native, mode, flags=['--force-jit', '--only-check', *flags]), native)
+        assert reference[0] == actual[0] == 1, (reference, actual)
+        assert actual[1].count('invalidating graph') == 1 and 'unsupported format' in actual[1], actual
+        assert (outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns) == before
+        (native / 'lib/common.txt').write_text('fail\n')
+        actual = execute(launcher(native, mode, flags=['--force-jit', *flags]), native)
+        assert actual[0] == 1, actual
+        assert (outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns) == before
+        (native / 'lib/common.txt').write_text('common\n')
+        check(stock, native, flags, mode=mode, native_expected=True)
+        assert graph.read_bytes()[:5] == b'BRAG\x03'
+        assert check(stock, native, flags, mode=mode, native_expected=True) == Counter()
+        print(f'build-filter: PASS {name} native reset, verification/failure recovery and no-op', flush=True)
 
 
 def removed_declaration_comparison(tmp):

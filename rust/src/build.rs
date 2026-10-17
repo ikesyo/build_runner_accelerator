@@ -79,10 +79,8 @@ pub(crate) fn run(
             .to_string()
             .contains(crate::cli::OUTPUT_POLICY_UNSUPPORTED)
     {
-        // The failed attempt has dropped its workers and transaction. No
-        // generated file or graph was published; retry the entire stock call.
-        // Stock may now retain logical digests that the discarded native
-        // attempt cannot import. Preserve stock ownership on later commands.
+        // Retry only after workers and staged outputs have been dropped.
+        // Pin stock history: native cannot import its logical digests.
         mark_stock_output_state(&options.root)?;
         eprintln!("Rust frontend falling back to stock: {error}");
         return run_dart_fallback(options, workspace_lock, Some(retained_output_state));
@@ -161,14 +159,11 @@ pub(crate) fn run_with_config_session(
             // Missing outputs are NOT retained and must trigger their producer.
             for action in state.actions.values() {
                 for output in &action.outputs {
-                    if current_snapshot
-                        .get(output)
-                        .is_some_and(|entry| entry.exists)
+                    if let Some(current) = current_snapshot.get(output)
+                        && current.exists
                         && let Some(previous) = state.assets.get(output)
                     {
-                        retained_output_guard |= current_snapshot
-                            .get(output)
-                            .is_some_and(|current| current.digest != previous.digest);
+                        retained_output_guard |= current.digest != previous.digest;
                         current_snapshot.insert(output.clone(), previous.clone());
                     }
                 }

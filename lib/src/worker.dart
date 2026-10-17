@@ -644,13 +644,11 @@ class _TrackingResolvers extends Resolvers {
   final Resolvers _delegate;
   final bool retainedOutputGuard;
   bool wasUsed = false;
-  bool unsupportedResolverUsed = false;
 
   @override
   Future<ReleasableResolver> get(BuildStep buildStep) {
     wasUsed = true;
     if (retainedOutputGuard) {
-      unsupportedResolverUsed = true;
       throw UnsupportedError(_retainedApiUnsupported);
     }
     return _delegate.get(buildStep);
@@ -998,7 +996,8 @@ Future<JsonMap> _runBuild(
           // or fails later. Never publish the builder's catch-path output.
           if ((step is _RetainedOutputBuildStep &&
                   step.unsupportedDigestUsed) ||
-              trackedResolver.unsupportedResolverUsed) {
+              (trackedResolver.retainedOutputGuard &&
+                  trackedResolver.wasUsed)) {
             throw UnsupportedError(_retainedApiUnsupported);
           }
         }
