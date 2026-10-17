@@ -83,6 +83,22 @@ def verify_cases(tmp, cache, filters):
         pair.write('a.mid', 'initial conflict at a cache output source path\n')
     pair.check(VERIFY, *filters, expected=1)  # clean missing/new outputs
     pair.check(*filters)
+    if cache:
+        assert not (pair.native / 'lib/a.mid').exists()
+        # Also cover an otherwise reusable graph. Failure must leave the
+        # conflict and every committed output intact; recovery removes it.
+        pair.write('a.mid', 'warm conflict at a cache output source path\n')
+        pair.check(VERIFY, *filters, expected=1)
+        baseline = snapshot(pair.native)
+        pair.write('common.txt', 'fail\n')
+        actual = execute(launcher(pair.native, 'rust', flags=['--force-jit', *filters]), pair.native)
+        reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *filters], pair.stock)
+        assert actual[0] == reference[0] == 1, (reference, actual)
+        assert snapshot(pair.native) == baseline, actual
+        pair.write('common.txt', 'common\n')
+        pair.check(*filters)
+        assert not (pair.native / 'lib/a.mid').exists()
+        pair.check(*filters)
     pair.check(VERIFY, *filters)
     # Presubmit checkout: generated package files exist, but no incremental
     # graph or artifact tree is available. Matching bytes must still pass.

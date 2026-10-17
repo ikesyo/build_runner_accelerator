@@ -231,7 +231,22 @@ pub(crate) fn run_with_config_session(
     )?;
     drop(dirty);
     let no_work = !dirty_plan.has_work();
-    if no_work && !state.config_digest.is_empty() && !state.was_filtered {
+    // Cache outputs own their package paths too. Verify deliberately leaves
+    // conflicts there, so an ordinary build must stage their removal even
+    // when every action is reusable. Do not delete until all actions succeed.
+    let mut cache_source_conflicts = std::collections::BTreeSet::new();
+    for spec in &plan.specs {
+        if spec.instance.builder.build_to == crate::builder::BuildTo::Cache
+            && !spec.instance.builder.is_optional
+        {
+            for output in &spec.outputs {
+                if workspace.asset_exists_at(output, crate::builder::BuildTo::Source)? {
+                    cache_source_conflicts.insert(output.clone());
+                }
+            }
+        }
+    }
+    if no_work && !state.config_digest.is_empty() && !state.was_filtered && cache_source_conflicts.is_empty() {
         println!("No work to do (Rust frontend)");
         let graph_metrics = commit::save_no_work(
             &mut state,
@@ -287,6 +302,11 @@ pub(crate) fn run_with_config_session(
         }
         state.was_filtered = false;
     }
+    transaction.pending_location_deletions.extend(
+        cache_source_conflicts
+            .into_iter()
+            .map(|asset| (crate::builder::BuildTo::Source, asset)),
+    );
     let mut generated_assets: std::collections::BTreeSet<String> =
         state.output_locations.keys().cloned().collect();
     generated_assets.extend(state.watch_generated_sources.iter().cloned());
