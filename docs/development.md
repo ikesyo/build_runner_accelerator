@@ -105,10 +105,9 @@ bookkeeping cannot trigger or mask a rebuild.
 `failure`, or `api` in the output-policy comparison script; the default runs all groups.
 
 CI uses parallel steps within a small number of jobs for long correctness suites.
-Output-policy checks use two jobs with three parallel groups each, sharing runner
-setup. Avoid a separate matrix job per group: job concurrency limits add queue
-time. Local full verification keeps each selected suite's state transitions
-ordered in isolated workspaces.
+Share runner setup and avoid a separate matrix job per group: job concurrency
+limits add queue time. Local full verification keeps each selected suite's state
+transitions ordered in isolated workspaces.
 
 ## Benchmarks
 
