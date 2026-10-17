@@ -16,6 +16,7 @@ verify_cases=${VERIFY_CASES:-failure,conditional-dependency}
 verify_full_suites=${VERIFY_FULL_SUITES:-all}
 
 full_suites=(
+  output-policies
   core
   current-codegen
   compatibility-lifecycle
@@ -253,6 +254,15 @@ run_targeted() {
   fi
 }
 
+run_output_policies_suite() {
+  worker_prepare
+  local group
+  for group in routing modes source cache failure api; do
+    OUTPUT_POLICY_CASE_GROUP="$group" run_script_probe "output-policies-$group" \
+      correctness_output_policies.sh 'output-policies stock/native comparisons passed'
+  done
+}
+
 run_core_suite() {
   VERIFY_WATCH=0 run_quick
   run_script_probe cli correctness_cli.sh 'cli-compatibility: PASS'
@@ -305,6 +315,7 @@ run_full() {
   local suite_status
   if [[ -n "${VERIFY_SUITE_BODY:-}" ]]; then
     case "$VERIFY_SUITE_BODY" in
+      output-policies) run_output_policies_suite ;;
       core) run_core_suite ;;
       current-codegen) run_current_codegen_suite ;;
       compatibility-lifecycle) run_compatibility_lifecycle_suite ;;

@@ -71,8 +71,8 @@ impl BuildFilter {
     }
 }
 
-/// Runtime filters, artifact modes and retired deletion flags do not configure
-/// builders. Canonicalize parsed release/config flags while retaining defines.
+/// Runtime filters, output policies, artifact modes and retired deletion flags
+/// do not configure builders. Canonicalize parsed release/config flags while retaining defines.
 pub(crate) fn configuration_arguments(arguments: &[String]) -> io::Result<Vec<String>> {
     let settings = crate::cli::BuildSettings::parse(arguments)?;
     let mut result = Vec::new();
@@ -137,6 +137,7 @@ mod tests {
             "--build-filter",
             "lib/a",
             "--release",
+            "--keep-modified-outputs",
             "--build-filter=lib/b",
         ];
         assert_eq!(
@@ -152,7 +153,12 @@ mod tests {
             ["--config", "build.--force-aot.yaml"]
         );
         assert_eq!(
-            configuration_arguments(&["--force-jit".to_owned(), "-d".to_owned()]).unwrap(),
+            configuration_arguments(&[
+                "--force-jit".to_owned(),
+                "-d".to_owned(),
+                "--only-check".to_owned()
+            ])
+            .unwrap(),
             Vec::<String>::new()
         );
     }

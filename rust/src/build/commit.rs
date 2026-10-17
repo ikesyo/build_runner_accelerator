@@ -24,6 +24,8 @@ pub(super) struct GraphSaveMetrics {
 
 /// All plan and staged-state evidence needed to publish one successful build.
 pub(super) struct CommitInputs<'a> {
+    pub(super) only_check: bool,
+    pub(super) keep_modified_outputs: bool,
     pub(super) workspace: &'a Workspace,
     pub(super) state_path: &'a Path,
     pub(super) build_config: &'a RustBuildConfig,
@@ -87,7 +89,21 @@ pub(super) fn commit(
     state: &mut GraphState,
     inputs: CommitInputs<'_>,
 ) -> io::Result<GraphSaveMetrics> {
+    // Verify before any file mutation or graph publication. Stock verify does
+    // not persist intermediate outputs or incremental graph, even on success.
+    if inputs.only_check {
+        verify_outputs(state, &inputs)?;
+        return Ok(GraphSaveMetrics {
+            graph_save_us: 0,
+            graph_save_bytes: graph_file_size(inputs.state_path),
+            graph_save_skipped: true,
+            post_scan_us: 0,
+            post_assets_us: 0,
+        });
+    }
     let CommitInputs {
+        only_check: _,
+        keep_modified_outputs,
         workspace,
         state_path,
         build_config,
@@ -101,6 +117,11 @@ pub(super) fn commit(
 
     // No phase or asset RPC can read the overlay once all actions have succeeded.
     // Release its references so committing each output can free its buffer.
+    let written_outputs: BTreeSet<_> = transaction
+        .pending_outputs
+        .iter()
+        .map(|(_, asset, _)| asset.clone())
+        .collect();
     drop(transaction.overlay);
     let outputs = crate::wall::Span::new("output_commit");
     // Commit only after every dirty action succeeded. Cache-built part files
@@ -188,6 +209,10 @@ pub(super) fn commit(
     drop(outputs);
     let metadata = crate::wall::Span::new("commit_metadata");
     workspace.clear_asset_caches()?;
+    // A consumer can retain legitimate bytes produced from manual upstream
+    // content even after that upstream output is repaired. Future overwrite
+    // builds must still use digest-based demand reuse, not eager invalidation.
+    state.retained_output_state |= keep_modified_outputs;
     state.schema_version = GRAPH_SCHEMA_VERSION;
     state.config_digest = config_digest;
     drop(metadata);
@@ -236,6 +261,19 @@ pub(super) fn commit(
             }
         }
     }
+    if keep_modified_outputs && let Some((initial, _, _)) = filtered_snapshot_evidence {
+        // Retained bytes may differ from their logical digest. Keep that
+        // evidence until the producer actually runs, including across restarts.
+        for action in state.actions.values() {
+            for output in &action.outputs {
+                if !written_outputs.contains(output)
+                    && let Some(retained) = initial.get(output)
+                {
+                    post_snapshot.insert(output.clone(), retained.clone());
+                }
+            }
+        }
+    }
     drop(scan);
     let update = crate::wall::Span::new("graph_update_assets");
     state.update_assets(post_snapshot);
@@ -251,4 +289,78 @@ pub(super) fn commit(
         post_scan_us,
         post_assets_us,
     })
+}
+
+/// Compare the final transaction's package-path mutations. Artifact-tree
+/// changes are intentionally excluded, matching stock's presubmit contract.
+fn verify_outputs(state: &GraphState, inputs: &CommitInputs<'_>) -> io::Result<()> {
+    use crate::builder::BuildTo;
+    let workspace = inputs.workspace;
+    let transaction = &inputs.transaction;
+    let mut changes = BTreeMap::new();
+    for (location, asset) in &transaction.pending_location_deletions {
+        if *location == BuildTo::Source {
+            changes.insert(asset.clone(), None);
+        }
+    }
+    for (builder, asset) in &transaction.pending_deletions {
+        if builder.build_to == BuildTo::Source {
+            changes.insert(asset.clone(), None);
+        }
+    }
+    for (_, action) in &transaction.deleted_actions {
+        let builder = inputs
+            .build_config
+            .definition(&action.builder)
+            .ok_or_else(|| io::Error::other("previous builder unavailable"))?;
+        for asset in &action.outputs {
+            let cache = state
+                .output_locations
+                .get(asset)
+                .copied()
+                .unwrap_or(builder.build_to == BuildTo::Cache);
+            if !cache && !inputs.expected_outputs.contains(asset) {
+                changes.insert(asset.clone(), None);
+            }
+        }
+    }
+    for (builder, asset, bytes) in &transaction.pending_outputs {
+        if builder.build_to == BuildTo::Source {
+            changes.insert(asset.clone(), Some(bytes.as_ref()));
+        }
+    }
+    let mut lines = Vec::new();
+    for (asset, expected) in changes {
+        let existing = match fs::read(workspace.path_for_asset(&asset)?) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let kind = match (expected, existing.as_deref()) {
+            (Some(_), None) => Some('M'),
+            (None, Some(_)) => Some('U'),
+            (Some(expected), Some(actual)) if expected != actual => Some('I'),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            let (package, path) = asset
+                .split_once('|')
+                .ok_or_else(|| io::Error::other("invalid output asset"))?;
+            let rendered = if package == workspace.root_package {
+                path.to_owned()
+            } else {
+                format!("{package}|{path}")
+            };
+            lines.push(format!("{kind} {rendered}"));
+        }
+    }
+    lines.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+    if !lines.is_empty() {
+        eprintln!(
+            "Verify failed due to Incorrect|Missing|Unexpected:\n\n{}",
+            lines.join("\n")
+        );
+        return Err(io::Error::other("output verification failed"));
+    }
+    Ok(())
 }

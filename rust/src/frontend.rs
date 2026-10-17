@@ -13,6 +13,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
+pub(crate) const STOCK_OUTPUT_POLICY_STATE: &str =
+    ".dart_tool/build_runner_accelerator/stock-output-policy-state";
+
 const MANIFEST_PATH: &str = ".dart_tool/build_runner_accelerator/builder-manifest.json";
 const WORKER_ENTRYPOINT_PATH: &str = ".dart_tool/build_runner_accelerator/dynamic_worker.dart";
 const EARLY_WORKER_MARKER_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -23,6 +26,22 @@ pub(crate) fn select_frontend(
 ) -> io::Result<Option<RustBuildConfig>> {
     if options.mode == FrontendMode::Dart {
         return Ok(None);
+    }
+
+    if matches!(options.command.as_str(), "build" | "watch")
+        && workspace.root.join(STOCK_OUTPUT_POLICY_STATE).is_file()
+    {
+        return select_dart_fallback(
+            options,
+            "stock output-policy state requires stock until both build states are reset",
+        );
+    }
+    // Detect the state-dependent watch boundary before preparing a manifest.
+    let retained_output_state = matches!(options.command.as_str(), "build" | "watch")
+        && crate::graph::GraphState::load(&crate::build::graph_path(workspace))?
+            .retained_output_state;
+    if retained_output_state && options.command == "watch" {
+        return select_dart_fallback(options, "watch after retained output state requires stock");
     }
 
     if let Some(name) = crate::cli::BuildSettings::parse(&options.stock_arguments)?.config_path()?
@@ -89,8 +108,11 @@ pub(crate) fn select_frontend(
 
     match rust_build_config_from_manifest(manifest) {
         Ok(config) => {
-            let filters = crate::cli::BuildSettings::parse(&options.stock_arguments)?.build_filters;
-            if !filters.is_empty()
+            let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
+            let demand_policy =
+                settings.only_check || settings.keep_modified_outputs || retained_output_state;
+            let filters = settings.build_filters;
+            if (demand_policy || !filters.is_empty())
                 && config.builders.iter().any(|b| {
                     b.definition.is_optional
                         || b.options
@@ -106,11 +128,12 @@ pub(crate) fn select_frontend(
             {
                 return select_dart_fallback(
                     options,
-                    "build filters with optional, post-process, trigger-only or zero-output builders are outside the supported subset",
+                    "output policies/build filters with optional, post-process, trigger-only or zero-output builders are outside the supported subset",
                 );
             }
-            if !filters.is_empty()
-                && let Some(reason) = crate::build::filtered_transition_reason(workspace, &config)?
+            if (demand_policy || !filters.is_empty())
+                && let Some(reason) =
+                    crate::build::filtered_transition_reason(workspace, &config, demand_policy)?
             {
                 return select_dart_fallback(options, reason);
             }
@@ -699,6 +722,24 @@ pub(crate) fn run_dart_fallback(
     options: &Options,
     workspace_lock: Option<&crate::workspace_lock::WorkspaceLock>,
 ) -> io::Result<()> {
+    if matches!(options.command.as_str(), "build" | "watch") {
+        let settings = crate::cli::BuildSettings::parse(&options.stock_arguments).ok();
+        let keep = settings
+            .as_ref()
+            .is_some_and(|settings| settings.keep_modified_outputs);
+        let verify = settings
+            .as_ref()
+            .is_some_and(|settings| settings.only_check);
+        let retained = crate::graph::GraphState::load(
+            &options
+                .root
+                .join(".dart_tool/build_runner_accelerator/graph-v3.bin"),
+        )
+        .is_ok_and(|state| state.retained_output_state);
+        if keep || (retained && !verify) {
+            crate::build::mark_stock_output_state(&options.root)?;
+        }
+    }
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     let mut command = Command::new(dart_binary);
     command.env_remove(crate::process::SUPERVISION_CONTEXT);

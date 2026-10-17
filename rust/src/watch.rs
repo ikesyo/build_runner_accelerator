@@ -225,7 +225,7 @@ fn run_watch_build(
     // incremental evidence even when filesystem events reuse the manifest.
     if reuse_configuration
         && filtered
-        && let Some(reason) = build::filtered_transition_reason(&workspace, &build_config)?
+        && let Some(reason) = build::filtered_transition_reason(&workspace, &build_config, false)?
     {
         pool.take();
         if options.mode == FrontendMode::Rust {

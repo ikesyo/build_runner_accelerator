@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:build/build.dart';
+import 'package:crypto/crypto.dart' show Digest;
 import 'package:build_runner/src/build/build_step_impl.dart' show BuildStepImpl;
 import 'package:build_runner/src/build/library_cycle_graph/phased_asset_deps.dart'
     show PhasedAssetDeps;
@@ -104,6 +105,7 @@ Future<void> runWorker({
                 'initialize root does not match worker workspace',
               );
             }
+            runtime.retainedOutputGuard = initialize.retainedOutputGuard;
             await runtime.startBuild(
               initialize.package,
               phaseCount: initialize.phaseCount,
@@ -122,6 +124,7 @@ Future<void> runWorker({
                 'shared-blocked-assets-v1',
                 'reset-overlay-blob-v1',
                 'build-runner-current-v1',
+                'retained-output-guard-v1',
               ],
             });
           case WorkerResetMessage reset:
@@ -242,6 +245,7 @@ class _WorkerRuntime {
   late RemoteBuildState buildState;
   late RemoteBuilderFilesystem buildFilesystem;
   bool _buildStarted = false;
+  bool retainedOutputGuard = false;
   bool resolverInitialized = false;
   int _phaseCount = 1;
 
@@ -609,15 +613,46 @@ Map<String, int> _activityDurations() {
   return result;
 }
 
+const _retainedApiUnsupported =
+    'native output policy unsupported: '
+    'digest/resolver APIs with retained modified outputs; use --mode auto or dart';
+
+class _RetainedOutputBuildStep extends BuildStepImpl {
+  _RetainedOutputBuildStep({
+    required super.inputId,
+    required super.expectedOutputs,
+    required super.inputTracker,
+    required super.buildFilesystem,
+    required super.phase,
+    required super.resolvers,
+    required super.resourceManager,
+    super.reportUnusedAssets,
+  });
+
+  bool unsupportedDigestUsed = false;
+
+  @override
+  Future<Digest> digest(AssetId id, {bool track = true}) async {
+    unsupportedDigestUsed = true;
+    throw UnsupportedError(_retainedApiUnsupported);
+  }
+}
+
 class _TrackingResolvers extends Resolvers {
-  _TrackingResolvers(this._delegate);
+  _TrackingResolvers(this._delegate, {this.retainedOutputGuard = false});
 
   final Resolvers _delegate;
+  final bool retainedOutputGuard;
   bool wasUsed = false;
+  bool unsupportedResolverUsed = false;
 
   @override
   Future<ReleasableResolver> get(BuildStep buildStep) {
     wasUsed = true;
+    if (retainedOutputGuard) {
+      unsupportedResolverUsed = true;
+      throw UnsupportedError(_retainedApiUnsupported);
+    }
     return _delegate.get(buildStep);
   }
 
@@ -915,7 +950,10 @@ Future<JsonMap> _runBuild(
         await postProcessStep.complete();
       }
     } else {
-      final trackedResolver = _TrackingResolvers(runtime.resolver);
+      final trackedResolver = _TrackingResolvers(
+        runtime.resolver,
+        retainedOutputGuard: runtime.retainedOutputGuard,
+      );
       final resolver = _metricsEnabled
           ? _ProfilingResolvers(trackedResolver, runtime, profile)
           : trackedResolver;
@@ -936,7 +974,10 @@ Future<JsonMap> _runBuild(
         primaryInput: input,
         builderLabel: builderId,
       );
-      step = BuildStepImpl(
+      final createStep = runtime.retainedOutputGuard
+          ? _RetainedOutputBuildStep.new
+          : BuildStepImpl.new;
+      step = createStep(
         inputId: input,
         expectedOutputs: [
           for (final output in request.allowedOutputs) AssetId.parse(output),
@@ -950,7 +991,17 @@ Future<JsonMap> _runBuild(
       try {
         await builder.build(step);
       } finally {
-        await step.complete();
+        try {
+          await step.complete();
+        } finally {
+          // Latch the unsupported API even if a builder catches its exception
+          // or fails later. Never publish the builder's catch-path output.
+          if ((step is _RetainedOutputBuildStep &&
+                  step.unsupportedDigestUsed) ||
+              trackedResolver.unsupportedResolverUsed) {
+            throw UnsupportedError(_retainedApiUnsupported);
+          }
+        }
       }
       resolverUsed = trackedResolver.wasUsed;
     }

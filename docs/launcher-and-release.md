@@ -31,6 +31,7 @@ The launcher recognizes these options:
 | `--root PATH`, `--dart PATH` | Select workspace or Dart executable. |
 | `--jobs N`, `--interval-ms N` | Configure the native frontend. |
 | `--force-aot`, `--force-jit` | Select worker execution mode; mutually exclusive. |
+| `--only-check`, `--keep-modified-outputs` | Build-only output policies for the normal-builder demand subset; see [output policies](#output-policies). |
 | `--build-filter PATTERN` | Select build/watch outputs; syntax and manifest limits are in [ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md). |
 | `--define`, `--release`, `--no-release`, `--config` | Resolve `build_runner` settings; see [configuration](configuration.md). |
 | `--delete-conflicting-outputs`, `-d` | Accepted retired flags in `build_runner` 2.16.2; they have no effect and are never added automatically. |
@@ -52,7 +53,7 @@ In `auto`, these option groups also route to stock:
 | Stock-only group | Examples |
 | --- | --- |
 | Output layout or build directory | `--output` / `-o`, `--workspace`, positional build directories |
-| Output lifecycle and logging | `--keep-modified-outputs`, `--only-check`, `--symlink`, `--no-symlink`, `--verbose` / `-v`, `--verbose-durations` |
+| Output layout and logging | `--symlink`, `--no-symlink`, `--verbose` / `-v`, `--verbose-durations` |
 | Dart runtime or profiling | `--enable-experiment`, `--dart-jit-vm-arg`, `--dart-aot-perf` |
 | Serve and daemon | `--hostname`, `--log-requests`, `--live-reload`, `--build-mode` |
 | Other stock commands or arguments | `clean`, `serve`, `run`, `test`, `stop`, `daemon`, unknown arguments, invalid stock values |
@@ -60,6 +61,39 @@ In `auto`, these option groups also route to stock:
 Strict `rust` mode rejects these requests. Prewarm has no stock equivalent:
 it accepts supported configuration settings but rejects stock-only and
 build-only arguments.
+
+## Output policies
+
+`build --only-check` verifies expected package-path outputs without writing or
+removing generated files. It reports incorrect (`I`), missing (`M`), and
+unexpected (`U`) files and exits 1 on differences. Cache intermediates are not
+compared or saved, and incremental graph changes are not saved, even on success.
+Setup/compilation caches may still change. A later ordinary build applies the
+uncommitted results normally.
+
+`build --keep-modified-outputs` retains existing manually edited outputs while
+their producer can be reused. Missing outputs are regenerated. An input change
+can rerun the builder and overwrite manual changes; deleted inputs or omitted
+outputs remove old generated files. Retention is not permanent protection.
+
+These flags cannot be combined or negated; repeating the same flag is allowed.
+They support multiple outputs, dependency chains, source/cache intermediates,
+and supported build filters. Optional/post-process/trigger-only/zero-output
+builders and unsupported prior-state transitions route to stock in auto and
+error in rust. Starting native watch from a graph with retained output history
+also requires stock fallback, including after ordinary builds. Watch with either flag routes before native setup; prewarm
+rejects both. Dart delegates all policy behavior to stock. See
+[ADR 0034](adr/0034-native-output-policies.md) for state and commit guarantees.
+
+When keep finds modified generated outputs, builders using digest/resolver APIs
+use stock in auto and error before publication in rust; stock exposes old digest
+values alongside retained bytes. Builders cannot suppress this boundary by
+catching the API exception. After stock keep or fallback from retained history, later build/watch
+commands stay on stock until both disposable states are reset using the
+[recovery guide](compatibility-cleanup.md#safe-recovery). This avoids reusing an
+older native graph against stock's newer keep history; the launcher routes this
+state before native acquisition. A publishing dart-mode build/watch after native
+keep also claims stock ownership; verification/help does not.
 
 ## Environment controls
 

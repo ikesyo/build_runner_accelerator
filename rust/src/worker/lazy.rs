@@ -405,6 +405,7 @@ pub struct LazyBuildState {
     filtered_dirty_keys: BTreeSet<String>,
     filtered_probe_root_dirty: bool,
     filtered_compatible: bool,
+    pub(crate) keep_modified_outputs: bool,
     filtered_coordinator: Option<FilteredDemandCoordinator>,
     filtered_worker: usize,
 }
@@ -431,6 +432,7 @@ impl LazyBuildState {
             filtered_dirty_keys: BTreeSet::new(),
             filtered_probe_root_dirty: false,
             filtered_compatible: false,
+            keep_modified_outputs: false,
             filtered_coordinator: None,
             filtered_worker: 0,
         }
@@ -578,6 +580,7 @@ impl LazyBuildState {
             filtered_dirty_keys: BTreeSet::new(),
             filtered_probe_root_dirty: false,
             filtered_compatible: self.filtered_compatible,
+            keep_modified_outputs: self.keep_modified_outputs,
             filtered_coordinator: Some(coordinator),
             filtered_worker: worker,
         }
@@ -1383,13 +1386,14 @@ impl FilteredExecution<'_> {
             }
             if let Some(previous) = &previous {
                 for output in &previous.outputs {
-                    if previous.output_digests.get(output)
-                        != crate::plan::output_digest(&crate::plan::output_path(
-                            workspace,
-                            &spec.instance.builder,
-                            output,
-                        )?)?
-                        .as_ref()
+                    let current = crate::plan::output_digest(&crate::plan::output_path(
+                        workspace,
+                        &spec.instance.builder,
+                        output,
+                    )?)?;
+                    if current.is_none()
+                        || (!lazy.keep_modified_outputs
+                            && previous.output_digests.get(output) != current.as_ref())
                     {
                         needs_build = true;
                     }

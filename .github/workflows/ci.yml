@@ -166,6 +166,35 @@ jobs:
               BUILD_FILTER_CASE_GROUP: ${{ matrix.third }}
             run: bash scripts/correctness_build_filter.sh
 
+  integration-output-policies:
+    name: 'Integration: output policies (${{ matrix.group }})'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [routing, modes, source, cache, failure, api]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: integration-output-policies
+          cache-inputs: |
+            pubspec.lock
+            fixtures/build_filter_app/pubspec.lock
+            rust/Cargo.lock
+            scripts/correctness_output_policies.*
+            scripts/correctness_build_filter.py
+            scripts/correctness_cli.py
+          setup-rust: 'true'
+          build-frontend: 'true'
+      - name: Prime output-policy fixture dependencies
+        run: (cd fixtures/build_filter_app && dart --suppress-analytics pub get)
+      - name: Compare stock and native output policy lifecycle
+        env:
+          OUTPUT_POLICY_CASE_GROUP: ${{ matrix.group }}
+        run: bash scripts/correctness_output_policies.sh
+
   integration-baseline:
     name: 'Integration: baseline smoke'
     runs-on: ubuntu-24.04-arm

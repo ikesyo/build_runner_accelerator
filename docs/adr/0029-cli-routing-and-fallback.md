@@ -7,7 +7,8 @@ Status: Accepted
 
 Native settings are amended by [ADR 0031](0031-native-build-settings.md);
 filter capability and output demand are amended by
-[ADR 0032](0032-native-build-filter-demand-and-output-state.md).
+[ADR 0032](0032-native-build-filter-demand-and-output-state.md). Native output
+policy support is amended by [ADR 0034](0034-native-output-policies.md).
 
 ## Context
 

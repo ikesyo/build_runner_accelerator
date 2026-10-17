@@ -7,7 +7,7 @@ use std::path::Path;
 
 pub const GRAPH_SCHEMA_VERSION: u32 = 4;
 const GRAPH_MAGIC: &[u8; 4] = b"BRAG";
-const GRAPH_FORMAT_VERSION: u8 = 2;
+const GRAPH_FORMAT_VERSION: u8 = 3;
 const GRAPH_HEADER_LENGTH: usize = GRAPH_MAGIC.len() + 1 + 4;
 const GRAPH_MAX_BYTES: usize = 256 * 1024 * 1024;
 const GRAPH_MAX_COLLECTION_ITEMS: usize = 4_000_000;
@@ -53,6 +53,11 @@ pub struct GraphState {
     pub stock_glob_members: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     /// Source-path generated files excluded from plain sources in this watch.
     pub watch_generated_sources: BTreeSet<String>,
+    /// A keep build can leave consumers generated from retained manual bytes.
+    /// Subsequent overwrite builds must keep using demand evaluation, even
+    /// after upstream files are repaired: equal logical producer bytes must
+    /// not cause those legitimate consumers to rerun through eager invalidation.
+    pub retained_output_state: bool,
 }
 
 impl GraphState {
@@ -132,7 +137,7 @@ impl GraphState {
             return Err(invalid_graph("graph file has an unknown magic"));
         }
         let format_version = contents[GRAPH_MAGIC.len()];
-        if !matches!(format_version, 1 | GRAPH_FORMAT_VERSION) {
+        if !matches!(format_version, 1 | 2 | GRAPH_FORMAT_VERSION) {
             return Err(invalid_graph(
                 "graph file has an unsupported format version",
             ));
@@ -450,6 +455,7 @@ impl Encoder {
                 .collect::<Vec<_>>(),
             "watch generated sources",
         )?;
+        self.write_u8(u8::from(state.retained_output_state))?;
         Ok(())
     }
 
@@ -658,7 +664,9 @@ impl<'a> Decoder<'a> {
                     .collect();
             }
         }
+        let retained_output_state = format_version >= 3 && self.read_bool()?;
         Ok(GraphState {
+            retained_output_state,
             schema_version,
             config_digest,
             assets,
@@ -724,6 +732,7 @@ mod tests {
             stock_input_order: BTreeMap::new(),
             stock_glob_members: BTreeMap::new(),
             watch_generated_sources: BTreeSet::new(),
+            retained_output_state: false,
         }
     }
 
@@ -815,6 +824,7 @@ mod tests {
         let state = GraphState {
             schema_version: super::GRAPH_SCHEMA_VERSION,
             config_digest: "config".to_owned(),
+            retained_output_state: true,
             watch_generated_sources: BTreeSet::from(["app|lib/omitted.mid".to_owned()]),
             stock_glob_members: BTreeMap::from([(
                 "step".to_owned(),
@@ -884,6 +894,27 @@ mod tests {
     }
 
     #[test]
+    fn format_two_defaults_to_no_retained_output_state() {
+        let state = GraphState {
+            schema_version: super::GRAPH_SCHEMA_VERSION,
+            ..GraphState::default()
+        };
+        let mut encoder = super::Encoder::new();
+        encoder.write_graph_state(&state).unwrap();
+        let mut payload = encoder.finish();
+        assert_eq!(payload.pop(), Some(0));
+        let mut bytes = super::GRAPH_MAGIC.to_vec();
+        bytes.push(2);
+        bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        bytes.extend(payload);
+        let path =
+            std::env::temp_dir().join(format!("accelerator-format-two-{}.bin", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(GraphState::load_checked(&path).unwrap(), state);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn format_one_graphs_load_without_guessing_output_locations() {
         let state = GraphState {
             schema_version: super::GRAPH_SCHEMA_VERSION,
@@ -902,7 +933,7 @@ mod tests {
         encoder.write_graph_state(&state).unwrap();
         let mut payload = encoder.finish();
         // Format 1 ends after resolver edges, before the empty location map.
-        payload.truncate(payload.len() - 16);
+        payload.truncate(payload.len() - 17);
         let mut bytes = super::GRAPH_MAGIC.to_vec();
         bytes.push(1);
         bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());

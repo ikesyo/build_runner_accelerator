@@ -30,7 +30,8 @@ pub struct WorkerPool {
     auto_worker_artifact: bool,
     allow_worker_artifact_upgrade: bool,
     max_jobs: usize,
-    initialized: Option<(PathBuf, String, String, usize, bool)>,
+    initialized: Option<(PathBuf, String, String, usize, bool, bool)>,
+    retained_output_guard: bool,
     initialized_workers: usize,
     resolver_usage: BTreeMap<(String, String), bool>,
     retired_metrics: WorkerClientMetrics,
@@ -155,6 +156,7 @@ impl WorkerPool {
             allow_worker_artifact_upgrade: true,
             max_jobs,
             initialized: None,
+            retained_output_guard: false,
             initialized_workers: 0,
             resolver_usage: BTreeMap::new(),
             retired_metrics: WorkerClientMetrics::default(),
@@ -181,6 +183,10 @@ impl WorkerPool {
         self.allow_worker_artifact_upgrade = false;
     }
 
+    pub(crate) fn set_retained_output_guard(&mut self, enabled: bool) {
+        self.retained_output_guard = enabled;
+    }
+
     /// Reuses workers only for an identical workspace/configuration signature.
     /// A changed signature clears resolver-use hints and restarts the resident
     /// processes; each newly admitted process must pass worker IPC checks.
@@ -203,6 +209,7 @@ impl WorkerPool {
             config_digest.to_owned(),
             phase_count,
             requires_optional_builder,
+            self.retained_output_guard,
         );
         if self.initialized.as_ref() == Some(&signature) {
             if self.auto_worker_artifact && self.allow_worker_artifact_upgrade {
@@ -368,7 +375,13 @@ impl WorkerPool {
         let _wall = crate::wall::Span::new("pool_initialize_pending");
         let pending = self.workers.len().saturating_sub(self.initialized_workers);
         for worker in self.workers.iter_mut().skip(self.initialized_workers) {
-            worker.initialize(root, package, phase_count, requires_optional_builder)?;
+            worker.initialize(
+                root,
+                package,
+                phase_count,
+                requires_optional_builder,
+                self.retained_output_guard,
+            )?;
         }
         self.worker_initializes += pending as u64;
         self.initialized_workers = self.workers.len();
@@ -437,7 +450,7 @@ impl WorkerPool {
             return Ok(Vec::new());
         }
         let (root, package) = match &self.initialized {
-            Some((root, package, _, _, _)) => (root.clone(), package.clone()),
+            Some((root, package, _, _, _, _)) => (root.clone(), package.clone()),
             None => {
                 return Err(io::Error::other(
                     "worker pool must be initialized before building",
@@ -447,7 +460,7 @@ impl WorkerPool {
         let phase_count = self
             .initialized
             .as_ref()
-            .map(|(_, _, _, phase_count, _)| *phase_count)
+            .map(|(_, _, _, phase_count, _, _)| *phase_count)
             .unwrap_or(1);
 
         // Serializing resolver-backed batches on one resident worker only pays
@@ -635,7 +648,7 @@ impl WorkerPool {
         }
         self.prepare_for_requests(&workspace.root, 1)?;
         let (root, package) = match &self.initialized {
-            Some((root, package, _, _, _)) => (root.clone(), package.clone()),
+            Some((root, package, _, _, _, _)) => (root.clone(), package.clone()),
             None => {
                 return Err(io::Error::other(
                     "worker pool must be initialized before building",
@@ -645,7 +658,7 @@ impl WorkerPool {
         let phase_count = self
             .initialized
             .as_ref()
-            .map(|(_, _, _, phase_count, _)| *phase_count)
+            .map(|(_, _, _, phase_count, _, _)| *phase_count)
             .unwrap_or(1);
         self.initialize_pending_workers(&root, &package, phase_count, true)?;
         self.workers[0].build_batch_lazy(
@@ -683,7 +696,7 @@ impl WorkerPool {
             return Ok(());
         }
         self.prepare_for_filtered_roots(&workspace.root, roots.len())?;
-        let (root, package, _, phase_count, _) = self
+        let (root, package, _, phase_count, _, _) = self
             .initialized
             .clone()
             .ok_or_else(|| io::Error::other("worker pool must be initialized"))?;

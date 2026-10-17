@@ -400,7 +400,7 @@ def legacy_graph(root):
     """Remove format-2 location evidence while preserving real action history."""
     path = root / '.dart_tool/build_runner_accelerator/graph-v3.bin'
     data = bytearray(path.read_bytes())
-    assert data[:5] == b'BRAG\x02', data[:5]
+    assert data[:4] == b'BRAG' and data[4] in (2, 3), data[:5]
     offset = 9
     def integer():
         nonlocal offset
