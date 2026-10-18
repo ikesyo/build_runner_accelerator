@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-pub const GRAPH_SCHEMA_VERSION: u32 = 4;
+pub const GRAPH_SCHEMA_VERSION: u32 = 5;
 const GRAPH_MAGIC: &[u8; 4] = b"BRAG";
 const GRAPH_FORMAT_VERSION: u8 = 2;
 const GRAPH_HEADER_LENGTH: usize = GRAPH_MAGIC.len() + 1 + 4;

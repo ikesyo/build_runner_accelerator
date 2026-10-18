@@ -83,6 +83,14 @@ impl AssetVisibility {
         self.locations.get(asset).copied()
     }
 
+    pub(crate) fn generated_assets(
+        &self,
+        package: &str,
+        pattern: &str,
+    ) -> impl Iterator<Item = &String> {
+        crate::workspace::glob_candidates(&self.locations, package, pattern)
+    }
+
     /// Returns the logical assets hidden from an action at [phase].
     pub(crate) fn blocked_assets(
         &self,
@@ -177,6 +185,7 @@ mod tests {
             spec("app:source", 1, BuildTo::Source, "app|lib/input.source"),
         ];
         let config = RustBuildConfig {
+            asset_sources: None,
             builders: Vec::new(),
             worker_entrypoint: None,
             manifest_signature: None,

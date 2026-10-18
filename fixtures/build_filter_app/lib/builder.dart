@@ -358,3 +358,33 @@ class Resolve implements Builder {
     }
   }
 }
+
+Builder nestedView(BuilderOptions options) => NestedView();
+
+class NestedView implements Builder {
+  Map<String, List<String>> get buildExtensions => {
+    '.probe': ['.final'],
+  };
+
+  Future<void> build(BuildStep step) async {
+    _recordHistory('${step.inputId.package}|${step.inputId.path}');
+    final name = (await step.readAsString(step.inputId)).trim();
+    final assets = await step.findAssets(Glob('**/*.txt')).toList()
+      ..sort((a, b) => a.toString().compareTo(b.toString()));
+    final result = <String>[for (final asset in assets) asset.toString()];
+    for (final asset in [
+      AssetId('build_filter_app', 'dep/lib/$name.txt'),
+      AssetId('filter_dep', 'lib/$name.txt'),
+    ]) {
+      final readable = await step.canRead(asset);
+      String content;
+      try {
+        content = await step.readAsString(asset);
+      } on AssetNotFoundException {
+        content = '<missing>';
+      }
+      result.add('$asset:$readable:$content');
+    }
+    await step.writeAsString(step.allowedOutputs.single, result.join('\n'));
+  }
+}

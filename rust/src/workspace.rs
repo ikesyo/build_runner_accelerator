@@ -6,7 +6,70 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub(crate) struct SourcePatterns {
+    include: Vec<String>,
+    exclude: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub(crate) struct PackageSources {
+    targets: Vec<SourcePatterns>,
+    public_assets: Option<Vec<String>>,
+}
+
+pub(crate) type AssetSources = BTreeMap<String, PackageSources>;
+
+impl PackageSources {
+    fn may_include_under(&self, prefix: &str) -> bool {
+        let may_match = |pattern: &String| {
+            let literal = glob_literal_prefix(pattern);
+            literal.starts_with(prefix) || prefix.starts_with(literal)
+        };
+        self.public_assets
+            .as_ref()
+            .is_none_or(|patterns| patterns.iter().any(may_match))
+            && self.targets.iter().any(|target| {
+                target.include.iter().any(may_match)
+                    && !target.exclude.iter().any(|pattern| {
+                        matches!(pattern.as_str(), "**" | "**/*")
+                            || pattern.strip_suffix("/**").is_some_and(|directory| {
+                                let mut ancestor = prefix.trim_end_matches('/');
+                                loop {
+                                    if matches_glob(directory, ancestor) {
+                                        return true;
+                                    }
+                                    let Some((parent, _)) = ancestor.rsplit_once('/') else {
+                                        return false;
+                                    };
+                                    ancestor = parent;
+                                }
+                            })
+                    })
+            })
+    }
+
+    fn matches(&self, path: &str) -> bool {
+        if !is_discoverable_file(path) {
+            return false;
+        }
+        self.public_assets
+            .as_ref()
+            .is_none_or(|patterns| patterns.iter().any(|pattern| matches_glob(pattern, path)))
+            && self.targets.iter().any(|target| {
+                target
+                    .include
+                    .iter()
+                    .any(|pattern| matches_glob(pattern, path))
+                    && !target
+                        .exclude
+                        .iter()
+                        .any(|pattern| matches_glob(pattern, path))
+            })
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WorkspaceReadMetrics {
@@ -21,6 +84,7 @@ pub struct Workspace {
     pub root: PathBuf,
     pub root_package: String,
     packages: BTreeMap<String, PathBuf>,
+    sources: Arc<OnceLock<Arc<AssetSources>>>,
     package_config_identity: String,
     asset_index: Arc<Mutex<BTreeMap<String, Arc<Vec<String>>>>>,
     find_assets_cache: Arc<Mutex<FindAssetsCache>>,
@@ -71,6 +135,7 @@ impl Workspace {
             root,
             root_package,
             packages,
+            sources: Arc::new(OnceLock::new()),
             package_config_identity,
             asset_index: Arc::new(Mutex::new(BTreeMap::new())),
             find_assets_cache: Arc::new(Mutex::new(BTreeMap::new())),
@@ -175,8 +240,75 @@ impl Workspace {
         Ok(root.join(path))
     }
 
+    pub(crate) fn configure_sources(&self, sources: Option<&Arc<AssetSources>>) {
+        if let Some(sources) = sources {
+            self.sources.get_or_init(|| Arc::clone(sources));
+        }
+    }
+
+    pub(crate) fn includes_build_implementation_sources(&self) -> bool {
+        self.sources
+            .get()
+            .and_then(|sources| sources.get(&self.root_package))
+            .is_some_and(|sources| {
+                sources.may_include_under(".dart_tool/build/")
+                    || sources.may_include_under(".dart_tool/build_runner_accelerator/")
+            })
+    }
+
+    pub(crate) fn overlapping_watch_sources(&self) -> io::Result<Option<String>> {
+        let Some(sources) = self.sources.get() else {
+            return Ok(None);
+        };
+        let roots = sources
+            .keys()
+            .map(|package| Ok((package, fs::canonicalize(self.package_root(package)?)?)))
+            .collect::<io::Result<Vec<_>>>()?;
+        for (parent, root) in &roots {
+            for (child, nested) in &roots {
+                if parent == child {
+                    continue;
+                }
+                let Ok(relative) = nested.strip_prefix(root) else {
+                    continue;
+                };
+                let relative = normalized_relative_path(relative);
+                let prefix = if relative.is_empty() {
+                    relative
+                } else {
+                    format!("{relative}/")
+                };
+                if sources[*parent].may_include_under(&prefix) {
+                    return Ok(Some(format!(
+                        "watch source sets may overlap packages {parent} and {child}; stock updates only the deepest package identity"
+                    )));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn source_path_for_asset(&self, asset: &str) -> io::Result<PathBuf> {
+        let (package, path) = split_asset(asset)?;
+        if !self.is_source_path(package, path) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("asset not found: {asset}"),
+            ));
+        }
+        self.path_for_asset(asset)
+    }
+
+    fn is_source_path(&self, package: &str, path: &str) -> bool {
+        self.sources.get().is_none_or(|sources| {
+            sources
+                .get(package)
+                .is_some_and(|sources| sources.matches(path))
+        })
+    }
+
     pub fn read_asset(&self, asset: &str) -> io::Result<Vec<u8>> {
-        fs::read(self.path_for_asset(asset)?)
+        fs::read(self.source_path_for_asset(asset)?)
     }
 
     pub fn cache_path_for_asset(&self, asset: &str) -> io::Result<PathBuf> {
@@ -241,7 +373,15 @@ impl Workspace {
     pub fn list_package_assets(&self, package: &str) -> io::Result<Vec<(String, PathBuf)>> {
         let root = self.package_root(package)?.to_path_buf();
         let mut files = Vec::new();
-        collect_files(&root, &root, &mut files)?;
+        let sources = if let Some(sources) = self.sources.get() {
+            let Some(sources) = sources.get(package) else {
+                return Ok(Vec::new());
+            };
+            Some(sources)
+        } else {
+            None
+        };
+        collect_files(&root, &root, sources, &mut files)?;
         files.sort_by(|left, right| left.0.cmp(&right.0));
         Ok(files
             .into_iter()
@@ -343,11 +483,6 @@ impl Workspace {
             .list_package_assets(package)?
             .into_iter()
             .map(|(asset, _)| asset)
-            .chain(
-                self.list_cached_package_assets(package)?
-                    .into_iter()
-                    .map(|(asset, _)| asset),
-            )
             .collect::<Vec<_>>();
         assets.sort();
         assets.dedup();
@@ -368,7 +503,7 @@ impl Workspace {
             return Ok(Vec::new());
         }
         let mut files = Vec::new();
-        collect_files(&cache_root, &cache_root, &mut files)?;
+        collect_files(&cache_root, &cache_root, None, &mut files)?;
         Ok(files
             .into_iter()
             .map(|(path, absolute)| (format!("{package}|{path}"), absolute))
@@ -497,41 +632,41 @@ fn lower_bound(values: &[String], target: &str) -> usize {
 fn collect_files(
     root: &Path,
     current: &Path,
+    sources: Option<&PackageSources>,
     result: &mut Vec<(String, PathBuf)>,
 ) -> io::Result<()> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
-        let file_name = entry.file_name();
-        let name = file_name.to_string_lossy();
         let file_type = entry.file_type()?;
-        // build_runner's package asset view hides dot-prefixed paths. In
-        // particular, .fvm/flutter_sdk commonly points at an entire Flutter
-        // SDK and must not become part of the root package's asset graph.
-        if name.starts_with('.') {
-            continue;
-        }
-        if matches!(name.as_ref(), "build" | "target") {
-            continue;
-        }
         // Do not follow links out of a package root (or recurse through a link
         // back into the package). Package assets are discovered from real
         // directory entries only.
         if file_type.is_symlink() {
             continue;
         }
+        let relative = normalized_relative_path(path.strip_prefix(root).map_err(io::Error::other)?);
         if file_type.is_dir() {
-            collect_files(root, &path, result)?;
-        } else if file_type.is_file() {
-            let relative = path
-                .strip_prefix(root)
-                .map_err(io::Error::other)?
-                .to_string_lossy()
-                .replace('\\', "/");
+            if sources.is_none_or(|sources| sources.may_include_under(&format!("{relative}/"))) {
+                collect_files(root, &path, sources, result)?;
+            }
+        } else if file_type.is_file()
+            && sources.map_or_else(
+                || is_discoverable_file(&relative),
+                |sources| sources.matches(&relative),
+            )
+        {
             result.push((relative, path));
         }
     }
     Ok(())
+}
+
+fn is_discoverable_file(path: &str) -> bool {
+    !path
+        .rsplit('/')
+        .next()
+        .is_some_and(|name| name.starts_with("._"))
 }
 
 fn split_asset(asset: &str) -> io::Result<(&str, &str)> {
@@ -722,6 +857,35 @@ mod tests {
     }
 
     #[test]
+    fn watch_overlap_check_respects_subtree_exclusions() {
+        let sources: super::PackageSources = serde_json::from_value(serde_json::json!({
+            "targets": [{"include": ["**"], "exclude": ["dep/**"]}],
+            "public_assets": null,
+        }))
+        .unwrap();
+        assert!(!sources.may_include_under("dep/"));
+        assert!(!sources.may_include_under("dep/nested/"));
+        assert!(sources.may_include_under("dependency/"));
+        let public: super::PackageSources = serde_json::from_value(serde_json::json!({
+            "targets": [{"include": ["**"], "exclude": []}],
+            "public_assets": ["lib/**"],
+        }))
+        .unwrap();
+        assert!(!public.may_include_under("dep/"));
+        assert!(public.may_include_under("lib/dep/"));
+        assert!(public.matches("lib/.visible.txt"));
+        assert!(!public.matches("lib/._ignored.txt"));
+        let hidden: super::PackageSources = serde_json::from_value(serde_json::json!({
+            "targets": [{"include": ["**"], "exclude": ["**/.dart_tool/**"]}],
+            "public_assets": null,
+        }))
+        .unwrap();
+        assert!(!hidden.may_include_under(".dart_tool/build/"));
+        assert!(!hidden.may_include_under("dep/.dart_tool/build/"));
+        assert!(hidden.may_include_under("lib/.visible/"));
+    }
+
+    #[test]
     fn ordered_glob_candidates_preserve_exhaustive_results() {
         let mut assets = BTreeMap::from([
             ("app|lib/model.json.g.part".to_owned(), ()),
@@ -795,7 +959,7 @@ mod tests {
     }
 
     #[test]
-    fn package_scan_skips_hidden_paths_and_symlinks() {
+    fn package_scan_prunes_out_of_source_paths_and_symlinks() {
         let temp = TempDir::new();
         let root = temp.path().join("workspace");
         let sdk = temp.path().join("flutter-sdk");
@@ -822,12 +986,19 @@ mod tests {
         std::os::unix::fs::symlink(&sdk, root.join("linked-sdk"))
             .expect("create non-hidden SDK symlink");
 
+        fs::write(root.join("lib/.visible.dart"), "class Hidden {}").unwrap();
+        let sources: super::PackageSources = serde_json::from_value(serde_json::json!({
+            "targets": [{"include": ["lib/**"], "exclude": []}],
+            "public_assets": null,
+        }))
+        .unwrap();
         let mut files = Vec::new();
-        collect_files(&root, &root, &mut files).expect("scan package files");
-        let paths = files
+        collect_files(&root, &root, Some(&sources), &mut files).expect("scan package files");
+        let mut paths = files
             .into_iter()
             .map(|(relative, _)| relative)
             .collect::<Vec<_>>();
-        assert_eq!(paths, vec!["lib/visible.dart"]);
+        paths.sort();
+        assert_eq!(paths, vec!["lib/.visible.dart", "lib/visible.dart"]);
     }
 }

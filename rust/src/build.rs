@@ -81,6 +81,7 @@ pub(crate) fn run_with_config_session(
     let _wall = crate::wall::Session::new();
     let _build = crate::wall::Span::new("build_with_config");
     let state_path = graph_path(&workspace);
+    workspace.configure_sources(build_config.asset_sources.as_ref());
     let load = crate::wall::Span::new("graph_load");
     let graph_load_started = Instant::now();
     let mut state = GraphState::load(&state_path)?;
@@ -181,7 +182,7 @@ pub(crate) fn run_with_config_session(
         &mut filesystem_metrics,
     )?;
     drop(dirty);
-    if !dirty_plan.has_work() {
+    if !dirty_plan.has_work() && !state.config_digest.is_empty() {
         println!("No work to do (Rust frontend)");
         let graph_metrics = commit::save_no_work(
             &mut state,
@@ -284,6 +285,7 @@ pub(crate) fn filtered_transition_reason(
     workspace: &Workspace,
     config: &crate::builder::RustBuildConfig,
 ) -> io::Result<Option<&'static str>> {
+    workspace.configure_sources(config.asset_sources.as_ref());
     let state = GraphState::load(&graph_path(workspace))?;
     if state.has_resolver_cycle() {
         return Ok(Some(

@@ -4,7 +4,7 @@ import 'dart:io';
 import 'model.dart';
 import 'source.dart';
 
-const _manifestVersion = 9;
+const _manifestVersion = 10;
 
 /// Writes just the worker entrypoint. `generate_builder_manifest` emits it
 /// early — before the factory probe — so the frontend can overlap the
@@ -29,6 +29,7 @@ Future<void> emitManifestArtifacts({
   required Iterable<Map<String, dynamic>> definitions,
   required Iterable<CatalogEntry> catalogEntries,
   required String triggerDigest,
+  required Map<String, dynamic> assetSources,
 }) async {
   final manifestFile = File(manifestPath);
   final workerFile = File(workerEntrypoint);
@@ -44,6 +45,7 @@ Future<void> emitManifestArtifacts({
     'worker_source_digest': workerSourceDigest(source),
     'builders': builders.toList(),
     'definitions': definitions.toList(),
+    'asset_sources': assetSources,
   };
   await _writeAtomically(manifestFile, jsonEncode(manifest) + '\n');
 }

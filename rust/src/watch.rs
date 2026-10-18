@@ -221,6 +221,17 @@ fn run_watch_build(
         run_dart_fallback(options, watch_state.workspace_lock)?;
         return Ok(false);
     };
+    workspace.configure_sources(build_config.asset_sources.as_ref());
+    if let Some(reason) = workspace.overlapping_watch_sources()? {
+        pool.take();
+        if options.mode == FrontendMode::Rust {
+            return Err(io::Error::new(io::ErrorKind::Unsupported, reason));
+        }
+        eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
+        watch_state.events.stop();
+        run_dart_fallback(options, watch_state.workspace_lock)?;
+        return Ok(false);
+    }
     // A successful cold build can discover resolver cycles. Re-check the
     // incremental evidence even when filesystem events reuse the manifest.
     if reuse_configuration
@@ -256,6 +267,10 @@ fn run_watch_build(
     if pool_shape
         .as_ref()
         .is_some_and(|previous| previous != &shape)
+        || watch_state
+            .cached_configuration
+            .as_ref()
+            .is_some_and(|previous| previous.asset_sources != build_config.asset_sources)
     {
         pool.take();
         let reason = "watch configuration changed builder applications or output topology";
@@ -558,14 +573,6 @@ fn is_relevant_event(
             return true;
         }
         let components = Path::new(relative).components().collect::<Vec<_>>();
-        if components.iter().any(|component| {
-            matches!(
-                component.as_os_str().to_str(),
-                Some(".git" | "build" | "target")
-            )
-        }) {
-            return false;
-        }
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             return false;
         };

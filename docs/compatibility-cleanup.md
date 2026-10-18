@@ -24,8 +24,8 @@ These formats are not stable API; old state need not be migrated:
 
 | State | Current update behavior |
 | --- | --- |
-| Manifest | v9 uses explicit `extensions` or post-process `input_extensions`. Builder-level flattened fields are removed. Old, invalid or incomplete manifests regenerate; configured metadata must agree with its definition. |
-| Graph | Obsolete formats/schemas and corrupt records are diagnosed and rebuilt from empty. Filesystem IO errors remain errors. Old filenames outside the current path are ignored. |
+| Manifest | v10 adds source sets for all targets and dependency public-asset restrictions. Old, invalid or incomplete manifests regenerate; configured metadata must agree with its definition. |
+| Graph | Schema 5 invalidates snapshots/actions made with the overbroad root source defaults. Obsolete formats/schemas and corrupt records rebuild from empty. Filesystem IO errors remain errors. Old filenames outside the current path are ignored. |
 | Worker AOT/kernel, generator/probe and SDK summary | Format/content/SDK/dependency identity checks select usable artifacts; misses regenerate them. |
 | Analyzer/directive cache | Packed stores use `byte_store/v2/<fingerprint>` and `dep_parse/v3-<sdk>`. Both per-key readers/writers and analyzer per-key readiness scanning are removed. Old directories remain untouched and unselected. |
 
@@ -37,6 +37,11 @@ regenerate build outputs or the action graph.
 Cache format changes do not delete user sources or existing generated source
 files. Normal successful build actions still replace outputs and handle their
 ordinary stale-output lifecycle.
+
+A native cold build replaces its private artifact tree only after all actions
+succeed. This removes extra parent-package cache outputs from older builds
+without trusting obsolete graph records to delete files in nested packages.
+Failure or cancellation before commit leaves both the old cache and graph intact.
 
 ## Safe recovery
 

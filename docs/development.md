@@ -80,6 +80,7 @@ Run the closest comparison script when changing a boundary:
 | CLI routing, fallback, or process signals | `bash scripts/correctness_cli.sh` |
 | Watch lifecycle | `bash scripts/watch_smoke.sh` |
 | Freezed/Riverpod compatibility | `scripts/correctness_freezed.sh`, `scripts/watch_smoke_freezed.sh`, `scripts/correctness_riverpod.sh`, `scripts/watch_smoke_riverpod.sh` |
+| Nested path packages and source visibility | `bash scripts/correctness_nested_packages.sh` |
 | Manifest or builder output | The relevant fixture script; see the full verification groups. |
 
 The CI workflow runs the same checks in functional groups:

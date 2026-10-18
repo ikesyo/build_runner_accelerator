@@ -73,7 +73,12 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   );
   reportStage('probe');
   final normalized = _normalizeManifest(resolved, selection, runtimeMappings);
-  await _emitArtifacts(options, triggers.digest, normalized);
+  await _emitArtifacts(
+    options,
+    triggers.digest,
+    normalized,
+    assetSources(resolved.orderedTargets, inputs.configs),
+  );
   reportStage('emit');
 }
 
@@ -503,6 +508,7 @@ Future<void> _emitArtifacts(
   _Arguments options,
   String triggerDigest,
   _NormalizedManifest normalized,
+  Map<String, dynamic> sources,
 ) => emitManifestArtifacts(
   manifestPath: options.manifest,
   workerEntrypoint: options.workerEntrypoint,
@@ -511,6 +517,7 @@ Future<void> _emitArtifacts(
   definitions: normalized.definitions,
   catalogEntries: normalized.catalogEntries,
   triggerDigest: triggerDigest,
+  assetSources: sources,
 );
 
 /// Resolves the `part` directive suffix an input must declare before a

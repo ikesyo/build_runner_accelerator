@@ -106,7 +106,7 @@ jobs:
   integration-build-filter:
     name: 'Integration: build-filter (${{ matrix.id }})'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -139,6 +139,7 @@ jobs:
             fixtures/post_process_builder_app/pubspec.lock
             rust/Cargo.lock
             scripts/correctness_build_filter.*
+            scripts/correctness_nested_packages.*
             scripts/correctness_cli.py
           setup-rust: 'true'
           build-frontend: 'true'
@@ -161,10 +162,13 @@ jobs:
             env:
               BUILD_FILTER_CASE_GROUP: ${{ matrix.second }}
             run: bash scripts/correctness_build_filter.sh
-          - name: 'Build-filter: ${{ matrix.third }}'
+          - name: 'Build-filter: ${{ matrix.third }} and nested package sources'
             env:
               BUILD_FILTER_CASE_GROUP: ${{ matrix.third }}
-            run: bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP: ${{ matrix.id == 'selection' && 'defaults' || matrix.id == 'fallback' && 'explicit' || matrix.id == 'graph' && 'recovery' || 'watch' }}
+            run: |
+              bash scripts/correctness_build_filter.sh
+              bash scripts/correctness_nested_packages.sh
 
   integration-baseline:
     name: 'Integration: baseline smoke'

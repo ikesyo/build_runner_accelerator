@@ -234,7 +234,17 @@ impl WorkerClient {
                     .and_then(Value::as_str)
                     .unwrap_or("**");
                 let mut assets = Vec::new();
-                for asset in workspace.find_assets(package, pattern)? {
+                let candidates = workspace.find_assets(package, pattern)?;
+                for asset in candidates.into_iter().chain(
+                    visibility
+                        .generated_assets(package, pattern)
+                        .filter(|asset| {
+                            asset.split_once('|').is_some_and(|(p, path)| {
+                                p == package && matches_glob(pattern, path)
+                            })
+                        })
+                        .cloned(),
+                ) {
                     if visibility.is_blocked(asset.as_str(), phase, kind, deleted_overlay)
                         || !asset_exists(workspace, &asset, overlay, visibility)?
                     {
@@ -442,7 +452,11 @@ fn asset_exists(
     }
     match visibility.location(asset) {
         Some(build_to) => workspace.asset_exists_at(asset, build_to),
-        None => workspace.asset_exists_or_cache(asset),
+        None => match workspace.source_path_for_asset(asset) {
+            Ok(path) => Ok(path.is_file()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        },
     }
 }
 
@@ -554,10 +568,7 @@ enum ReadResult {
     Path(PathBuf),
 }
 
-/// Resolve the on-disk path currently holding [asset]'s bytes, mirroring
-/// `Workspace::read_asset_at_shared`/`read_asset_or_cache_shared`: the
-/// producer-declared location when known, else the package source path with
-/// the generated cache tree as fallback. `NotFound` when no location exists.
+/// Resolve a declared generated asset or an eligible package source.
 fn asset_disk_path(
     workspace: &Workspace,
     asset: &str,
@@ -566,17 +577,7 @@ fn asset_disk_path(
     let path = match visibility.location(asset) {
         Some(BuildTo::Cache) => workspace.cache_path_for_asset(asset)?,
         Some(BuildTo::Source) => workspace.path_for_asset(asset)?,
-        None => {
-            let source = workspace.path_for_asset(asset)?;
-            match fs::metadata(&source) {
-                Ok(meta) if meta.is_file() => source,
-                Ok(_) => workspace.cache_path_for_asset(asset)?,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    workspace.cache_path_for_asset(asset)?
-                }
-                Err(error) => return Err(error),
-            }
-        }
+        None => workspace.source_path_for_asset(asset)?,
     };
     if path.is_file() {
         Ok(path)
