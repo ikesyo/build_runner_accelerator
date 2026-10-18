@@ -245,10 +245,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
   }
 
   @override
-  Future<bool> canRead(AssetId id, {bool inArtifactTree = false}) =>
-      isReadable(id, catchInvalidInputs: true);
-
-  Future<bool> isReadable(AssetId id, {bool catchInvalidInputs = false}) async {
+  Future<bool> canRead(AssetId id, {bool inArtifactTree = false}) async {
     _state.observedReads.add(id);
     final primaryInput = _state.primaryInput;
     if (primaryInput != null && id != primaryInput) return false;
@@ -269,13 +266,6 @@ class RemoteAssetReaderWriter extends ReaderWriter {
       resolverActionMetrics
         ..ipcCanReadCalls += 1
         ..ipcCanReadUs += timer.elapsedMicroseconds;
-    }
-    final invalidInput = response['invalid_input'];
-    if (invalidInput is List && !catchInvalidInputs) {
-      throw InvalidInputException(
-        id,
-        allowedGlobs: invalidInput.cast<String>(),
-      );
     }
     final value = response['value'] == true;
     if (value) _state.readableCache.add(id);

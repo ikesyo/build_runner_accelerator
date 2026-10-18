@@ -32,6 +32,7 @@ pub struct WorkerPool {
     max_jobs: usize,
     initialized: Option<(PathBuf, String, String, usize, bool)>,
     initialized_workers: usize,
+    input_restrictions: BTreeMap<String, Vec<String>>,
     resolver_usage: BTreeMap<(String, String), bool>,
     retired_metrics: WorkerClientMetrics,
     worker_starts: u64,
@@ -156,6 +157,7 @@ impl WorkerPool {
             max_jobs,
             initialized: None,
             initialized_workers: 0,
+            input_restrictions: BTreeMap::new(),
             resolver_usage: BTreeMap::new(),
             retired_metrics: WorkerClientMetrics::default(),
             worker_starts,
@@ -186,12 +188,13 @@ impl WorkerPool {
     /// processes; each newly admitted process must pass worker IPC checks.
     pub fn initialize(
         &mut self,
-        root: &Path,
+        workspace: &Workspace,
         package: &str,
         config_digest: &str,
         phase_count: usize,
         requires_optional_builder: bool,
     ) -> io::Result<()> {
+        let root = &workspace.root;
         // Deferred filtered-watch pools materialize only when a build actually
         // reaches worker initialization. Ordinary callers retain eager start.
         if self.workers.is_empty() {
@@ -277,6 +280,7 @@ impl WorkerPool {
             self.restart_workers(root, worker_artifact)?;
         }
         self.initialized_workers = 0;
+        self.input_restrictions = workspace.input_restrictions();
         self.initialize_pending_workers(root, package, phase_count, requires_optional_builder)?;
         self.initialized = Some(signature);
         Ok(())
@@ -368,7 +372,13 @@ impl WorkerPool {
         let _wall = crate::wall::Span::new("pool_initialize_pending");
         let pending = self.workers.len().saturating_sub(self.initialized_workers);
         for worker in self.workers.iter_mut().skip(self.initialized_workers) {
-            worker.initialize(root, package, phase_count, requires_optional_builder)?;
+            worker.initialize(
+                root,
+                package,
+                phase_count,
+                requires_optional_builder,
+                &self.input_restrictions,
+            )?;
         }
         self.worker_initializes += pending as u64;
         self.initialized_workers = self.workers.len();

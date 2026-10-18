@@ -59,6 +59,7 @@ void main() {
 
       await send({
         'type': 'initialize',
+        'input_restrictions': <String, List<String>>{},
         'package': package,
         'phase_count': 8,
         'root': Directory.current.absolute.path,

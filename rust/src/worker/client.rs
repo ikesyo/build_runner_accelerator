@@ -176,6 +176,7 @@ impl WorkerClient {
         package: &str,
         phase_count: usize,
         requires_optional_builder: bool,
+        input_restrictions: &BTreeMap<String, Vec<String>>,
     ) -> io::Result<()> {
         let _wall = self.wall_span("worker_initialize", None);
         let started = Instant::now();
@@ -188,6 +189,7 @@ impl WorkerClient {
             "root": root,
             "package": package,
             "phase_count": phase_count,
+            "input_restrictions": input_restrictions,
             "resolver_mode": "dart_local"
         }))?;
         let response = self.receive_json()?;

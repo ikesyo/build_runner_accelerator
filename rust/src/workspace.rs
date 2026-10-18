@@ -317,10 +317,18 @@ impl Workspace {
         fs::read(self.source_path_for_asset(asset)?)
     }
 
-    pub(crate) fn invalid_input_globs(&self, asset: &str) -> Option<&[String]> {
-        let (package, path) = split_asset(asset).ok()?;
-        let patterns = self.sources.get()?.get(package)?.public_assets.as_deref()?;
-        (!patterns.iter().any(|pattern| matches_glob(pattern, path))).then_some(patterns)
+    pub(crate) fn input_restrictions(&self) -> BTreeMap<String, Vec<String>> {
+        self.sources
+            .get()
+            .into_iter()
+            .flat_map(|sources| sources.iter())
+            .filter_map(|(package, sources)| {
+                sources
+                    .public_assets
+                    .as_ref()
+                    .map(|patterns| (package.clone(), patterns.clone()))
+            })
+            .collect()
     }
 
     pub fn cache_path_for_asset(&self, asset: &str) -> io::Result<PathBuf> {

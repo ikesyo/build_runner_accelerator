@@ -30,6 +30,9 @@ Workspace source enumeration, snapshots, reads and globs use the same source
 sets. Dependency public patterns restrict inputs even for that dependency's
 own builders. `canRead` returns false outside those patterns; explicit reads
 throw stock's `InvalidInputException`, rather than reporting a missing source.
+The worker receives these public patterns at initialization and validates
+builder inputs before phase and cache shortcuts. Resolver filesystem reads
+retain their separate graph visibility, including generated non-public files.
 Generated assets retain the graph's phase/location rules and are added
 to glob candidates from the declared-output index, without scanning orphan
 cache files as sources. Physical package containment does not remove parent
@@ -53,11 +56,15 @@ package roots without another file walk. Literal subtree exclusions such as
 exclusions may not prove separation.
 Non-overlapping default, narrowed and explicitly excluded sources remain native.
 
-Graph schema 5 discards prior input/action evidence without migration or
+Graph schema 6 discards prior input/action evidence without migration or
 source-file deletions based on obsolete records. A successful native cold build
 replaces the private artifact tree, removing old extra cache outputs. Failure
 or cancellation before commit preserves that tree and the old graph. The
 existing non-crash-atomic filesystem publication boundary is unchanged.
+Filtered builds record that undemanded cache outputs may be untracked. The
+next ordinary build scans the private cache once and removes untracked files
+at successful commit, before publishing rebuilt outputs; later ordinary
+builds do not repeat that scan. Package-path files are not part of this cleanup.
 
 ## Validation
 

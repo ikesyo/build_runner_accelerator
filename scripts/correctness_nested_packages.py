@@ -346,12 +346,21 @@ def dependency_glob(tmp):
     for root in (stock, native):
         cfg = root / 'build.yaml'
         head, view = cfg.read_text().split('  view:')
-        cfg.write_text(head + '  view:' + view.replace('build_to: source', 'build_to: cache'))
+        cfg.write_text(head + '  view:' + view.replace('build_to: source', 'build_to: cache') +
+                       "    required_inputs: ['.post']\n" + '''  private_seed:
+    import: 'package:build_filter_app/builder.dart'
+    builder_factories: [nestedPrivateSeed]
+    build_extensions: {'^lib/{{}}.txt': ['lib/{{}}.post', 'test/{{}}.post']}
+    auto_apply: root_package
+    build_to: cache
+''')
         dep_cfg = root / 'dep/build.yaml'
         dep_cfg.write_text('additional_public_assets: [test/published/**]\n' + dep_cfg.read_text().replace(
             '  $default:\n', '  $default:\n    sources: [lib/**, test/**]\n') +
-            '      build_filter_app:view:\n        enabled: true\n')
-        (root / 'dep/lib/view.probe').write_text('a\n')
+            '      build_filter_app:view:\n        enabled: true\n' +
+            '      build_filter_app:private_seed:\n        enabled: true\n')
+        for path in ('lib/view.probe', 'dep/lib/view.probe'):
+            (root / path).write_text('a\nprivate-outputs\n')
         (root / 'dep/test/published').mkdir(parents=True)
         (root / 'dep/test/a.txt').write_text('private dependency input\n')
         (root / 'dep/test/published/a.txt').write_text('published dependency input\n')
@@ -360,6 +369,9 @@ def dependency_glob(tmp):
 
     def check_dependency_visibility(published):
         result = outputs(native)
+        expected_private = b'filter_dep|test/a.post:false:<invalid>'
+        assert expected_private in result['cache/filter_dep/test/a.post']
+        assert expected_private in result['cache/filter_dep/lib/view.final']
         for suffix in ('mid', 'side', 'final'):
             assert f'cache/filter_dep/test/a.{suffix}' not in result
             assert (f'cache/filter_dep/test/published/a.{suffix}' in result) == published
@@ -376,11 +388,12 @@ def dependency_glob(tmp):
     check_dependency_visibility(True)
     assert history(native)['filter_dep|test/a.txt'] == 0
     assert history(native)['filter_dep|test/published/a.txt'] == 1
+    assert history(native)['private_seed|filter_dep|lib/a.txt'] == 1
     assert check(stock, native) == Counter()
     for root in (stock, native):
         (root / 'dep/lib/new.txt').write_text('glob addition\n')
         (root / 'dep/test/published/a.txt').write_text('published dependency input edited\n')
-    check(stock, native)
+    check(stock, native, ['--build-filter=lib/view.final,package:filter_dep/view.final'])
     check_dependency_visibility(True)
     for root in (stock, native):
         (root / 'dep/lib/new.txt').unlink()

@@ -183,7 +183,7 @@ pub(crate) fn run_with_config_session(
     )?;
     drop(dirty);
     let no_work = !dirty_plan.has_work();
-    if no_work && !state.config_digest.is_empty() {
+    if no_work && !state.config_digest.is_empty() && !state.was_filtered {
         println!("No work to do (Rust frontend)");
         let graph_metrics = commit::save_no_work(
             &mut state,
@@ -221,11 +221,24 @@ pub(crate) fn run_with_config_session(
     )?;
     drop(executing);
     let execution::ExecutionResult {
-        transaction,
+        mut transaction,
         expected_outputs,
         pool_metrics,
         part_filtered_actions,
     } = execution;
+    if state.was_filtered {
+        let _reconcile = crate::wall::Span::new("cache_reconcile");
+        for package in &scanned_packages {
+            for (asset, _) in workspace.list_cached_package_assets(package)? {
+                if state.output_locations.get(&asset) != Some(&true) {
+                    transaction
+                        .pending_location_deletions
+                        .push((crate::builder::BuildTo::Cache, asset));
+                }
+            }
+        }
+        state.was_filtered = false;
+    }
     let mut generated_assets: std::collections::BTreeSet<String> =
         state.output_locations.keys().cloned().collect();
     generated_assets.extend(state.watch_generated_sources.iter().cloned());

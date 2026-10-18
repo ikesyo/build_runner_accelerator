@@ -136,7 +136,9 @@ class RemoteBuilderFilesystem extends BuilderFilesystem {
     required BuildPackages buildPackages,
     required RemoteBuildState buildState,
     required RemoteAssetReaderWriter readerWriter,
+    required Map<String, List<Glob>> inputRestrictions,
   }) : _remoteReaderWriter = readerWriter,
+       _inputRestrictions = inputRestrictions,
        super(
          buildPackages: buildPackages,
          // The Rust planner supplies the action graph; this intentionally
@@ -150,6 +152,7 @@ class RemoteBuilderFilesystem extends BuilderFilesystem {
        );
 
   final RemoteAssetReaderWriter _remoteReaderWriter;
+  final Map<String, List<Glob>> _inputRestrictions;
 
   void Function(AssetId, AssetContent?)? _contentListener;
 
@@ -227,9 +230,13 @@ class RemoteBuilderFilesystem extends BuilderFilesystem {
     if (buildPackages[id.package] == null) {
       throw PackageNotFoundException(id.package);
     }
-    // Rust owns the source/output index and visibility rules. The Dart
-    // BuildConfigs adapter is intentionally empty, so its normal input-glob
-    // check would reject readable source parts before the remote RPC runs.
+    final patterns = _inputRestrictions[id.package];
+    if (patterns != null && !patterns.any((glob) => glob.matches(id.path))) {
+      throw InvalidInputException(
+        id,
+        allowedGlobs: [for (final glob in patterns) glob.pattern],
+      );
+    }
   }
 
   /// The build plan declares no outputs, so the inherited implementation
@@ -281,9 +288,9 @@ class RemoteBuilderFilesystem extends BuilderFilesystem {
       rethrow;
     }
     if (Placeholders.isPlaceholderPath(id.path)) return false;
-    return _remoteReaderWriter.isReadable(
+    return _remoteReaderWriter.canRead(
       id,
-      catchInvalidInputs: catchInvalidInputs,
+      inArtifactTree: buildState.isInArtifactTree(id),
     );
   }
 
