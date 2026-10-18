@@ -83,6 +83,10 @@ Run the closest comparison script when changing a boundary:
 | Nested path packages and source visibility | `bash scripts/correctness_nested_packages.sh` |
 | Manifest or builder output | The relevant fixture script; see the full verification groups. |
 
+Nested-package checks accept comma-separated `NESTED_PACKAGE_CASE_GROUP` values
+(for example, `default-on,modes`); unset runs every case. CI distributes these
+cases across the existing build-filter parallel lanes using measured durations.
+
 The CI workflow runs the same checks in functional groups:
 
 | Group | Coverage |

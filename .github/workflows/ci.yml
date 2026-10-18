@@ -106,27 +106,39 @@ jobs:
   integration-build-filter:
     name: 'Integration: build-filter (${{ matrix.id }})'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         include:
           - id: selection
             first: selection-source
+            nested-first: 'default-on,modes'
             second: selection-cache
+            nested-second: 'default-off'
             third: selection-packages
+            nested-third: 'narrow'
           - id: graph
             first: glob
+            nested-first: 'recovery-state'
             second: resolver
+            nested-second: ''
             third: state
+            nested-third: 'recovery-actions'
           - id: fallback
             first: fallback-optional-post
+            nested-first: 'explicit-cache,boundary'
             second: fallback-zero-trigger
+            nested-second: 'source,glob'
             third: routing
+            nested-third: ''
           - id: watch
             first: watch-source
+            nested-first: ''
             second: watch-cache
+            nested-second: 'watch-native'
             third: watch-classification
+            nested-third: 'watch-boundary'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
@@ -157,18 +169,30 @@ jobs:
           - name: 'Build-filter: ${{ matrix.first }}'
             env:
               BUILD_FILTER_CASE_GROUP: ${{ matrix.first }}
-            run: bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP: ${{ matrix.nested-first }}
+            run: |
+              bash scripts/correctness_build_filter.sh
+              if [[ -n "$NESTED_PACKAGE_CASE_GROUP" ]]; then
+                bash scripts/correctness_nested_packages.sh
+              fi
           - name: 'Build-filter: ${{ matrix.second }}'
             env:
               BUILD_FILTER_CASE_GROUP: ${{ matrix.second }}
-            run: bash scripts/correctness_build_filter.sh
-          - name: 'Build-filter: ${{ matrix.third }} and nested package sources'
-            env:
-              BUILD_FILTER_CASE_GROUP: ${{ matrix.third }}
-              NESTED_PACKAGE_CASE_GROUP: ${{ matrix.id == 'selection' && 'defaults' || matrix.id == 'fallback' && 'explicit' || matrix.id == 'graph' && 'recovery' || 'watch' }}
+              NESTED_PACKAGE_CASE_GROUP: ${{ matrix.nested-second }}
             run: |
               bash scripts/correctness_build_filter.sh
-              bash scripts/correctness_nested_packages.sh
+              if [[ -n "$NESTED_PACKAGE_CASE_GROUP" ]]; then
+                bash scripts/correctness_nested_packages.sh
+              fi
+          - name: 'Build-filter: ${{ matrix.third }}'
+            env:
+              BUILD_FILTER_CASE_GROUP: ${{ matrix.third }}
+              NESTED_PACKAGE_CASE_GROUP: ${{ matrix.nested-third }}
+            run: |
+              bash scripts/correctness_build_filter.sh
+              if [[ -n "$NESTED_PACKAGE_CASE_GROUP" ]]; then
+                bash scripts/correctness_nested_packages.sh
+              fi
 
   integration-baseline:
     name: 'Integration: baseline smoke'

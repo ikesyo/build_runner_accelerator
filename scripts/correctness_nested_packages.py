@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Stock/native nested path-package source selection and transactional lifecycle."""
 from collections import Counter
+from functools import partial
 from pathlib import Path
 import os
 import shutil
@@ -314,32 +315,34 @@ def modes(tmp):
     print('nested-packages: PASS auto/dart mode selection', flush=True)
 
 
+def case_groups(tmp):
+    return {
+        'default-on': (partial(lifecycle, tmp, 'default', True, 'cache'),),
+        'default-off': (partial(lifecycle, tmp, 'default', False, 'cache'),),
+        'narrow': tuple(partial(lifecycle, tmp, 'lib/**', enabled, 'cache') for enabled in (True, False)),
+        'explicit-cache': tuple(partial(lifecycle, tmp, 'overlap', enabled, 'cache') for enabled in (True, False)),
+        'source': tuple(partial(lifecycle, tmp, sources, False, 'source') for sources in ('default', 'overlap')),
+        'glob': (partial(dependency_glob, tmp),),
+        'boundary': (partial(implementation_sources_boundary, tmp),),
+        'modes': (partial(modes, tmp),),
+        'recovery-state': tuple(partial(obsolete_state, tmp, location) for location in ('cache', 'source')),
+        'recovery-actions': (partial(failure_and_cancel, tmp), partial(builder_transition, tmp)),
+        'watch-native': (partial(watch_lifecycle, tmp, input_path='dep/lib/build/.new.txt'),
+                         partial(watch_lifecycle, tmp, 'lib/**')),
+        'watch-boundary': (partial(watch_lifecycle, tmp, 'overlap', overlap=True),
+                           partial(watch_lifecycle, tmp, '**', excluded=True)),
+    }
+
+
 def main():
     tmp = Path(tempfile.mkdtemp(prefix='accelerator-nested-'))
     try:
-        group = os.environ.get('NESTED_PACKAGE_CASE_GROUP', 'all')
-        assert group in ('all', 'lifecycle', 'defaults', 'explicit', 'recovery', 'watch'), group
-        if group in ('all', 'lifecycle', 'defaults', 'explicit'):
-            source_cases = ('overlap',) if group == 'explicit' else ('default', 'lib/**') if group == 'defaults' else ('default', 'lib/**', 'overlap')
-            for sources in source_cases:
-                for enabled in (True, False):
-                    lifecycle(tmp, sources, enabled, 'cache')
-            if group != 'defaults':
-                lifecycle(tmp, 'default', False, 'source')
-                lifecycle(tmp, 'overlap', False, 'source')
-                dependency_glob(tmp)
-                implementation_sources_boundary(tmp)
-            if group != 'explicit': modes(tmp)
-        if group in ('all', 'recovery'):
-            for location in ('cache', 'source'):
-                obsolete_state(tmp, location)
-            failure_and_cancel(tmp)
-            builder_transition(tmp)
-        if group in ('all', 'watch'):
-            watch_lifecycle(tmp, input_path='dep/lib/build/.new.txt')
-            watch_lifecycle(tmp, 'lib/**')
-            watch_lifecycle(tmp, 'overlap', overlap=True)
-            watch_lifecycle(tmp, '**', excluded=True)
+        groups = case_groups(tmp)
+        selection = os.environ.get('NESTED_PACKAGE_CASE_GROUP', 'all')
+        selected = tuple(groups) if selection == 'all' else tuple(selection.split(','))
+        assert len(set(selected)) == len(selected) and set(selected) <= groups.keys(), selection
+        for group in selected:
+            for case in groups[group]: case()
     except BaseException:
         print(f'nested-packages: retaining failure fixture {tmp}', file=sys.stderr)
         raise
