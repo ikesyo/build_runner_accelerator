@@ -104,11 +104,15 @@ def worker_metrics(output):
     return {key: int(value) for key, value in fields.items()}
 
 
-def prepare(root):
+def copy_fixture(root):
     shutil.copytree(REPO / 'fixtures/build_filter_app', root,
                     ignore=shutil.ignore_patterns('.dart_tool', '.cache', '.pub-cache', '*.mid', '*.side', '*.final', '*.ignored', 'history.log'))
     file = root / 'pubspec.yaml'
     file.write_text(file.read_text().replace('path: ../..', f'path: {REPO}'))
+
+
+def prepare(root):
+    copy_fixture(root)
     code, log = execute([DART, 'pub', 'get', '--offline'], root)
     assert code == 0, log
 

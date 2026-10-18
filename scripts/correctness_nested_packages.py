@@ -10,13 +10,13 @@ import struct
 import subprocess
 import tempfile
 from correctness_build_filter import (
-    DART, prepare, execute, launcher, outputs, history,
+    DART, copy_fixture, execute, launcher, outputs, history,
     history_path, check, watch, wait, stop_all, fixture_env,
 )
 
 
 def setup(root, sources='default', enabled=True, location='cache'):
-    prepare(root)
+    copy_fixture(root)
     dep = root / 'dep'
     (dep / 'lib').mkdir(parents=True)
     (dep / 'pubspec.yaml').write_text('name: filter_dep\nenvironment:\n  sdk: ">=3.11.0 <4.0.0"\n')
@@ -75,8 +75,9 @@ def lifecycle(tmp, sources, enabled, location):
     for root in (stock, native): (root / 'dep/lib/new.txt').unlink()
     check(stock, native)
     assert check(stock, native) == Counter()
-    define = ['--define=:finish=glob_names=true'] if sources == 'default' and enabled and location == 'cache' else []
-    if define:
+    cold_recovery = sources == 'default' and enabled and location == 'cache'
+    define = ['--define=:finish=glob_names=true'] if cold_recovery else []
+    if cold_recovery:
         # A fresh graph with existing cache files must not revive removed aliases.
         for root in (stock, native):
             state = root / '.dart_tool' / ('build' if root == stock else 'build_runner_accelerator')

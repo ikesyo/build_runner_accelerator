@@ -37,16 +37,7 @@ fn filtered_glob_members(
         .find_assets(package, pattern)?
         .into_iter()
         .collect();
-    candidates.extend(
-        visibility
-            .generated_assets(package, pattern)
-            .filter(|asset| {
-                asset
-                    .split_once('|')
-                    .is_some_and(|(pkg, path)| pkg == package && matches_glob(pattern, path))
-            })
-            .cloned(),
-    );
+    candidates.extend(visibility.generated_assets(package, pattern).cloned());
     candidates.extend(
         glob_candidates(overlay, package, pattern)
             .filter(|asset| {

@@ -233,33 +233,28 @@ impl WorkerClient {
                     .get("pattern")
                     .and_then(Value::as_str)
                     .unwrap_or("**");
-                let mut assets = Vec::new();
-                let candidates = workspace.find_assets(package, pattern)?;
-                for asset in candidates.into_iter().chain(
-                    visibility
-                        .generated_assets(package, pattern)
+                let mut candidates: BTreeSet<_> = workspace
+                    .find_assets(package, pattern)?
+                    .into_iter()
+                    .chain(visibility.generated_assets(package, pattern).cloned())
+                    .collect();
+                candidates.extend(
+                    glob_candidates(overlay, package, pattern)
                         .filter(|asset| {
-                            asset.split_once('|').is_some_and(|(p, path)| {
-                                p == package && matches_glob(pattern, path)
+                            asset.split_once('|').is_some_and(|(pkg, path)| {
+                                pkg == package && matches_glob(pattern, path)
                             })
                         })
                         .cloned(),
-                ) {
+                );
+                let mut assets = Vec::new();
+                for asset in candidates {
                     if visibility.is_blocked(asset.as_str(), phase, kind, deleted_overlay)
                         || !asset_exists(workspace, &asset, overlay, visibility)?
                     {
                         continue;
                     }
                     assets.push(asset);
-                }
-                for asset in glob_candidates(overlay, package, pattern) {
-                    if !visibility.is_blocked(asset, phase, kind, deleted_overlay)
-                        && let Some((asset_package, asset_path)) = asset.split_once('|')
-                        && asset_package == package
-                        && matches_glob(pattern, asset_path)
-                    {
-                        assets.push(asset.clone());
-                    }
                 }
                 // Preserve stock glob membership order in ordinary results as
                 // well, so an unfiltered -> filtered build can reuse them.
@@ -270,7 +265,6 @@ impl WorkerClient {
                         .cmp(&visibility.location(b).is_some())
                         .then_with(|| a.encode_utf16().cmp(b.encode_utf16()))
                 });
-                assets.dedup();
                 self.metrics.find_assets_results += assets.len() as u64;
                 json!({ "v": 1, "type": "asset_response", "id": id, "ok": true, "assets": assets })
             }
