@@ -413,7 +413,8 @@ class NestedView implements Builder {
       AssetId('filter_dep', 'test/published/$name.txt'),
       if (lines.contains('private-outputs')) ...[
         AssetId('filter_dep', 'lib/src/$name.txt'),
-        ...await step.findAssets(Glob('test/**.post')).toList(),
+        ...(await step.findAssets(Glob('test/**.post')).toList()
+          ..sort((a, b) => a.toString().compareTo(b.toString()))),
       ],
     ]) {
       result.add(await _probeRead(step, asset));
