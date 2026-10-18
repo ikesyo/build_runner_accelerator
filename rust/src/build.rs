@@ -228,7 +228,7 @@ pub(crate) fn run_with_config_session(
     } = execution;
     if state.was_filtered {
         let _reconcile = crate::wall::Span::new("cache_reconcile");
-        for package in &scanned_packages {
+        for (package, _) in workspace.packages() {
             for (asset, _) in workspace.list_cached_package_assets(package)? {
                 if state.output_locations.get(&asset) != Some(&true) {
                     transaction

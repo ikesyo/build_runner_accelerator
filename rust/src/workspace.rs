@@ -717,12 +717,78 @@ pub fn matches_glob(pattern: &str, path: &str) -> bool {
     if !path.starts_with(glob_literal_prefix(pattern)) {
         return false;
     }
-    if !pattern.split('/').any(|segment| segment == "**") {
+    if pattern
+        .split('/')
+        .any(|segment| segment != "**" && segment.contains("**"))
+    {
+        let (prefix, suffix) = pattern.split_once("**").expect("recursive wildcard");
+        if !prefix.contains(['*', '?']) && !suffix.contains(['*', '?']) {
+            return path.len() >= prefix.len() + suffix.len()
+                && path.starts_with(prefix)
+                && path.ends_with(suffix);
+        }
+        return matches_recursive_glob(pattern, path);
+    }
+    if pattern.contains('?') && path.chars().any(|character| character.len_utf16() > 1) {
+        return matches_recursive_glob(pattern, path);
+    }
+    if !pattern.contains("**") {
         return matches_non_recursive_glob(pattern, path);
     }
     let pattern_segments: Vec<&str> = pattern.split('/').collect();
     let path_segments: Vec<&str> = path.split('/').collect();
     glob_segments(&pattern_segments, &path_segments)
+}
+
+fn matches_recursive_glob(pattern: &str, path: &str) -> bool {
+    const STAR: u16 = b'*' as u16;
+    const SLASH: u16 = b'/' as u16;
+    const QUESTION: u16 = b'?' as u16;
+    // Dart globs count UTF-16 units. Two rolling rows bound memory to path length.
+    let pattern: Vec<_> = pattern.encode_utf16().collect();
+    let path: Vec<_> = path.encode_utf16().collect();
+    let mut previous = vec![false; path.len() + 1];
+    let mut current = vec![false; path.len() + 1];
+    previous[0] = true;
+    let mut index = 0;
+    while index < pattern.len() {
+        current.fill(false);
+        let token = pattern[index];
+        if token == STAR {
+            let recursive = pattern.get(index + 1) == Some(&STAR);
+            let directory = recursive
+                && (index == 0 || pattern[index - 1] == SLASH)
+                && pattern.get(index + 2) == Some(&SLASH);
+            if directory {
+                let mut reachable = false;
+                for end in 0..=path.len() {
+                    reachable |= previous[end];
+                    current[end] =
+                        previous[end] || (end > 0 && path[end - 1] == SLASH && reachable);
+                }
+                index += 3;
+            } else {
+                current[0] = previous[0];
+                for end in 1..=path.len() {
+                    current[end] = previous[end]
+                        || (current[end - 1] && (recursive || path[end - 1] != SLASH));
+                }
+                index += if recursive { 2 } else { 1 };
+            }
+        } else {
+            for end in 1..=path.len() {
+                current[end] = previous[end - 1]
+                    && if token == QUESTION {
+                        path[end - 1] != SLASH
+                    } else {
+                        token == path[end - 1]
+                    };
+            }
+            index += 1;
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[path.len()]
 }
 
 pub fn glob_literal_prefix(pattern: &str) -> &str {
@@ -956,6 +1022,17 @@ mod tests {
 
     #[test]
     fn glob_supports_recursive_and_single_segment_wildcards() {
+        assert!(matches_glob("lib/**.dart", "lib/src/model.dart"));
+        assert!(matches_glob("lib/**.dart", "lib/model.dart"));
+        assert!(!matches_glob("lib/**.dart", "lib/src/model.txt"));
+        assert!(matches_glob("lib/**/a**.dart", "lib/a.dart"));
+        assert!(matches_glob("lib/**/a**.dart", "lib/src/a/b.dart"));
+        assert!(matches_glob("lib/**/a*b**.dart", "lib/aabb/c/ab.dart"));
+        assert!(matches_glob("lib/a**/b.dart", "lib/abc/d/b.dart"));
+        assert!(!matches_glob("lib/a**/b.dart", "lib/b.dart"));
+        assert!(!matches_glob("lib/***/b.dart", "lib/b.dart"));
+        assert!(!matches_glob("lib/?.dart", "lib/😀.dart"));
+        assert!(matches_glob("lib/??.dart", "lib/😀.dart"));
         assert!(matches_glob("lib/**/*.dart", "lib/model.dart"));
         assert!(matches_glob("lib/**/*.dart", "lib/src/model.dart"));
         assert!(matches_glob("lib/*.dart", "lib/model.dart"));

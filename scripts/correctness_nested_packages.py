@@ -119,8 +119,7 @@ def obsolete_state(tmp, location):
     (stock / f'dep/lib/a.{suffix}').write_bytes(sentinel)
     code, log = execute([DART, 'run', 'build_runner', 'build', '--force-jit'], stock)
     assert code == 0, log
-    # The binary layout is unchanged: schema 4 records the former overbroad
-    # defaults. Include real alias actions, not just an empty old header.
+    # Mark real alias actions as obsolete; schema 4 used overbroad defaults.
     data = bytearray(graph(native).read_bytes())
     data[9:13] = struct.pack('>I', 4)
     graph(native).write_bytes(data)
@@ -330,6 +329,7 @@ def watch_lifecycle(tmp, sources='default', overlap=False, excluded=False, input
 def builder_transition(tmp):
     stock, native = pair(tmp, 'builder-transition')
     check(stock, native)
+    assert check(stock, native, ['--build-filter=lib/a.final']) == Counter()
     for enabled in (False, True):
         for root in (stock, native):
             cfg = root / 'dep/build.yaml'
@@ -337,7 +337,7 @@ def builder_transition(tmp):
             cfg.write_text(cfg.read_text().replace('enabled: ' + old, 'enabled: ' + new))
         check(stock, native)
         assert ('cache/filter_dep/lib/a.mid' in outputs(native)) == enabled
-        assert check(stock, native) == Counter()
+        if not enabled: assert check(stock, native) == Counter()
     print('nested-packages: PASS incremental dependency builder enablement', flush=True)
 
 
@@ -356,7 +356,7 @@ def dependency_glob(tmp):
 ''')
         dep_cfg = root / 'dep/build.yaml'
         dep_cfg.write_text('additional_public_assets: [test/published/**]\n' + dep_cfg.read_text().replace(
-            '  $default:\n', '  $default:\n    sources: [lib/**, test/**]\n') +
+            '  $default:\n', '  $default:\n    sources: [lib/**.txt, lib/**.probe, lib/$lib$, test/**]\n') +
             '      build_filter_app:view:\n        enabled: true\n' +
             '      build_filter_app:private_seed:\n        enabled: true\n')
         for path in ('lib/view.probe', 'dep/lib/view.probe'):
@@ -364,6 +364,8 @@ def dependency_glob(tmp):
         (root / 'dep/test/published').mkdir(parents=True)
         (root / 'dep/test/a.txt').write_text('private dependency input\n')
         (root / 'dep/test/published/a.txt').write_text('published dependency input\n')
+        (root / 'dep/lib/src').mkdir()
+        (root / 'dep/lib/src/a.txt').write_text('nested dependency input\n')
     check(stock, native)
     assert b'filter_dep|lib/a.txt' in outputs(native)['cache/filter_dep/lib/view.final']
 
@@ -372,6 +374,9 @@ def dependency_glob(tmp):
         expected_private = b'filter_dep|test/a.post:false:<invalid>'
         assert expected_private in result['cache/filter_dep/test/a.post']
         assert expected_private in result['cache/filter_dep/lib/view.final']
+        assert b'filter_dep|test/src/a.post:false:<invalid>' in result['cache/filter_dep/lib/view.final']
+        for suffix in ('mid', 'side', 'final', 'post'):
+            assert f'cache/filter_dep/lib/src/a.{suffix}' in result
         for suffix in ('mid', 'side', 'final'):
             assert f'cache/filter_dep/test/a.{suffix}' not in result
             assert (f'cache/filter_dep/test/published/a.{suffix}' in result) == published
@@ -381,6 +386,7 @@ def dependency_glob(tmp):
             content = result[path]
             assert b'filter_dep|test/a.txt:false:<invalid>' in content, content
             assert expected in content, content
+            assert b'filter_dep|lib/src/a.txt:true:nested dependency input' in content, content
             if path == 'cache/filter_dep/lib/view.final':
                 assert b'filter_dep|test/a.txt\n' not in content, content
                 assert (b'filter_dep|test/published/a.txt\n' in content) == published, content

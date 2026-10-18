@@ -37,6 +37,8 @@ Generated assets retain the graph's phase/location rules and are added
 to glob candidates from the declared-output index, without scanning orphan
 cache files as sources. Physical package containment does not remove parent
 IDs from one-shot builds.
+Embedded recursive wildcards such as `lib/**.dart` cross directory separators,
+matching Dart glob semantics in source selection and generated-asset queries.
 
 Prune directories using source patterns, rather than unconditionally hiding
 dot-prefixed or `build`/`target` paths. Eligible hidden files are ordinary
@@ -62,7 +64,7 @@ replaces the private artifact tree, removing old extra cache outputs. Failure
 or cancellation before commit preserves that tree and the old graph. The
 existing non-crash-atomic filesystem publication boundary is unchanged.
 Filtered builds record that undemanded cache outputs may be untracked. The
-next ordinary build scans the private cache once and removes untracked files
+next ordinary build scans resolved package caches once and removes untracked files
 at successful commit, before publishing rebuilt outputs; later ordinary
 builds do not repeat that scan. Package-path files are not part of this cleanup.
 

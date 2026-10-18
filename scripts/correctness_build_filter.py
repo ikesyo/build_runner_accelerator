@@ -415,7 +415,7 @@ def legacy_graph(root):
         length = integer(); offset += length
     def strings():
         for _ in range(integer()): string()
-    integer(); string()  # schema/config
+    integer(); string(); offset += 1  # schema/config/filtered marker
     for _ in range(integer()):
         string(); offset += 1; string(); offset += 8
     for _ in range(integer()):
