@@ -75,7 +75,8 @@ def lifecycle(tmp, sources, enabled, location):
     for root in (stock, native): (root / 'dep/lib/new.txt').unlink()
     check(stock, native)
     assert check(stock, native) == Counter()
-    if sources == 'default' and enabled and location == 'cache':
+    define = ['--define=:finish=glob_names=true'] if sources == 'default' and enabled and location == 'cache' else []
+    if define:
         # A fresh graph with existing cache files must not revive removed aliases.
         for root in (stock, native):
             state = root / '.dart_tool' / ('build' if root == stock else 'build_runner_accelerator')
@@ -83,13 +84,14 @@ def lifecycle(tmp, sources, enabled, location):
                 shutil.rmtree(state)
             else:
                 (state / 'graph-v3.bin').unlink()
-        check(stock, native)
-        assert check(stock, native) == Counter()
+        check(stock, native, define)
+        assert check(stock, native, define) == Counter()
     flags = ['--build-filter=lib/a.final,package:filter_dep/a.final'] if location == 'cache' else ['--build-filter=lib/a.final']
+    flags += define
     check(stock, native, flags)
     assert check(stock, native, flags) == Counter()
-    check(stock, native)
-    assert check(stock, native) == Counter()
+    check(stock, native, define)
+    assert check(stock, native, define) == Counter()
     print(f'nested-packages: PASS lifecycle {sources} dependency={enabled} {location}', flush=True)
 
 

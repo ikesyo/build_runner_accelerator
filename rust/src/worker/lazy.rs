@@ -38,6 +38,16 @@ fn filtered_glob_members(
         .into_iter()
         .collect();
     candidates.extend(
+        visibility
+            .generated_assets(package, pattern)
+            .filter(|asset| {
+                asset
+                    .split_once('|')
+                    .is_some_and(|(pkg, path)| pkg == package && matches_glob(pattern, path))
+            })
+            .cloned(),
+    );
+    candidates.extend(
         glob_candidates(overlay, package, pattern)
             .filter(|asset| {
                 asset

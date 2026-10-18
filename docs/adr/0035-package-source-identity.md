@@ -61,7 +61,8 @@ existing non-crash-atomic filesystem publication boundary is unchanged.
 `scripts/correctness_nested_packages.sh` compares real stock/native builds with
 input-controlled output bytes and omission, statuses, builder histories and
 subsequent builds. It covers enabled/disabled dependency builders, source/cache
-chains, filters, clean/incremental state, source listing/read/glob identity,
+chains, filters, cache-glob membership across ordinary/filtered builds,
+clean/incremental state, source listing/read/glob identity,
 watch changes/restarts and mode routing, obsolete alias records, dependency file
 preservation, failure and cancellation. Existing filter and upgrade suites
 continue to cover their broader state contracts.
