@@ -240,10 +240,43 @@ def assert_watch_ignores_outside_sources(roots, handles):
             assert history(root) == before_history
 
 
+def read_barrier_env(root):
+    return {f'BUILD_FILTER_READ_BARRIER_{name.upper()}': str(root.parent / f'{root.name}-{name}')
+            for name in ('arm', 'reached', 'release')}
+
+
+def watch_recovers_removed_source_output(roots, handles):
+    for index, (root, handle) in enumerate(zip(roots, handles)):
+        env = read_barrier_env(root)
+        arm, reached, release = (Path(env[f'BUILD_FILTER_READ_BARRIER_{name}'])
+                                 for name in ('ARM', 'REACHED', 'RELEASE'))
+        output = root / 'lib/view.final'
+        expected = output.read_bytes()
+        marker = 'Built with build_runner' if index == 0 else 'Build completed (Rust frontend)'
+        old = handle[1].read_text().count(marker)
+        arm.write_text('pause after reading common.side')
+        (root / 'dep/lib/common.txt').write_text('changed during watch build\n')
+        try:
+            wait(reached.exists, handle[0], handle[1])
+            output.unlink()
+        finally:
+            release.write_text('continue build')
+        wait(lambda: output.exists() and output.read_bytes() == expected
+             and handle[1].read_text().count(marker) >= old + 2,
+             handle[0], handle[1], timeout=20)
+    assert outputs(roots[0]) == outputs(roots[1])
+    assert history(roots[0]) == history(roots[1])
+
+
 def watch_lifecycle(tmp, sources='default', overlap=False, excluded=False, input_path='dep/lib/new.txt'):
     name = 'overlap' if overlap else 'excluded' if excluded else sources.replace('/', '_').replace('*', 'all')
     stock, native = pair(tmp, 'watch-' + name, sources=sources)
     for root in (stock, native): (root / input_path).parent.mkdir(parents=True, exist_ok=True)
+    if sources == 'lib/**':
+        for root in (stock, native):
+            cfg = root / 'build.yaml'
+            cfg.write_text(cfg.read_text().replace('sources: ["lib/**"]',
+                'sources: {include: ["lib/**"], exclude: ["lib/view.final"]}'))
     if excluded:
         for root in (stock, native):
             cfg = root / 'build.yaml'
@@ -253,14 +286,15 @@ def watch_lifecycle(tmp, sources='default', overlap=False, excluded=False, input
         assert code != 0 and 'watch source sets may overlap' in log, (code, log)
         assert not graph(native).exists() and outputs(native) == {}
     def start(root, stock_lane):
+        env = read_barrier_env(root) if sources == 'lib/**' else None
         if stock_lane or overlap:
             command = None if stock_lane else launcher(root, 'auto', 'watch', ['--force-jit'])
-            handle = watch(root, 'stock', (), command=command)
+            handle = watch(root, 'stock', (), command=command, extra_env=env)
             if not stock_lane:
                 assert 'using Dart fallback' in handle[1].read_text()
                 assert not graph(root).exists()
             return handle
-        return watch(root, 'rust', ())
+        return watch(root, 'rust', (), extra_env=env)
     handles = []
     try:
         for root in (stock, native): handles.append(start(root, root == stock))
@@ -276,6 +310,7 @@ def watch_lifecycle(tmp, sources='default', overlap=False, excluded=False, input
                 wait(lambda h=handle, n=old, m=marker: h[1].read_text().count(m) > n, handle[0], handle[1])
             assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
         assert history(stock) == history(native), (history(stock), history(native))
+        if sources == 'lib/**': watch_recovers_removed_source_output((stock, native), handles)
     finally:
         stop_all(handles)
     handles = []

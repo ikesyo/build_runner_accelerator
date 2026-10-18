@@ -597,7 +597,9 @@ fn is_relevant_event(
         }
         let asset = format!("{package}|{relative}");
         if !workspace.is_source_path(package, &relative)
-            && !previous_state.is_some_and(|state| state.assets.contains_key(&asset))
+            && !previous_state.is_some_and(|state| {
+                state.assets.contains_key(&asset) || state.output_locations.contains_key(&asset)
+            })
         {
             return false;
         }
@@ -725,6 +727,9 @@ mod manifest_tests {
                 size: 9,
             },
         );
+        state
+            .output_locations
+            .insert("app|generated/location-only.final".into(), false);
         for kind in [
             EventKind::Create(notify::event::CreateKind::File),
             EventKind::Modify(ModifyKind::Any),
@@ -747,6 +752,7 @@ mod manifest_tests {
                     false,
                 ),
                 ("generated/out.final", true),
+                ("generated/location-only.final", true),
                 ("generated/untracked.final", false),
             ] {
                 let event = Event::new(kind).add_path(root.join(relative));
