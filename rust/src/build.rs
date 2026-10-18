@@ -182,7 +182,8 @@ pub(crate) fn run_with_config_session(
         &mut filesystem_metrics,
     )?;
     drop(dirty);
-    if !dirty_plan.has_work() && !state.config_digest.is_empty() {
+    let no_work = !dirty_plan.has_work();
+    if no_work && !state.config_digest.is_empty() {
         println!("No work to do (Rust frontend)");
         let graph_metrics = commit::save_no_work(
             &mut state,
@@ -271,7 +272,11 @@ pub(crate) fn run_with_config_session(
             eprintln!("part_filtered={part_filtered_actions}");
         }
     }
-    println!("Build completed (Rust frontend)");
+    if no_work {
+        println!("No work to do (Rust frontend)");
+    } else {
+        println!("Build completed (Rust frontend)");
+    }
     Ok(())
 }
 
