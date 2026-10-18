@@ -281,9 +281,9 @@ class RemoteBuilderFilesystem extends BuilderFilesystem {
       rethrow;
     }
     if (Placeholders.isPlaceholderPath(id.path)) return false;
-    return _remoteReaderWriter.canRead(
+    return _remoteReaderWriter.isReadable(
       id,
-      inArtifactTree: buildState.isInArtifactTree(id),
+      catchInvalidInputs: catchInvalidInputs,
     );
   }
 

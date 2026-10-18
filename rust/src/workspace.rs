@@ -317,6 +317,12 @@ impl Workspace {
         fs::read(self.source_path_for_asset(asset)?)
     }
 
+    pub(crate) fn invalid_input_globs(&self, asset: &str) -> Option<&[String]> {
+        let (package, path) = split_asset(asset).ok()?;
+        let patterns = self.sources.get()?.get(package)?.public_assets.as_deref()?;
+        (!patterns.iter().any(|pattern| matches_glob(pattern, path))).then_some(patterns)
+    }
+
     pub fn cache_path_for_asset(&self, asset: &str) -> io::Result<PathBuf> {
         let (package, path) = split_asset(asset)?;
         validate_relative_path(path)?;

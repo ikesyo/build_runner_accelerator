@@ -971,6 +971,7 @@ impl WorkerClient {
             }
             "read" | "can_read" => {
                 if let Some(asset) = request.get("asset").and_then(Value::as_str)
+                    && workspace.invalid_input_globs(asset).is_none()
                     && let Err(error) = self.ensure_optional_output(
                         workspace,
                         asset,

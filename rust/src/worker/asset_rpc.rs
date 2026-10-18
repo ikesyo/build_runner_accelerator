@@ -64,7 +64,9 @@ impl WorkerClient {
                 // absolute path so the worker reads the bytes itself; the
                 // visibility and overlay decisions stay on the frontend. Only
                 // in-memory overlay values travel as binary payloads.
-                let read_result = if visibility.is_blocked(asset, phase, kind, deleted_overlay) {
+                let read_result = if workspace.invalid_input_globs(asset).is_some()
+                    || visibility.is_blocked(asset, phase, kind, deleted_overlay)
+                {
                     Err(io::Error::new(
                         io::ErrorKind::NotFound,
                         format!("asset not found: {asset}"),
@@ -143,6 +145,7 @@ impl WorkerClient {
                 for raw in assets {
                     let asset = raw.as_str().unwrap_or_default();
                     if asset.is_empty()
+                        || workspace.invalid_input_globs(asset).is_some()
                         || visibility.is_blocked(asset, phase, kind, deleted_overlay)
                     {
                         resolved.push(json!({"status": "not_found"}));
@@ -203,7 +206,9 @@ impl WorkerClient {
                     .get("asset")
                     .and_then(Value::as_str)
                     .ok_or_else(|| io::Error::other("can_read request has no asset"))?;
-                let blocked = visibility.is_blocked(asset, phase, kind, deleted_overlay);
+                let invalid_input = workspace.invalid_input_globs(asset);
+                let blocked = invalid_input.is_some()
+                    || visibility.is_blocked(asset, phase, kind, deleted_overlay);
                 let value = if blocked {
                     false
                 } else if overlay.contains_key(asset) {
@@ -221,7 +226,7 @@ impl WorkerClient {
                 } else {
                     asset_exists(workspace, asset, overlay, visibility)?
                 };
-                json!({ "v": 1, "type": "asset_response", "id": id, "ok": true, "value": value })
+                json!({ "v": 1, "type": "asset_response", "id": id, "ok": true, "value": value, "invalid_input": invalid_input })
             }
             "find_assets" => {
                 self.metrics.find_assets_requests += 1;

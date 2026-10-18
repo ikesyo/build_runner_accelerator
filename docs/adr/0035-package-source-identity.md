@@ -27,7 +27,10 @@ from manifest compilation: test the lightweight default lists against stock's
 constants. Explicit empty target sources remain empty.
 
 Workspace source enumeration, snapshots, reads and globs use the same source
-sets. Generated assets retain the graph's phase/location rules and are added
+sets. Dependency public patterns restrict inputs even for that dependency's
+own builders. `canRead` returns false outside those patterns; explicit reads
+throw stock's `InvalidInputException`, rather than reporting a missing source.
+Generated assets retain the graph's phase/location rules and are added
 to glob candidates from the declared-output index, without scanning orphan
 cache files as sources. Physical package containment does not remove parent
 IDs from one-shot builds.

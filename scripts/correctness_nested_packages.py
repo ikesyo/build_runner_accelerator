@@ -348,15 +348,45 @@ def dependency_glob(tmp):
         head, view = cfg.read_text().split('  view:')
         cfg.write_text(head + '  view:' + view.replace('build_to: source', 'build_to: cache'))
         dep_cfg = root / 'dep/build.yaml'
-        dep_cfg.write_text(dep_cfg.read_text() + '      build_filter_app:view:\n        enabled: true\n')
+        dep_cfg.write_text('additional_public_assets: [test/published/**]\n' + dep_cfg.read_text().replace(
+            '  $default:\n', '  $default:\n    sources: [lib/**, test/**]\n') +
+            '      build_filter_app:view:\n        enabled: true\n')
         (root / 'dep/lib/view.probe').write_text('a\n')
+        (root / 'dep/test/published').mkdir(parents=True)
+        (root / 'dep/test/a.txt').write_text('private dependency input\n')
+        (root / 'dep/test/published/a.txt').write_text('published dependency input\n')
     check(stock, native)
     assert b'filter_dep|lib/a.txt' in outputs(native)['cache/filter_dep/lib/view.final']
+
+    def check_dependency_visibility(published):
+        result = outputs(native)
+        for suffix in ('mid', 'side', 'final'):
+            assert f'cache/filter_dep/test/a.{suffix}' not in result
+            assert (f'cache/filter_dep/test/published/a.{suffix}' in result) == published
+        expected = (b'filter_dep|test/published/a.txt:true:published dependency input' if published
+                    else b'filter_dep|test/published/a.txt:false:<missing>')
+        for path in ('cache/filter_dep/lib/view.final', 'cache/build_filter_app/lib/view.final'):
+            content = result[path]
+            assert b'filter_dep|test/a.txt:false:<invalid>' in content, content
+            assert expected in content, content
+            if path == 'cache/filter_dep/lib/view.final':
+                assert b'filter_dep|test/a.txt\n' not in content, content
+                assert (b'filter_dep|test/published/a.txt\n' in content) == published, content
+
+    check_dependency_visibility(True)
+    assert history(native)['filter_dep|test/a.txt'] == 0
+    assert history(native)['filter_dep|test/published/a.txt'] == 1
     assert check(stock, native) == Counter()
-    for root in (stock, native): (root / 'dep/lib/new.txt').write_text('glob addition\n')
+    for root in (stock, native):
+        (root / 'dep/lib/new.txt').write_text('glob addition\n')
+        (root / 'dep/test/published/a.txt').write_text('published dependency input edited\n')
     check(stock, native)
-    for root in (stock, native): (root / 'dep/lib/new.txt').unlink()
+    check_dependency_visibility(True)
+    for root in (stock, native):
+        (root / 'dep/lib/new.txt').unlink()
+        (root / 'dep/test/published/a.txt').unlink()
     check(stock, native)
+    check_dependency_visibility(False)
     assert check(stock, native) == Counter()
     print('nested-packages: PASS dependency-package glob/read identity', flush=True)
 

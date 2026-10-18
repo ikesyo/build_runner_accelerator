@@ -375,11 +375,15 @@ class NestedView implements Builder {
     for (final asset in [
       AssetId('build_filter_app', 'dep/lib/$name.txt'),
       AssetId('filter_dep', 'lib/$name.txt'),
+      AssetId('filter_dep', 'test/$name.txt'),
+      AssetId('filter_dep', 'test/published/$name.txt'),
     ]) {
       final readable = await step.canRead(asset);
       String content;
       try {
         content = await step.readAsString(asset);
+      } on InvalidInputException {
+        content = '<invalid>';
       } on AssetNotFoundException {
         content = '<missing>';
       }
