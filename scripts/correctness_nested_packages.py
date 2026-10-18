@@ -9,6 +9,7 @@ import sys
 import struct
 import subprocess
 import tempfile
+import time
 from correctness_build_filter import (
     DART, copy_fixture, execute, launcher, outputs, history,
     history_path, check, watch, wait, stop_all, fixture_env,
@@ -216,6 +217,29 @@ def failure_and_cancel(tmp):
     print('nested-packages: PASS failure/cancellation and subsequent builds', flush=True)
 
 
+def assert_watch_ignores_outside_sources(roots, handles):
+    positions = [handle[1].stat().st_size for handle in handles]
+    before_outputs = outputs(roots[0])
+    before_history = history(roots[0])
+    for value in ('created', 'edited', None):
+        for root in roots:
+            for folder in ('.git', 'build', 'target'):
+                path = root / folder / 'watch-unrelated.txt'
+                path.parent.mkdir(exist_ok=True)
+                if value is None: path.unlink()
+                else: path.write_text(value)
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            for (proc, log, _), position in zip(handles, positions):
+                assert proc.poll() is None, log.read_text()
+                added = log.read_text()[position:]
+                assert 'Change detected; rebuilding' not in added and 'Built with build_runner' not in added, added
+            time.sleep(.05)
+        for root in roots:
+            assert outputs(root) == before_outputs
+            assert history(root) == before_history
+
+
 def watch_lifecycle(tmp, sources='default', overlap=False, excluded=False, input_path='dep/lib/new.txt'):
     name = 'overlap' if overlap else 'excluded' if excluded else sources.replace('/', '_').replace('*', 'all')
     stock, native = pair(tmp, 'watch-' + name, sources=sources)
@@ -241,6 +265,7 @@ def watch_lifecycle(tmp, sources='default', overlap=False, excluded=False, input
     try:
         for root in (stock, native): handles.append(start(root, root == stock))
         assert outputs(stock) == outputs(native)
+        if sources == 'default': assert_watch_ignores_outside_sources((stock, native), handles)
         for relative, value in [(input_path, 'watch add\n'), (input_path, 'watch edit\n'), (input_path, None)]:
             for root, handle in zip((stock, native), handles):
                 old = handle[1].read_text().count('Built with build_runner' if root == stock or overlap else 'Build completed (Rust frontend)')
@@ -261,6 +286,7 @@ def watch_lifecycle(tmp, sources='default', overlap=False, excluded=False, input
         assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
         assert history(stock) == history(native), (history(stock), history(native))
         if not overlap: assert history(native) == Counter(), history(native)
+        if sources == 'default': assert_watch_ignores_outside_sources((stock, native), handles)
     finally:
         stop_all(handles)
     print(f'nested-packages: PASS watch {name} add/edit/delete/restart', flush=True)

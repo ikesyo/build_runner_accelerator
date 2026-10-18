@@ -226,6 +226,12 @@ impl Workspace {
             })
     }
 
+    pub(crate) fn packages(&self) -> impl Iterator<Item = (&str, &Path)> {
+        self.packages
+            .iter()
+            .map(|(package, root)| (package.as_str(), root.as_path()))
+    }
+
     pub fn package_roots(&self) -> Vec<PathBuf> {
         let mut roots = self.packages.values().cloned().collect::<Vec<_>>();
         roots.sort();
@@ -299,7 +305,7 @@ impl Workspace {
         self.path_for_asset(asset)
     }
 
-    fn is_source_path(&self, package: &str, path: &str) -> bool {
+    pub(crate) fn is_source_path(&self, package: &str, path: &str) -> bool {
         self.sources.get().is_none_or(|sources| {
             sources
                 .get(package)

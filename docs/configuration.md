@@ -47,6 +47,8 @@ An arbitrary nested dependency directory such as `dep/` is outside those
 root defaults. Dependency assets still use their own package ID even when
 no builder is enabled there. Source listing, explicit reads and globs respect
 all target source sets and dependency public-asset restrictions.
+Watch ignores events outside those source sets unless they affect build
+configuration or graph-tracked assets.
 
 An explicit root `sources: ['**']` includes nested files under root-relative
 IDs too: stock also generates root-owned outputs in that case. There is no
