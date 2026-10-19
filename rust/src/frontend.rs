@@ -46,7 +46,7 @@ pub(crate) fn select_frontend(
         return unsupported("watch after retained output state is unsupported");
     }
 
-    if let Some(name) = crate::cli::BuildSettings::parse(&options.build_arguments)?.config_path()?
+    if let Some(name) = options.settings.config_path()?
         && !workspace.root.join(name.clone()).is_file()
     {
         return unsupported(&format!("configuration file not found: {name}"));
@@ -106,10 +106,10 @@ pub(crate) fn select_frontend(
                     "target sources include build implementation directories under .dart_tool; native cannot model stock artifact-tree inputs",
                 );
             }
-            let settings = crate::cli::BuildSettings::parse(&options.build_arguments)?;
+            let settings = &options.settings;
             let demand_policy =
                 settings.only_check || settings.keep_modified_outputs || retained_output_state;
-            let filters = settings.build_filters;
+            let filters = &settings.build_filters;
             if (demand_policy || !filters.is_empty())
                 && config.builders.iter().any(|b| {
                     b.definition.is_optional
@@ -166,11 +166,11 @@ fn settings_fingerprint(options: &Options, workspace: &Workspace) -> io::Result<
     bytes.extend_from_slice(workspace.builder_manifest_fingerprint()?.as_bytes());
     bytes.extend_from_slice(
         &serde_json::to_vec(&crate::build_filter::configuration_arguments(
-            &options.build_arguments,
+            &options.settings,
         )?)
         .map_err(io::Error::other)?,
     );
-    let settings = crate::cli::BuildSettings::parse(&options.build_arguments)?;
+    let settings = &options.settings;
     let mut paths = std::collections::BTreeSet::new();
     for entry in fs::read_dir(&workspace.root)? {
         let entry = entry?;

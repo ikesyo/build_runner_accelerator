@@ -12,6 +12,9 @@ pub(crate) struct Options {
     pub(crate) show_help: bool,
     pub(crate) show_version: bool,
     pub(crate) build_arguments: Vec<String>,
+    /// Parsed once at the native entry point; raw arguments remain for Dart's
+    /// official configuration resolver and detached prewarm invocations.
+    pub(crate) settings: BuildSettings,
 }
 
 impl Options {
@@ -123,17 +126,21 @@ impl Options {
                 format!("--background is only supported with prewarm: {command}"),
             ));
         }
-        if let Ok(settings) = BuildSettings::parse(&build_arguments)
-            && settings.force_aot
-            && settings.force_jit
-        {
+        let show_help = show_help || matches!(command.as_str(), "--help" | "-h");
+        let show_version = show_version || command == "--version";
+        let settings = match BuildSettings::parse(&build_arguments) {
+            Ok(settings) => settings,
+            // Help/version do not execute a build and tolerate build arguments.
+            Err(_) if show_help || show_version => BuildSettings::default(),
+            Err(error) => return Err(error),
+        };
+        if settings.force_aot && settings.force_jit {
             return Err(io::Error::other(
                 "Only one of --force-aot and --force-jit may be used",
             ));
         }
-        let filtered_command = matches!(command.as_str(), "build" | "watch")
-            && BuildSettings::parse(&build_arguments)
-                .is_ok_and(|settings| !settings.build_filters.is_empty());
+        let filtered_command =
+            matches!(command.as_str(), "build" | "watch") && !settings.build_filters.is_empty();
         if !jobs_explicit && !filtered_command {
             // Worker processes each carry a full analyzer instance (~1 GiB on
             // large workspaces), so unfiltered default parallelism follows
@@ -147,22 +154,22 @@ impl Options {
             interval_ms,
             jobs,
             background,
-            show_help: show_help || matches!(command.as_str(), "--help" | "-h"),
-            show_version: show_version || command == "--version",
+            show_help,
+            show_version,
             build_arguments,
+            settings,
             command,
         })
     }
 
     pub(crate) fn native_supported(&self) -> bool {
+        let settings = &self.settings;
         matches!(
             self.command.as_str(),
             "build" | "watch" | "prewarm" | "aot-cache-key" | "--help" | "-h" | "--version"
-        ) && BuildSettings::parse(&self.build_arguments).is_ok_and(|settings| {
-            (self.command == "build" || (!settings.only_check && !settings.keep_modified_outputs))
-                && (matches!(self.command.as_str(), "build" | "watch")
-                    || (!settings.deletion_flag && settings.build_filters.is_empty()))
-        })
+        ) && (self.command == "build" || (!settings.only_check && !settings.keep_modified_outputs))
+            && (matches!(self.command.as_str(), "build" | "watch")
+                || (!settings.deletion_flag && settings.build_filters.is_empty()))
     }
 }
 
@@ -584,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn stock_cli_is_preserved_and_classified() {
+    fn native_cli_preserves_supported_arguments_and_rejects_unsupported_ones() {
         for command in ["build", "watch"] {
             let supported = super::Options::parse(
                 [command, "--force-jit", "-d"]
@@ -595,16 +602,50 @@ mod tests {
             assert!(supported.native_supported());
             assert_eq!(supported.build_arguments, ["--force-jit", "-d"]);
         }
+        let clean = super::Options::parse(["clean".to_owned()].into_iter()).unwrap();
+        assert!(!clean.native_supported());
         for args in [
-            vec!["clean"],
             vec!["serve", "web:8080"],
             vec!["build", "--build-filter", "lib/[ab].g.dart"],
             vec!["build", "--unknown"],
             vec!["build", "--", "--mode", "rust"],
         ] {
-            let options = super::Options::parse(args.iter().map(|s| s.to_string())).unwrap();
-            assert!(!options.native_supported());
-            assert_eq!(options.build_arguments, args[1..]);
+            assert!(super::Options::parse(args.iter().map(|s| s.to_string())).is_err());
+        }
+    }
+
+    #[test]
+    fn help_and_version_skip_invalid_build_settings_but_not_removed_modes() {
+        for flag in ["--help", "-h", "--version"] {
+            let options =
+                super::Options::parse(["build", "--unknown", flag].into_iter().map(str::to_owned))
+                    .unwrap();
+            assert!(options.show_help || options.show_version);
+            assert!(
+                super::Options::parse(
+                    ["build", flag, "--mode=auto"]
+                        .into_iter()
+                        .map(str::to_owned),
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_settings_report_the_cause_at_entry() {
+        for (argument, message) in [
+            ("--unknown", "Unsupported native argument"),
+            (
+                "--build-filter=lib/[ab].g.dart",
+                "Unsupported native build filter",
+            ),
+            ("--define=a=b", "Expected --define"),
+        ] {
+            let error = super::Options::parse(["build", argument].into_iter().map(str::to_owned))
+                .err()
+                .unwrap();
+            assert!(error.to_string().contains(message), "{error}");
         }
     }
 
@@ -624,13 +665,7 @@ mod tests {
             )
             .unwrap();
             assert!(options.native_supported());
-            assert_eq!(
-                super::BuildSettings::parse(&options.build_arguments)
-                    .unwrap()
-                    .build_filters
-                    .len(),
-                3
-            );
+            assert_eq!(options.settings.build_filters.len(), 3);
         }
         let options = super::Options::parse(
             ["prewarm", "--build-filter=lib/**"]
@@ -730,7 +765,7 @@ mod tests {
             )
             .unwrap();
             assert!(options.native_supported());
-            let settings = super::BuildSettings::parse(&options.build_arguments).unwrap();
+            let settings = &options.settings;
             assert_eq!(settings.config.as_deref(), Some("--force-aot"));
             assert!(!settings.force_aot);
             assert!(settings.force_jit);
@@ -747,14 +782,15 @@ mod tests {
             vec!["--config=named\n"],
             vec!["--define=pkg=x=1", "--define=pkg|pkg=x=2"],
         ] {
-            let options = super::Options::parse(
-                [vec!["build"], arguments]
-                    .concat()
-                    .into_iter()
-                    .map(str::to_owned),
-            )
-            .unwrap();
-            assert!(!options.native_supported());
+            assert!(
+                super::Options::parse(
+                    [vec!["build"], arguments]
+                        .concat()
+                        .into_iter()
+                        .map(str::to_owned),
+                )
+                .is_err()
+            );
         }
     }
 

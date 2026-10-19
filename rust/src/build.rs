@@ -165,7 +165,7 @@ pub(crate) fn run_with_config_session(
         }
     };
     drop(scan);
-    let settings = crate::cli::BuildSettings::parse(&options.build_arguments)?;
+    let settings = &options.settings;
     let mut filters = settings.build_filters.clone();
     let mut retained_output_guard = false;
     if settings.only_check || settings.keep_modified_outputs || state.retained_output_state {

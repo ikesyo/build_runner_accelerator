@@ -58,7 +58,7 @@ fn main() -> io::Result<()> {
         "build" | "watch" => Some(workspace_lock::WorkspaceLock::acquire(&options.root)?),
         _ => None,
     };
-    let settings = cli::BuildSettings::parse(&options.build_arguments)?;
+    let settings = &options.settings;
     if settings.force_aot {
         // Single-threaded startup, before any workers are spawned.
         unsafe {
