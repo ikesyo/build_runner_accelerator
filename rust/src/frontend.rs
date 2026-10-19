@@ -8,7 +8,7 @@ use crate::worker_kernel::{
 };
 use crate::workspace::Workspace;
 use std::fs;
-use std::io;
+use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
@@ -443,29 +443,60 @@ fn generate_manifest(
         .arg("--settings-json")
         .arg(&settings_json)
         .current_dir(&workspace.root)
+        .stderr(Stdio::piped())
         .spawn();
+    let diagnostics = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    let mut stderr_done = None;
     let status = match child_result {
         Err(error) => Err(error),
-        Ok(mut child) => loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break Ok(status),
-                Ok(None) => {
-                    if early_compile_ready && early_compile.is_none() && worker_entrypoint.is_file()
-                    {
-                        early_source = fs::read(worker_entrypoint).ok();
-                        early_compile = early_worker_aot_compile(
-                            &workspace.root,
-                            dart_binary,
-                            &worker_entrypoint.to_string_lossy(),
-                            readiness.as_deref(),
-                        );
+        Ok(mut child) => {
+            if let Some(mut pipe) = child.stderr.take() {
+                let tail = std::sync::Arc::clone(&diagnostics);
+                let (done, receiver) = std::sync::mpsc::channel();
+                stderr_done = Some(receiver);
+                std::thread::spawn(move || {
+                    let mut buffer = [0; 4096];
+                    while let Ok(count) = pipe.read(&mut buffer) {
+                        if count == 0 {
+                            break;
+                        }
+                        let _ = io::stderr().write_all(&buffer[..count]);
+                        let mut tail = tail.lock().unwrap();
+                        tail.extend_from_slice(&buffer[..count]);
+                        let excess = tail.len().saturating_sub(32 * 1024);
+                        tail.drain(..excess);
                     }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-                Err(error) => break Err(error),
+                    let _ = done.send(());
+                });
             }
-        },
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break Ok(status),
+                    Ok(None) => {
+                        if early_compile_ready
+                            && early_compile.is_none()
+                            && worker_entrypoint.is_file()
+                        {
+                            early_source = fs::read(worker_entrypoint).ok();
+                            early_compile = early_worker_aot_compile(
+                                &workspace.root,
+                                dart_binary,
+                                &worker_entrypoint.to_string_lossy(),
+                                readiness.as_deref(),
+                            );
+                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    Err(error) => break Err(error),
+                }
+            }
+        }
     };
+    // A descendant may retain stderr after the generator exits. Keep draining
+    // without allowing EOF to block frontend preparation indefinitely.
+    if let Some(done) = stderr_done {
+        let _ = done.recv_timeout(Duration::from_secs(1));
+    }
     // Always join before returning: `prepare_worker_aot` uses pid-named temp
     // files, so it must not overlap a later invocation in this process — even
     // when polling the generator itself failed.
@@ -496,7 +527,8 @@ fn generate_manifest(
         Ok(())
     } else {
         Err(io::Error::other(format!(
-            "manifest generator exited with {status}"
+            "manifest generator exited with {status}\n{}",
+            String::from_utf8_lossy(&diagnostics.lock().unwrap())
         )))
     }
 }
