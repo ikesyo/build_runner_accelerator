@@ -179,7 +179,7 @@ def main():
                             for p, content in sources.items():
                                 p.write_bytes(edit(content, broad=True))
                         command = [str(getattr(args, lane)), 'build', '--root', str(args.root),
-                                   '--dart', str(args.frontend_dart), '--mode', 'rust', '--jobs', str(jobs)]
+                                   '--dart', str(args.frontend_dart), '--jobs', str(jobs)]
                         log = args.results / f'{jobs}-{repeat}-{lane}-{case}.log'
                         start = time.perf_counter()
                         with log.open('w') as stream:

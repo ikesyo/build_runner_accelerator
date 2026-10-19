@@ -1,5 +1,10 @@
 # ADR 0030: Compatibility cleanup during 0.x and disposable state
 
+Stock fallback and frontend-mode statements below are superseded by
+[ADR 0036](0036-native-only-execution.md) for 0.14.0. Unsupported requests now fail
+explicitly; native correctness and supported-subset boundaries remain.
+
+
 - Status: Accepted
 - Date: 2026-10-08
 - Amends ADRs 0001–0004, 0009, 0011, 0019, 0021, 0022, 0024, 0026, 0028 and 0029.

@@ -1,5 +1,10 @@
 # ADR 0033: Parallel filtered demand and lazy worker startup
 
+Stock fallback statements below are superseded by
+[ADR 0036](0036-native-only-execution.md) for 0.14.0. The scheduler policy is
+unchanged; unsupported requests now fail explicitly.
+
+
 - Status: Accepted
 - Date: 2026-10-11
 - Amends [ADR 0032](0032-native-build-filter-demand-and-output-state.md).

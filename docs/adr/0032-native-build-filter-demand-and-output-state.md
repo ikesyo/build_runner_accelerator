@@ -1,5 +1,10 @@
 # ADR 0032: Native build-filter demand and output state
 
+Stock fallback and frontend-mode statements below are superseded by
+[ADR 0036](0036-native-only-execution.md) for 0.14.0. Unsupported requests now fail
+explicitly; native correctness and supported-subset boundaries remain.
+
+
 - Status: Accepted
 - Date: 2026-10-10
 - Amends ADR 0029 and ADR 0031; extends the private state contract in ADR 0030.

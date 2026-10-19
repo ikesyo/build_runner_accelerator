@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Verify the public `prewarm` contract: foreground and --background runs,
 # single-flight compile sharing with a concurrent build, idempotent second
-# invocations, and the no-op fallback modes.
+# invocations, and native-only failures.
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
@@ -79,7 +79,7 @@ run_runner() {
     BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" \
     BUILD_RUNNER_ACCELERATOR_METRICS=1 \
     worker_run_frontend \
-    "$@" --root "$root" --dart "$dart_bin" --mode rust
+    "$@" --root "$root" --dart "$dart_bin"
 }
 
 aot_artifact() {
@@ -195,14 +195,15 @@ for reference in "$workspace_a/lib"/*.g.dart; do
     fail 'post-prewarm output differs from stock'
 done
 
-# --- Mode contract ----------------------------------------------------------
-"$fast_bin" prewarm --root "$workspace_b" --dart "$dart_bin" --mode dart \
-  >"$temporary_dir/dart-mode.log" 2>&1 ||
-  fail 'prewarm --mode dart did not exit 0'
-grep -Fq 'nothing to prewarm' "$temporary_dir/dart-mode.log" ||
-  fail 'prewarm --mode dart printed no skip notice'
+# --- Native-only contract ---------------------------------------------------
+for mode in auto rust dart; do
+  if "$fast_bin" prewarm --mode "$mode" >"$temporary_dir/removed-mode.log" 2>&1; then
+    fail 'removed --mode unexpectedly succeeded'
+  fi
+  grep -Fq -- '--mode was removed in 0.14.0' "$temporary_dir/removed-mode.log"
+done
 
-if "$fast_bin" build --root "$workspace_b" --dart "$dart_bin" --mode rust \
+if "$fast_bin" build --root "$workspace_b" --dart "$dart_bin" \
   --background >"$temporary_dir/bg-build.log" 2>&1; then
   fail '--background outside prewarm did not error'
 fi
@@ -215,7 +216,7 @@ grep -Fq 'only supported with prewarm' "$temporary_dir/bg-build.log" ||
   "BUILD_RUNNER_ACCELERATOR_BIN=$fast_bin" \
   "BUILD_RUNNER_ACCELERATOR_CACHE=$BUILD_RUNNER_ACCELERATOR_CACHE" \
   "$dart_bin" run bin/build_runner_accelerator.dart prewarm \
-  --root "$workspace_a" --mode auto) >"$temporary_dir/launcher.log" 2>&1 ||
+  --root "$workspace_a") >"$temporary_dir/launcher.log" 2>&1 ||
   fail 'dart launcher prewarm failed'
 grep -Fq 'AOT prewarm ready:' "$temporary_dir/launcher.log" ||
   fail 'dart launcher prewarm printed no artifact line'
@@ -223,13 +224,5 @@ if grep -Fq 'Rust worker AOT compile: elapsed_us=' "$temporary_dir/launcher.log"
   fail 'dart launcher prewarm recompiled a warm worker'
 fi
 
-# Dart-mode prewarm through the launcher is a successful no-op.
-(cd "$repo_root" && env "PUB_CACHE=$pub_cache" \
-  "$dart_bin" run bin/build_runner_accelerator.dart prewarm \
-  --root "$workspace_a" --mode dart) >"$temporary_dir/launcher-dart.log" 2>&1 ||
-  fail 'dart launcher prewarm --mode dart did not exit 0'
-grep -Fq 'nothing to prewarm' "$temporary_dir/launcher-dart.log" ||
-  fail 'dart launcher prewarm --mode dart printed no skip notice'
-
-printf 'prewarm: foreground=yes background=yes idempotent=yes single-flight=yes waited=%s dart-noop=yes launcher=yes analysis-prewarm=%s analysis-opt-out=yes\n' \
+printf 'prewarm: foreground=yes background=yes idempotent=yes single-flight=yes waited=%s removed-modes=yes launcher=yes analysis-prewarm=%s analysis-opt-out=yes\n' \
   "$wait_marker" "$analysis_prewarm_ran"

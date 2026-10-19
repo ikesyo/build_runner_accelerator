@@ -173,7 +173,7 @@ run_rust() {
   local directory=$1
   local log=$2
   VERIFY_COMMAND_LOG="$log" VERIFY_WORKSPACE="$directory" worker_run_frontend \
-    build --root "$directory" --dart "$dart_bin" --mode rust
+    build --root "$directory" --dart "$dart_bin"
 }
 prepare_package "$stock_dir"
 prepare_package "$rust_dir"
@@ -195,7 +195,7 @@ assert_same_file "$stock_root_cache" "$rust_root_cache"
 assert_contains "$temporary_dir/rust.initial.log" 'Rust frontend: 2 build action(s)'
 
 if ! VERIFY_COMMAND_LOG="$temporary_dir/rust.no-op.log" VERIFY_WORKSPACE="$rust_dir" worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
-    --mode rust; then
+   ; then
   fail 'Rust no-op build failed'
 fi
 assert_contains "$temporary_dir/rust.no-op.log" 'No work to do (Rust frontend)'
@@ -206,7 +206,7 @@ if ! run_stock "$stock_dir" "$temporary_dir/stock.dependency-change.log"; then
   fail 'stock dependency input-change build failed'
 fi
 if ! VERIFY_COMMAND_LOG="$temporary_dir/rust.dependency-change.log" VERIFY_WORKSPACE="$rust_dir" worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
-    --mode rust; then
+   ; then
   fail 'Rust dependency input-change build failed'
 fi
 assert_same_file "$stock_cache" "$rust_cache"
@@ -219,7 +219,7 @@ if ! run_stock "$stock_dir" "$temporary_dir/stock.root-change.log"; then
   fail 'stock root input-change build failed'
 fi
 if ! VERIFY_COMMAND_LOG="$temporary_dir/rust.root-change.log" VERIFY_WORKSPACE="$rust_dir" worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" \
-    --mode rust; then
+   ; then
   fail 'Rust root input-change build failed'
 fi
 assert_same_file "$stock_root_cache" "$rust_root_cache"

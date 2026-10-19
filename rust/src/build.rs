@@ -12,7 +12,7 @@ mod transaction;
 mod tests;
 
 use crate::cli::Options;
-use crate::frontend::{NativeFrontend, run_dart_fallback, select_frontend};
+use crate::frontend::{NativeFrontend, select_frontend};
 use crate::graph::GraphState;
 use crate::metrics::{
     FilesystemMetrics, graph_file_size, print_filesystem_metrics, print_graph_metrics,
@@ -20,7 +20,6 @@ use crate::metrics::{
 };
 use crate::worker::WorkerPool;
 use crate::workspace::Workspace;
-use crate::workspace_lock::WorkspaceLock;
 use std::io;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -31,7 +30,7 @@ pub(crate) fn graph_path(workspace: &Workspace) -> PathBuf {
         .join(".dart_tool/build_runner_accelerator/graph-v3.bin")
 }
 
-/// One validated graph load shared by selection, execution and late fallback.
+/// One validated graph load shared by selection and execution.
 pub(crate) struct LoadedGraph {
     pub state: GraphState,
     load_us: u128,
@@ -93,61 +92,19 @@ impl Preflight {
     }
 }
 
-pub(crate) fn run(
-    options: &Options,
-    pool: Option<&mut WorkerPool>,
-    workspace_lock: Option<&WorkspaceLock>,
-) -> io::Result<()> {
+pub(crate) fn run(options: &Options) -> io::Result<()> {
     let load = crate::wall::Span::new("workspace_load");
     let workspace = Workspace::load(options.root.clone())?;
     drop(load);
     let loaded_graph = LoadedGraph::load(&workspace)?;
-    let retained_output_state = loaded_graph.state.retained_output_state;
     let selection = crate::wall::Span::new("manifest_select");
-    let build_config = match select_frontend(options, &workspace, &loaded_graph.state)? {
-        Some(config) => config,
-        None => {
-            drop(selection);
-            let _fallback = crate::wall::Span::new("dart_fallback");
-            return run_dart_fallback(options, workspace_lock, Some(retained_output_state));
-        }
-    };
+    let build_config = select_frontend(options, &workspace, &loaded_graph.state)?;
     drop(selection);
-    let result = run_with_config(options, pool, workspace, build_config, loaded_graph);
-    if options.mode == crate::cli::FrontendMode::Auto
-        && let Err(error) = &result
-        && error
-            .to_string()
-            .contains(crate::cli::OUTPUT_POLICY_UNSUPPORTED)
-    {
-        // Retry only after workers and staged outputs have been dropped.
-        // Pin stock history: native cannot import its logical digests.
-        mark_stock_output_state(&options.root)?;
-        eprintln!("Rust frontend falling back to stock: {error}");
-        return run_dart_fallback(options, workspace_lock, Some(retained_output_state));
-    }
-    result
-}
-
-pub(crate) fn mark_stock_output_state(root: &std::path::Path) -> io::Result<()> {
-    crate::assets::write_atomic(
-        &root.join(crate::frontend::STOCK_OUTPUT_POLICY_STATE),
-        b"Stock owns output-policy history; reset both build states before native reuse.\n",
-    )
-}
-
-pub(crate) fn run_with_config(
-    options: &Options,
-    pool: Option<&mut WorkerPool>,
-    workspace: Workspace,
-    frontend: NativeFrontend,
-    loaded_graph: LoadedGraph,
-) -> io::Result<()> {
     run_with_config_session(
         options,
-        pool,
+        None,
         workspace,
-        frontend,
+        build_config,
         loaded_graph,
         true,
         &crate::watch::WatchChanges::default(),
@@ -208,7 +165,7 @@ pub(crate) fn run_with_config_session(
         }
     };
     drop(scan);
-    let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
+    let settings = crate::cli::BuildSettings::parse(&options.build_arguments)?;
     let mut filters = settings.build_filters.clone();
     let mut retained_output_guard = false;
     if settings.only_check || settings.keep_modified_outputs || state.retained_output_state {
@@ -453,7 +410,7 @@ pub(crate) fn empty_filtered_result(spec: &crate::plan::BuildSpec) -> crate::pro
 }
 
 /// Old private state cannot supply output locations after a configuration change.
-/// Changes removing previous declarations also require stock's source reclassification.
+/// Removing previous declarations exceeds the supported source reclassification.
 pub(crate) fn filtered_transition_reason(
     workspace: &Workspace,
     config: &crate::builder::RustBuildConfig,
@@ -500,7 +457,7 @@ pub(crate) fn filtered_transition_reason(
     let digest = snapshot::config_digest(workspace, config)?;
     if output_policy && !state.config_digest.is_empty() && state.config_digest != digest {
         return Ok(Some(
-            "output-policy configuration transitions require stock",
+            "output-policy configuration transitions are outside the supported subset",
         ));
     }
     if let Some(reason) = dependency_output_conflict_reason(workspace, config, state, preflight)? {

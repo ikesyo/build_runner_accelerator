@@ -115,7 +115,7 @@ class FrontendBinaryResolver {
     if (Platform.isMacOS && architecture == 'x64') {
       throw UnsupportedError(
         'macOS Intel (x86_64) is not supported by released frontend artifacts. '
-        'Use --mode dart or set BUILD_RUNNER_ACCELERATOR_BIN.',
+        'Set BUILD_RUNNER_ACCELERATOR_BIN or run dart run build_runner directly.',
       );
     }
     return '$os-$architecture';

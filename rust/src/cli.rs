@@ -1,27 +1,6 @@
-pub(crate) const OUTPUT_POLICY_UNSUPPORTED: &str = "native output policy unsupported:";
-
 use std::env;
 use std::io;
 use std::path::PathBuf;
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FrontendMode {
-    Auto,
-    Rust,
-    Dart,
-}
-
-impl FrontendMode {
-    pub(crate) fn parse(value: &str) -> io::Result<Self> {
-        match value {
-            "auto" => Ok(Self::Auto),
-            "rust" => Ok(Self::Rust),
-            "dart" => Ok(Self::Dart),
-            _ => Err(io::Error::other(format!(
-                "--mode must be auto, rust, or dart: {value}"
-            ))),
-        }
-    }
-}
 pub(crate) struct Options {
     pub(crate) command: String,
     pub(crate) root: PathBuf,
@@ -29,10 +8,10 @@ pub(crate) struct Options {
     pub(crate) worker: Option<String>,
     pub(crate) interval_ms: u64,
     pub(crate) jobs: usize,
-    pub(crate) mode: FrontendMode,
     pub(crate) background: bool,
-    pub(crate) stock_arguments: Vec<String>,
-    pub(crate) stock_invocation: Option<Vec<String>>,
+    pub(crate) show_help: bool,
+    pub(crate) show_version: bool,
+    pub(crate) build_arguments: Vec<String>,
 }
 
 impl Options {
@@ -54,16 +33,16 @@ impl Options {
         // are known. Unfiltered work gets the machine-based default below.
         let mut jobs = 1;
         let mut jobs_explicit = false;
-        let mut mode = FrontendMode::Auto;
         let mut background = false;
-        let mut stock_arguments = Vec::new();
-        let mut stock_invocation = None;
-        let mut direct_invocation = if command_seen {
-            vec![command.clone()]
-        } else {
-            Vec::new()
-        };
+        let mut show_help = false;
+        let mut show_version = false;
+        let mut build_arguments = Vec::new();
         while let Some(argument) = args.next() {
+            if argument == "--mode" || argument.starts_with("--mode=") {
+                return Err(io::Error::other(
+                    "--mode was removed in 0.14.0; remove it to use native execution, or run dart run build_runner directly",
+                ));
+            }
             let (name, inline) = argument
                 .split_once('=')
                 .map_or((argument.as_str(), None), |(name, value)| {
@@ -71,13 +50,7 @@ impl Options {
                 });
             if matches!(
                 name,
-                "--root"
-                    | "--dart"
-                    | "--worker"
-                    | "--interval-ms"
-                    | "--jobs"
-                    | "--mode"
-                    | "--stock-arguments-json"
+                "--root" | "--dart" | "--worker" | "--interval-ms" | "--jobs"
             ) {
                 let value = inline
                     .map(str::to_owned)
@@ -88,18 +61,6 @@ impl Options {
                     "--root" => root = PathBuf::from(value),
                     "--dart" => dart_binary = Some(value),
                     "--worker" => worker = Some(value),
-                    "--mode" => mode = FrontendMode::parse(&value)?,
-                    "--stock-arguments-json" => {
-                        #[derive(serde::Deserialize)]
-                        struct StockArguments {
-                            arguments: Vec<String>,
-                            invocation: Vec<String>,
-                        }
-                        let transport: StockArguments =
-                            serde_json::from_str(&value).map_err(io::Error::other)?;
-                        stock_arguments.extend(transport.arguments);
-                        stock_invocation = Some(transport.invocation);
-                    }
                     "--jobs" => {
                         jobs = value
                             .parse()
@@ -127,28 +88,28 @@ impl Options {
                 && (!argument.starts_with('-')
                     || matches!(argument.as_str(), "--help" | "-h" | "--version"))
             {
-                direct_invocation.push(argument.clone());
+                if !build_arguments.is_empty() {
+                    return Err(io::Error::other("Build arguments must follow the command"));
+                }
                 command = argument;
                 command_seen = true;
                 continue;
             }
             match argument.as_str() {
                 "--background" => background = true,
+                "--help" | "-h" => show_help = true,
+                "--version" => show_version = true,
                 "--" => {
-                    direct_invocation.push(argument.clone());
-                    stock_arguments.push(argument);
+                    build_arguments.push(argument);
                     let rest: Vec<String> = args.by_ref().collect();
-                    direct_invocation.extend(rest.iter().cloned());
-                    stock_arguments.extend(rest);
+                    build_arguments.extend(rest);
                 }
                 _ => {
-                    direct_invocation.push(argument.clone());
-                    stock_arguments.push(argument.clone());
-                    if stock_option_takes_value(&argument)
+                    build_arguments.push(argument.clone());
+                    if build_option_takes_value(&argument)
                         && let Some(value) = args.next()
                     {
-                        direct_invocation.push(value.clone());
-                        stock_arguments.push(value);
+                        build_arguments.push(value);
                     }
                 }
             }
@@ -162,7 +123,7 @@ impl Options {
                 format!("--background is only supported with prewarm: {command}"),
             ));
         }
-        if let Ok(settings) = BuildSettings::parse(&stock_arguments)
+        if let Ok(settings) = BuildSettings::parse(&build_arguments)
             && settings.force_aot
             && settings.force_jit
         {
@@ -170,11 +131,8 @@ impl Options {
                 "Only one of --force-aot and --force-jit may be used",
             ));
         }
-        if !command_seen {
-            direct_invocation.insert(0, command.clone());
-        }
         let filtered_command = matches!(command.as_str(), "build" | "watch")
-            && BuildSettings::parse(&stock_arguments)
+            && BuildSettings::parse(&build_arguments)
                 .is_ok_and(|settings| !settings.build_filters.is_empty());
         if !jobs_explicit && !filtered_command {
             // Worker processes each carry a full analyzer instance (~1 GiB on
@@ -182,52 +140,25 @@ impl Options {
             // machine CPUs capped by available memory where detectable.
             jobs = default_worker_count();
         }
-        let stock_invocation = Some(stock_invocation.unwrap_or(direct_invocation));
         Ok(Self {
-            command,
             root,
             dart_binary,
             worker,
             interval_ms,
             jobs,
-            mode,
             background,
-            stock_arguments,
-            stock_invocation,
+            show_help: show_help || matches!(command.as_str(), "--help" | "-h"),
+            show_version: show_version || command == "--version",
+            build_arguments,
+            command,
         })
     }
 
-    /// Classifies ownership without requiring native support for stock's CLI.
-    pub(crate) fn stock_output_policy(&self) -> (bool, bool) {
-        let (mut keep, mut verify, mut help) = (false, false, false);
-        let mut args = self.stock_arguments.iter();
-        while let Some(argument) = args.next() {
-            match argument.as_str() {
-                "--" => break,
-                "--keep-modified-outputs" => keep = true,
-                "--only-check" => verify = true,
-                "--help" | "-h" => help = true,
-                _ if stock_option_takes_value(argument) => {
-                    args.next();
-                }
-                _ => {}
-            }
-        }
-        (keep && !help, !verify && !help)
-    }
-
     pub(crate) fn native_supported(&self) -> bool {
-        if self
-            .stock_invocation
-            .as_ref()
-            .is_some_and(|args| args.first() != Some(&self.command))
-        {
-            return false;
-        }
         matches!(
             self.command.as_str(),
             "build" | "watch" | "prewarm" | "aot-cache-key" | "--help" | "-h" | "--version"
-        ) && BuildSettings::parse(&self.stock_arguments).is_ok_and(|settings| {
+        ) && BuildSettings::parse(&self.build_arguments).is_ok_and(|settings| {
             (self.command == "build" || (!settings.only_check && !settings.keep_modified_outputs))
                 && (matches!(self.command.as_str(), "build" | "watch")
                     || (!settings.deletion_flag && settings.build_filters.is_empty()))
@@ -235,27 +166,12 @@ impl Options {
     }
 }
 
-fn stock_option_takes_value(argument: &str) -> bool {
-    matches!(
-        argument,
-        "--build-filter"
-            | "--config"
-            | "-c"
-            | "--output"
-            | "-o"
-            | "--define"
-            | "--enable-experiment"
-            | "--dart-jit-vm-arg"
-            | "--log-performance"
-            | "--build-mode"
-            | "--hostname"
-            | "--port"
-            | "--dart-dev-service-port"
-    )
+fn build_option_takes_value(argument: &str) -> bool {
+    matches!(argument, "--build-filter" | "--config" | "-c" | "--define")
 }
 
 /// Lexical capability check only. Dart/build_config owns normalized overrides
-/// and configuration parsing. Never discard the original stock vector.
+/// and configuration parsing. Build arguments retain their original spelling and values.
 #[derive(Default)]
 pub(crate) struct BuildSettings {
     pub(crate) only_check: bool,
@@ -627,12 +543,11 @@ fn available_memory_gib() -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FrontendMode, cgroup_available_bytes, cgroup_dir_for, cgroup_mount,
-        parse_vm_stat_available_gib,
+        cgroup_available_bytes, cgroup_dir_for, cgroup_mount, parse_vm_stat_available_gib,
     };
 
     #[test]
-    fn output_policy_capabilities_preserve_stock_arguments() {
+    fn output_policy_capabilities_preserve_build_arguments() {
         for policy in ["--only-check", "--keep-modified-outputs"] {
             let flags = [
                 "build",
@@ -643,7 +558,7 @@ mod tests {
             ];
             let options = super::Options::parse(flags.into_iter().map(str::to_owned)).unwrap();
             assert!(options.native_supported());
-            assert_eq!(options.stock_arguments, flags[1..]);
+            assert_eq!(options.build_arguments, flags[1..]);
             for command in ["watch", "prewarm", "aot-cache-key"] {
                 let options =
                     super::Options::parse([command, policy].into_iter().map(str::to_owned))
@@ -678,7 +593,7 @@ mod tests {
             )
             .unwrap();
             assert!(supported.native_supported());
-            assert_eq!(supported.stock_arguments, ["--force-jit", "-d"]);
+            assert_eq!(supported.build_arguments, ["--force-jit", "-d"]);
         }
         for args in [
             vec!["clean"],
@@ -689,21 +604,8 @@ mod tests {
         ] {
             let options = super::Options::parse(args.iter().map(|s| s.to_string())).unwrap();
             assert!(!options.native_supported());
-            assert_eq!(options.mode, FrontendMode::Auto);
-            assert_eq!(options.stock_arguments, args[1..]);
+            assert_eq!(options.build_arguments, args[1..]);
         }
-        let options = super::Options::parse(
-            [
-                "build",
-                "--stock-arguments-json",
-                r#"{"arguments":["--force-aot","-d"],"invocation":["build","--force-aot","-d"]}"#,
-            ]
-            .into_iter()
-            .map(str::to_owned),
-        )
-        .unwrap();
-        assert!(options.native_supported());
-        assert_eq!(options.stock_arguments, ["--force-aot", "-d"]);
     }
 
     #[test]
@@ -723,13 +625,12 @@ mod tests {
             .unwrap();
             assert!(options.native_supported());
             assert_eq!(
-                super::BuildSettings::parse(&options.stock_arguments)
+                super::BuildSettings::parse(&options.build_arguments)
                     .unwrap()
                     .build_filters
                     .len(),
                 3
             );
-            assert_eq!(options.stock_invocation.unwrap()[1], "--build-filter");
         }
         let options = super::Options::parse(
             ["prewarm", "--build-filter=lib/**"]
@@ -807,7 +708,7 @@ mod tests {
                 super::Options::parse(std::iter::once("build".to_owned()).chain(arguments.clone()))
                     .unwrap();
             assert!(options.native_supported());
-            assert_eq!(options.stock_arguments, arguments);
+            assert_eq!(options.build_arguments, arguments);
         }
     }
 
@@ -829,11 +730,10 @@ mod tests {
             )
             .unwrap();
             assert!(options.native_supported());
-            let settings = super::BuildSettings::parse(&options.stock_arguments).unwrap();
+            let settings = super::BuildSettings::parse(&options.build_arguments).unwrap();
             assert_eq!(settings.config.as_deref(), Some("--force-aot"));
             assert!(!settings.force_aot);
             assert!(settings.force_jit);
-            assert_eq!(options.stock_invocation.as_ref().unwrap()[0], command);
         }
         for arguments in [
             vec!["--define"],
@@ -859,16 +759,30 @@ mod tests {
     }
 
     #[test]
-    fn global_options_and_stock_order_are_preserved() {
-        let options =
-            super::Options::parse(["--mode=dart", "--version"].into_iter().map(str::to_owned))
-                .unwrap();
-        assert_eq!(options.command, "--version");
-        let options =
-            super::Options::parse(["--force-jit", "build"].into_iter().map(str::to_owned)).unwrap();
-        assert!(!options.native_supported());
-        assert_eq!(options.stock_invocation.unwrap(), ["--force-jit", "build"]);
+    fn removed_modes_fail_with_migration_guidance() {
+        for mode in ["auto", "rust", "dart", "native"] {
+            for args in [
+                vec!["build".to_owned(), format!("--mode={mode}")],
+                vec!["--mode".to_owned(), mode.to_owned(), "build".to_owned()],
+            ] {
+                let error = super::Options::parse(args.into_iter()).err().unwrap();
+                assert!(error.to_string().contains("--mode was removed in 0.14.0"));
+            }
+        }
+        // A config value is never parsed as a launcher option.
+        let options = super::Options::parse(
+            ["build", "--config", "--mode=rust"]
+                .into_iter()
+                .map(str::to_owned),
+        )
+        .unwrap();
+        assert!(options.native_supported());
+    }
+
+    #[test]
+    fn invalid_launcher_values_fail() {
         for args in [
+            vec!["--force-jit", "build"],
             vec!["build", "--jobs=0"],
             vec!["build", "--dart="],
             vec!["build", "--worker", "--help"],
@@ -876,14 +790,6 @@ mod tests {
         ] {
             assert!(super::Options::parse(args.into_iter().map(str::to_owned)).is_err());
         }
-    }
-
-    #[test]
-    fn frontend_mode_accepts_only_explicit_values() {
-        assert_eq!(FrontendMode::parse("auto").unwrap(), FrontendMode::Auto);
-        assert_eq!(FrontendMode::parse("rust").unwrap(), FrontendMode::Rust);
-        assert_eq!(FrontendMode::parse("dart").unwrap(), FrontendMode::Dart);
-        assert!(FrontendMode::parse("native").is_err());
     }
 
     #[test]

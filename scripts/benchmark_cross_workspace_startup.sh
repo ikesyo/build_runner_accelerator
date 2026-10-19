@@ -69,7 +69,7 @@ def measure(mode, case, root, binary, index):
     run_env = dict(env, BUILD_RUNNER_ACCELERATOR_CACHE=str(results / f'{mode}-cache'),
                    ANALYZER_STATE_LOCATION_OVERRIDE=str(results / f'{mode}-analyzer'))
     command = [binary, 'build', '--root', str(root), '--dart', dart,
-               '--mode', 'rust', '--jobs', jobs]
+               '--jobs', jobs]
     label = f'{mode}-{index}-{case}'
     start = time.monotonic()
     with (results / f'{label}.log').open('w') as log:

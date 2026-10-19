@@ -122,7 +122,7 @@ def main():
             if lane == 'stock':
                 command += ['build_runner', 'build']
             else:
-                command += ['build_runner_accelerator', 'build', '--mode', 'rust',
+                command += ['build_runner_accelerator', 'build',
                             '--dart', dart, '--jobs', str(args.jobs)]
             inputs = sorted((root / 'lib').rglob('*.dart'))
             for case in ['cold', 'noop', 'one-file', 'broad']:

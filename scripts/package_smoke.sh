@@ -66,7 +66,7 @@ cp "$stock_dir/lib/model.g.dart" "$test_root/model.g.dart.stock"
   BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
   BUILD_RUNNER_ACCELERATOR_WORKER_AOT=0 \
   "$dart_bin" --suppress-analytics run build_runner_accelerator \
-    build --mode rust >/dev/null)
+    build >/dev/null)
 
 cmp "$test_root/model.g.dart.stock" "$accelerator_dir/lib/model.g.dart" || \
   fail 'published-package launcher output differs from stock build_runner'

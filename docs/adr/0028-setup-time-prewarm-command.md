@@ -1,5 +1,10 @@
 # ADR 0028: Setup-time `prewarm` command and single-flight worker AOT compiles
 
+Stock fallback and frontend-mode statements below are superseded by
+[ADR 0036](0036-native-only-execution.md) for 0.14.0. Unsupported requests now fail
+explicitly; native correctness and supported-subset boundaries remain.
+
+
 The accelerator 0.x alias contract below is superseded by
 [ADR 0030](0030-compatibility-cleanup-and-disposable-state.md); use `prewarm`.
 

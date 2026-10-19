@@ -109,7 +109,7 @@ def obsolete_state(tmp, location):
     sentinel = b'dependency file that must survive obsolete source-output records'
     suffix = 'asset' if location == 'cache' else 'final'
     (stock / f'dep/lib/a.{suffix}').write_bytes(sentinel)
-    code, log = execute(launcher(native, 'rust', flags=['--force-jit']), native)
+    code, log = execute(launcher(native, flags=['--force-jit']), native)
     assert code == 0, log
     assert 'cache/build_filter_app/dep/lib/a.mid' in outputs(native)
     # Disposable graphs cannot authorize deleting old source outputs. Give
@@ -131,13 +131,13 @@ def obsolete_state(tmp, location):
     before_graph = graph(native).read_bytes()
     before_outputs = outputs(native)
     (native / 'lib/common.txt').write_text('fail\n')
-    code, log = execute(launcher(native, 'rust', flags=['--force-jit']), native)
+    code, log = execute(launcher(native, flags=['--force-jit']), native)
     assert code != 0 and 'fixture failure' in log, (code, log)
     assert 'invalidating graph schema 4' in log, log
     assert graph(native).read_bytes() == before_graph and outputs(native) == before_outputs
     (native / 'lib/common.txt').write_text('common\n')
     history_path(native).unlink(missing_ok=True)
-    code, log = execute(launcher(native, 'rust', flags=['--force-jit']), native)
+    code, log = execute(launcher(native, flags=['--force-jit']), native)
     assert code == 0, log
     assert not stale.exists() and real.read_bytes() == sentinel
     assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), log)
@@ -175,7 +175,7 @@ def failure_and_cancel(tmp):
         (root / 'dep/lib/common.txt').write_text('fail\n')
         history_path(root).unlink(missing_ok=True)
     results = [execute([DART, 'run', 'build_runner', 'build', '--force-jit'], stock),
-               execute(launcher(native, 'rust', flags=['--force-jit']), native)]
+               execute(launcher(native, flags=['--force-jit']), native)]
     assert results[0][0] == results[1][0] != 0, results
     # Stock continues independent downstream actions after a failure; native
     # stops at the failed phase and discards the successful sibling's outputs.
@@ -196,7 +196,7 @@ def failure_and_cancel(tmp):
             (root / 'dep/lib/common.txt').write_text('cancelled change\n')
             history_path(root).unlink(missing_ok=True)
             log = tmp / (root.name + '-cancel.log'); stream = log.open('w')
-            args = [DART, 'run', 'build_runner', 'build', '--force-jit'] if mode == 'stock' else launcher(root, mode, flags=['--force-jit'])
+            args = [DART, 'run', 'build_runner', 'build', '--force-jit'] if mode == 'stock' else launcher(root, flags=['--force-jit'])
             activity = tmp / (root.name + '-cancel-activity.jsonl')
             proc = subprocess.Popen(args, cwd=root, env=fixture_env(root, {
                 'BUILD_FILTER_DELAY_MS': '600000',
@@ -281,18 +281,14 @@ def watch_lifecycle(tmp, sources='default', overlap=False, excluded=False, input
             cfg = root / 'build.yaml'
             cfg.write_text(cfg.read_text().replace('sources: ["**"]', 'sources:\n      include: ["**"]\n      exclude: ["**/.dart_tool/**", "dep/**"]'))
     if overlap:
-        code, log = execute(launcher(native, 'rust', 'watch', ['--force-jit']), native)
+        code, log = execute(launcher(native, 'watch', ['--force-jit']), native)
         assert code != 0 and 'watch source sets may overlap' in log, (code, log)
         assert not graph(native).exists() and outputs(native) == {}
+        return
     def start(root, stock_lane):
         env = read_barrier_env(root) if sources == 'lib/**' else None
-        if stock_lane or overlap:
-            command = None if stock_lane else launcher(root, 'auto', 'watch', ['--force-jit'])
-            handle = watch(root, 'stock', (), command=command, extra_env=env)
-            if not stock_lane:
-                assert 'using Dart fallback' in handle[1].read_text()
-                assert not graph(root).exists()
-            return handle
+        if stock_lane:
+            return watch(root, 'stock', (), extra_env=env)
         return watch(root, 'rust', (), extra_env=env)
     handles = []
     try:
@@ -412,20 +408,10 @@ def dependency_glob(tmp):
 
 def implementation_sources_boundary(tmp):
     stock, native = pair(tmp, 'implementation-inputs', sources='**')
-    code, log = execute(launcher(native, 'rust', flags=['--force-aot']), native)
+    code, log = execute(launcher(native, flags=['--force-aot']), native)
     assert code != 0 and 'build implementation directories' in log, (code, log)
     assert not graph(native).exists() and outputs(native) == {}
-    for _ in range(2):
-        check(stock, native, mode='auto')
-        assert not graph(native).exists()
     print('nested-packages: PASS implementation-directory input boundary', flush=True)
-
-
-def modes(tmp):
-    for mode in ('auto', 'dart'):
-        stock, native = pair(tmp, 'mode-' + mode)
-        check(stock, native, mode=mode, native_expected=mode == 'auto')
-    print('nested-packages: PASS auto/dart mode selection', flush=True)
 
 
 def case_groups(tmp):
@@ -437,7 +423,6 @@ def case_groups(tmp):
         'source': tuple(partial(lifecycle, tmp, sources, False, 'source') for sources in ('default', 'overlap')),
         'glob': (partial(dependency_glob, tmp),),
         'boundary': (partial(implementation_sources_boundary, tmp),),
-        'modes': (partial(modes, tmp),),
         'recovery-state': tuple(partial(obsolete_state, tmp, location) for location in ('cache', 'source')),
         'recovery-actions': (partial(failure_and_cancel, tmp), partial(builder_transition, tmp)),
         'watch-native': (partial(watch_lifecycle, tmp, input_path='dep/lib/build/.new.txt'),

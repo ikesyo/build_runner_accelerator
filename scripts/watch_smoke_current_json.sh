@@ -84,7 +84,7 @@ stock_pid=$worker_last_pid
 worker_start_frontend_process_group "$rust_log" \
   BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
   PUB_CACHE="$pub_cache" -- \
-  watch --root "$rust_dir" --dart "$dart_bin" --interval-ms 200 --mode rust
+  watch --root "$rust_dir" --dart "$dart_bin" --interval-ms 200
 rust_pid=$worker_last_pid
 
 wait_for_path() {

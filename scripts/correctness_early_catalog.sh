@@ -46,7 +46,7 @@ generate() {
   local label=$1
   rm -f -- "$manifest" "$entrypoint"
   VERIFY_COMMAND_LOG="$temporary_dir/$label.log" VERIFY_WORKSPACE="$fixture" \
-    worker_run_frontend build --root "$fixture" --dart "$dart_bin" --mode rust --jobs 1
+    worker_run_frontend build --root "$fixture" --dart "$dart_bin" --jobs 1
 }
 no_early_catalog() {
   ! grep -Fq 'Rust manifest early catalog:' "$temporary_dir/$1.log"
@@ -112,7 +112,7 @@ cmp "$entrypoint" "$temporary_dir/expected.dart"
 diff -r "$fixture/lib" "$temporary_dir/expected-lib"
 
 # Failure of the authoritative generator cannot commit a graph or outputs,
-# even after a successful early compilation. Auto mode still uses stock Dart.
+# even after a successful early compilation. Native execution reports the failure.
 cp "$temporary_dir/helper.before" "$helper"
 cat >"$generator" <<'DART'
 void main(List<String> args) => throw StateError('full generator failure probe');
@@ -128,8 +128,4 @@ fi
 grep -Fq 'aot_started=true' "$temporary_dir/generator-failure.log"
 [[ ! -e "$manifest" && ! -e "$state/graph-v3.bin" ]]
 [[ -z $(find "$fixture/lib" -name '*.g.dart' -print -quit) ]]
-VERIFY_COMMAND_LOG="$temporary_dir/auto-fallback.log" VERIFY_WORKSPACE="$fixture" \
-  worker_run_frontend build --root "$fixture" --dart "$dart_bin" --mode auto --jobs 1
-grep -Fq 'using Dart fallback' "$temporary_dir/auto-fallback.log"
-diff -r "$fixture/lib" "$temporary_dir/expected-lib"
-printf 'early-catalog: PASS cold/hit/disabled/jit/background/explicit-aot/helper-failure/mismatch/generator-failure/auto-fallback\n'
+printf 'early-catalog: PASS cold/hit/disabled/jit/background/explicit-aot/helper-failure/mismatch/generator-failure\n'

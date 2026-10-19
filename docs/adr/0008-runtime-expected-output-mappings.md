@@ -1,5 +1,10 @@
 # ADR 0008: Runtime expected-output mappings
 
+Stock fallback and frontend-mode statements below are superseded by
+[ADR 0036](0036-native-only-execution.md) for 0.14.0. Unsupported requests now fail
+explicitly; native correctness and supported-subset boundaries remain.
+
+
 - Status: Proposed
 - Date: 2026-09-14
 

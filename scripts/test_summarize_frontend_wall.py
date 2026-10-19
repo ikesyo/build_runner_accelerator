@@ -31,14 +31,6 @@ def session(*events, end=100):
 
 
 class WallSummaryTest(unittest.TestCase):
-    def test_dart_fallback_is_not_manifest_or_native_worker_time(self):
-        result = session(event('manifest_select', 0, 10),
-                         event('dart_fallback', 10, 90))
-        self.assertEqual(result['categories']['manifest_select']['exclusive_us'], 10)
-        self.assertEqual(result['categories']['dart_fallback']['exclusive_us'], 80)
-        self.assertEqual(result['categories']['unattributed']['exclusive_us'], 10)
-        self.assertEqual(result['phase_dispatches'], [])
-
     def test_diagnostic_json_size_partition_inside_decode(self):
         identity = {'worker_pid': 7, 'batch_id': 2}
         phase = session(event('phase_dispatch', 0, 100),

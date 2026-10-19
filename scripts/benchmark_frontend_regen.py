@@ -243,10 +243,10 @@ def main():
                 if args.launcher:
                     run_env[PREFIX + 'BIN'] = str(binary)
                     command = [str(args.dart), 'run', 'build_runner_accelerator', 'build',
-                               '--mode', 'rust', '--jobs', str(jobs), '--dart', str(args.dart)]
+                               '--jobs', str(jobs), '--dart', str(args.dart)]
                 else:
                     command = [str(binary), 'build', '--root', str(args.root),
-                               '--dart', str(args.dart), '--mode', 'rust', '--jobs', str(jobs)]
+                               '--dart', str(args.dart), '--jobs', str(jobs)]
                 log = args.results / f'{route}-{jobs}-{repeat}-{lane}.log'
                 row = dict(route=route, mode=mode, case='regen', jobs=jobs, repeat=repeat,
                            lane=lane, position=position, order=order, command=command,

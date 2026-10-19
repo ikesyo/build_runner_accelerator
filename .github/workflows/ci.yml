@@ -70,7 +70,7 @@ jobs:
             dart format --output=none --set-exit-if-changed lib bin test tool
           fi
           dart analyze --fatal-infos lib bin test tool
-          # Ensure stock Dart fallback compiles under both dependency solutions.
+          # Ensure the stock comparison baseline compiles under both dependency solutions.
           dart run build_runner --help
           dart test --compiler=source
       - name: Validate publish package
@@ -113,7 +113,7 @@ jobs:
         include:
           - id: selection
             first: selection-source
-            nested-first: 'default-on,modes'
+            nested-first: 'default-on'
             second: selection-cache
             nested-second: 'default-off'
             third: selection-packages
@@ -125,10 +125,10 @@ jobs:
             nested-second: ''
             third: state
             nested-third: 'recovery-actions'
-          - id: fallback
-            first: fallback-optional-post
+          - id: unsupported
+            first: unsupported-optional-post
             nested-first: 'explicit-cache,boundary'
-            second: fallback-zero-trigger
+            second: unsupported-zero-trigger
             nested-second: 'source,glob'
             third: routing
             nested-third: ''
@@ -159,7 +159,7 @@ jobs:
         shell: bash
         run: |
           fixtures=(build_filter_app)
-          if [[ '${{ matrix.id }}' == fallback ]]; then
+          if [[ '${{ matrix.id }}' == unsupported ]]; then
             fixtures+=(optional_builder_app post_process_builder_app)
           fi
           for fixture in "${fixtures[@]}"; do
@@ -256,6 +256,8 @@ jobs:
             scripts/smoke.sh
             scripts/watch_smoke.sh
             scripts/correctness_upgrade.sh
+            scripts/correctness_cli.*
+            scripts/sync_release_metadata.py
           setup-rust: 'true'
           build-frontend: 'true'
       - name: Prime baseline fixture dependencies
@@ -277,6 +279,8 @@ jobs:
             run: bash scripts/correctness_upgrade.sh
           - name: Run setup-time prewarm correctness
             run: bash scripts/correctness_prewarm.sh
+      - name: Run CLI correctness
+        run: bash scripts/correctness_cli.sh
 
   integration-settings:
     name: 'Integration: native build settings (${{ matrix.id }})'
@@ -298,7 +302,7 @@ jobs:
             fourth: watch-dot
           - id: configuration
             first: errors
-            second: fallback
+            second: boundaries
             third: watch-nested
             fourth: watch-backslash
           - id: lifecycle

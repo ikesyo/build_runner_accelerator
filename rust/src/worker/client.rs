@@ -200,10 +200,7 @@ impl WorkerClient {
         }
         validate_initialized(&response, id)?;
         if retained_output_guard && !has_capability(&response, "retained-output-guard-v1") {
-            return Err(io::Error::other(format!(
-                "{} worker lacks retained-output-guard-v1",
-                crate::cli::OUTPUT_POLICY_UNSUPPORTED
-            )));
+            return Err(io::Error::other("worker lacks retained-output-guard-v1"));
         }
         if !has_capability(&response, BINARY_READ_CAPABILITY) {
             return Err(io::Error::other(format!(

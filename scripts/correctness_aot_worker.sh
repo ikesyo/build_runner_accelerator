@@ -67,7 +67,7 @@ run_rust() {
   local log=$1
   BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" \
     worker_run_frontend build --root "$rust_dir" \
-    --dart "$dart_bin" --mode rust >"$log" 2>&1
+    --dart "$dart_bin" >"$log" 2>&1
 }
 
 run_rust "$first_log" || fail 'initial AOT build failed'

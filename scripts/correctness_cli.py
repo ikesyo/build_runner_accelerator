@@ -9,7 +9,10 @@ import subprocess
 import tempfile
 import time
 
+from sync_release_metadata import read_package_version
+
 REPO = Path(__file__).resolve().parents[1]
+PACKAGE_VERSION = read_package_version(REPO / 'pubspec.yaml')
 DART = os.environ.get('DART_BIN', str(REPO / '.toolchains/dart-wrapper'))
 NATIVE = REPO / 'rust/target/debug/build_runner_accelerator'
 LAUNCHER = [DART, f'--packages={REPO}/.dart_tool/package_config.json',
@@ -79,8 +82,8 @@ class Copier implements Builder {
     run([DART, '--suppress-analytics', 'pub', 'get', '--offline'], root)
 
 
-def launcher(root, mode, command='build', flags=()):
-    return [*LAUNCHER, command, f'--mode={mode}', '--dart', DART,
+def launcher(root, command='build', flags=()):
+    return [*LAUNCHER, command, '--dart', DART,
             '--root', str(root), '--jobs=1', *flags]
 
 
@@ -182,7 +185,7 @@ def main():
         stock, native = base / 'stock', base / 'native'
         for root in (stock, native):
             prepare(root)
-        run(launcher(native, 'rust', 'prewarm', ['--force-aot']), native)
+        run(launcher(native, 'prewarm', ['--force-aot']), native)
         assert not (native / '.dart_tool/build_runner_accelerator/graph-v3.bin').exists()
         # The obsolete -d/long flag must have exactly the same output effect as
         # omission, including conflicts whose builder emits no output.
@@ -194,92 +197,83 @@ def main():
                     for ext in ('copy', 'final'):
                         (root / f'lib/{name}.{ext}').write_text('conflict\n')
             run([DART, '--suppress-analytics', 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
-            run(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
+            run(launcher(native, flags=['--force-jit', *flags]), native)
             assert files(stock) == files(native)
             assert not (native / 'lib/empty.copy').exists()
             for root in (stock, native):
                 (root / 'lib/a.txt').write_text(f'edited {case_index}\n')
             run([DART, '--suppress-analytics', 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
-            run(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
+            run(launcher(native, flags=['--force-jit', *flags]), native)
             assert files(stock) == files(native)
-            run(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
+            run(launcher(native, flags=['--force-jit', *flags]), native)
             assert files(stock) == files(native)
         print('cli-compatibility: conflict flags/no-op/incremental/dependency chain passed', flush=True)
-        # Unsupported build-filter syntax selects stock before binary acquisition.
-        fallback = base / 'fallback'
-        prepare(fallback)
-        bad_native = {**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/bin/false'}
-        args = launcher(fallback, 'auto', flags=['--force-jit', '--build-filter=package:cli_fixture/[a].final'])
-        run(args, fallback, env=bad_native)
-        assert not (fallback / '.dart_tool/build_runner_accelerator').exists()
-        assert (fallback / 'lib/a.final').read_bytes() == (stock / 'lib/b.final').read_bytes().replace(b'b\n', b'a\n')
-        run(launcher(fallback, 'rust', flags=['--build-filter=package:cli_fixture/[a].final']), fallback, expected=1)
-        # clean/unknown arguments/help/invalid stock values and separator status
-        # agree with direct stock, and never resolve the invalid native binary.
-        for command, flags in [('clean', []), ('build', ['--help']), ('build', ['--version']),
-                               ('build', ['--unknown']), ('build', ['--no-delete-conflicting-outputs']),
-                               ('build', ['--delete-conflicting-outputs=true']), ('build', ['--build-filter']),
-                               ('build', ['--', '--jobs', '2'])]:
-            result = subprocess.run([DART, '--suppress-analytics', 'run', 'build_runner', command, *flags], cwd=stock,
-                                    env=ENV, capture_output=True, timeout=180)
-            run(launcher(fallback, 'auto', command, flags), fallback,
-                expected=result.returncode, env=bad_native)
-        print('cli-compatibility: early stock routing/status passed', flush=True)
-        # Manifest-time fallback still carries stock flags and the exact status.
-        empty = base / 'empty'
-        empty.mkdir()
-        capture = base / 'captured.json'
+        # Unsupported requests fail before binary acquisition and preserve files.
+        rejected = base / 'rejected'
+        prepare(rejected)
+        before = files(rejected)
         fake_dart = base / 'fake-dart'
+        capture = base / 'dart-invocations.jsonl'
         fake_dart.write_text('#!/usr/bin/env python3\nimport json,sys\n'
-                            f'open({str(capture)!r}, "w").write(json.dumps(sys.argv[1:]))\n'
+                            f'with open({str(capture)!r}, "a") as f: f.write(json.dumps(sys.argv[1:])+"\\n")\n'
                             'sys.exit(23)\n')
         fake_dart.chmod(0o755)
-        # Workspace load uses a resolved package graph; generator failure then
-        # conservatively falls back (the fake Dart never writes a manifest).
-        shutil.copytree(native / '.dart_tool', empty / '.dart_tool')
-        shutil.copy(native / 'pubspec.yaml', empty / 'pubspec.yaml')
-        for command in ('build', 'watch'):
-            run([*LAUNCHER, command, '--root', str(empty), '--dart', str(fake_dart), '--force-jit', '-d', '--build-filter', 'lib/a.final,lib/b.final', '--build-filter=package:cli_fixture/**'],
-                empty, expected=23)
-            assert json.loads(capture.read_text()) == ['--suppress-analytics', 'run', 'build_runner', command, '--force-jit', '-d', '--build-filter', 'lib/a.final,lib/b.final', '--build-filter=package:cli_fixture/**']
-            output = run([str(NATIVE), command, '--mode=rust', '--root', str(empty), '--dart', str(fake_dart)], empty, expected=1)
-            assert 'Watching' not in output
-        notice = run([str(NATIVE), 'prewarm', '--mode=dart', '--root', str(base / 'missing')], base)
-        assert 'nothing to prewarm' in notice
-        # The same session/exec path works in an AOT launcher, with no runtime
-        # SDK lookup for the wrapper and no changes to the selected stock argv.
+        for command, flags in [('clean', []), ('serve', []), ('build', ['--unknown']),
+                               ('build', ['--output=out']), ('build', ['--build-filter=lib/[a].final']),
+                               ('build', ['--', '--jobs', '2']), ('watch', ['--only-check'])]:
+            for entry in (LAUNCHER, [str(NATIVE)]):
+                log = run([*entry, command, '--root', str(rejected), '--dart', str(fake_dart), *flags],
+                          rejected, expected=1)
+                assert 'unsupported' in log.lower() or 'supported only with build' in log, log
+                assert files(rejected) == before
+                assert not capture.exists()
+                assert not (rejected / '.dart_tool/build_runner_accelerator/graph-v3.bin').exists()
+        for entry in (LAUNCHER, [str(NATIVE)]):
+            for mode in ('auto', 'rust', 'dart'):
+                log = run([*entry, 'build', f'--mode={mode}'], base, expected=1)
+                assert '--mode was removed in 0.14.0' in log
+            for flags in (['--help'], ['build', '--help'], ['watch', '--version']):
+                log = run([*entry, *flags], base,
+                          env={**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/missing-native'})
+                if flags[-1] == '--version':
+                    assert log.splitlines()[-1] == PACKAGE_VERSION, log
+                else:
+                    assert 'build_runner_accelerator' in log, log
+        unavailable = run(launcher(rejected, flags=['--force-jit']), rejected, expected=1,
+                          env={**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': str(base / 'missing-native')})
+        assert 'unavailable' in unavailable.lower() and files(rejected) == before, unavailable
+        assert not capture.exists()
+        # The compiled launcher uses the same native path and own diagnostics.
         compiled_launcher = base / 'launcher'
-        run([DART, '--suppress-analytics', 'compile', 'exe',
-             str(REPO / 'bin/build_runner_accelerator.dart'), '-o', str(compiled_launcher)], REPO)
-        aot_root = base / 'aot-root'
-        aot_root.mkdir()
-        run([str(compiled_launcher), 'build', '--mode=dart', '--dart', str(fake_dart),
-             '--root', str(aot_root), '--force-jit', '-d', '--build-filter=lib/a.final'], aot_root, expected=23)
-        assert not (aot_root / '.dart_tool').exists()
-        assert json.loads(capture.read_text()) == ['run', 'build_runner', 'build', '--force-jit', '-d', '--build-filter=lib/a.final']
-        # Direct native CLI routes stock without loading a workspace at all.
-        for command, arguments in [('clean', []), ('build', ['--unknown']),
-                                   ('build', ['--', '--mode', 'rust'])]:
-            run([str(NATIVE), command, '--dart', str(fake_dart), '--root', str(base),
-                 *arguments], base, expected=23)
-            assert json.loads(capture.read_text()) == ['--suppress-analytics', 'run', 'build_runner', command, *arguments]
-        assert not (base / '.dart_tool').exists()
-        print('cli-compatibility: manifest/direct-native fallback arguments and status passed', flush=True)
-        # Native watch and early CLI fallback watch both stop on launcher Ctrl-C.
+        run([DART, 'compile', 'exe', str(REPO / 'bin/build_runner_accelerator.dart'),
+             '-o', str(compiled_launcher)], REPO)
+        assert 'build_runner_accelerator' in run([str(compiled_launcher), 'build', '--help'], base)
+        run([str(compiled_launcher), 'build', '--root', str(native), '--dart', DART,
+             '--jobs=1', '--force-jit'], native)
+        assert files(native) == files(stock)
+        # A generator failure must never retry the invocation through stock.
+        empty = base / 'empty'
+        empty.mkdir()
+        shutil.copytree(native / '.dart_tool', empty / '.dart_tool')
+        shutil.rmtree(empty / '.dart_tool/build_runner_accelerator')
+        shutil.copy(native / 'pubspec.yaml', empty / 'pubspec.yaml')
+        for command in ('build', 'watch', 'prewarm'):
+            log = run([*LAUNCHER, command, '--root', str(empty), '--dart', str(fake_dart), '--force-jit'], empty, expected=1)
+            assert 'Watching ' not in log
+            invocations = [json.loads(line) for line in capture.read_text().splitlines()]
+            assert not any('build_runner' in argv for argv in invocations), invocations
+        print('cli-compatibility: unsupported requests/modes/help/generator failure passed', flush=True)
+        # Native watch stops on launcher Ctrl-C and terminal hangup.
         reference = files(native)
-        assert watch(launcher(native, 'rust', 'watch', ['--force-jit', '-d']), native, reference)
-        assert watch(launcher(stock, 'auto', 'watch', ['--force-jit', '--verbose-durations']),
-                     stock, reference) == files(native)
-        # Terminal/SSH hangup must reach both isolated subprocess topologies.
+        assert watch(launcher(native, 'watch', ['--force-jit', '-d']), native, reference)
+        # Terminal/SSH hangup must reach the native subprocess tree.
         reference = files(native)
-        assert watch(launcher(native, 'rust', 'watch', ['--force-jit']), native,
+        assert watch(launcher(native, 'watch', ['--force-jit']), native,
                      reference, stop_signal=signal.SIGHUP)
-        assert watch(launcher(stock, 'auto', 'watch', ['--force-jit', '--verbose-durations']),
-                     stock, reference, stop_signal=signal.SIGHUP) == files(native)
-        assert watch([str(NATIVE), 'watch', '--mode=rust', '--root', str(native),
+        assert watch([str(NATIVE), 'watch', '--root', str(native),
                       '--dart', DART, '--jobs=1', '--force-jit'], native, files(native),
                      stop_signal=signal.SIGHUP, edit='direct native hangup edit')
-        print('cli-compatibility: SIGHUP cleanup/status passed for native/stock/direct-native', flush=True)
+        print('cli-compatibility: SIGHUP cleanup/status passed for native/direct-native', flush=True)
         # A real internal prewarm helper starts a deliberately stalled compiler
         # with its own child. All three must die when only the launcher gets SIGINT.
         compiler_marker = base / 'compiler-started'
@@ -307,10 +301,10 @@ def main():
                           'BUILD_RUNNER_ACCELERATOR_WORKER_AOT': 'background',
                           'BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM': '0',
                           'BUILD_RUNNER_ACCELERATOR_SDK_SUMMARY_PREWARM': '0'}
-        assert watch([*LAUNCHER, 'watch', '--mode=rust', '--root', str(native),
+        assert watch([*LAUNCHER, 'watch', '--root', str(native),
                       '--dart', str(compiler), '--jobs=1'], native, files(native),
                      env=background_env, compiler_marker=compiler_marker)
-    print('cli-compatibility: PASS conflicts/no-op/incremental/dependencies/filter/fallback/status/watch/Ctrl-C/SIGHUP')
+    print('cli-compatibility: PASS conflicts/no-op/incremental/dependencies/rejections/status/watch/Ctrl-C/SIGHUP')
 
 
 if __name__ == '__main__':

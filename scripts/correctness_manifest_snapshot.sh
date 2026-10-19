@@ -40,7 +40,7 @@ generate() {
   local label=$1 expected=$2
   rm -f -- "$manifest" "$entrypoint"
   VERIFY_COMMAND_LOG="$temporary_dir/$label.log" VERIFY_WORKSPACE="$fixture" \
-    worker_run_frontend build --root "$fixture" --dart "$dart_bin" --mode rust
+    worker_run_frontend build --root "$fixture" --dart "$dart_bin"
   grep -Fq -- "$expected" "$temporary_dir/$label.log"
 }
 

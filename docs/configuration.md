@@ -36,8 +36,7 @@ The root package's `<package>.build.yaml` replaces its `BuildConfig`. A selected
 definitions still come from `build.yaml` and package overrides.
 
 Malformed, missing, ambiguous, or unsupported configuration is not partially
-applied. `auto` routes the whole invocation to stock; `rust` reports an error before
-native actions. Stock diagnostics and exit status are preserved.
+applied. The accelerator reports an error before native actions.
 
 ## Package source sets
 
@@ -56,7 +55,7 @@ unconditional deepest-package ownership rule for one-shot builds.
 
 Native supports broad sources such as `['lib/**', 'dep/**']`. Source sets
 admitting `.dart_tool/build/**` or `.dart_tool/build_runner_accelerator/**`
-instead use stock in auto and error before actions in rust: stock can consume
+are rejected before actions: stock can consume
 its own prior artifact tree as root inputs, while native has a different
 private artifact layout. For `**`, exclude `.dart_tool/**` to avoid this
 implementation-directory boundary. Other eligible hidden files are included.
@@ -64,8 +63,8 @@ implementation-directory boundary. Other eligible hidden files are included.
 Native watch requires source sets that cannot reach another configured package
 root. Stock watches only the deepest package identity, retaining different
 parent-alias source/cache evidence until restart; native snapshots cannot
-reproduce that history. Potentially overlapping watch inputs therefore use
-stock in auto and fail before actions in rust. Literal subtree exclusions such
+reproduce that history. Potentially overlapping watch inputs therefore
+fail before actions. Literal subtree exclusions such
 as `exclude: ['.dart_tool/**', 'dep/**']` allow native watch. The prefix check is
 conservative when more complex exclusions cannot prove that the subtree is excluded.
 
@@ -78,8 +77,7 @@ regenerates the manifest and invalidates the private action graph. Runtime filte
 worker compile mode do not change configuration identity.
 
 Value-only changes can reload during native watch. Changes to builder
-applications, mappings, sources, or phase topology hand the whole watch to
-stock in auto and stop with an error in rust. The worker pool is replaced when
+applications, mappings, sources, or phase topology stop watch with an error. The worker pool is replaced when
 the resolved manifest changes.
 
 Stock 2.16.2 watches the raw named-config spelling even though it normalizes the

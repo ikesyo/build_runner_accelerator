@@ -18,7 +18,7 @@ cache_key=$(DART_BIN="$dart_bin" \
   "$script_dir/aot_cache_key.sh" "$workspace_root")
 
 worker_run_frontend \
-  prewarm --root "$workspace_root" --dart "$dart_bin" --mode rust
+  prewarm --root "$workspace_root" --dart "$dart_bin"
 
 aot_root="$workspace_root/.dart_tool/build_runner_accelerator/aot-sdk"
 aot_path="$aot_root/bin/dynamic_worker"

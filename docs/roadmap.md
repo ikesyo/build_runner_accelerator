@@ -33,7 +33,7 @@ The following are implemented and covered by the current fixture suite:
 - Stock-vs-native output comparisons for clean, no-op, incremental, failure,
   deletion, rename, and watch cases.
 - A single project-facing Dart launcher with automatic signed native artifact
-  download and conservative Dart fallback.
+  download and explicit native-only execution.
 - Five release targets with manifest, signature, checksum, and cache
   validation.
 
@@ -50,7 +50,7 @@ The following are implemented and covered by the current fixture suite:
 ## Post-release research
 
 - [ ] Expand the manifest subset toward complete `build.yaml` semantics while
-  preserving the automatic Dart fallback. Full post-process behavior and
+  preserving explicit rejection outside the validated subset. Full post-process behavior and
   workspace semantics remain separate follow-ups.
 - [ ] Compare conditional import/export dependency selection with stock
   `build_runner` before attempting a more precise invalidation rule.

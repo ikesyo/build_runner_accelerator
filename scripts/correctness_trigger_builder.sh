@@ -101,7 +101,7 @@ run_rust() {
   local log=$2
   BUILD_RUNNER_ACCELERATOR_METRICS=1 VERIFY_COMMAND_LOG="$log" VERIFY_WORKSPACE="$directory" worker_run_frontend \
     build --root "$directory" --dart "$dart_bin" \
-    --mode rust --jobs 2
+    --jobs 2
 }
 prepare_package() {
   local directory=$1
