@@ -1,3 +1,5 @@
+pub(crate) const OUTPUT_POLICY_UNSUPPORTED: &str = "native output policy unsupported:";
+
 use std::env;
 use std::io;
 use std::path::PathBuf;
@@ -142,22 +144,8 @@ impl Options {
                 _ => {
                     direct_invocation.push(argument.clone());
                     stock_arguments.push(argument.clone());
-                    if matches!(
-                        argument.as_str(),
-                        "--build-filter"
-                            | "--config"
-                            | "-c"
-                            | "--output"
-                            | "-o"
-                            | "--define"
-                            | "--enable-experiment"
-                            | "--dart-jit-vm-arg"
-                            | "--log-performance"
-                            | "--build-mode"
-                            | "--hostname"
-                            | "--port"
-                            | "--dart-dev-service-port"
-                    ) && let Some(value) = args.next()
+                    if stock_option_takes_value(&argument)
+                        && let Some(value) = args.next()
                     {
                         direct_invocation.push(value.clone());
                         stock_arguments.push(value);
@@ -208,6 +196,26 @@ impl Options {
             stock_invocation,
         })
     }
+
+    /// Classifies ownership without requiring native support for stock's CLI.
+    pub(crate) fn stock_output_policy(&self) -> (bool, bool) {
+        let (mut keep, mut verify, mut help) = (false, false, false);
+        let mut args = self.stock_arguments.iter();
+        while let Some(argument) = args.next() {
+            match argument.as_str() {
+                "--" => break,
+                "--keep-modified-outputs" => keep = true,
+                "--only-check" => verify = true,
+                "--help" | "-h" => help = true,
+                _ if stock_option_takes_value(argument) => {
+                    args.next();
+                }
+                _ => {}
+            }
+        }
+        (keep && !help, !verify && !help)
+    }
+
     pub(crate) fn native_supported(&self) -> bool {
         if self
             .stock_invocation
@@ -220,16 +228,38 @@ impl Options {
             self.command.as_str(),
             "build" | "watch" | "prewarm" | "aot-cache-key" | "--help" | "-h" | "--version"
         ) && BuildSettings::parse(&self.stock_arguments).is_ok_and(|settings| {
-            matches!(self.command.as_str(), "build" | "watch")
-                || (!settings.deletion_flag && settings.build_filters.is_empty())
+            (self.command == "build" || (!settings.only_check && !settings.keep_modified_outputs))
+                && (matches!(self.command.as_str(), "build" | "watch")
+                    || (!settings.deletion_flag && settings.build_filters.is_empty()))
         })
     }
+}
+
+fn stock_option_takes_value(argument: &str) -> bool {
+    matches!(
+        argument,
+        "--build-filter"
+            | "--config"
+            | "-c"
+            | "--output"
+            | "-o"
+            | "--define"
+            | "--enable-experiment"
+            | "--dart-jit-vm-arg"
+            | "--log-performance"
+            | "--build-mode"
+            | "--hostname"
+            | "--port"
+            | "--dart-dev-service-port"
+    )
 }
 
 /// Lexical capability check only. Dart/build_config owns normalized overrides
 /// and configuration parsing. Never discard the original stock vector.
 #[derive(Default)]
 pub(crate) struct BuildSettings {
+    pub(crate) only_check: bool,
+    pub(crate) keep_modified_outputs: bool,
     pub(crate) release: bool,
     pub(crate) defines: Vec<String>,
     pub(crate) config: Option<String>,
@@ -271,6 +301,8 @@ impl BuildSettings {
         let mut pairs = std::collections::BTreeSet::new();
         while let Some(argument) = args.next() {
             match argument.as_str() {
+                "--only-check" => settings.only_check = true,
+                "--keep-modified-outputs" => settings.keep_modified_outputs = true,
                 "--release" | "-r" => settings.release = true,
                 "--no-release" => settings.release = false,
                 "-d" | "--delete-conflicting-outputs" => settings.deletion_flag = true,
@@ -322,6 +354,11 @@ impl BuildSettings {
                     }
                 }
             }
+        }
+        if settings.only_check && settings.keep_modified_outputs {
+            return Err(io::Error::other(
+                "Cannot specify both --only-check and --keep-modified-outputs",
+            ));
         }
         settings.config_path()?;
         Ok(settings)
@@ -593,6 +630,43 @@ mod tests {
         FrontendMode, cgroup_available_bytes, cgroup_dir_for, cgroup_mount,
         parse_vm_stat_available_gib,
     };
+
+    #[test]
+    fn output_policy_capabilities_preserve_stock_arguments() {
+        for policy in ["--only-check", "--keep-modified-outputs"] {
+            let flags = [
+                "build",
+                policy,
+                policy,
+                "--build-filter=lib/*.final",
+                "--force-jit",
+            ];
+            let options = super::Options::parse(flags.into_iter().map(str::to_owned)).unwrap();
+            assert!(options.native_supported());
+            assert_eq!(options.stock_arguments, flags[1..]);
+            for command in ["watch", "prewarm", "aot-cache-key"] {
+                let options =
+                    super::Options::parse([command, policy].into_iter().map(str::to_owned))
+                        .unwrap();
+                assert!(!options.native_supported());
+            }
+        }
+        for flags in [
+            vec!["--only-check", "--keep-modified-outputs"],
+            vec!["--no-only-check"],
+            vec!["--no-keep-modified-outputs"],
+            vec!["--only-check=true"],
+            vec!["--keep-modified-outputs=false"],
+            vec!["--only-check", "false"],
+        ] {
+            assert!(
+                super::BuildSettings::parse(
+                    &flags.into_iter().map(str::to_owned).collect::<Vec<_>>()
+                )
+                .is_err()
+            );
+        }
+    }
 
     #[test]
     fn stock_cli_is_preserved_and_classified() {

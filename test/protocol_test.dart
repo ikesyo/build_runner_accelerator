@@ -132,6 +132,7 @@ void main() {
       expect(initialize.inputRestrictions, {
         'dep': ['lib/**'],
       });
+      expect(initialize.retainedOutputGuard, isFalse);
     });
 
     test('decodes build messages and normalizes optional fields once', () {
@@ -275,6 +276,33 @@ void main() {
       );
     }
   });
+  test('retained output guard is optional but strictly boolean', () {
+    final valid = <String, dynamic>{
+      'v': 1,
+      'type': 'initialize',
+      'id': 1,
+      'package': 'app',
+      'root': Directory.current.absolute.path,
+      'resolver_mode': 'dart_local',
+      'phase_count': 1,
+      'input_restrictions': <String, List<String>>{},
+      'accelerator_version': buildRunnerAcceleratorVersion,
+    };
+    for (final enabled in [false, true]) {
+      final request =
+          WorkerMessage.decode({...valid, 'retained_output_guard': enabled})
+              as WorkerInitializeMessage;
+      expect(request.retainedOutputGuard, enabled);
+    }
+    for (final invalid in [null, 1, 'true']) {
+      expect(
+        () =>
+            WorkerMessage.decode({...valid, 'retained_output_guard': invalid}),
+        throwsFormatException,
+      );
+    }
+  });
+
   test('build requires current fields instead of legacy defaults', () {
     final valid = <String, dynamic>{
       'v': 1,

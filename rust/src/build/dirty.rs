@@ -64,9 +64,17 @@ pub(super) fn analyze(
     let mut dirty_roots = Vec::new();
     let dirty_context = state.dirty_context(current_snapshot);
     for (spec, digests) in specs.iter().zip(spec_output_digests) {
+        let key = spec.action_key();
+        // A file at a declared but previously omitted output is a conflict,
+        // including after verify deliberately left it untouched. An otherwise
+        // unchanged action must get a chance to remove that unexpected file.
+        let has_unrecorded_output = state.actions.get(&key).is_some_and(|action| {
+            digests.iter().any(|(output, digest)| {
+                digest.is_some() && !action.outputs.iter().any(|actual| actual == output)
+            })
+        });
         apply_output_digests(&mut current_output_digests, digests);
 
-        let key = spec.action_key();
         let needs_build = match state.actions.get(&key) {
             Some(action) if state.is_compatible(config_digest) => state
                 .changed_since_previous_with(
@@ -77,7 +85,7 @@ pub(super) fn analyze(
                 ),
             _ => true,
         };
-        if needs_build {
+        if needs_build || has_unrecorded_output {
             dirty_roots.push(spec.clone());
             if !spec.instance.builder.is_optional {
                 dirty.push(spec.clone());

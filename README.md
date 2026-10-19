@@ -75,6 +75,20 @@ builder types, or prior-state transitions use stock in auto and report an error
 in rust. See [ADR 0032](docs/adr/0032-native-build-filter-demand-and-output-state.md)
 for the selection, dependency, deletion, and failure rules.
 
+## Verify or retain generated outputs
+
+```bash
+dart run build_runner_accelerator build --only-check
+dart run build_runner_accelerator build --keep-modified-outputs
+```
+
+Verification exits 1 on output differences without writing generated files or
+incremental state. Keep retains manual edits until the producer reruns; missing
+outputs regenerate. Both flags support normal-builder chains and build filters,
+and are mutually exclusive and build-only in native mode. See the
+[output policy reference](docs/launcher-and-release.md#output-policies) for
+compatibility limits and state recovery.
+
 ## Compatibility and recovery
 
 The native frontend supports build_runner `>=2.16.2 <2.17.0`; correctness

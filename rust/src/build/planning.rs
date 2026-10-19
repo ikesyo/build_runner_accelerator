@@ -37,6 +37,7 @@ pub(super) fn create(
     build_config: &RustBuildConfig,
     current_snapshot: &BTreeMap<String, crate::snapshot::AssetSnapshot>,
 ) -> io::Result<PlannedActions> {
+    let _planning = crate::wall::Span::new("planning");
     // Post-process outputs are hidden from all normal Builder phases. Keep
     // them in the persisted snapshot for their own action bookkeeping, but
     // remove them from the candidate snapshot used by normal builders.

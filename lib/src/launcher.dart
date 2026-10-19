@@ -3,6 +3,7 @@ import 'dart:io';
 import 'frontend_binary_resolver.dart';
 import 'launcher_options.dart';
 import 'manifest/settings.dart';
+import 'native_graph.dart';
 import 'launcher_process.dart';
 import 'process_group.dart';
 
@@ -32,6 +33,31 @@ Future<int> runLauncher(List<String> arguments) async {
   var unsupportedReason = options.nativeUnsupported
       ? 'unsupported native CLI'
       : null;
+  if (unsupportedReason == null &&
+      options.mode != 'dart' &&
+      const {'build', 'watch'}.contains(options.command) &&
+      File(
+        '${options.root}/.dart_tool/build_runner_accelerator/stock-output-policy-state',
+      ).existsSync()) {
+    unsupportedReason =
+        'stock output-policy state requires stock until both build states are reset';
+    if (options.mode == 'rust') throw StateError(unsupportedReason);
+  }
+  bool? retainedNativeOutputState;
+  if (unsupportedReason == null &&
+      options.mode != 'dart' &&
+      options.command == 'watch') {
+    try {
+      retainedNativeOutputState = hasRetainedNativeOutputState(options.root);
+    } on FileSystemException {
+      // Unreadable history cannot safely resume native watch.
+      retainedNativeOutputState = true;
+    }
+    if (retainedNativeOutputState) {
+      unsupportedReason = 'watch after retained output state requires stock';
+      if (options.mode == 'rust') throw StateError(unsupportedReason);
+    }
+  }
   if (unsupportedReason == null && options.mode != 'dart') {
     final config = BuildSettings.parse(
       options.dartArguments.skip(3).toList(),
@@ -65,11 +91,10 @@ Future<int> runLauncher(List<String> arguments) async {
         'using Dart build_runner fallback.',
       );
     }
-    return processRunner.run(
-      options.dartBinary,
-      options.dartArguments,
-      options.root,
-      isolatedProcessGroup: true,
+    return _runStock(
+      options,
+      processRunner,
+      retainedNativeOutputState: retainedNativeOutputState,
     );
   }
 
@@ -94,12 +119,7 @@ Future<int> runLauncher(List<String> arguments) async {
       'build_runner_accelerator: Rust frontend unavailable ($error); '
       'using Dart build_runner fallback.',
     );
-    return processRunner.run(
-      options.dartBinary,
-      options.dartArguments,
-      options.root,
-      isolatedProcessGroup: true,
-    );
+    return _runStock(options, processRunner);
   }
   if (binary == null) {
     if (options.mode == 'rust' || options.command == 'aot-cache-key') {
@@ -119,12 +139,7 @@ Future<int> runLauncher(List<String> arguments) async {
       'build_runner_accelerator: Rust frontend unavailable; '
       'using Dart build_runner fallback.',
     );
-    return processRunner.run(
-      options.dartBinary,
-      options.dartArguments,
-      options.root,
-      isolatedProcessGroup: true,
-    );
+    return _runStock(options, processRunner);
   }
   final environment = Map<String, String>.from(Platform.environment);
   // AOT startup is substantially faster for dirty builds. Long-running
@@ -150,6 +165,54 @@ Future<int> runLauncher(List<String> arguments) async {
   );
 }
 
+// Stock keep can publish logical digests that the native graph cannot import.
+// Claim ownership before starting it, including when the process is interrupted.
+// Claims remain until explicit recovery: another invocation may have adopted one.
+Future<int> _runStock(
+  LauncherOptions options,
+  LauncherProcessRunner runner, {
+  bool? retainedNativeOutputState,
+}) async {
+  final marker = File(
+    '${options.root}/.dart_tool/build_runner_accelerator/stock-output-policy-state',
+  );
+  var claimOwnership = options.stockKeepRequested;
+  if (!marker.existsSync() &&
+      options.stockMayPublishOutputs &&
+      !claimOwnership &&
+      const {'build', 'watch'}.contains(options.command)) {
+    try {
+      claimOwnership =
+          retainedNativeOutputState ??
+          hasRetainedNativeOutputState(options.root);
+    } on FileSystemException {
+      // Stock was already selected. Unreadable native history must not block
+      // it or let a subsequent native build reuse history stock may replace.
+      claimOwnership = true;
+    }
+  }
+  if (!marker.existsSync() &&
+      options.stockMayPublishOutputs &&
+      claimOwnership) {
+    try {
+      marker.parent.createSync(recursive: true);
+      marker.writeAsStringSync('Stock owns output-policy history.\n');
+    } on FileSystemException catch (error) {
+      if (options.mode != 'dart') rethrow;
+      stderr.writeln(
+        'build_runner_accelerator: cannot record stock output-policy history '
+        '($error); reset both build states before native reuse.',
+      );
+    }
+  }
+  return runner.run(
+    options.dartBinary,
+    options.dartArguments,
+    options.root,
+    isolatedProcessGroup: true,
+  );
+}
+
 /// `prewarm` only
 /// warms frontend caches; when no frontend can run there is nothing to do.
 bool _isPrewarmCommand(String command) => command == 'prewarm';
@@ -171,8 +234,13 @@ and verifies the matching signed release artifact.
 Native commands: build, watch, prewarm, aot-cache-key.
 Other stock commands (clean, serve, run, test, stop) and unsupported options
 use stock in auto/dart; rust reports an error before downloading a frontend.
-Stock --output, --workspace,
---keep-modified-outputs, --only-check and logging options use fallback.
+Stock --output, --workspace and logging options use fallback.
+Build --only-check verifies package outputs without writes/deletes or graph saves;
+I/M/U differences fail with status 1. --keep-modified-outputs retains edits until
+producer rerun; missing outputs regenerate. Mutually exclusive, non-negatable;
+watch uses stock and prewarm rejects both. Normal-builder demand subset only.
+Keep with modified outputs and digest/resolver API use requires stock (rust errors).
+After stock keep/history fallback, build/watch stay on stock until both states reset.
 --delete-conflicting-outputs / -d are accepted by native build/watch as retired
 stock compatibility flags: they have no effect. They are never auto-added.
 Build/watch filters support repeated/comma-separated relative, package: and
@@ -205,6 +273,8 @@ Launcher options:
   --release, -r          Use release options (default: development)
   --no-release           Use development options; last release flag wins
   --config NAME, -c NAME Use build.NAME.yaml; last config wins
+  --only-check           Verify outputs without publishing outputs or graph
+  --keep-modified-outputs Keep edits until input changes rerun their producer
   --force-aot             Force the AOT worker (stock-compatible)
   --force-jit             Force the non-AOT worker (stock-compatible)
   BUILD_RUNNER_ACCELERATOR_BIN   Use a preinstalled frontend binary
