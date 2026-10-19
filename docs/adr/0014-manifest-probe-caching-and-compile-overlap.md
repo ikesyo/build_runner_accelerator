@@ -91,5 +91,12 @@ Two facts make most of it redundant:
 - `BUILD_RUNNER_ACCELERATOR_CACHE` relocates the probe cache along with the
   other machine-wide stores; correctness fixtures that point it at a
   scratch directory stay hermetic.
-- The probe subprocess itself is unchanged; a future move to in-worker
-  probing would obsolete the cache without changing the manifest format.
+- Probe transport failure is an explicit manifest-generation error, distinct
+  from a successfully probed mapping outside the native subset. Report the
+  attempted builder/application and factories, failure category, and at most
+  8 KiB of stderr per attempt while continuing to drain both pipes. A failed
+  worker-AOT attempt may retry through the source probe; if both fail retain
+  both diagnostics. Never accept a timeout's late result or cache a failed or
+  partial response. Even optional runtime-type probes must complete before
+  publishing a manifest, so cold and warm generation cannot silently differ
+  in runtime mapping or part-directive metadata because a probe failed.

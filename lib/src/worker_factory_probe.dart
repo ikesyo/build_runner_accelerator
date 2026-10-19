@@ -44,7 +44,10 @@ void runWorkerFactoryProbe({
         }
       }
       result[request['id'] as String] = entries;
-    } catch (_) {}
+    } catch (error, stack) {
+      stderr.writeln('Factory probe ${request['id']}: $error');
+      stderr.writeln(stack);
+    }
   }
   File(resultPath).writeAsStringSync(jsonEncode(result));
 }
