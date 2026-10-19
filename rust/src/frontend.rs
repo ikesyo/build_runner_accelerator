@@ -765,26 +765,22 @@ pub(crate) fn run_dart_fallback(
     retained_output_state: Option<bool>,
 ) -> io::Result<()> {
     if matches!(options.command.as_str(), "build" | "watch") {
-        let settings = crate::cli::BuildSettings::parse(&options.stock_arguments).ok();
-        let keep = settings
-            .as_ref()
-            .is_some_and(|settings| settings.keep_modified_outputs);
-        let verify = settings
-            .as_ref()
-            .is_some_and(|settings| settings.only_check);
-        let retained = match retained_output_state {
-            // Keep already claims ownership; verify cannot publish it.
-            _ if keep || verify => false,
-            Some(retained) => retained,
-            None => crate::graph::GraphState::load(
-                &options
-                    .root
-                    .join(".dart_tool/build_runner_accelerator/graph-v3.bin"),
-            )
-            .is_ok_and(|state| state.retained_output_state),
-        };
-        if keep || (retained && !verify) {
-            crate::build::mark_stock_output_state(&options.root)?;
+        let (keep, may_publish) = options.stock_output_policy();
+        if may_publish {
+            let retained = match retained_output_state {
+                // Keep already claims ownership without reading native history.
+                _ if keep => false,
+                Some(retained) => retained,
+                None => crate::graph::GraphState::load(
+                    &options
+                        .root
+                        .join(".dart_tool/build_runner_accelerator/graph-v3.bin"),
+                )
+                .is_ok_and(|state| state.retained_output_state),
+            };
+            if keep || retained {
+                crate::build::mark_stock_output_state(&options.root)?;
+            }
         }
     }
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");

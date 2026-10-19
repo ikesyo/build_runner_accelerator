@@ -79,9 +79,11 @@ readable obsolete/malformed history still resets natively. Stock uses its own
 graph, including cold-build semantics when absent; discarded native attempts
 publish nothing.
 
-Read-only verify/help does not claim ownership. Once claimed, ownership persists
-until explicit recovery, including after usage errors: another stock invocation
-may already have adopted the claim. Prewarm does not inspect output-policy history.
+Read-only verify/help does not claim ownership, including when other arguments
+are outside native CLI support. Policy detection respects option values and `--`.
+Once claimed, ownership persists until explicit recovery, including after usage
+errors: another stock invocation may already have adopted the claim. Prewarm does
+not inspect output-policy history.
 
 ## Failure and validation
 

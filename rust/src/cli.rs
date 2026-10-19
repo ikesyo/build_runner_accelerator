@@ -144,22 +144,8 @@ impl Options {
                 _ => {
                     direct_invocation.push(argument.clone());
                     stock_arguments.push(argument.clone());
-                    if matches!(
-                        argument.as_str(),
-                        "--build-filter"
-                            | "--config"
-                            | "-c"
-                            | "--output"
-                            | "-o"
-                            | "--define"
-                            | "--enable-experiment"
-                            | "--dart-jit-vm-arg"
-                            | "--log-performance"
-                            | "--build-mode"
-                            | "--hostname"
-                            | "--port"
-                            | "--dart-dev-service-port"
-                    ) && let Some(value) = args.next()
+                    if stock_option_takes_value(&argument)
+                        && let Some(value) = args.next()
                     {
                         direct_invocation.push(value.clone());
                         stock_arguments.push(value);
@@ -210,6 +196,26 @@ impl Options {
             stock_invocation,
         })
     }
+
+    /// Classifies ownership without requiring native support for stock's CLI.
+    pub(crate) fn stock_output_policy(&self) -> (bool, bool) {
+        let (mut keep, mut verify, mut help) = (false, false, false);
+        let mut args = self.stock_arguments.iter();
+        while let Some(argument) = args.next() {
+            match argument.as_str() {
+                "--" => break,
+                "--keep-modified-outputs" => keep = true,
+                "--only-check" => verify = true,
+                "--help" | "-h" => help = true,
+                _ if stock_option_takes_value(argument) => {
+                    args.next();
+                }
+                _ => {}
+            }
+        }
+        (keep && !help, !verify && !help)
+    }
+
     pub(crate) fn native_supported(&self) -> bool {
         if self
             .stock_invocation
@@ -227,6 +233,25 @@ impl Options {
                     || (!settings.deletion_flag && settings.build_filters.is_empty()))
         })
     }
+}
+
+fn stock_option_takes_value(argument: &str) -> bool {
+    matches!(
+        argument,
+        "--build-filter"
+            | "--config"
+            | "-c"
+            | "--output"
+            | "-o"
+            | "--define"
+            | "--enable-experiment"
+            | "--dart-jit-vm-arg"
+            | "--log-performance"
+            | "--build-mode"
+            | "--hostname"
+            | "--port"
+            | "--dart-dev-service-port"
+    )
 }
 
 /// Lexical capability check only. Dart/build_config owns normalized overrides
