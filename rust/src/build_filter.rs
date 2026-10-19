@@ -10,7 +10,7 @@ pub(crate) struct BuildFilter {
 
 impl BuildFilter {
     /// Parses the supported URI/path glob subset. Unsupported spellings are
-    /// errors so the caller can preserve stock `build_runner` diagnostics.
+    /// errors and never broaden the supported subset by guessing.
     pub(crate) fn parse(value: &str) -> io::Result<Self> {
         let unsupported = || io::Error::other(format!("Unsupported native build filter: {value}"));
         if value.is_empty()
@@ -73,8 +73,9 @@ impl BuildFilter {
 
 /// Runtime filters, output policies, artifact modes and retired deletion flags
 /// do not configure builders. Canonicalize parsed release/config flags while retaining defines.
-pub(crate) fn configuration_arguments(arguments: &[String]) -> io::Result<Vec<String>> {
-    let settings = crate::cli::BuildSettings::parse(arguments)?;
+pub(crate) fn configuration_arguments(
+    settings: &crate::cli::BuildSettings,
+) -> io::Result<Vec<String>> {
     let mut result = Vec::new();
     if settings.release {
         result.push("--release".to_owned());
@@ -83,9 +84,9 @@ pub(crate) fn configuration_arguments(arguments: &[String]) -> io::Result<Vec<St
         result.push("--config".to_owned());
         result.push(path);
     }
-    for value in settings.defines {
+    for value in &settings.defines {
         result.push("--define".to_owned());
-        result.push(value);
+        result.push(value.clone());
     }
     Ok(result)
 }
@@ -131,6 +132,10 @@ mod tests {
     }
     #[test]
     fn filter_demand_does_not_change_configuration_identity() {
+        fn canonical(arguments: &[String]) -> Vec<String> {
+            let settings = crate::cli::BuildSettings::parse(arguments).unwrap();
+            configuration_arguments(&settings).unwrap()
+        }
         let args = [
             "--define",
             "b=key=--build-filter=literal",
@@ -141,24 +146,23 @@ mod tests {
             "--build-filter=lib/b",
         ];
         assert_eq!(
-            configuration_arguments(&args.map(str::to_owned)).unwrap(),
+            canonical(&args.map(str::to_owned)),
             ["--release", "--define", "b=key=--build-filter=literal"]
         );
         assert_eq!(
-            configuration_arguments(&["--force-aot".to_owned(), "-dr".to_owned()]).unwrap(),
+            canonical(&["--force-aot".to_owned(), "-dr".to_owned()]),
             ["--release"]
         );
         assert_eq!(
-            configuration_arguments(&["--config".to_owned(), "--force-aot".to_owned()]).unwrap(),
+            canonical(&["--config".to_owned(), "--force-aot".to_owned()]),
             ["--config", "build.--force-aot.yaml"]
         );
         assert_eq!(
-            configuration_arguments(&[
+            canonical(&[
                 "--force-jit".to_owned(),
                 "-d".to_owned(),
                 "--only-check".to_owned()
-            ])
-            .unwrap(),
+            ]),
             Vec::<String>::new()
         );
     }

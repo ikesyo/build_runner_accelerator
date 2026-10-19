@@ -1,6 +1,6 @@
 use crate::build;
 use crate::builder::{ConfiguredBuilder, RustBuildConfig};
-use crate::cli::{BuildSettings, Options};
+use crate::cli::Options;
 use crate::frontend::{NativeFrontend, select_frontend, unsupported, worker_executable};
 use crate::graph::GraphState;
 use crate::pattern::match_capture_pattern;
@@ -89,7 +89,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     let mut pool_signature = None;
     let mut pool_shape = None;
     let mut watch_state = WatchState::default();
-    let settings = BuildSettings::parse(&options.build_arguments)?;
+    let settings = &options.settings;
     let stock_config_path = settings
         .config
         .as_ref()
@@ -197,9 +197,7 @@ fn run_watch_build(
     let workspace = Workspace::load(options.root.clone())?;
     let loaded_graph = build::LoadedGraph::load(&workspace)?;
     let session_start = watch_state.cached_configuration.is_none();
-    let filtered = !BuildSettings::parse(&options.build_arguments)?
-        .build_filters
-        .is_empty();
+    let filtered = !options.settings.build_filters.is_empty();
     let mut frontend = if reuse_configuration {
         if let Some(config) = &watch_state.cached_configuration {
             NativeFrontend::new(config.clone())

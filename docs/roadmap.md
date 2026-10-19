@@ -49,6 +49,9 @@ The following are implemented and covered by the current fixture suite:
 
 ## Post-release research
 
+The [native-only follow-up audit](native-only-follow-up-audit.md) prioritizes
+cleanup, diagnostics and performance investigations after stock fallback removal.
+
 - [ ] Expand the manifest subset toward complete `build.yaml` semantics while
   preserving explicit rejection outside the validated subset. Full post-process behavior and
   workspace semantics remain separate follow-ups.
