@@ -39,6 +39,36 @@ Malformed, missing, ambiguous, or unsupported configuration is not partially
 applied. `auto` routes the whole invocation to stock; `rust` reports an error before
 native actions. Stock diagnostics and exit status are preserved.
 
+## Package source sets
+
+Root target defaults use stock's in-build source list (`lib/**`, `test/**`,
+`example/**`, and the other standard paths), plus `additional_public_assets`.
+An arbitrary nested dependency directory such as `dep/` is outside those
+root defaults. Dependency assets still use their own package ID even when
+no builder is enabled there. Source listing, explicit reads and globs respect
+all target source sets and dependency public-asset restrictions.
+Watch ignores events outside those source sets unless they affect build
+configuration or graph-tracked assets.
+
+An explicit root `sources: ['**']` includes nested files under root-relative
+IDs too: stock also generates root-owned outputs in that case. There is no
+unconditional deepest-package ownership rule for one-shot builds.
+
+Native supports broad sources such as `['lib/**', 'dep/**']`. Source sets
+admitting `.dart_tool/build/**` or `.dart_tool/build_runner_accelerator/**`
+instead use stock in auto and error before actions in rust: stock can consume
+its own prior artifact tree as root inputs, while native has a different
+private artifact layout. For `**`, exclude `.dart_tool/**` to avoid this
+implementation-directory boundary. Other eligible hidden files are included.
+
+Native watch requires source sets that cannot reach another configured package
+root. Stock watches only the deepest package identity, retaining different
+parent-alias source/cache evidence until restart; native snapshots cannot
+reproduce that history. Potentially overlapping watch inputs therefore use
+stock in auto and fail before actions in rust. Literal subtree exclusions such
+as `exclude: ['.dart_tool/**', 'dep/**']` allow native watch. The prefix check is
+conservative when more complex exclusions cannot prove that the subtree is excluded.
+
 ## Watch and cache behavior
 
 Configuration identity includes supported CLI settings and the relevant

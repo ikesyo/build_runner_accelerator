@@ -10,6 +10,7 @@ import 'package:build_runner_accelerator/src/asset_read_cache.dart';
 import 'package:build_runner_accelerator/src/current_build_runtime.dart';
 import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:build_runner_accelerator/src/remote_build_step.dart';
+import 'package:glob/glob.dart';
 import 'package:package_config/package_config.dart';
 import 'package:test/test.dart';
 
@@ -22,15 +23,20 @@ void main() {
 
   RemoteBuilderFilesystem filesystem({
     Map<AssetId, AssetContent> committed = const {},
+    Map<String, List<Glob>> inputRestrictions = const {},
   }) {
     final packages = buildPackagesFor(
-      PackageConfig([Package('app', Uri.file('/app/'))]),
+      PackageConfig([
+        Package('app', Uri.file('/app/')),
+        Package('dep', Uri.file('/dep/')),
+      ]),
       'app',
     );
     return RemoteBuilderFilesystem(
+      inputRestrictions: inputRestrictions,
       buildPackages: packages,
       buildState: RemoteBuildState(
-        {'app'},
+        {'app', 'dep'},
         phaseCount: 8,
         committedContents: committed,
       ),
@@ -59,6 +65,47 @@ void main() {
     io = RemoteAssetReaderWriter(readCache: cache, readableCache: {});
     analyzer = AnalysisDriverFilesystem();
   });
+
+  test(
+    'builder public restrictions precede phase and content caches',
+    () async {
+      final private = AssetId('dep', 'test/generated.dart');
+      cache[private] = utf8.encode('class Private {}');
+      final fs = filesystem(
+        inputRestrictions: {
+          'dep': [Glob('lib/**')],
+        },
+      );
+      fs.listenToContentUpdates((_, _) {});
+      for (final blocked in [
+        <AssetId>{private},
+        <AssetId>{},
+      ]) {
+        action(blocked: blocked);
+        expect(
+          await fs.isReadable(private, 1, catchInvalidInputs: true),
+          isFalse,
+        );
+        await expectLater(
+          fs.isReadable(private, 1),
+          throwsA(
+            isA<InvalidInputException>().having(
+              (error) => error.allowedGlobs,
+              'allowedGlobs',
+              ['lib/**'],
+            ),
+          ),
+        );
+        if (blocked.isEmpty) {
+          expect(
+            (await fs.readPhased(1, private)).lastValue,
+            'class Private {}',
+          );
+        }
+        io.endAction();
+      }
+    },
+  );
 
   test(
     'positive dep content uses the owned typed bytes without another copy',

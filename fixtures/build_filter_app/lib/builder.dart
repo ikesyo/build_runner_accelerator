@@ -358,3 +358,67 @@ class Resolve implements Builder {
     }
   }
 }
+
+Builder nestedView(BuilderOptions options) => NestedView();
+Builder nestedPrivateSeed(BuilderOptions options) => NestedPrivateSeed();
+
+Future<String> _probeRead(BuildStep step, AssetId asset) async {
+  final readable = await step.canRead(asset);
+  String content;
+  try {
+    content = await step.readAsString(asset);
+  } on InvalidInputException {
+    content = '<invalid>';
+  } on AssetNotFoundException {
+    content = '<missing>';
+  }
+  return '$asset:$readable:$content';
+}
+
+class NestedPrivateSeed implements Builder {
+  Map<String, List<String>> get buildExtensions => {
+    '^lib/{{}}.txt': ['lib/{{}}.post', 'test/{{}}.post'],
+  };
+
+  Future<void> build(BuildStep step) async {
+    _recordHistory('private_seed|${step.inputId}');
+    final text = await step.readAsString(step.inputId);
+    if (text.trim() == 'empty') return;
+    final privateOutput = step.allowedOutputs.firstWhere(
+      (id) => id.path.startsWith('test/'),
+    );
+    final probe = await _probeRead(step, privateOutput);
+    for (final output in step.allowedOutputs) {
+      await step.writeAsString(output, '$text$probe\n${output.path}\n');
+    }
+  }
+}
+
+class NestedView implements Builder {
+  Map<String, List<String>> get buildExtensions => {
+    '.probe': ['.final'],
+  };
+
+  Future<void> build(BuildStep step) async {
+    _recordHistory('${step.inputId.package}|${step.inputId.path}');
+    final lines = (await step.readAsString(step.inputId)).trim().split('\n');
+    final name = lines.first;
+    final assets = await step.findAssets(Glob('**/*.txt')).toList()
+      ..sort((a, b) => a.toString().compareTo(b.toString()));
+    final result = <String>[for (final asset in assets) asset.toString()];
+    for (final asset in [
+      AssetId('build_filter_app', 'dep/lib/$name.txt'),
+      AssetId('filter_dep', 'lib/$name.txt'),
+      AssetId('filter_dep', 'test/$name.txt'),
+      AssetId('filter_dep', 'test/published/$name.txt'),
+      if (lines.contains('private-outputs')) ...[
+        AssetId('filter_dep', 'lib/src/$name.txt'),
+        ...(await step.findAssets(Glob('test/**.post')).toList()
+          ..sort((a, b) => a.toString().compareTo(b.toString()))),
+      ],
+    ]) {
+      result.add(await _probeRead(step, asset));
+    }
+    await step.writeAsString(step.allowedOutputs.single, result.join('\n'));
+  }
+}

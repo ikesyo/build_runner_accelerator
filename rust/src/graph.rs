@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-pub const GRAPH_SCHEMA_VERSION: u32 = 4;
+pub const GRAPH_SCHEMA_VERSION: u32 = 6;
 const GRAPH_MAGIC: &[u8; 4] = b"BRAG";
 const GRAPH_FORMAT_VERSION: u8 = 2;
 const GRAPH_HEADER_LENGTH: usize = GRAPH_MAGIC.len() + 1 + 4;
@@ -38,6 +38,8 @@ pub struct ActionState {
 pub struct GraphState {
     pub schema_version: u32,
     pub config_digest: String,
+    /// Whether the last successful build applied output filters.
+    pub was_filtered: bool,
     pub assets: Snapshot,
     pub actions: BTreeMap<String, ActionState>,
     /// Direct dependency edges the Dart resolver loader has observed.
@@ -424,6 +426,7 @@ impl Encoder {
     fn write_graph_state(&mut self, state: &GraphState) -> io::Result<()> {
         self.write_u32(state.schema_version)?;
         self.write_string(&state.config_digest)?;
+        self.write_u8(u8::from(state.was_filtered))?;
         self.write_snapshot(&state.assets)?;
         self.write_count(state.actions.len(), "action graph")?;
         for (key, action) in &state.actions {
@@ -617,6 +620,7 @@ impl<'a> Decoder<'a> {
         format_version: u8,
     ) -> io::Result<GraphState> {
         let config_digest = self.read_string()?;
+        let was_filtered = self.read_bool()?;
         let assets = self.read_snapshot()?;
         let action_count = self.read_count("action graph")?;
         let mut actions = BTreeMap::new();
@@ -661,6 +665,7 @@ impl<'a> Decoder<'a> {
         Ok(GraphState {
             schema_version,
             config_digest,
+            was_filtered,
             assets,
             actions,
             resolver_dep_graph,
@@ -717,6 +722,7 @@ mod tests {
         GraphState {
             schema_version: super::GRAPH_SCHEMA_VERSION,
             config_digest: String::new(),
+            was_filtered: false,
             assets,
             actions: BTreeMap::new(),
             resolver_dep_graph: BTreeMap::new(),
@@ -815,6 +821,7 @@ mod tests {
         let state = GraphState {
             schema_version: super::GRAPH_SCHEMA_VERSION,
             config_digest: "config".to_owned(),
+            was_filtered: true,
             watch_generated_sources: BTreeSet::from(["app|lib/omitted.mid".to_owned()]),
             stock_glob_members: BTreeMap::from([(
                 "step".to_owned(),

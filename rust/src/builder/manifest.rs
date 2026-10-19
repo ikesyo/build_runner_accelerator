@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct BuilderManifestFile {
+    pub(crate) asset_sources: crate::workspace::AssetSources,
     pub(crate) version: u32,
     pub(crate) fingerprint: String,
     pub(crate) worker_entrypoint: String,
@@ -79,7 +80,7 @@ pub(crate) struct BuilderManifestDefinition {
 pub(crate) fn rust_build_config_from_manifest(
     manifest: BuilderManifestFile,
 ) -> io::Result<RustBuildConfig> {
-    if manifest.version != 9 {
+    if manifest.version != 10 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unsupported builder manifest version: {}", manifest.version),
@@ -207,6 +208,7 @@ pub(crate) fn rust_build_config_from_manifest(
     });
 
     Ok(RustBuildConfig {
+        asset_sources: Some(Arc::new(manifest.asset_sources)),
         builders,
         worker_entrypoint: Some(PathBuf::from(manifest.worker_entrypoint)),
         manifest_signature: Some(manifest.fingerprint),

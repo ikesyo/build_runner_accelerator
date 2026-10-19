@@ -76,7 +76,7 @@ impl PendingTransaction {
             pending_outputs: Vec::new(),
             pending_deletions: Vec::new(),
             pending_location_deletions: Vec::new(),
-            clean_artifact_tree: false,
+            clean_artifact_tree: state.config_digest.is_empty(),
             pending_actions: Vec::new(),
             pending_stock_inputs: BTreeMap::new(),
             pending_stock_globs: BTreeMap::new(),

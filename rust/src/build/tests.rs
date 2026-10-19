@@ -311,6 +311,7 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
         ..GraphState::default()
     };
     let build_config = RustBuildConfig {
+        asset_sources: None,
         builders: vec![builder.clone()],
         worker_entrypoint: None,
         manifest_signature: None,
@@ -407,6 +408,7 @@ fn output_registration_shares_buffers_and_releases_aborted_transaction() -> io::
 
 fn dirty_test_config(builders: &[ConfiguredBuilder]) -> RustBuildConfig {
     RustBuildConfig {
+        asset_sources: None,
         builders: builders.to_vec(),
         worker_entrypoint: None,
         manifest_signature: None,

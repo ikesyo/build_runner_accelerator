@@ -12,6 +12,7 @@ import 'package:build_runner/src/build_plan/build_packages.dart'
     show BuildPackages;
 import 'package:build_runner/src/logging/build_log.dart' show buildLog;
 import 'package:logging/logging.dart';
+import 'package:glob/glob.dart';
 import 'package:package_config/package_config.dart';
 
 import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
@@ -107,6 +108,7 @@ Future<void> runWorker({
             await runtime.startBuild(
               initialize.package,
               phaseCount: initialize.phaseCount,
+              inputRestrictions: initialize.inputRestrictions,
             );
             await writer.send(<String, dynamic>{
               'v': 1,
@@ -237,6 +239,7 @@ class _WorkerRuntime {
       <String, PostProcessBuilder>{};
 
   String? currentPackage;
+  Map<String, List<Glob>> inputRestrictions = const {};
   late RemoteAssetReaderWriter io;
   late BuildPackages buildPackages;
   late RemoteBuildState buildState;
@@ -252,13 +255,21 @@ class _WorkerRuntime {
   int _lastDepDrainPhase = -1;
 
   /// Starts a new build series for [package].
-  Future<void> startBuild(String package, {required int phaseCount}) async {
+  Future<void> startBuild(
+    String package, {
+    required int phaseCount,
+    required Map<String, List<String>> inputRestrictions,
+  }) async {
     if (_buildStarted) {
       await resourceManager.disposeAll();
       _replaceResolver();
       _buildStarted = false;
     }
     currentPackage = package;
+    this.inputRestrictions = {
+      for (final entry in inputRestrictions.entries)
+        entry.key: [for (final pattern in entry.value) Glob(pattern)],
+    };
     _phaseCount = phaseCount < 1 ? 1 : phaseCount;
     _clearPerBuildState();
     await _startBuild();
@@ -549,6 +560,7 @@ class _WorkerRuntime {
       buildPackages: buildPackages,
       buildState: buildState,
       readerWriter: io,
+      inputRestrictions: inputRestrictions,
     );
     await resolver.takeLockAndStartBuild(
       builderFilesystem: buildFilesystem,

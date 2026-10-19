@@ -74,7 +74,7 @@ from pathlib import Path
 import json, sys
 state, cache = map(Path, sys.argv[1:])
 manifest = json.loads((state/'builder-manifest.json').read_text())
-assert manifest['version'] == 9
+assert manifest['version'] == 10
 assert all('input_suffix' not in b and 'output_suffixes' not in b for b in manifest['builders'] + manifest['definitions'])
 assert (state/'graph-v3.bin').read_bytes().startswith(b'BRAG')
 assert (state/'user-sentinel').read_text() == 'keep'

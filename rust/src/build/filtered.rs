@@ -183,7 +183,7 @@ pub(super) fn run(
         drop(active.take_dep_graph());
         active.prepare_for_filtered_roots(&workspace.root, dirty_roots.len())?;
         active.initialize(
-            &workspace.root,
+            workspace,
             &workspace.root_package,
             config_digest,
             config.phase_count(),
@@ -351,6 +351,7 @@ pub(super) fn run(
     // Undemanded but still-declared normal outputs survive this build on disk.
     // They are omitted from the next incremental state, exactly as stock does.
     state.actions.retain(|key, _| demanded.contains(key));
+    state.was_filtered = true;
     state.watch_generated_sources.extend(
         plan.generated_output_locations
             .iter()

@@ -94,7 +94,7 @@ pub(super) fn run(
             .map(|spec| spec.instance.package.clone())
             .expect("dirty actions have a package");
         active_pool.initialize(
-            &workspace.root,
+            workspace,
             &first_package,
             config_digest,
             phase_count,
@@ -205,7 +205,7 @@ pub(super) fn run(
                 crate::wall::Span::new("phase_reset").phase(configured_builder.phase, &builder.id);
             if configured_builder.package != initialized_package {
                 active_pool.initialize(
-                    &workspace.root,
+                    workspace,
                     &configured_builder.package,
                     config_digest,
                     phase_count,

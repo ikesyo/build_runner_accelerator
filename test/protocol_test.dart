@@ -118,6 +118,9 @@ void main() {
         'root': Directory.current.absolute.path,
         'resolver_mode': 'dart_local',
         'phase_count': 3,
+        'input_restrictions': {
+          'dep': ['lib/**'],
+        },
         'accelerator_version': buildRunnerAcceleratorVersion,
       });
 
@@ -126,6 +129,9 @@ void main() {
       expect(initialize.id, 7);
       expect(initialize.package, 'app');
       expect(initialize.phaseCount, 3);
+      expect(initialize.inputRestrictions, {
+        'dep': ['lib/**'],
+      });
     });
 
     test('decodes build messages and normalizes optional fields once', () {
@@ -238,6 +244,7 @@ void main() {
       'root': Directory.current.absolute.path,
       'resolver_mode': 'dart_local',
       'phase_count': 1,
+      'input_restrictions': <String, List<String>>{},
       'accelerator_version': buildRunnerAcceleratorVersion,
     };
     for (final field in [
@@ -246,6 +253,7 @@ void main() {
       'accelerator_version',
       'root',
       'resolver_mode',
+      'input_restrictions',
     ]) {
       final missing = {...valid}..remove(field);
       expect(() => WorkerMessage.decode(missing), throwsFormatException);
@@ -256,6 +264,10 @@ void main() {
       {'accelerator_version': '0.0.0'},
       {'phase_count': 0},
       {'phase_count': 1.5},
+      {'input_restrictions': []},
+      {
+        'input_restrictions': {'dep': 'lib/**'},
+      },
     ]) {
       expect(
         () => WorkerMessage.decode({...valid, ...change}),

@@ -92,6 +92,7 @@ impl ConfiguredBuilder {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RustBuildConfig {
+    pub(crate) asset_sources: Option<Arc<crate::workspace::AssetSources>>,
     pub(crate) builders: Vec<ConfiguredBuilder>,
     pub(crate) worker_entrypoint: Option<PathBuf>,
     pub(crate) manifest_signature: Option<String>,

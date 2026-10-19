@@ -50,6 +50,7 @@ class WorkerInitializeMessage extends WorkerMessage {
     required this.package,
     required this.root,
     required this.phaseCount,
+    required this.inputRestrictions,
   }) : super(id: id);
 
   factory WorkerInitializeMessage.fromJson(JsonMap message) {
@@ -76,12 +77,20 @@ class WorkerInitializeMessage extends WorkerMessage {
       package: package,
       root: root,
       phaseCount: phaseCount,
+      inputRestrictions: {
+        for (final entry in _stringKeyedMap(
+          message['input_restrictions'],
+          'initialize input_restrictions',
+        ).entries)
+          entry.key: _stringList(entry.value, 'input restriction patterns'),
+      },
     );
   }
 
   final String package;
   final String root;
   final int phaseCount;
+  final Map<String, List<String>> inputRestrictions;
 }
 
 class WorkerResetMessage extends WorkerMessage {

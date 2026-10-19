@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-07
+- Amended by [ADR 0035](0035-package-source-identity.md) for source sets and overlapping watch inputs.
 
 ## Context
 

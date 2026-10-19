@@ -82,6 +82,7 @@ void main() {
         workerEntrypoint: worker.path,
         fingerprint: 'fingerprint',
         triggerDigest: 'trigger-digest',
+        assetSources: const {},
         builders: const <Map<String, dynamic>>[
           <String, dynamic>{'id': 'example:builder'},
         ],
@@ -99,7 +100,7 @@ void main() {
       );
 
       final decoded = jsonDecode(await manifest.readAsString()) as Map;
-      expect(decoded['version'], 9);
+      expect(decoded['version'], 10);
       expect(decoded['fingerprint'], 'fingerprint');
       expect(decoded['trigger_digest'], 'trigger-digest');
       expect(decoded['worker_entrypoint'], worker.absolute.path);

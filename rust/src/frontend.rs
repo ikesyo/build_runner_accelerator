@@ -89,6 +89,13 @@ pub(crate) fn select_frontend(
 
     match rust_build_config_from_manifest(manifest) {
         Ok(config) => {
+            workspace.configure_sources(config.asset_sources.as_ref());
+            if workspace.includes_build_implementation_sources() {
+                return select_dart_fallback(
+                    options,
+                    "target sources include build implementation directories under .dart_tool; native cannot model stock artifact-tree inputs",
+                );
+            }
             let filters = crate::cli::BuildSettings::parse(&options.stock_arguments)?.build_filters;
             if !filters.is_empty()
                 && config.builders.iter().any(|b| {
@@ -181,7 +188,7 @@ fn read_manifest(
         Ok(manifest) => manifest,
         Err(_) => return Ok(None),
     };
-    if manifest.version != 9 || manifest.fingerprint != fingerprint {
+    if manifest.version != 10 || manifest.fingerprint != fingerprint {
         return Ok(None);
     }
     if !expected_worker_entrypoint.is_file() {
@@ -785,7 +792,7 @@ mod tests {
         fs::write(&local, "local worker").unwrap();
         fs::write(&stale, "stale worker").unwrap();
         let mut valid = serde_json::json!({
-            "version": 9, "fingerprint": "same", "trigger_digest": "stock", "worker_entrypoint": stale,
+            "version": 10, "asset_sources": {}, "fingerprint": "same", "trigger_digest": "stock", "worker_entrypoint": stale,
             "worker_source_digest": crate::digest::digest_bytes(b"local worker"),
             "definitions": [{"id": "app:copy", "kind": "normal", "extensions": [{"input_suffix": ".txt", "input_match": "suffix", "input_anchored": false, "output_suffixes": [".out"]}], "build_to": "source", "phase": 0}],
             "builders": [{"id": "app:copy", "kind": "normal", "build_to": "source", "phase": 0, "target": "app:app", "package": "app", "is_root": true, "generate_for": ["**"]}]

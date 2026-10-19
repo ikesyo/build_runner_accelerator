@@ -258,6 +258,7 @@ run_core_suite() {
   run_script_probe cli correctness_cli.sh 'cli-compatibility: PASS'
   run_script_probe settings correctness_settings.sh 'settings-compatibility: PASS'
   run_script_probe build-filter correctness_build_filter.sh 'build-filter stock/native comparisons passed'
+  run_script_probe nested-packages correctness_nested_packages.sh 'nested-packages: PASS'
   run_script_probe watch watch_smoke.sh 'watch-smoke:'
   run_all_json_cases
   run_built_value_correctness
