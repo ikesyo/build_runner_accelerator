@@ -144,7 +144,10 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
             workspace.configure_sources(config.asset_sources.as_ref());
         }
         let previous_state = if native_build_succeeded {
-            Some(GraphState::load(&build::graph_path(&workspace))?)
+            Some(load_watch_graph(
+                &build::graph_path(&workspace),
+                "event_filter",
+            )?)
         } else {
             None
         };
@@ -184,6 +187,42 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     }
 }
 
+/// These reloads happen outside build metrics, including the graph held while
+/// waiting for source events. Keep their cost visible before changing ownership.
+fn load_watch_graph(path: &Path, purpose: &str) -> io::Result<GraphState> {
+    let started = crate::metrics::runtime_metrics_enabled().then(Instant::now);
+    let result = GraphState::load(path);
+    if let Some(started) = started {
+        eprintln!(
+            "Rust watch graph metrics: purpose={} load_us={} load_bytes={} success={}",
+            purpose,
+            started.elapsed().as_micros(),
+            crate::metrics::graph_file_size(path),
+            result.is_ok(),
+        );
+    }
+    result
+}
+
+/// Includes workspace/configuration preparation and worker setup, even when
+/// they fail before the build can emit its ordinary graph/execution metrics.
+struct WatchCycleMetrics {
+    started: Option<Instant>,
+    success: bool,
+}
+
+impl Drop for WatchCycleMetrics {
+    fn drop(&mut self) {
+        if let Some(started) = self.started {
+            eprintln!(
+                "Rust watch cycle metrics: elapsed_us={} success={}",
+                started.elapsed().as_micros(),
+                self.success
+            );
+        }
+    }
+}
+
 fn run_watch_build(
     options: &Options,
     pool: &mut Option<WorkerPool>,
@@ -193,6 +232,10 @@ fn run_watch_build(
     reuse_configuration: bool,
     changed_paths: &WatchChanges,
 ) -> io::Result<()> {
+    let mut cycle_metrics = WatchCycleMetrics {
+        started: crate::metrics::runtime_metrics_enabled().then(Instant::now),
+        success: false,
+    };
     let _wall = crate::wall::Session::new();
     let workspace = Workspace::load(options.root.clone())?;
     let loaded_graph = build::LoadedGraph::load(&workspace)?;
@@ -309,6 +352,7 @@ fn run_watch_build(
         session_start,
         changed_paths,
     )?;
+    cycle_metrics.success = true;
     Ok(())
 }
 
@@ -456,7 +500,7 @@ fn load_source_post_process_outputs(root: &Path) -> BTreeSet<String> {
     }
 
     let graph_path = root.join(".dart_tool/build_runner_accelerator/graph-v3.bin");
-    let Ok(state) = GraphState::load(&graph_path) else {
+    let Ok(state) = load_watch_graph(&graph_path, "post_process_outputs") else {
         return BTreeSet::new();
     };
     state
