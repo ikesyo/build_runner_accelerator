@@ -298,9 +298,8 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
     }
     return decoded;
   } catch (_) {
-    // A probe is an optimization boundary, not a reason to fail the build.
-    // The caller treats a missing selected request as an unsupported manifest
-    // and falls back to stock Dart build_runner in auto mode.
+    // Do not cache unavailable or malformed probe results. The caller rejects
+    // the manifest if a selected factory still lacks a supported mapping.
     return const {};
   } finally {
     if (temporary != null) {
