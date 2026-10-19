@@ -1,18 +1,5 @@
 # Changelog
 
-## 0.14.0
-
-- **Breaking:** Remove automatic stock build_runner fallback and all `--mode`
-  values. Execution is native-only; unsupported requests and unavailable native
-  binaries fail explicitly, including prewarm. Run `dart run build_runner`
-  directly when stock is needed.
-- Serve accelerator help/version for command-level requests. Remove stock
-  invocation transport, retries and watch handoff machinery while retaining
-  unsupported-request guards and transactional output/graph guarantees.
-- Continue rejecting legacy stock output-policy history with explicit reset
-  guidance. See [the upgrade guide](docs/compatibility-cleanup.md).
-
-
 ## [v0.13.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.12.0...v0.13.0) - 2026-10-19
 
 - fix: honor package source sets for nested dependencies by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/112
