@@ -776,7 +776,7 @@ pub(crate) fn run_dart_fallback(
                         .root
                         .join(".dart_tool/build_runner_accelerator/graph-v3.bin"),
                 )
-                .is_ok_and(|state| state.retained_output_state),
+                .map_or(true, |state| state.retained_output_state),
             };
             if keep || retained {
                 crate::build::mark_stock_output_state(&options.root)?;

@@ -300,11 +300,11 @@ def native_fallback_ownership(tmp):
                     'sys.exit(23)\n')
     fake.chmod(0o755)
 
-    def native(root, flags, mode='auto', dart=DART, transported=False):
-        args = [str(NATIVE), 'build', '--root', str(root), '--dart', str(dart),
+    def native(root, flags, mode='auto', dart=DART, transported=False, command='build'):
+        args = [str(NATIVE), command, '--root', str(root), '--dart', str(dart),
                 '--mode', mode, '--jobs', '1']
         return args + (['--stock-arguments-json', json.dumps({
-            'arguments': flags, 'invocation': ['build', *flags],
+            'arguments': flags, 'invocation': [command, *flags],
         })] if transported else flags)
 
     for retained in (False, True):
@@ -362,6 +362,35 @@ def native_fallback_ownership(tmp):
             assert snapshot(pair.native) == before
             assert diagnostics(reference[1]) == diagnostics(actual[1]), (reference, actual)
             pair.check()  # verification must still permit the next native build
+            # A directory produces a read error even when tests run as root.
+            saved_graph = tmp / 'unreadable-native-graph.bin'
+            graph.rename(saved_graph)
+            graph.mkdir()
+            before = snapshot(pair.native)
+            try:
+                for command in ('build', 'watch'):
+                    for flags, claims in ((['--verbose'], True),
+                                          ([VERIFY, '--verbose'], False),
+                                          (['--help', '--verbose'], False)):
+                        result = execute(native(pair.native, flags, dart=fake, command=command),
+                                         pair.native)
+                        assert result[0] == 23 and marker.exists() == claims, (command, flags, result)
+                        assert snapshot(pair.native) == before and graph.is_dir()
+                        marker.unlink(missing_ok=True)
+                pair.write('common.txt', 'changed while native history is unreadable\n')
+                flags = ['--force-jit', '--verbose']
+                reference = execute([DART, 'run', 'build_runner', 'build', *flags], pair.stock)
+                actual = execute(native(pair.native, flags), pair.native)
+                assert reference[0] == actual[0] == 0 and marker.exists(), (reference, actual)
+                assert outputs(pair.stock) == outputs(pair.native) and graph.is_dir()
+            finally:
+                graph.rmdir()
+                saved_graph.rename(graph)
+            restored = graph.read_bytes()
+            reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit'], pair.stock)
+            actual = execute(native(pair.native, ['--force-jit']), pair.native)
+            assert reference[0] == actual[0] == 0 and 'stock output-policy state' in actual[1], actual
+            assert outputs(pair.stock) == outputs(pair.native) and graph.read_bytes() == restored
         else:
             reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit'], pair.stock)
             actual = execute(native(pair.native, ['--force-jit']), pair.native)
