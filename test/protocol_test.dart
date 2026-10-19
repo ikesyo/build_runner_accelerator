@@ -285,6 +285,7 @@ void main() {
       'root': Directory.current.absolute.path,
       'resolver_mode': 'dart_local',
       'phase_count': 1,
+      'input_restrictions': <String, List<String>>{},
       'accelerator_version': buildRunnerAcceleratorVersion,
     };
     for (final enabled in [false, true]) {

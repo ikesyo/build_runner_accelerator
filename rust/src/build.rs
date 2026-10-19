@@ -327,7 +327,11 @@ pub(crate) fn run_with_config_session(
             }
         }
     }
-    if no_work && !state.config_digest.is_empty() && !state.was_filtered && cache_source_conflicts.is_empty() {
+    if no_work
+        && !state.config_digest.is_empty()
+        && !state.was_filtered
+        && cache_source_conflicts.is_empty()
+    {
         println!("No work to do (Rust frontend)");
         let graph_metrics = commit::save_no_work(
             &mut state,

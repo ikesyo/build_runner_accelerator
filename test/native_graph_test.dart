@@ -12,9 +12,10 @@ List<int> string(String value) {
   return [...integer(bytes.length), ...bytes];
 }
 
-List<int> payload({int schema = 4, bool retained = true}) => [
+List<int> payload({int schema = 6, bool retained = true}) => [
   ...integer(schema),
   ...string('config'),
+  0, // was filtered
   // Empty snapshot, actions, resolver edges, output locations, input order,
   // glob membership and watch exclusions.
   for (var i = 0; i < 7; i++) ...integer(0),
@@ -55,13 +56,21 @@ void main() {
       final malformed = <List<int>>[
         for (final format in [1, 2, 99]) graph(valid, format: format),
         graph(payload(schema: 1)),
+        graph([...valid.take(14), 2, ...valid.skip(15)]), // was filtered
+
         [0, ...graph(valid).skip(1)], // magic
         [...graph(valid), 1], // mismatched header length
         graph([...valid, 1]), // trailing payload
         graph(valid.sublist(0, valid.length - 1)), // missing history
         graph([...valid.take(valid.length - 1), 2]), // invalid boolean
-        graph([...integer(4), ...integer(1), 0xff, ...valid.skip(14)]), // UTF-8
-        graph([...valid.take(14), ...integer(4000001), ...valid.skip(18)]),
+        graph([
+          ...integer(6),
+          ...integer(1),
+          0xff,
+          0,
+          ...valid.skip(15),
+        ]), // UTF-8
+        graph([...valid.take(15), ...integer(4000001), ...valid.skip(19)]),
       ];
       for (final bytes in malformed) {
         file.writeAsBytesSync(bytes);
@@ -90,7 +99,7 @@ void main() {
       ],
     ];
     file.writeAsBytesSync(
-      graph([...payload().take(14), ...snapshot, ...payload().skip(18)]),
+      graph([...payload().take(15), ...snapshot, ...payload().skip(19)]),
     );
     expect(hasRetainedNativeOutputState(root.path), isFalse);
   });

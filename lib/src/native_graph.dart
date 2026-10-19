@@ -24,7 +24,7 @@ bool hasRetainedNativeOutputState(String root) {
       return false;
     }
     final schema = input.readSync(4);
-    if (schema.length != 4 || ByteData.sublistView(schema).getUint32(0) != 4) {
+    if (schema.length != 4 || ByteData.sublistView(schema).getUint32(0) != 6) {
       return false;
     }
     // A false/invalid history byte cannot route to stock. Most graphs take
@@ -33,8 +33,9 @@ bool hasRetainedNativeOutputState(String root) {
     if (input.readByteSync() != 1) return false;
     input.setPositionSync(9);
     final reader = _GraphReader(input.readSync(length - 9));
-    if (reader.integer() != 4) return false;
+    if (reader.integer() != 6) return false;
     reader.string(); // config digest
+    reader.boolean(); // was filtered
     reader.map(() {
       reader.boolean();
       reader.string();

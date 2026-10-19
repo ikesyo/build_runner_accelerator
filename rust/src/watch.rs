@@ -243,7 +243,11 @@ fn run_watch_build(
         }
         eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
         watch_state.events.stop();
-        run_dart_fallback(options, watch_state.workspace_lock, Some(loaded_graph.state.retained_output_state))?;
+        run_dart_fallback(
+            options,
+            watch_state.workspace_lock,
+            Some(loaded_graph.state.retained_output_state),
+        )?;
         return Ok(false);
     }
     // A successful cold build can discover resolver cycles. Re-check the
