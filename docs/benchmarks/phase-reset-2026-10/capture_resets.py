@@ -46,7 +46,7 @@ def main():
             for lane in lanes:
                 regen_cleanup(args.root)
                 command = [str(getattr(args, lane)), 'build', '--root', str(args.root),
-                           '--dart', str(args.dart), '--mode', 'rust', '--jobs', str(jobs)]
+                           '--dart', str(args.dart), '--jobs', str(jobs)]
                 path = args.results / f'{jobs}-{repeat}-{lane}.log'
                 with path.open('w') as log:
                     process = subprocess.Popen(command, cwd=args.root, env=environment,

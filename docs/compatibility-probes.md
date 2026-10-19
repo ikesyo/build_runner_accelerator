@@ -17,7 +17,7 @@ supported.
 | `fixtures/freezed_app` (`freezed 4.0.1`, `json_serializable 6.14.1`) | Passed | Current stack fixture | The lockfile resolves `build_runner 2.16.1` with Analyzer 14.3.0. Clean, incremental, failure, deletion, rename, watch, and byte-identical stock/native comparisons are covered. |
 | `fixtures/riverpod_app` (`riverpod_generator 4.0.9`, `freezed 4.0.1`, `json_serializable 6.14.1`) | Passed | Current stack fixture | The lockfile resolves `build_runner 2.16.1` with Analyzer 14.3.0. Provider, Freezed, and JSON outputs are compared across clean, incremental, failure, deletion, watch, and byte-identical stock/native cases. |
 | `fixtures/multi_mapping_builder_app` | Regression fixture | Supported target shape | The static build.yaml suffix is intentionally overridden by a resolved option at runtime (`.runtime` vs `.multi`), while the anchored special-path output remains literal. Clean, no-op, change, rename, and deletion compare the resulting output union; the native side runs with two jobs to exercise concurrent action planning. |
-| `fixtures/build_filter_app` | Regression fixture | Filtered demand and conservative fallback | Pinned stock 2.16.2 comparisons check output bytes, source/cache existence and deletion, exit status, and real builder history. Covers primary chains, multiple outputs, shared secondary reads, glob membership/order, resolver imports, filter transitions and watch restarts. Optional/post-process/zero-output/trigger-only combinations and incremental cyclic resolver reuse compare whole-invocation fallback and strict rejection. See ADR 0032. |
+| `fixtures/build_filter_app` | Regression fixture | Filtered demand and explicit rejection | Pinned stock 2.16.2 comparisons check output bytes, source/cache existence and deletion, exit status, and real builder history. Covers primary chains, multiple outputs, shared secondary reads, glob membership/order, resolver imports, filter transitions and watch restarts. Optional/post-process/zero-output/trigger-only combinations and incremental cyclic resolver reuse verify explicit rejection without publication. See ADR 0032. |
 | `fixtures/empty_input_mapping_app` | New compatibility probe | Supported generic mapping shape | With pinned `build_runner 2.16.1` / `build 4.0.11`, an empty input extension key matches every asset in the selected target scope. The fixture covers extensionless, `.dart`, and `.drift` inputs, regular-plus-empty mapping union, downstream generated-input visibility, target/`generate_for` filtering, source/cache placement, clean/no-op, changes, rename, deletion, stale cleanup, collision, failure recovery, jobs 1/2, and paired stock/native watch output changes. Performance is unmeasured. |
 | `fixtures/lifetime_builder_app` | Passed | Supported target shape | With `--jobs 1`, two source builders run in separate phases with one resident worker. Builder instance state and a shared `Resource` remain stable across four inputs, and the second phase reads the first phase's generated assets. |
 | `fixtures/applies_builder_app` | Passed | Supported target shape | An `applies_builders` consumer is scheduled after its producer phase; stock/native generated outputs match across clean, no-op, change, rename, and deletion cases. |
@@ -29,8 +29,8 @@ supported.
 | API Dash `har` target | Passed after narrowing | Supported subset | The initial probe expected a Freezed output for an input outside that builder's effective `generate_for`; the narrowed target completed with matching outputs. |
 | Invoice Ninja model target | Passed | Supported subset | Isolated Freezed/JSON target completed with byte-identical outputs. |
 | Official Conduit stamp-only target | Passed | Supported subset | `conduit_build_runner`'s `stamp_builder` completed. |
-| Official Conduit full builder set | Not supported | Conservative fallback | `registry_builder` is outside the current manifest/worker subset. |
-| Drift `examples/app` / `examples/with_built_value` | Not supported | Conservative fallback | The full examples still include `build_web_compilers`, full Drift workspace configuration, and other builders outside this focused subset. The focused `fixtures/drift_app` probe covers the compatible `drift_dev` factory/output path. |
+| Official Conduit full builder set | Not supported | Explicit rejection | `registry_builder` is outside the current manifest/worker subset. |
+| Drift `examples/app` / `examples/with_built_value` | Not supported | Explicit rejection | The full examples still include `build_web_compilers`, full Drift workspace configuration, and other builders outside this focused subset. The focused `fixtures/drift_app` probe covers the compatible `drift_dev` factory/output path. |
 
 Some full repository roots also could not be resolved under the probe's
 pub.dev dependency constraints. Those are dependency-resolution limitations,
@@ -62,9 +62,8 @@ This change supports ordinary Builders with simple output suffixes, including
 regular and empty-key mappings together, static/runtime mappings, source/cache
 outputs, and the existing filtering/dependency semantics. Post-process and
 Drift-specific behavior, workspace semantics, and unsupported manifest shapes
-remain excluded. In `--mode auto`, an unsupported mapping shape is rejected at
-the manifest boundary before generation and falls back to stock Dart
-`build_runner`; `--mode rust` returns an explicit unsupported error. The
+remain excluded. Unsupported mapping shapes fail explicitly at the manifest
+boundary before native actions. The
 compatibility probe does not make a performance claim.
 
 ## Follow-up order
@@ -120,9 +119,8 @@ fixed costs.
 `not_shared`, full `driftCleanup`, `registry_builder`,
 `build_web_compilers`, and full Drift examples/workspaces are excluded. This
 modular support requires the monolithic `drift_dev:drift_dev` builder to remain
-disabled in the focused fixture. In `--mode auto`, an unsupported manifest
-shape or API requirement is detected before generation and remains on stock
-Dart `build_runner`; `--mode rust` reports the unsupported shape explicitly.
+disabled in the focused fixture. Unsupported manifest shapes or API requirements
+fail explicitly before output publication.
 
 ## Trigger semantics boundary
 
@@ -145,5 +143,4 @@ and `_allowedByTriggers` in `build.dart`:
   therefore preserved.
 
 Invalid trigger configuration and post-process trigger definitions are outside
-the supported normalized subset. `--mode auto` falls back to stock Dart
-`build_runner`; `--mode rust` reports an explicit unsupported error.
+the supported normalized subset. Unsupported requests fail explicitly.

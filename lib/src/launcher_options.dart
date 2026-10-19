@@ -1,21 +1,16 @@
 import 'dart:io';
-import 'dart:convert';
 
 import 'manifest/settings.dart';
 
 /// The small set of launcher options that must be consumed before invoking
-/// either the Rust frontend or stock build_runner.
+/// the native frontend.
 class LauncherOptions {
   LauncherOptions._({
     required this.command,
-    required this.nativeUnsupported,
-    required this.stockKeepRequested,
-    required this.stockMayPublishOutputs,
-    required this.mode,
     required this.root,
     required this.dartBinary,
     required this.rustArguments,
-    required this.dartArguments,
+    required this.buildArguments,
     required this.forceAot,
     required this.forceJit,
     required this.showHelp,
@@ -25,8 +20,6 @@ class LauncherOptions {
   factory LauncherOptions.parse(List<String> arguments) {
     var command = 'build';
     var commandSeen = false;
-    var commandPosition = 0;
-    var mode = 'auto';
     var root = Directory.current.absolute.path;
     var dartBinary = Platform.resolvedExecutable;
     var dartBinaryExplicit = false;
@@ -35,11 +28,7 @@ class LauncherOptions {
     var showHelp = false;
     var showVersion = false;
     var separated = false;
-    var stockKeepRequested = false;
-    var stockHelpRequested = false;
-    var stockVerifyRequested = false;
     final rustArguments = <String>[];
-    final dartArguments = <String>[];
     final passthrough = <String>[];
 
     String takeValue(List<String> values, String option, int index) {
@@ -62,24 +51,19 @@ class LauncherOptions {
         passthrough.add(argument);
         continue;
       }
-      if (!commandSeen && (argument == '--help' || argument == '-h')) {
+      if (argument == '--help' || argument == '-h') {
         showHelp = true;
         continue;
       }
-      if (!commandSeen && argument == '--version') {
+      if (argument == '--version') {
         showVersion = true;
         continue;
       }
       if (argument == '--mode' || argument.startsWith('--mode=')) {
-        final value = argument.startsWith('--mode=')
-            ? argument.substring('--mode='.length)
-            : takeValue(arguments, '--mode', index);
-        if (!argument.startsWith('--mode=')) index++;
-        if (!const {'auto', 'rust', 'dart'}.contains(value)) {
-          throw FormatException('--mode must be auto, rust, or dart: $value');
-        }
-        mode = value;
-        continue;
+        throw const FormatException(
+          '--mode was removed in 0.14.0; remove it to use native execution, '
+          'or run dart run build_runner directly',
+        );
       }
       if (argument == '--root' || argument.startsWith('--root=')) {
         final value = argument.startsWith('--root=')
@@ -112,14 +96,17 @@ class LauncherOptions {
       }
 
       if (!commandSeen && !argument.startsWith('-')) {
-        commandPosition = passthrough.length;
+        if (passthrough.isNotEmpty) {
+          throw const FormatException(
+            'Build arguments must follow the command',
+          );
+        }
         command = argument;
         commandSeen = true;
         continue;
       }
 
-      // Boolean flags the Rust frontend consumes directly. Keeping them out
-      // of `passthrough` prevents them from reaching stock build_runner.
+      // Launcher controls are separate from builder settings.
       const rustFlagOptions = {'--background'};
       const rustValueOptions = {'--jobs', '--interval-ms', '--worker'};
       if (rustFlagOptions.contains(argument)) {
@@ -146,26 +133,14 @@ class LauncherOptions {
         rustArguments.addAll([option, value]);
       } else {
         passthrough.add(argument);
-        if (argument == '--keep-modified-outputs') stockKeepRequested = true;
-        if (argument == '--only-check') stockVerifyRequested = true;
-        if (argument == '--help' || argument == '-h') stockHelpRequested = true;
-        // Values belong to stock, even when they look like launcher flags.
-        const stockValueOptions = {
+        // Configuration values may look like launcher flags.
+        const buildValueOptions = {
           '--build-filter',
           '--config',
           '-c',
-          '--output',
-          '-o',
           '--define',
-          '--enable-experiment',
-          '--dart-jit-vm-arg',
-          '--log-performance',
-          '--build-mode',
-          '--hostname',
-          '--port',
-          '--dart-dev-service-port',
         };
-        if (stockValueOptions.contains(argument) &&
+        if (buildValueOptions.contains(argument) &&
             index + 1 < arguments.length) {
           passthrough.add(arguments[++index]);
         }
@@ -189,66 +164,36 @@ class LauncherOptions {
     }
 
     rustArguments.insert(0, command);
-    rustArguments.addAll([
-      '--root',
-      root,
-      '--dart',
-      dartBinary,
-      '--mode',
-      mode,
-    ]);
-    dartArguments
-      ..addAll(['run', 'build_runner'])
-      ..addAll([
-        ...passthrough.take(commandPosition),
-        command,
-        ...passthrough.skip(commandPosition),
-      ]);
-    var nativeUnsupported =
-        commandPosition != 0 ||
-        !const {'build', 'watch', 'prewarm', 'aot-cache-key'}.contains(command);
-    try {
+    rustArguments.addAll(['--root', root, '--dart', dartBinary]);
+    if (!showHelp && !showVersion) {
+      if (!const {
+        'build',
+        'watch',
+        'prewarm',
+        'aot-cache-key',
+      }.contains(command)) {
+        throw FormatException(
+          'Unsupported command: $command; run dart run build_runner directly if needed',
+        );
+      }
       final settings = BuildSettings.parse(passthrough);
       if (command != 'build' &&
           (settings.onlyCheck || settings.keepModifiedOutputs)) {
-        nativeUnsupported = true;
+        throw FormatException('Output policies are supported only with build');
       }
       if (!const {'build', 'watch'}.contains(command) &&
           (settings.deletionFlag || settings.buildFilters.isNotEmpty)) {
-        nativeUnsupported = true;
+        throw FormatException('$command does not accept build-only arguments');
       }
-    } on FormatException {
-      nativeUnsupported = true;
     }
-    if (nativeUnsupported && command == 'prewarm') {
-      throw FormatException('prewarm does not accept stock arguments');
-    }
-    if (nativeUnsupported && mode == 'rust' && !showHelp && !showVersion) {
-      throw FormatException(
-        'Native frontend does not support this command or '
-        'arguments: $command ${passthrough.join(' ')}; use --mode auto or dart',
-      );
-    }
-    // The native process may discover an unsupported manifest later. Carry
-    // the complete stock argument vector across that boundary as one value.
-    rustArguments.addAll([
-      '--stock-arguments-json',
-      jsonEncode({
-        'arguments': passthrough,
-        'invocation': dartArguments.skip(2).toList(),
-      }),
-    ]);
+    rustArguments.addAll(passthrough);
 
     return LauncherOptions._(
       command: command,
-      nativeUnsupported: nativeUnsupported,
-      stockKeepRequested: stockKeepRequested && !stockHelpRequested,
-      stockMayPublishOutputs: !stockHelpRequested && !stockVerifyRequested,
-      mode: mode,
       root: root,
       dartBinary: dartBinary,
       rustArguments: List.unmodifiable(rustArguments),
-      dartArguments: List.unmodifiable(dartArguments),
+      buildArguments: List.unmodifiable(passthrough),
       forceAot: forceAot,
       forceJit: forceJit,
       showHelp: showHelp,
@@ -256,15 +201,11 @@ class LauncherOptions {
     );
   }
 
-  final bool nativeUnsupported;
-  final bool stockKeepRequested;
-  final bool stockMayPublishOutputs;
   final String command;
-  final String mode;
   final String root;
   final String dartBinary;
   final List<String> rustArguments;
-  final List<String> dartArguments;
+  final List<String> buildArguments;
   final bool forceAot;
   final bool forceJit;
   final bool showHelp;

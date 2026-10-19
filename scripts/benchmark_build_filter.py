@@ -284,7 +284,7 @@ def invoke_case(args, package, binary, root, cache, sources, mode, jobs,
         fixture.DART,
         f"--packages={root / '.dart_tool/package_config.json'}",
         str(package / "bin/build_runner_accelerator.dart"),
-        "build", "--mode=rust", "--dart", fixture.DART,
+        "build", "--dart", fixture.DART,
         "--root", str(root), f"--jobs={jobs}", f"--force-{mode}", FILTER,
     ]
     fixture.history_path(root).unlink(missing_ok=True)

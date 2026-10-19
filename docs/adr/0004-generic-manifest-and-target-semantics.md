@@ -1,5 +1,10 @@
 # ADR 0004: Generic manifest and target semantics
 
+Stock fallback and frontend-mode statements below are superseded by
+[ADR 0036](0036-native-only-execution.md) for 0.14.0. Unsupported requests now fail
+explicitly; native correctness and supported-subset boundaries remain.
+
+
 - Status: Accepted
 - Date: 2026-09-07
 - Amended by [ADR 0035](0035-package-source-identity.md) for source sets and overlapping watch inputs.

@@ -76,7 +76,7 @@ run_runner() {
   VERIFY_COMMAND_LOG="$log" \
     BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" \
     worker_run_frontend \
-    "$@" --root "$root" --dart "$dart_bin" --mode rust
+    "$@" --root "$root" --dart "$dart_bin"
 }
 
 setup_workspace "$workspace_a"

@@ -167,7 +167,7 @@ run_rust() {
   local log=$2
   local jobs=${3:-$mapping_jobs}
   VERIFY_COMMAND_LOG="$log" VERIFY_WORKSPACE="$directory" worker_run_frontend build \
-    --root "$directory" --dart "$dart_bin" --mode rust --jobs "$jobs"
+    --root "$directory" --dart "$dart_bin" --jobs "$jobs"
 }
 
 stock_cache_asset() {

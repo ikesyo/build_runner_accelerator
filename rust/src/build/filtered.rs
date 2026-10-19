@@ -46,7 +46,7 @@ pub(super) fn run(
     changed_paths: &BTreeSet<std::path::PathBuf>,
     retained_output_guard: bool,
 ) -> io::Result<()> {
-    let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
+    let settings = crate::cli::BuildSettings::parse(&options.build_arguments)?;
     let mut pool = pool;
     // Preserve only source-state evidence from the start of a filtered build.
     // Old and current outputs are refreshed from the committed filesystem,

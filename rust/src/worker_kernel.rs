@@ -799,7 +799,6 @@ fn spawn_background_worker_aot(
         .arg(dart_binary)
         .args(["--worker"])
         .arg(worker_executable)
-        .args(["--mode", "rust"])
         .current_dir(root)
         .env(BACKGROUND_AOT_LOCK_ENV, &lock_path)
         .stdin(Stdio::null())

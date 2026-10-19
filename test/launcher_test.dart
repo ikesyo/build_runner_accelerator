@@ -31,246 +31,119 @@ void main() {
     expect(dependencies, contains('/src/key_normalization.dart'));
   });
 
-  test('removed alias fails in every mode', () {
-    for (final mode in ['auto', 'rust', 'dart']) {
-      expect(
-        () => LauncherOptions.parse(['aot-prewarm', '--mode', mode]),
-        throwsFormatException,
-      );
-    }
-  });
-  test('background is rejected outside prewarm in every frontend mode', () {
-    for (final mode in ['auto', 'rust', 'dart']) {
-      for (final command in ['build', 'watch', 'clean']) {
-        expect(
-          () =>
-              LauncherOptions.parse([command, '--mode', mode, '--background']),
-          throwsFormatException,
-        );
-      }
-      for (final command in ['prewarm']) {
-        final options = LauncherOptions.parse([
-          command,
-          '--mode',
-          mode,
-          '--background',
-        ]);
-        expect(options.rustArguments, contains('--background'));
-        expect(options.dartArguments, isNot(contains('--background')));
-      }
-    }
-  });
-
-  test('defaults to auto build and forwards the Rust contract', () {
-    final options = LauncherOptions.parse(const []);
-
+  test('defaults to native build', () {
+    final options = LauncherOptions.parse([]);
     expect(options.command, 'build');
-    expect(options.mode, 'auto');
-    expect(
-      options.rustArguments,
-      containsAll(<String>['build', '--mode', 'auto']),
-    );
-    expect(
-      options.dartArguments,
-      containsAll(<String>['run', 'build_runner', 'build']),
-    );
+    expect(options.rustArguments.first, 'build');
+    expect(options.buildArguments, isEmpty);
+    expect(options.rustArguments, isNot(contains('--stock-arguments-json')));
   });
 
-  test('stock keep ownership follows parsed tokens and excludes help', () {
-    expect(
-      LauncherOptions.parse([
-        'build',
-        '--keep-modified-outputs',
-      ]).stockKeepRequested,
-      isTrue,
-    );
-    for (final arguments in [
-      ['build', '--define', '--keep-modified-outputs'],
-      ['build', '--', '--keep-modified-outputs'],
-      ['build', '--keep-modified-outputs', '--help'],
-    ]) {
-      expect(LauncherOptions.parse(arguments).stockKeepRequested, isFalse);
-    }
-  });
-
-  test('stock verify/help do not claim publishing ownership', () {
-    for (final flags in [
-      ['--only-check'],
-      ['--keep-modified-outputs', '--only-check'],
-      ['--keep-modified-outputs', '--help'],
-    ]) {
-      expect(
-        LauncherOptions.parse(['build', ...flags]).stockMayPublishOutputs,
-        isFalse,
-      );
-    }
-    expect(
-      LauncherOptions.parse([
-        'build',
-        '--keep-modified-outputs',
-      ]).stockMayPublishOutputs,
-      isTrue,
-    );
-    expect(
-      LauncherOptions.parse([
-        'build',
-        '--define',
-        '--only-check',
-      ]).stockMayPublishOutputs,
-      isTrue,
-    );
-  });
-
-  test('supported filters retain the complete late fallback invocation', () {
-    for (final command in ['build', 'watch']) {
-      final arguments = [
-        command,
-        '--build-filter',
-        'lib/a.final,lib/b.final',
-        '--build-filter=package:app*/**',
-        '--force-jit',
-        '--release',
-      ];
-      final options = LauncherOptions.parse(arguments);
-      expect(options.nativeUnsupported, isFalse);
-      expect(options.dartArguments, ['run', 'build_runner', ...arguments]);
-      final transport = options.rustArguments.indexOf('--stock-arguments-json');
-      final json = options.rustArguments[transport + 1];
-      expect(json, contains('lib/a.final,lib/b.final'));
-      expect(json, contains('--build-filter=package:app*/**'));
-    }
-    expect(
-      () => LauncherOptions.parse(['prewarm', '--build-filter=lib/**']),
-      throwsFormatException,
-    );
-  });
-
-  test('filtered worker count is implicit unless the caller sets --jobs', () {
-    for (final command in ['build', 'watch']) {
-      final defaultJobs = LauncherOptions.parse([
-        command,
-        '--build-filter=lib/a.final,lib/b.final',
-      ]);
-      expect(defaultJobs.rustArguments, isNot(contains('--jobs')));
-
-      final explicitJobs = LauncherOptions.parse([
-        command,
-        '--build-filter=lib/a.final,lib/b.final',
-        '--jobs=4',
-      ]);
-      final jobsIndex = explicitJobs.rustArguments.indexOf('--jobs');
-      expect(jobsIndex, isNonNegative);
-      expect(explicitJobs.rustArguments[jobsIndex + 1], '4');
-    }
-  });
-
-  test('unsupported CLI selects stock before native resolution', () {
-    for (final args in [
-      ['clean'],
-      ['serve'],
-      ['test', '--', '--mode', 'rust'],
-      ['build', '--build-filter', 'lib/[ab].g.dart'],
-      ['build', '--build-filter', 'lib/a\n'],
-      ['build', '--unknown'],
-      ['build', '--help'],
-      ['build', '--version'],
-      ['build', '--'],
-    ]) {
-      final options = LauncherOptions.parse(args);
-      expect(options.nativeUnsupported, isTrue, reason: '$args');
-      expect(options.dartArguments, ['run', 'build_runner', ...args]);
-      expect(
-        () => LauncherOptions.parse([
-          ...args.takeWhile((a) => a != '--'),
-          '--mode=rust',
-          ...args.skipWhile((a) => a != '--'),
-        ]),
-        throwsFormatException,
-      );
-    }
-  });
-
-  test('stock values and separator never consume launcher flags', () {
-    final options = LauncherOptions.parse([
-      'build',
-      '--dart-jit-vm-arg',
-      '--force-aot',
-      '--define',
-      '--mode=rust',
-      '--',
-      '--jobs',
-      '0',
-      '--force-jit',
-      '--help',
-    ]);
-    expect(options.mode, 'auto');
-    expect(options.forceAot, isFalse);
-    expect(options.forceJit, isFalse);
-    expect(options.showHelp, isFalse);
-    expect(options.dartArguments, [
-      'run',
-      'build_runner',
-      'build',
-      '--dart-jit-vm-arg',
-      '--force-aot',
-      '--define',
-      '--mode=rust',
-      '--',
-      '--jobs',
-      '0',
-      '--force-jit',
-      '--help',
-    ]);
-  });
-
-  test('stock command order is preserved', () {
-    final options = LauncherOptions.parse(['--force-jit', 'build', '-d']);
-    expect(options.nativeUnsupported, isTrue);
-    expect(options.dartArguments, [
-      'run',
-      'build_runner',
-      '--force-jit',
-      'build',
-      '-d',
-    ]);
-  });
-
-  test('native stock flags survive manifest fallback transport', () {
-    final options = LauncherOptions.parse(['watch', '-d', '--force-jit']);
-    expect(options.nativeUnsupported, isFalse);
-    expect(options.dartArguments, [
-      'run',
-      'build_runner',
-      'watch',
-      '-d',
-      '--force-jit',
-    ]);
-    expect(
-      options.rustArguments.last,
-      contains('"arguments":["-d","--force-jit"]'),
-    );
-    expect(
-      options.rustArguments.last,
-      contains('"invocation":["watch","-d","--force-jit"]'),
-    );
-    expect(options.rustArguments, contains('--stock-arguments-json'));
-  });
-
-  test('invalid accelerator values fail in every mode', () {
-    for (final mode in ['auto', 'dart', 'rust']) {
+  test('removed modes explain migration', () {
+    for (final mode in ['auto', 'rust', 'dart', 'native']) {
       for (final args in [
-        ['--jobs', '0'],
-        ['--jobs=abc'],
-        ['--interval-ms=-1'],
-        ['--root'],
-        ['--dart', '--help'],
-        ['--worker='],
+        ['build', '--mode=$mode'],
+        ['--mode', mode, 'watch'],
       ]) {
         expect(
-          () => LauncherOptions.parse(['--mode=$mode', ...args]),
-          throwsFormatException,
+          () => LauncherOptions.parse(args),
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('--mode was removed in 0.14.0'),
+            ),
+          ),
         );
       }
+    }
+  });
+
+  test('unsupported requests fail before native resolution', () {
+    for (final args in [
+      ['--force-jit', 'build'],
+      ['clean'],
+      ['serve'],
+      ['aot-prewarm'],
+      ['build', '--unknown'],
+      ['build', '--output', 'out'],
+      ['build', '--build-filter=lib/[ab].g.dart'],
+      ['build', '--'],
+      ['watch', '--only-check'],
+      ['prewarm', '--keep-modified-outputs'],
+      ['prewarm', '--build-filter=lib/**'],
+      ['build', '--background'],
+    ]) {
+      expect(
+        () => LauncherOptions.parse(args),
+        throwsFormatException,
+        reason: '$args',
+      );
+    }
+    expect(
+      LauncherOptions.parse(['prewarm', '--background']).rustArguments,
+      contains('--background'),
+    );
+  });
+
+  test('launcher owns leading and command help/version', () {
+    for (final args in [
+      ['--help'],
+      ['build', '--help'],
+      ['watch', '-h'],
+    ]) {
+      expect(LauncherOptions.parse(args).showHelp, isTrue);
+    }
+    expect(LauncherOptions.parse(['build', '--version']).showVersion, isTrue);
+  });
+
+  test('build settings retain token boundaries without fallback transport', () {
+    final flags = [
+      '--config',
+      '--mode=rust',
+      '--define=:b=text=a=b,c',
+      '--build-filter=lib/*.final',
+      '--force-jit',
+    ];
+    final options = LauncherOptions.parse(['build', '--jobs=2', ...flags]);
+    expect(options.buildArguments, flags);
+    expect(
+      options.rustArguments.skip(options.rustArguments.length - flags.length),
+      flags,
+    );
+    expect(options.forceJit, isTrue);
+    expect(options.rustArguments, containsAll(['--jobs', '2']));
+    final value = LauncherOptions.parse(['build', '--config', '--help']);
+    expect(value.showHelp, isFalse);
+    expect(value.buildArguments, ['--config', '--help']);
+  });
+
+  test('filtered jobs stay implicit unless explicitly selected', () {
+    expect(
+      LauncherOptions.parse(['build', '--build-filter=lib/**']).rustArguments,
+      isNot(contains('--jobs')),
+    );
+    expect(
+      LauncherOptions.parse([
+        'build',
+        '--build-filter=lib/**',
+        '--jobs=4',
+      ]).rustArguments,
+      containsAll(['--jobs', '4']),
+    );
+  });
+
+  test('invalid launcher values and conflicting compile flags fail', () {
+    for (final args in [
+      ['--jobs', '0'],
+      ['--jobs=abc'],
+      ['--interval-ms=-1'],
+      ['--root'],
+      ['--dart', '--help'],
+      ['--worker='],
+      ['build', '--force-aot', '--force-jit'],
+    ]) {
+      expect(() => LauncherOptions.parse(args), throwsFormatException);
     }
   });
 
@@ -305,7 +178,12 @@ void main() {
       );
 
       expect(result.exitCode, 0, reason: '${result.stderr}');
-      expect(result.stdout, contains('Usage: dart run'));
+      expect(
+        result.stdout,
+        contains(
+          'build_runner_accelerator <build|watch|prewarm|aot-cache-key>',
+        ),
+      );
       expect(lookupMarker.existsSync(), isFalse);
     } finally {
       await pathDirectory.delete(recursive: true);
@@ -413,56 +291,4 @@ void main() {
       }
     },
   );
-
-  test(
-    'consumes launcher options and preserves stock build_runner options',
-    () {
-      final options = LauncherOptions.parse(const [
-        'watch',
-        '--mode',
-        'dart',
-        '--root',
-        '/tmp/example',
-        '--jobs',
-        '2',
-        '--verbose',
-      ]);
-
-      expect(options.command, 'watch');
-      expect(options.mode, 'dart');
-      expect(options.root, '/tmp/example');
-      expect(options.rustArguments, containsAll(<String>['--jobs', '2']));
-      expect(options.dartArguments, [
-        'run',
-        'build_runner',
-        'watch',
-        '--verbose',
-      ]);
-    },
-  );
-
-  test('rejects an invalid mode', () {
-    expect(
-      () => LauncherOptions.parse(const ['--mode', 'native']),
-      throwsFormatException,
-    );
-  });
-
-  test('preserves stock AOT mode flags and rejects conflicting modes', () {
-    final aot = LauncherOptions.parse(const ['build', '--force-aot']);
-    expect(aot.forceAot, isTrue);
-    expect(aot.forceJit, isFalse);
-    expect(aot.dartArguments, contains('--force-aot'));
-
-    final jit = LauncherOptions.parse(const ['build', '--force-jit']);
-    expect(jit.forceAot, isFalse);
-    expect(jit.forceJit, isTrue);
-    expect(jit.dartArguments, contains('--force-jit'));
-
-    expect(
-      () =>
-          LauncherOptions.parse(const ['build', '--force-aot', '--force-jit']),
-      throwsFormatException,
-    );
-  });
 }

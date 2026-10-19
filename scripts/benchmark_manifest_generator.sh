@@ -29,7 +29,7 @@ env = dict(os.environ,
            BUILD_RUNNER_ACCELERATOR_PLAN_ONLY='1',
            BUILD_RUNNER_ACCELERATOR_METRICS='1')
 command = [native, 'build', '--root', str(root), '--dart', dart,
-           '--mode', 'rust', '--jobs', '1']
+           '--jobs', '1']
 records = []
 reference = None
 

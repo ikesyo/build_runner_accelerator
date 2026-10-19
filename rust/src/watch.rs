@@ -1,12 +1,11 @@
 use crate::build;
 use crate::builder::{ConfiguredBuilder, RustBuildConfig};
-use crate::cli::{BuildSettings, FrontendMode, Options};
-use crate::frontend::{NativeFrontend, run_dart_fallback, select_frontend, worker_executable};
+use crate::cli::{BuildSettings, Options};
+use crate::frontend::{NativeFrontend, select_frontend, unsupported, worker_executable};
 use crate::graph::GraphState;
 use crate::pattern::match_capture_pattern;
 use crate::worker::WorkerPool;
 use crate::workspace::Workspace;
-use crate::workspace_lock::WorkspaceLock;
 use notify::{
     Event, EventKind, RecursiveMode, Watcher,
     event::{ModifyKind, RenameMode},
@@ -55,20 +54,12 @@ impl WatchEvents {
         self.receiver = Some(receiver);
         Ok(())
     }
-
-    // Drop both the backend and receiver before handing watch ownership to stock.
-    fn stop(&mut self) {
-        self.receiver.take();
-        self.watcher.take();
-    }
 }
 
-// These values survive native cycles; stock fallback owns its own watcher.
 #[derive(Default)]
-struct WatchState<'a> {
+struct WatchState {
     cached_configuration: Option<RustBuildConfig>,
     events: WatchEvents,
-    workspace_lock: Option<&'a WorkspaceLock>,
 }
 
 fn added_event_paths(event: &Event) -> Vec<PathBuf> {
@@ -93,15 +84,12 @@ fn added_event_paths(event: &Event) -> Vec<PathBuf> {
     }
 }
 
-pub(crate) fn run(options: &Options, workspace_lock: Option<&WorkspaceLock>) -> io::Result<()> {
+pub(crate) fn run(options: &Options) -> io::Result<()> {
     let mut pool = None;
     let mut pool_signature = None;
     let mut pool_shape = None;
-    let mut watch_state = WatchState {
-        workspace_lock,
-        ..WatchState::default()
-    };
-    let settings = BuildSettings::parse(&options.stock_arguments)?;
+    let mut watch_state = WatchState::default();
+    let settings = BuildSettings::parse(&options.build_arguments)?;
     let stock_config_path = settings
         .config
         .as_ref()
@@ -124,7 +112,7 @@ pub(crate) fn run(options: &Options, workspace_lock: Option<&WorkspaceLock>) -> 
         false,
         &WatchChanges::default(),
     ) {
-        Ok(native_build) => native_build,
+        Ok(()) => true,
         Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
         Err(error) => {
             eprintln!("initial watch build failed: {error}");
@@ -184,13 +172,9 @@ pub(crate) fn run(options: &Options, workspace_lock: Option<&WorkspaceLock>) -> 
             retain_configuration && !configuration_changed,
             &changed_paths,
         ) {
-            Ok(true) => {
+            Ok(()) => {
                 native_build_succeeded = true;
                 source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
-            }
-            Ok(false) => {
-                native_build_succeeded = false;
-                source_post_process_outputs.clear();
             }
             Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
             Err(error) => {
@@ -208,47 +192,28 @@ fn run_watch_build(
     watch_state: &mut WatchState,
     reuse_configuration: bool,
     changed_paths: &WatchChanges,
-) -> io::Result<bool> {
+) -> io::Result<()> {
     let _wall = crate::wall::Session::new();
     let workspace = Workspace::load(options.root.clone())?;
     let loaded_graph = build::LoadedGraph::load(&workspace)?;
     let session_start = watch_state.cached_configuration.is_none();
-    let filtered = !BuildSettings::parse(&options.stock_arguments)?
+    let filtered = !BuildSettings::parse(&options.build_arguments)?
         .build_filters
         .is_empty();
-    let selected = if reuse_configuration && watch_state.cached_configuration.is_some() {
-        watch_state
-            .cached_configuration
-            .clone()
-            .map(NativeFrontend::new)
+    let mut frontend = if reuse_configuration {
+        if let Some(config) = &watch_state.cached_configuration {
+            NativeFrontend::new(config.clone())
+        } else {
+            select_frontend(options, &workspace, &loaded_graph.state)?
+        }
     } else {
         select_frontend(options, &workspace, &loaded_graph.state)?
-    };
-    let Some(mut frontend) = selected else {
-        pool.take();
-        watch_state.events.stop();
-        run_dart_fallback(
-            options,
-            watch_state.workspace_lock,
-            Some(loaded_graph.state.retained_output_state),
-        )?;
-        return Ok(false);
     };
     let build_config = &frontend.config;
     workspace.configure_sources(build_config.asset_sources.as_ref());
     if let Some(reason) = workspace.overlapping_watch_sources()? {
         pool.take();
-        if options.mode == FrontendMode::Rust {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, reason));
-        }
-        eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
-        watch_state.events.stop();
-        run_dart_fallback(
-            options,
-            watch_state.workspace_lock,
-            Some(loaded_graph.state.retained_output_state),
-        )?;
-        return Ok(false);
+        return unsupported(&reason);
     }
     // A successful cold build can discover resolver cycles. Re-check the
     // incremental evidence even when filesystem events reuse the manifest.
@@ -272,22 +237,12 @@ fn run_watch_build(
     };
     if let Some(reason) = transition_reason {
         pool.take();
-        if options.mode == FrontendMode::Rust {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, reason));
-        }
-        eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
-        watch_state.events.stop();
-        run_dart_fallback(
-            options,
-            watch_state.workspace_lock,
-            Some(loaded_graph.state.retained_output_state),
-        )?;
-        return Ok(false);
+        return unsupported(reason);
     }
 
     // Stock 2.16.2 reloads the plan in watch, but changing application/output
     // topology does not behave like a fresh build. Do not partially emulate
-    // that transition: hand the complete watch invocation to stock instead.
+    // that transition: reject the transition before publishing outputs.
     let shape: Vec<_> = build_config
         .builders
         .iter()
@@ -311,17 +266,7 @@ fn run_watch_build(
     {
         pool.take();
         let reason = "watch configuration changed builder applications or output topology";
-        if options.mode == FrontendMode::Rust {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, reason));
-        }
-        eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
-        watch_state.events.stop();
-        run_dart_fallback(
-            options,
-            watch_state.workspace_lock,
-            Some(loaded_graph.state.retained_output_state),
-        )?;
-        return Ok(false);
+        return unsupported(reason);
     }
     *pool_shape = Some(shape);
     watch_state.cached_configuration = Some(build_config.clone());
@@ -332,8 +277,7 @@ fn run_watch_build(
     // Subscribe only after the native plan is known to be supported, and before
     // worker startup or the initial build can observe source files. Events are
     // consumed by run() after the initial build so edits made during it remain
-    // queued for the next watch cycle. Stock fallback keeps sole ownership of
-    // its own watchers.
+    // queued for the next watch cycle.
     watch_state.events.start(&workspace)?;
     if pool.is_none() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
@@ -367,7 +311,7 @@ fn run_watch_build(
         session_start,
         changed_paths,
     )?;
-    Ok(true)
+    Ok(())
 }
 
 fn wait_for_relevant_event(

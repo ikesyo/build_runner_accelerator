@@ -1,5 +1,5 @@
 use crate::builder::{BuilderManifestFile, RustBuildConfig, rust_build_config_from_manifest};
-use crate::cli::{FrontendMode, Options};
+use crate::cli::Options;
 use crate::worker_kernel::{
     AOT_COMPILE_LOCK_NAME, BACKGROUND_AOT_LOCK_ENV, acquire_background_aot_lock,
     analysis_prewarm_enabled, early_worker_aot_compile, early_worker_aot_enabled,
@@ -38,38 +38,23 @@ pub(crate) fn select_frontend(
     options: &Options,
     workspace: &Workspace,
     state: &crate::graph::GraphState,
-) -> io::Result<Option<NativeFrontend>> {
-    if options.mode == FrontendMode::Dart {
-        return Ok(None);
-    }
-
-    if matches!(options.command.as_str(), "build" | "watch")
-        && workspace.root.join(STOCK_OUTPUT_POLICY_STATE).is_file()
-    {
-        return select_dart_fallback(
-            options,
-            "stock output-policy state requires stock until both build states are reset",
-        );
-    }
+) -> io::Result<NativeFrontend> {
     // Detect the state-dependent watch boundary before preparing a manifest.
     let retained_output_state =
         matches!(options.command.as_str(), "build" | "watch") && state.retained_output_state;
     if retained_output_state && options.command == "watch" {
-        return select_dart_fallback(options, "watch after retained output state requires stock");
+        return unsupported("watch after retained output state is unsupported");
     }
 
-    if let Some(name) = crate::cli::BuildSettings::parse(&options.stock_arguments)?.config_path()?
+    if let Some(name) = crate::cli::BuildSettings::parse(&options.build_arguments)?.config_path()?
         && !workspace.root.join(name.clone()).is_file()
     {
-        return select_dart_fallback(options, &format!("configuration file not found: {name}"));
+        return unsupported(&format!("configuration file not found: {name}"));
     }
     let fingerprint = match settings_fingerprint(options, workspace) {
         Ok(fingerprint) => fingerprint,
         Err(error) => {
-            return select_dart_fallback(
-                options,
-                &format!("cannot read configuration inputs: {error}"),
-            );
+            return unsupported(&format!("cannot read configuration inputs: {error}"));
         }
     };
     let manifest_path = workspace.root.join(MANIFEST_PATH);
@@ -89,18 +74,14 @@ pub(crate) fn select_frontend(
                     &manifest_path,
                     &worker_entrypoint,
                 ) {
-                    return select_dart_fallback(
-                        options,
-                        &format!("dynamic builder manifest generation failed: {error}"),
-                    );
+                    return unsupported(&format!(
+                        "dynamic builder manifest generation failed: {error}"
+                    ));
                 }
                 let refreshed = match settings_fingerprint(options, workspace) {
                     Ok(fingerprint) => fingerprint,
                     Err(error) => {
-                        return select_dart_fallback(
-                            options,
-                            &format!("cannot read configuration inputs: {error}"),
-                        );
+                        return unsupported(&format!("cannot read configuration inputs: {error}"));
                     }
                 };
                 if refreshed == manifest_fingerprint {
@@ -111,10 +92,7 @@ pub(crate) fn select_frontend(
             match read_manifest(&manifest_path, &manifest_fingerprint, &worker_entrypoint)? {
                 Some(manifest) => manifest,
                 None => {
-                    return select_dart_fallback(
-                        options,
-                        "dynamic builder manifest was not written",
-                    );
+                    return unsupported("dynamic builder manifest was not written");
                 }
             }
         }
@@ -124,12 +102,11 @@ pub(crate) fn select_frontend(
         Ok(config) => {
             workspace.configure_sources(config.asset_sources.as_ref());
             if workspace.includes_build_implementation_sources() {
-                return select_dart_fallback(
-                    options,
+                return unsupported(
                     "target sources include build implementation directories under .dart_tool; native cannot model stock artifact-tree inputs",
                 );
             }
-            let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
+            let settings = crate::cli::BuildSettings::parse(&options.build_arguments)?;
             let demand_policy =
                 settings.only_check || settings.keep_modified_outputs || retained_output_state;
             let filters = settings.build_filters;
@@ -147,8 +124,7 @@ pub(crate) fn select_frontend(
                             .any(|e| e.output_suffixes.is_empty())
                 })
             {
-                return select_dart_fallback(
-                    options,
+                return unsupported(
                     "output policies/build filters with optional, post-process, trigger-only or zero-output builders are outside the supported subset",
                 );
             }
@@ -172,14 +148,13 @@ pub(crate) fn select_frontend(
                 None
             };
             if let Some(reason) = transition_reason {
-                return select_dart_fallback(options, reason);
+                return unsupported(reason);
             }
-            Ok(Some(NativeFrontend { config, preflight }))
+            Ok(NativeFrontend { config, preflight })
         }
-        Err(error) => select_dart_fallback(
-            options,
-            &format!("dynamic builder manifest is outside the supported subset: {error}"),
-        ),
+        Err(error) => unsupported(&format!(
+            "dynamic builder manifest is outside the supported subset: {error}"
+        )),
     }
 }
 
@@ -191,11 +166,11 @@ fn settings_fingerprint(options: &Options, workspace: &Workspace) -> io::Result<
     bytes.extend_from_slice(workspace.builder_manifest_fingerprint()?.as_bytes());
     bytes.extend_from_slice(
         &serde_json::to_vec(&crate::build_filter::configuration_arguments(
-            &options.stock_arguments,
+            &options.build_arguments,
         )?)
         .map_err(io::Error::other)?,
     );
-    let settings = crate::cli::BuildSettings::parse(&options.stock_arguments)?;
+    let settings = crate::cli::BuildSettings::parse(&options.build_arguments)?;
     let mut paths = std::collections::BTreeSet::new();
     for entry in fs::read_dir(&workspace.root)? {
         let entry = entry?;
@@ -279,7 +254,7 @@ fn generate_manifest(
     let _wall = crate::wall::Span::new("manifest_generate");
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     let settings_json =
-        serde_json::to_string(&options.stock_arguments).map_err(io::Error::other)?;
+        serde_json::to_string(&options.build_arguments).map_err(io::Error::other)?;
     // Fill the shared analyzer byte store while this window is otherwise
     // CPU-idle on the Rust side: generator kernel compile/load, the early
     // catalog helper, the overlapped worker AOT compile and the factory
@@ -534,10 +509,7 @@ pub(crate) fn worker_executable(options: &Options, config: &RustBuildConfig) -> 
 
 pub(crate) fn run_aot_cache_key(options: &Options) -> io::Result<()> {
     let workspace = Workspace::load(options.root.clone())?;
-    let build_config = select_frontend(options, &workspace, &crate::graph::GraphState::default())?
-        .ok_or_else(|| {
-            io::Error::other("AOT cache key requires a Rust-compatible builder manifest")
-        })?;
+    let build_config = select_frontend(options, &workspace, &crate::graph::GraphState::default())?;
     let build_config = build_config.config;
     let worker = worker_executable(options, &build_config)?;
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
@@ -549,25 +521,12 @@ pub(crate) fn run_aot_cache_key(options: &Options) -> io::Result<()> {
 }
 
 pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
-    if options.mode == FrontendMode::Dart {
-        eprintln!("Rust frontend disabled (--mode dart); nothing to prewarm");
-        return Ok(());
-    }
     if options.background {
         return run_prewarm_detached(options);
     }
     let _background_lock = take_background_aot_lock();
     let workspace = load_prewarm_workspace(options)?;
-    let build_config =
-        match select_frontend(options, &workspace, &crate::graph::GraphState::default())? {
-            Some(config) => config,
-            // Unreachable under --mode rust (select_frontend already failed); the
-            // stock Dart path has no caches to warm, so skipping is not an error.
-            None => {
-                eprintln!("Rust frontend would not run this workspace; nothing to prewarm");
-                return Ok(());
-            }
-        };
+    let build_config = select_frontend(options, &workspace, &crate::graph::GraphState::default())?;
     let build_config = build_config.config;
     let worker = worker_executable(options, &build_config)?;
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
@@ -639,11 +598,6 @@ fn spawn_detached_prewarm(
         .open(&log_path)?;
     let log_stderr = log_stdout.try_clone()?;
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
-    let mode = match options.mode {
-        FrontendMode::Auto => "auto",
-        FrontendMode::Rust => "rust",
-        FrontendMode::Dart => "dart",
-    };
     let mut command = detached_prewarm_command()?;
     command.env_remove(crate::process::SUPERVISION_CONTEXT);
     command
@@ -651,17 +605,12 @@ fn spawn_detached_prewarm(
         .arg(&workspace.root)
         .args(["--dart"])
         .arg(dart_binary)
-        .args(["--mode", mode])
         .current_dir(&workspace.root)
         .env(BACKGROUND_AOT_LOCK_ENV, lock_path)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_stdout))
         .stderr(Stdio::from(log_stderr));
-    let invocation = [vec!["prewarm".to_owned()], options.stock_arguments.clone()].concat();
-    command.arg("--stock-arguments-json").arg(
-        serde_json::json!({"arguments": options.stock_arguments, "invocation": invocation})
-            .to_string(),
-    );
+    command.args(&options.build_arguments);
     if let Some(worker) = &options.worker {
         command.args(["--worker"]).arg(worker);
     }
@@ -748,66 +697,13 @@ fn detached_prewarm_command() -> io::Result<Command> {
     Ok(Command::new(std::env::current_exe()?))
 }
 
-fn select_dart_fallback(options: &Options, reason: &str) -> io::Result<Option<NativeFrontend>> {
-    if options.mode == FrontendMode::Rust {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("Rust frontend cannot handle this package: {reason}; use --mode dart"),
-        ));
-    }
-    eprintln!("Rust frontend unsupported ({reason}); using Dart fallback");
-    Ok(None)
-}
-
-pub(crate) fn run_dart_fallback(
-    options: &Options,
-    workspace_lock: Option<&crate::workspace_lock::WorkspaceLock>,
-    retained_output_state: Option<bool>,
-) -> io::Result<()> {
-    if matches!(options.command.as_str(), "build" | "watch") {
-        let (keep, may_publish) = options.stock_output_policy();
-        if may_publish {
-            let retained = match retained_output_state {
-                // Keep already claims ownership without reading native history.
-                _ if keep => false,
-                Some(retained) => retained,
-                None => crate::graph::GraphState::load(
-                    &options
-                        .root
-                        .join(".dart_tool/build_runner_accelerator/graph-v3.bin"),
-                )
-                .map_or(true, |state| state.retained_output_state),
-            };
-            if keep || retained {
-                crate::build::mark_stock_output_state(&options.root)?;
-            }
-        }
-    }
-    let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
-    let mut command = Command::new(dart_binary);
-    command.env_remove(crate::process::SUPERVISION_CONTEXT);
-    command.args(["--suppress-analytics", "run", "build_runner"]);
-    if let Some(invocation) = &options.stock_invocation {
-        command.args(invocation);
-    } else {
-        command.arg(&options.command).args(&options.stock_arguments);
-    }
-    // Replace this process on Unix: stock owns signals, children, and status.
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.current_dir(&options.root);
-        match workspace_lock {
-            Some(lock) => lock.exec(&mut command),
-            None => Err(command.exec()),
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = workspace_lock;
-        let status = command.current_dir(&options.root).status()?;
-        std::process::exit(status.code().unwrap_or(1));
-    }
+pub(crate) fn unsupported<T>(reason: &str) -> io::Result<T> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!(
+            "Native frontend cannot handle this request: {reason}. Run dart run build_runner directly if needed."
+        ),
+    ))
 }
 
 #[cfg(test)]

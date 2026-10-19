@@ -105,7 +105,7 @@ post_process_builders:
             path.write_bytes(content)
 
     command = lambda binary, jobs: [str(binary), 'build', '--root', str(args.root),
-                                   '--dart', str(args.dart), '--mode', 'rust', '--jobs', str(jobs)]
+                                   '--dart', str(args.dart), '--jobs', str(jobs)]
     # AOT, SDK summary and manifest priming are outside every speed sample.
     with (args.results / 'prime.log').open('w') as log:
         subprocess.run(command(args.baseline, 2), cwd=args.root, env=env, check=True,

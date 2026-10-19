@@ -31,7 +31,7 @@ stock_build() {
   verification_run_stock_build "$stock" build/upgrade-stock "$temporary_dir/stock.log" "$dart_bin" "$pub_cache" build --delete-conflicting-outputs
 }
 native_build() {
-  VERIFY_COMMAND_LOG="$temporary_dir/$1.log" VERIFY_WORKSPACE="$native" worker_run_frontend build --root "$native" --dart "$dart_bin" --mode rust
+  VERIFY_COMMAND_LOG="$temporary_dir/$1.log" VERIFY_WORKSPACE="$native" worker_run_frontend build --root "$native" --dart "$dart_bin"
 }
 compare() {
   python3 - "$stock/lib" "$native/lib" <<'PY'
@@ -176,7 +176,7 @@ Future<void> main() async {
 }
 """)
 PY_WORKER
-  if VERIFY_COMMAND_LOG="$temporary_dir/$problem.log" VERIFY_WORKSPACE="$native" worker_run_frontend build --root "$native" --dart "$dart_bin" --mode rust --worker "$temporary_dir/test-worker.dart"; then
+  if VERIFY_COMMAND_LOG="$temporary_dir/$problem.log" VERIFY_WORKSPACE="$native" worker_run_frontend build --root "$native" --dart "$dart_bin" --worker "$temporary_dir/test-worker.dart"; then
     printf 'upgrade: invalid test worker accepted: %s\n' "$problem" >&2; exit 1
   fi
   case "$problem" in
@@ -189,7 +189,7 @@ PY_WORKER
 done
 cp "$stock/lib/model.dart" "$native/lib/model.dart"
 # CLI alias removal must also be explicit on the native parser.
-if VERIFY_COMMAND_LOG="$temporary_dir/alias.log" VERIFY_WORKSPACE="$native" worker_run_frontend aot-prewarm --root "$native" --mode dart; then
+if VERIFY_COMMAND_LOG="$temporary_dir/alias.log" VERIFY_WORKSPACE="$native" worker_run_frontend aot-prewarm --root "$native"; then
   printf 'upgrade: old alias unexpectedly succeeded\n' >&2; exit 1
 fi
 grep -Fq 'aot-prewarm was removed; use prewarm' "$temporary_dir/alias.log"

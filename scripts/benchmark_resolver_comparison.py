@@ -166,7 +166,7 @@ def main():
                            BUILD_RUNNER_ACCELERATOR_CACHE=str(results / f'{mode}-tool-cache'),
                            ANALYZER_STATE_LOCATION_OVERRIDE=str(results / f'{mode}-analyzer-cache'))
             argv = [str(variants[mode][1]), 'build', '--root', str(root),
-                    '--dart', str(args.dart), '--mode', 'rust', '--jobs', str(args.jobs)]
+                    '--dart', str(args.dart), '--jobs', str(args.jobs)]
             log_path = results / f'{fixture_name}-{mode}-{iteration}-{case}.log'
             pack_root = Path(run_env['BUILD_RUNNER_ACCELERATOR_CACHE']) / 'byte_store'
             def packed_bytes():

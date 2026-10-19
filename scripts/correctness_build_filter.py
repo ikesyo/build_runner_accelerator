@@ -160,20 +160,20 @@ def history(root):
     return Counter(line.removeprefix('build_filter_app|') for line in file.read_text().splitlines()) if file.exists() else Counter()
 
 
-def check(stock, native, flags=(), mode='rust', same_history=True, compile_flag='--force-jit', native_expected=False,
+def check(stock, native, flags=(), same_history=True, compile_flag='--force-jit',
           jobs=1, extra_env=None):
     assert (stock / 'pubspec.lock').read_text() == (native / 'pubspec.lock').read_text()
     for root in (stock, native): history_path(root).unlink(missing_ok=True)
     # The pinned stock build_runner has no --jobs option; `jobs` controls the
     # native scheduler while stock runs at its built-in concurrency.
     reference = execute([DART, 'run', 'build_runner', 'build', compile_flag, *flags], stock)
-    args = launcher(native, mode, flags=[compile_flag, *flags])
+    args = launcher(native, flags=[compile_flag, *flags])
     args[args.index('--jobs=1')] = f'--jobs={jobs}'
     actual = execute(args, native, extra_env)
     assert actual[0] == reference[0] == 0, (flags, reference, actual)
     assert outputs(stock) == outputs(native), (flags, outputs(stock), outputs(native), actual)
     if same_history: assert history(stock) == history(native), (flags, history(stock), history(native), actual)
-    if mode == 'rust' or native_expected: assert '(Rust frontend)' in actual[1], actual
+    assert '(Rust frontend)' in actual[1], actual
     return history(native)
 
 
@@ -195,7 +195,7 @@ def watch(root, mode, flags, command=None, jobs=1, extra_env=None, wait_ready=Tr
         # internal watch concurrency while the native side honors the value.
         args.extend(flags)
     else:
-        args = launcher(root, mode, 'watch', ['--force-jit', *flags])
+        args = launcher(root, 'watch', ['--force-jit', *flags])
         args[args.index('--jobs=1')] = f'--jobs={jobs}'
     environment = fixture_env(root, extra_env)
     stream = log.open('w')
@@ -402,7 +402,7 @@ def watch_process_cleanup_comparison(tmp):
 
 def obsolete_graph_comparison(tmp):
     """Obsolete private graphs reset natively, with transactional publication."""
-    for version, mode, filtered in ((1, 'rust', False), (2, 'auto', True)):
+    for version, filtered in ((1, False), (2, True)):
         name = f'obsolete-{version}-{filtered}'
         stock, native = tmp / (name + '-stock'), tmp / (name + '-native')
         prepare(stock); prepare(native)
@@ -425,18 +425,18 @@ def obsolete_graph_comparison(tmp):
         before = outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns
         reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit',
                              '--only-check', *flags], stock)
-        actual = execute(launcher(native, mode, flags=['--force-jit', '--only-check', *flags]), native)
+        actual = execute(launcher(native, flags=['--force-jit', '--only-check', *flags]), native)
         assert reference[0] == actual[0] == 1, (reference, actual)
         assert actual[1].count('invalidating graph') == 1 and 'unsupported format' in actual[1], actual
         assert (outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns) == before
         (native / 'lib/common.txt').write_text('fail\n')
-        actual = execute(launcher(native, mode, flags=['--force-jit', *flags]), native)
+        actual = execute(launcher(native, flags=['--force-jit', *flags]), native)
         assert actual[0] == 1, actual
         assert (outputs(native), graph.read_bytes(), graph.stat().st_mtime_ns) == before
         (native / 'lib/common.txt').write_text('common\n')
-        check(stock, native, flags, mode=mode, native_expected=True)
+        check(stock, native, flags)
         assert graph.read_bytes()[:5] == b'BRAG\x03'
-        assert check(stock, native, flags, mode=mode, native_expected=True) == Counter()
+        assert check(stock, native, flags) == Counter()
         print(f'build-filter: PASS {name} native reset, verification/failure recovery and no-op', flush=True)
 
 
@@ -451,10 +451,9 @@ def removed_declaration_comparison(tmp):
         file = root / 'build.yaml'
         file.write_text(file.read_text() + '\n# compatible stock plan, changed native fingerprint\n')
     before = outputs(native), history(native)
-    code, log = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
+    code, log = execute(launcher(native, flags=['--force-jit', *flags]), native)
     assert code != 0 and 'without a source/cache layout transition' in log, log
     assert (outputs(native), history(native)) == before
-    check(stock, native, flags, mode='auto')
     for kind in ('declaration', 'application'):
         for root in (stock, native):
             file = root / 'build.yaml'
@@ -462,11 +461,10 @@ def removed_declaration_comparison(tmp):
             setting = "generate_for: ['lib/b.txt', 'lib/common.txt']" if kind == 'declaration' else 'enabled: false'
             file.write_text(text + 'targets:\n  $default:\n    builders:\n      build_filter_app:seed:\n        ' + setting + '\n')
         before = outputs(native), history(native)
-        code, log = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
+        code, log = execute(launcher(native, flags=['--force-jit', *flags]), native)
         reason = 'previous output declarations' if kind == 'declaration' else 'previous builder application'
         assert code != 0 and reason in log, (kind, log)
         assert (outputs(native), history(native)) == before
-        check(stock, native, flags, mode='auto')
 
 
 def resolver_generated_comparison(tmp):
@@ -518,7 +516,7 @@ def resolver_generated_comparison(tmp):
             'class Shared { int get value => 2; int get extra => 3; }\n')
         history_path(root).unlink(missing_ok=True)
     stock_result = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
-    native_args = launcher(native, 'rust', flags=['--force-jit', *flags])
+    native_args = launcher(native, flags=['--force-jit', *flags])
     native_args[native_args.index('--jobs=1')] = '--jobs=4'
     native_result = execute(native_args, native, {
         'BUILD_RUNNER_ACCELERATOR_BYTE_STORE': 'off',
@@ -1081,15 +1079,15 @@ def writer_lock_watch_comparison(tmp):
         before_outputs = outputs(native)
         graph_path = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
         before_graph = graph_path.read_bytes()
-        for mode in ('auto', 'rust'):
-            competing = execute(
-                launcher(native, mode, flags=['--force-jit', '--build-filter=lib/b.final']),
-                native,
-            )
-            assert competing[0] != 0 and 'workspace writer lock' in competing[1].lower(), (
-                mode, competing)
-            assert outputs(native) == before_outputs, (mode, outputs(native), before_outputs)
-            assert graph_path.read_bytes() == before_graph, mode
+        competing = execute(
+            launcher(native, flags=['--force-jit', '--build-filter=lib/b.final']),
+            native,
+        )
+        assert competing[0] != 0 and 'workspace writer lock' in competing[1].lower(), (
+            competing)
+        assert outputs(native) == before_outputs, (outputs(native), before_outputs)
+        assert graph_path.read_bytes() == before_graph
+
 
         release.write_text('release\n')
         wait(lambda: 'Build completed (Rust frontend)' in
@@ -1113,7 +1111,7 @@ def writer_lock_watch_comparison(tmp):
         stock_b = execute(
             [DART, 'run', 'build_runner', 'build', '--force-jit', *next_flags], stock)
         native_b = execute(
-            launcher(native, 'rust', flags=['--force-jit', *next_flags]), native)
+            launcher(native, flags=['--force-jit', *next_flags]), native)
         assert native_b[0] == stock_b[0] == 0, (stock_b, native_b)
         assert '(Rust frontend)' in native_b[1], native_b
         assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), native_b)
@@ -1122,149 +1120,6 @@ def writer_lock_watch_comparison(tmp):
         release.write_text('release cleanup\n')
         if handle is not None:
             stop_all([handle])
-
-
-def late_fallback_writer_lock_comparison(tmp):
-    stock, native = tmp / 'late-lock-stock', tmp / 'late-lock-native'
-    prepare(stock); prepare(native)
-    flags = ['--build-filter=lib/a.final']
-    check(stock, native, flags, compile_flag='--force-jit')
-
-    barriers = {}
-    handles = []
-    try:
-        for root in (stock, native):
-            barriers[root] = tuple(
-                tmp / f'{root.name}-late-lock-{suffix}'
-                for suffix in ('arm', 'reached', 'release')
-            )
-        for root, mode in ((stock, 'stock'), (native, 'auto')):
-            arm, reached, release = barriers[root]
-            handles.append(watch(root, mode, flags, extra_env={
-                'BUILD_FILTER_READ_BARRIER_ARM': str(arm),
-                'BUILD_FILTER_READ_BARRIER_REACHED': str(reached),
-                'BUILD_FILTER_READ_BARRIER_RELEASE': str(release),
-                'BUILD_FILTER_READ_BARRIER_TIMEOUT_SECONDS': '120',
-            }))
-
-        stock_initial_handle, native_handle = handles
-        stop(stock_initial_handle)
-        handles = [native_handle]
-        config_position = native_handle[1].stat().st_size
-        noise_builder = """  noise:
-    import: 'package:build_filter_app/builder.dart'
-    builder_factories: [noise]
-    build_extensions: {'.noise': ['.ignored']}
-    auto_apply: root_package
-    build_to: source
-"""
-        for root in (stock, native):
-            config = root / 'build.yaml'
-            contents = config.read_text()
-            assert contents.count(noise_builder) == 1, contents
-            # An unrelated optional builder is enough to route filtered auto
-            # to stock while keeping the selected .txt -> .mid -> .final path.
-            config.write_text(contents.replace(
-                noise_builder,
-                noise_builder.replace(
-                    'build_to: source',
-                    'build_to: cache\n    is_optional: true',
-                ),
-                1,
-            ))
-
-        wait(lambda: 'using Dart fallback' in native_handle[1].read_text(),
-             native_handle[0], native_handle[1])
-        wait(lambda: 'Built with build_runner' in
-             native_handle[1].read_text()[config_position:],
-             native_handle[0], native_handle[1])
-
-        # A direct stock reference starts from the same optional config that
-        # the native watch handed off to. This avoids relying on stock's own
-        # hot-reload transition while still comparing the same watch behavior.
-        arm, reached, release = barriers[stock]
-        stock_handle = watch(stock, 'stock', flags, extra_env={
-            'BUILD_FILTER_READ_BARRIER_ARM': str(arm),
-            'BUILD_FILTER_READ_BARRIER_REACHED': str(reached),
-            'BUILD_FILTER_READ_BARRIER_RELEASE': str(release),
-            'BUILD_FILTER_READ_BARRIER_TIMEOUT_SECONDS': '120',
-        })
-        handles.insert(0, stock_handle)
-        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
-
-        # The config-change cycle is complete in both stock watches. Compare
-        # only the next input-triggered cycle, with stock held after reading
-        # a.mid and before it publishes the dependent output.
-        for root in (stock, native):
-            history_path(root).unlink(missing_ok=True)
-            arm, _, _ = barriers[root]
-            arm.write_text('armed\n')
-            (root / 'lib/a.txt').write_text('late fallback lock watch edit\n')
-        positions = [handle[1].stat().st_size for handle in handles]
-        for root, handle in zip((stock, native), handles):
-            reached = barriers[root][1]
-            wait(lambda reached=reached: reached.exists(), handle[0], handle[1])
-
-        graph_path = native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
-        before_outputs = outputs(native)
-        before_graph = graph_path.read_bytes()
-        for mode in ('auto', 'rust'):
-            competing = execute(
-                launcher(native, mode, flags=['--force-jit', '--build-filter=lib/b.final']),
-                native,
-            )
-            assert competing[0] != 0 and 'workspace writer lock' in competing[1].lower(), (
-                mode, competing)
-            assert outputs(native) == before_outputs, (mode, outputs(native), before_outputs)
-            assert graph_path.read_bytes() == before_graph, mode
-
-        for _, _, release in barriers.values():
-            release.write_text('release\n')
-        for index, handle in enumerate(handles):
-            wait(lambda index=index, handle=handle:
-                 'Built with build_runner' in handle[1].read_text()[positions[index]:],
-                 handle[0], handle[1])
-        assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
-        assert history(stock) == history(native), (history(stock), history(native))
-        assert b'late fallback lock watch edit' in outputs(stock)['lib/a.mid']
-        assert b'late fallback lock watch edit' in outputs(native)['lib/a.mid']
-    finally:
-        for _, _, release in barriers.values():
-            release.write_text('release cleanup\n')
-        stop_all(handles)
-
-    # The lock must be released with the exec'd stock watch. Restore the
-    # supported plan, then compare the next native run with stock.
-    for root in (stock, native):
-        config = root / 'build.yaml'
-        config.write_text(config.read_text().replace(
-            'build_to: cache\n    is_optional: true', 'build_to: source', 1))
-        (root / 'lib/a.txt').write_text('native resumed after stock watch\n')
-        history_path(root).unlink(missing_ok=True)
-    stock_build = execute(
-        [DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
-    native_build = execute(
-        launcher(native, 'auto', flags=['--force-jit', *flags]), native)
-    assert stock_build[0] == native_build[0] == 0, (stock_build, native_build)
-    assert '(Rust frontend)' in native_build[1], native_build
-    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
-    assert b'native resumed after stock watch' in outputs(native)['lib/a.final']
-
-    # The first rebuild also absorbs the optional-config graph transition on
-    # the stock control. A second stable-plan edit gives both engines the same
-    # incremental history to compare after the lock has been released.
-    for root in (stock, native):
-        (root / 'lib/a.txt').write_text('native stable lock released edit\n')
-        history_path(root).unlink(missing_ok=True)
-    stock_next = execute(
-        [DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
-    native_next = execute(
-        launcher(native, 'auto', flags=['--force-jit', *flags]), native)
-    assert stock_next[0] == native_next[0] == 0, (stock_next, native_next)
-    assert '(Rust frontend)' in native_next[1], native_next
-    assert outputs(stock) == outputs(native), (outputs(stock), outputs(native))
-    assert history(stock) == history(native), (history(stock), history(native))
-    assert b'native stable lock released edit' in outputs(native)['lib/a.final']
 
 
 def watch_unknown_external_source_comparison(tmp):
@@ -1399,12 +1254,12 @@ def resolver_cycle_comparison(tmp):
     flags = ['--build-filter=lib/one.final']
     check(stock, native, flags)
     before = outputs(native), history(native)
-    code, log = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
+    code, log = execute(launcher(native, flags=['--force-jit', *flags]), native)
     assert code != 0 and 'incremental resolver cycles' in log, log
     assert (outputs(native), history(native)) == before
-    code, log = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], native)
-    assert code == 0, log
-    assert check(stock, native, flags, mode='auto') == Counter()
+    code, log = execute(launcher(native, flags=['--force-jit', *flags]), native)
+    assert code != 0 and 'incremental resolver cycles' in log, log
+    assert (outputs(native), history(native)) == before
 
 
 def recursive_combination_comparison(tmp):
@@ -1442,16 +1297,6 @@ def glob_membership_comparison(tmp):
     assert check(stock, native, flags) == Counter({'lib/b.txt': 1})
     for root in (stock, native): (root / 'lib/new.side').write_text('new glob member\n')
     check(stock, native, flags)
-
-
-def dart_mode_comparison(tmp):
-    stock, dart = tmp / 'dart-mode-stock', tmp / 'dart-mode-launcher'
-    prepare(stock); prepare(dart)
-    flags = ['--build-filter', 'lib/a.final,lib/b.final',
-             '--build-filter=package:build_filter_app/common.side']
-    check(stock, dart, flags, mode='dart')
-    assert check(stock, dart, flags, mode='dart') == Counter()
-    assert not (dart / '.dart_tool/build_runner_accelerator').exists()
 
 
 def undeclared_artifact_comparison(tmp):
@@ -1618,7 +1463,7 @@ def filtered_default_jobs_comparison(tmp):
     prepare(stock); prepare(native)
     flags = ['--force-jit', '--build-filter=lib/a.final,lib/b.final']
     reference = execute([DART, 'run', 'build_runner', 'build', *flags], stock)
-    native_args = launcher(native, 'rust', flags=flags)
+    native_args = launcher(native, flags=flags)
     native_args.remove('--jobs=1')
     actual = execute(native_args, native, {'BUILD_RUNNER_ACCELERATOR_METRICS': '1'})
     assert actual[0] == reference[0] == 0, (reference, actual)
@@ -1645,7 +1490,7 @@ def source_selection_comparison(tmp):
     assert check(stock, native, ['--build-filter=lib/a.final']) == Counter()
     for root in (stock, native): (root / 'lib/a.txt').write_text('a\n# same output\n')
     assert check(stock, native, ['--build-filter=lib/a.final']) == Counter({'lib/a.txt': 1})
-    assert check(stock, native, ['--build-filter=lib/a.final'], mode='auto', native_expected=True) == Counter()
+    assert check(stock, native, ['--build-filter=lib/a.final']) == Counter()
     for root in (stock, native): (root / 'lib/a.txt').write_text('no-shared\n')
     assert check(stock, native, ['--build-filter=lib/a.final']) == Counter({'lib/a.txt': 1, 'lib/a.mid': 1})
     assert check(stock, native, ['--build-filter=lib/a.final']) == Counter()
@@ -1754,7 +1599,7 @@ def root_cache_source_collision_comparison(tmp):
     # must remain absent.
     flags = ['--build-filter=lib/b.final']
     reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
-    actual = execute(launcher(native, 'rust', flags=['--force-jit', *flags]), native)
+    actual = execute(launcher(native, flags=['--force-jit', *flags]), native)
     assert actual[0] == reference[0] == 0, (reference, actual)
     assert '(Rust frontend)' in actual[1], actual
     assert outputs(stock) == outputs(native), (outputs(stock), outputs(native), actual)
@@ -1799,7 +1644,7 @@ def artifact_commit_graph_save_crash_comparison(tmp):
     stream = log.open('w')
     proc = None
     try:
-        args = launcher(native, 'rust', flags=[
+        args = launcher(native, flags=[
             '--force-jit', '--build-filter=lib/a.final',
         ])
         proc = subprocess.Popen(
@@ -1868,7 +1713,7 @@ def artifact_commit_graph_save_crash_comparison(tmp):
         stock,
     )
     native_result = execute(
-        launcher(native, 'rust', flags=['--force-jit', '--build-filter=lib/a.final']),
+        launcher(native, flags=['--force-jit', '--build-filter=lib/a.final']),
         native,
     )
     assert stock_result[0] == native_result[0] == 0, (stock_result, native_result)
@@ -1894,7 +1739,7 @@ def parallel_history_comparison(tmp):
     filtered_flags = ['--force-jit', '--build-filter=lib/*.final']
 
     def rust_four_jobs(flags):
-        args = launcher(native, 'rust', flags=flags)
+        args = launcher(native, flags=flags)
         args[args.index('--jobs=1')] = '--jobs=4'
         return args
 
@@ -2070,15 +1915,9 @@ def package_selection_comparison(tmp):
     for conflict_flags in (['--build-filter=package:filter_dep/a.final'], []):
         flags = ['--force-jit', *conflict_flags]
         for command in ('build', 'watch'):
-            rejected = execute(launcher(pn, 'rust', command, flags), pn)
+            rejected = execute(launcher(pn, command, flags), pn)
             assert rejected[0] != 0 and 'output conflicts in dependencies' in rejected[1], rejected
             assert graph.read_bytes() == committed_graph and outputs(pn) == before
-        reference = execute([DART, 'run', 'build_runner', 'build', *flags], ps)
-        actual = execute(launcher(pn, 'auto', flags=flags), pn)
-        assert reference[0] == actual[0] != 0, (reference, actual)
-        assert 'using Dart fallback' in actual[1], actual
-        assert outputs(ps) == outputs(pn) == before
-        assert graph.read_bytes() == committed_graph
         for root in (ps, pn):
             assert (root / 'dep/lib/a.mid').read_bytes() == b'dependency source conflict\n'
     for root in (ps, pn): (root / 'dep/lib/a.mid').unlink()
@@ -2094,7 +1933,7 @@ def package_selection_comparison(tmp):
                 for name in names: (root / name).write_text(case + ' edit\n')
         for root in (ps, pn): history_path(root).unlink(missing_ok=True)
         reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit'], ps)
-        actual = execute(launcher(pn, 'rust', flags=['--force-jit']), pn, {
+        actual = execute(launcher(pn, flags=['--force-jit']), pn, {
             'BUILD_RUNNER_ACCELERATOR_WALL_TRACE': '1',
         })
         assert reference[0] == actual[0] == 0, (case, reference, actual)
@@ -2120,7 +1959,7 @@ def dependency_preflight_watch(stock, native, tmp):
                        '        assert time.monotonic()<deadline\n        time.sleep(.05)\n'
                        f'os.execv({DART!r}, [{DART!r}, *sys.argv[1:]])\n')
     wrapper.chmod(0o755)
-    args = launcher(native, 'rust', 'watch', ['--force-jit'])
+    args = launcher(native, 'watch', ['--force-jit'])
     args[args.index('--dart') + 1] = str(wrapper)
     for root in (stock, native): history_path(root).unlink(missing_ok=True)
     handle = watch(native, 'rust', [], command=args, wait_ready=False,
@@ -2197,7 +2036,7 @@ def state_comparison(tmp):
     assert check(ats, atn, ['--build-filter=lib/a.final'], compile_flag='--force-jit') == Counter()
     assert check(ats, atn, ['--build-filter=lib/a.final', '-d'], compile_flag='--force-jit') == Counter()
     # Traced fixtures verify optional/post-process demand and output lifecycle
-    # even when the entire invocation deliberately uses stock fallback.
+    # when rejected before any native action can run.
 
 
 def caught_demand_failure_comparison(tmp):
@@ -2213,7 +2052,7 @@ def caught_demand_failure_comparison(tmp):
         for root in (stock, native):
             history_path(root).unlink(missing_ok=True)
         reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
-        args = launcher(native, 'rust', flags=['--force-jit', *flags])
+        args = launcher(native, flags=['--force-jit', *flags])
         args[args.index('--jobs=1')] = f'--jobs={jobs}'
         actual = execute(args, native)
         assert actual[0] == reference[0] == 0, (flags, reference, actual)
@@ -2266,7 +2105,7 @@ def caught_demand_failure_comparison(tmp):
                 'BUILD_FILTER_DELAY_MS': '60',
             }
         reference = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
-        native_args = launcher(native, 'rust', flags=['--force-jit', *flags])
+        native_args = launcher(native, flags=['--force-jit', *flags])
         native_args[native_args.index('--jobs=1')] = '--jobs=4' if rpc == 'read' else '--jobs=1'
         actual = execute(native_args, native, failure_env)
         assert reference[0] == actual[0] != 0, (rpc, reference, actual)
@@ -2321,7 +2160,7 @@ def caught_demand_failure_comparison(tmp):
         fresh_reference = execute(
             [DART, 'run', 'build_runner', 'build', '--force-jit', *fresh_flags], fresh_stock)
         fresh_actual = execute(
-            launcher(fresh_native, 'rust', flags=['--force-jit', *fresh_flags]), fresh_native)
+            launcher(fresh_native, flags=['--force-jit', *fresh_flags]), fresh_native)
         fresh_graph = fresh_native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
         assert fresh_reference[0] == fresh_actual[0] != 0, (rpc, fresh_reference, fresh_actual)
         assert 'intentional build-filter fixture failure' in fresh_actual[1], (rpc, fresh_actual)
@@ -2340,11 +2179,11 @@ def caught_demand_failure_comparison(tmp):
         restore_full_state(fresh_stock, fresh_native, fresh_flags)
 
 
-def traced_fallback_comparison(tmp, kinds):
+def unsupported_builder_comparison(tmp, kinds):
     for kind in kinds:
-        ts, tn = tmp / (kind + '-traced-stock'), tmp / (kind + '-traced-auto')
-        prepare(ts); prepare(tn)
-        for root in (ts, tn):
+        tn = tmp / (kind + '-unsupported')
+        prepare(tn)
+        for root in (tn,):
             file = root / 'build.yaml'
             config = file.read_text()
             if kind == 'optional':
@@ -2378,53 +2217,33 @@ targets:
     build_to: source
 """
             file.write_text(config)
-        check(ts, tn, ['--build-filter=lib/a.final'], mode='auto')
-        assert check(ts, tn, ['--build-filter=lib/a.final'], mode='auto') == Counter()
-        check(ts, tn, ['--build-filter=lib/*.side'], mode='auto')
-        check(ts, tn, ['--build-filter=lib/b.final'], mode='auto')
-        if kind == 'optional': check(ts, tn, ['--build-filter=lib/a.final'], mode='auto', compile_flag='--force-aot')
-        if kind == 'zero':
-            assert check(ts, tn, ['--build-filter=lib/a.txt'], mode='auto') == Counter({'lib/a.txt': 1})
         before_outputs, before_history = outputs(tn), history(tn)
-        code, log = execute(launcher(tn, 'rust', flags=['--build-filter=lib/a.final']), tn)
+        code, log = execute(launcher(tn, flags=['--build-filter=lib/a.final']), tn)
         assert outputs(tn) == before_outputs and history(tn) == before_history
         assert code != 0 and 'outside the supported subset' in log, (kind, log)
 
 
-def existing_fallback_comparison(tmp):
-    # Optional/post-process combinations are whole-invocation late fallback.
+def unsupported_fixture_comparison(tmp):
+    # Unsupported filtered builder combinations fail before actions.
     for fixture in ('optional_builder_app', 'post_process_builder_app'):
-        left, right = tmp / (fixture + '-stock'), tmp / (fixture + '-auto')
-        shutil.copytree(REPO / 'fixtures' / fixture, left, ignore=shutil.ignore_patterns('.dart_tool'))
-        shutil.copytree(left, right)
-        for root in (left, right):
+        right = tmp / (fixture + '-unsupported')
+        shutil.copytree(REPO / 'fixtures' / fixture, right, ignore=shutil.ignore_patterns('.dart_tool'))
+        for root in (right,):
             pub = root / 'pubspec.yaml'; pub.write_text(pub.read_text().replace('path: ../..', f'path: {REPO}'))
             code, log = execute([DART, 'pub', 'get', '--offline'], root); assert code == 0, log
         flags = ['--build-filter=lib/**', '--force-jit']
-        ref = execute([DART, 'run', 'build_runner', 'build', *flags], left)
-        actual = execute(launcher(right, 'auto', flags=flags), right)
-        assert ref[0] == actual[0] == 0, (fixture, ref, actual)
-        def content(root):
-            return {str(p.relative_to(root)): p.read_bytes() for p in (root / 'lib').rglob('*') if p.is_file()}
-        assert content(left) == content(right), fixture
-        assert 'using Dart fallback' in actual[1], actual
-        rejected = execute(launcher(right, 'rust', flags=flags), right)
+        rejected = execute(launcher(right, flags=flags), right)
         assert rejected[0] != 0 and 'outside the supported subset' in rejected[1], rejected
 
 
 def routing_comparison(tmp):
     caught_demand_failure_comparison(tmp)
-    stock, native = tmp / 'routing-stock', tmp / 'routing-native'
-    prepare(stock); prepare(native)
-    # Early fallback preserves unknown/invalid values, separators and compile flags.
+    native = tmp / 'routing-native'
+    prepare(native)
     for flags in (['--build-filter='], ['--build-filter=http:bad'], ['--build-filter=[bad'], ['--', '--build-filter=lib/a.final'], ['--build-filter=lib/{a,b}.final'], ['--build-filter']):
-        for mode in ('auto', 'dart'):
-            ref = execute([DART, 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
-            actual = execute(launcher(native, mode, flags=['--force-jit', *flags]), native)
-            assert ref[0] == actual[0], (mode, flags, ref, actual)
-        code, log = execute(launcher(native, 'rust', flags=flags), native)
-        assert code != 0, (flags, log)
-    dart_mode_comparison(tmp)
+        before = outputs(native)
+        code, log = execute(launcher(native, flags=flags), native)
+        assert code != 0 and outputs(native) == before, (flags, log)
     undeclared_artifact_comparison(tmp)
 
 
@@ -2435,8 +2254,8 @@ GROUPS = {
     'glob': glob_comparison,
     'resolver': resolver_comparison,
     'state': state_comparison,
-    'fallback-optional-post': lambda tmp: traced_fallback_comparison(tmp, ('optional', 'post')),
-    'fallback-zero-trigger': lambda tmp: (traced_fallback_comparison(tmp, ('zero', 'trigger')), existing_fallback_comparison(tmp)),
+    'unsupported-optional-post': lambda tmp: unsupported_builder_comparison(tmp, ('optional', 'post')),
+    'unsupported-zero-trigger': lambda tmp: (unsupported_builder_comparison(tmp, ('zero', 'trigger')), unsupported_fixture_comparison(tmp)),
     'routing': routing_comparison,
     'watch-source': lambda tmp: (
         watch_comparison(tmp),
@@ -2446,7 +2265,6 @@ GROUPS = {
         watch_initial_build_source_edit_comparison(tmp),
         watch_unknown_external_source_comparison(tmp),
         writer_lock_watch_comparison(tmp),
-        late_fallback_writer_lock_comparison(tmp),
     ),
     'watch-cache': lambda tmp: watch_comparison(tmp, cache=True),
     'watch-classification': watch_source_classification_comparison,

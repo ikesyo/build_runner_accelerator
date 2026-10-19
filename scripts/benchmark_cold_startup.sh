@@ -54,7 +54,7 @@ with (results / 'stock.log').open('w') as log:
 expected = outputs()
 assert expected, 'Stock reference produced no JSON outputs'
 command = [native, 'build', '--root', str(root), '--dart', dart,
-           '--mode', 'rust', '--jobs', jobs]
+           '--jobs', jobs]
 records = []
 
 def measure(mode, case, index, run_env):

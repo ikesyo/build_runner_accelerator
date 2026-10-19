@@ -71,7 +71,7 @@ run_stock() {
 run_rust() {
   local directory=$1
   worker_run_frontend build --root "$directory" --dart "$dart_bin" \
-    --mode rust --jobs "$jobs"
+    --jobs "$jobs"
 }
 
 measure() {

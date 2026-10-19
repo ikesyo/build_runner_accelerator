@@ -105,7 +105,7 @@ chmod 755 "$dart_wrapper"
 
 BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background DART_SDK="$dart_sdk" \
   BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" worker_run_frontend \
-  build --root "$rust_dir" --dart "$dart_wrapper" --mode rust \
+  build --root "$rust_dir" --dart "$dart_wrapper" \
   >"$first_log" 2>&1 &
 first_pid=$!
 
@@ -141,7 +141,7 @@ touch "$fail_compile"
 printf '\n// background AOT failure probe\n' >>"$rust_dir/lib/model_01.dart"
 BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background DART_SDK="$dart_sdk" \
   BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" worker_run_frontend \
-  build --root "$rust_dir" --dart "$dart_wrapper" --mode rust \
+  build --root "$rust_dir" --dart "$dart_wrapper" \
   >"$failure_log" 2>&1 || fail 'failed background build did not fall back'
 wait_for_file "$compile_started" 600 || fail 'failed background compile did not start'
 lock_path="$rust_dir/.dart_tool/build_runner_accelerator/.aot-background.lock"
@@ -165,7 +165,7 @@ remove_tree "$BUILD_RUNNER_ACCELERATOR_CACHE"
 printf '\n// background AOT retry probe\n' >>"$rust_dir/lib/model_01.dart"
 BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background DART_SDK="$dart_sdk" \
   BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" worker_run_frontend \
-  build --root "$rust_dir" --dart "$dart_wrapper" --mode rust \
+  build --root "$rust_dir" --dart "$dart_wrapper" \
   >"$retry_log" 2>&1 || fail 'background retry build failed'
 wait_for_file "$aot_path" 1200 || fail 'background AOT retry did not publish an executable'
 [[ -x "$aot_path" ]] || fail 'background retry artifact is not executable'
@@ -175,7 +175,7 @@ rm -f -- "$script_started"
 printf '\n// background AOT reuse probe\n' >>"$rust_dir/lib/model_01.dart"
 BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background DART_SDK="$dart_sdk" \
   BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" worker_run_frontend \
-  build --root "$rust_dir" --dart "$dart_wrapper" --mode rust \
+  build --root "$rust_dir" --dart "$dart_wrapper" \
   >"$second_log" 2>&1 || fail 'AOT reuse build failed'
 [[ -f "$rust_dir/lib/model_01.g.dart" ]] || \
   fail 'AOT reuse build produced no generated output'

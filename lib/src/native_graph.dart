@@ -5,7 +5,7 @@ import 'dart:typed_data';
 /// Reports retained history only after validating the complete current graph.
 ///
 /// Release-coupled with rust/src/graph.rs. Obsolete/corrupt state belongs to a
-/// native cold rebuild, not stock fallback.
+/// native cold rebuild.
 bool hasRetainedNativeOutputState(String root) {
   final file = File('$root/.dart_tool/build_runner_accelerator/graph-v3.bin');
   if (!file.existsSync()) return false;
@@ -27,7 +27,7 @@ bool hasRetainedNativeOutputState(String root) {
     if (schema.length != 4 || ByteData.sublistView(schema).getUint32(0) != 6) {
       return false;
     }
-    // A false/invalid history byte cannot route to stock. Most graphs take
+    // A false/invalid history byte cannot block native watch. Most graphs take
     // this cheap path; only a candidate true flag needs full validation.
     input.setPositionSync(length - 1);
     if (input.readByteSync() != 1) return false;

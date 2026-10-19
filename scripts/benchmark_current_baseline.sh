@@ -198,8 +198,6 @@ build_command() {
         "$dart_bin"
         --jobs
         "$accelerator_jobs"
-        --mode
-        rust
       )
     else
       BUILD_COMMAND=(
@@ -215,8 +213,6 @@ build_command() {
         "$dart_bin"
         --jobs
         "$accelerator_jobs"
-        --mode
-        rust
       )
     fi
     return 0

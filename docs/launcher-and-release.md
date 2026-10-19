@@ -1,8 +1,8 @@
 # Launcher and release contract
 
 The Dart package contains the launcher, manifest generator, and worker. The
-launcher selects a matching Rust frontend when available and otherwise follows
-the mode-specific fallback rules below.
+launcher requires a matching Rust frontend. Unsupported or unavailable native
+execution fails explicitly; stock build_runner is never launched.
 
 ## Install and invoke
 
@@ -15,19 +15,17 @@ dart run build_runner_accelerator watch
 `dart run` starts the launcher. Worker AOT settings control the generated Dart
 worker, not the launcher.
 
-## Modes and CLI
+## Native-only CLI
 
-| Mode | Native unavailable or unsupported request |
-| --- | --- |
-| `auto` (default) | Explain on stderr, then run stock `build_runner`. |
-| `rust` | Return an error before native actions. |
-| `dart` | Always run stock `build_runner`. |
+0.14.0 removes automatic stock fallback and all `--mode` values. Old mode
+arguments fail with migration guidance. Use `dart run build_runner` directly
+when stock is needed. Command-level and leading help/version describe the
+accelerator and do not require a native binary.
 
 The launcher recognizes these options:
 
 | Option | Purpose |
 | --- | --- |
-| `--mode auto`, `--mode rust`, `--mode dart` | Select native/fallback policy. |
 | `--root PATH`, `--dart PATH` | Select workspace or Dart executable. |
 | `--jobs N`, `--interval-ms N` | Configure the native frontend. |
 | `--force-aot`, `--force-jit` | Select worker execution mode; mutually exclusive. |
@@ -38,17 +36,13 @@ The launcher recognizes these options:
 | `prewarm [--background]` | Prepare caches without running builders. |
 | `aot-cache-key` | Print a native worker cache key; no stock equivalent. |
 
-Unsupported commands and options fall back before native download or
-workspace setup in `auto`; `rust` rejects them. Fallback retains the original
-argument order, values, `--` separator, and explicit `--force-aot`/`--force-jit`
-flags, and preserves
-stock's exit status. Stock option values remain values even when they resemble
-accelerator options. Invalid accelerator values are errors in every mode.
-Leading help/version describe the accelerator; command help/version route to
-stock in `auto` and are rejected in `rust`. The internal `--worker` and transport
-options are for tests and diagnostics, not third-party extension APIs.
+Unsupported commands and options fail before native download or workspace
+setup. Configuration values retain their token boundaries, even when they
+resemble launcher flags. `--` ends accelerator option parsing; positional build
+directories remain unsupported. The internal `--worker` option is for tests and
+diagnostics, not a third-party extension API.
 
-In `auto`, these option groups also route to stock:
+The following stock features require a direct stock invocation:
 
 | Stock-only group | Examples |
 | --- | --- |
@@ -58,10 +52,10 @@ In `auto`, these option groups also route to stock:
 | Serve and daemon | `--hostname`, `--log-requests`, `--live-reload`, `--build-mode` |
 | Other stock commands or arguments | `clean`, `serve`, `run`, `test`, `stop`, `daemon`, unknown arguments, invalid stock values |
 
-Strict `rust` mode rejects these requests. Prewarm has no stock equivalent:
+These requests are rejected. Prewarm has no stock equivalent:
 it accepts supported configuration settings but rejects stock-only and
 build-only arguments. Package-path output conflicts in dependencies also require
-stock, including ordinary builds and watches; native delegates before actions.
+a direct stock invocation, including ordinary builds and watches; native fails before actions.
 
 ## Output policies
 
@@ -80,21 +74,22 @@ outputs remove old generated files. Retention is not permanent protection.
 These flags cannot be combined or negated; repeating the same flag is allowed.
 They support multiple outputs, dependency chains, source/cache intermediates,
 and supported build filters. Optional/post-process/trigger-only/zero-output
-builders and unsupported prior-state transitions route to stock in auto and
-error in rust. Starting native watch from a graph with retained output history
-also requires stock fallback, including after ordinary builds. Watch with either
-flag routes before native setup; prewarm rejects both. Dart delegates all policy behavior to stock. See
+builders and unsupported prior-state transitions fail explicitly. Starting native
+watch from a graph with retained output history is also unsupported, including
+after ordinary builds. Watch and prewarm reject both flags before native setup. See
 [ADR 0034](adr/0034-native-output-policies.md) for state and commit guarantees.
 
 When keep finds modified generated outputs, builders using digest/resolver APIs
-use stock in auto and error before publication in rust; stock exposes old digest
-values alongside retained bytes. Builders cannot suppress this boundary by
-catching the API exception. After stock keep or fallback from retained history,
-later build/watch commands stay on stock until both disposable states are reset using the
-[recovery guide](compatibility-cleanup.md#safe-recovery). This avoids reusing an
-older native graph against stock's newer keep history; the launcher routes this
-state before native acquisition. A publishing dart-mode build/watch after native
-keep also claims stock ownership; verification/help does not.
+fail before publication; stock exposes old digest values alongside retained
+bytes that native cannot reproduce. Builders cannot suppress this boundary by
+catching the API exception. The entire staged transaction is discarded.
+
+A legacy `stock-output-policy-state` marker from earlier releases blocks native
+build/watch before binary acquisition or manifest preparation. The accelerator
+never clears it automatically or imports stock logical digest history. Follow
+the [recovery guide](compatibility-cleanup.md#safe-recovery) to reset both states.
+Direct stock commands do not create or update accelerator ownership markers;
+stop all builders and follow the recovery guide before returning to native.
 
 ## Environment controls
 
@@ -126,10 +121,9 @@ dart run build_runner_accelerator prewarm --background
 
 Background prewarm returns promptly and logs to
 `.dart_tool/build_runner_accelerator/prewarm.log`. A worker AOT compile lock
-prevents duplicate worker AOT compiles. Prewarm runs no build actions. Under
-`auto`, it reports and exits successfully when native execution is unavailable;
-`dart` mode skips it and `rust` stays strict. Filters and other build-only
-arguments are rejected. Set `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` to
+prevents duplicate worker AOT compiles. Prewarm runs no build actions. It fails
+explicitly when native execution is unavailable or unsupported. Filters and other
+build-only arguments are rejected. Set `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` to
 skip its analysis sweep.
 
 ## Binary selection and integrity
@@ -140,7 +134,8 @@ Frontend resolution checks, in order:
 2. A workspace binary under `.dart_tool/build_runner_accelerator/bin/`.
 3. The versioned user cache.
 4. The matching GitHub Release artifact.
-5. Stock fallback in auto.
+
+A miss or verification/download failure is an error.
 
 A release manifest and detached Ed25519 signature are verified before
 downloaded code is used. The launcher checks target, package version, protocol
@@ -157,7 +152,8 @@ mirror.
 | windows-x64 | x86_64-pc-windows-msvc | zip |
 | windows-arm64 | aarch64-pc-windows-msvc | zip |
 
-macOS Intel uses stock in `auto`. The signed release workflow requires
+macOS Intel has no published native artifact; use a compatible preinstalled
+binary or run stock directly. The signed release workflow requires
 `BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY` in repository Actions secrets;
 the corresponding public key is pinned in the package.
 
@@ -178,12 +174,11 @@ a compatibility path for cache misses; `dart run` is the normal invocation.
 
 Native build/watch supervises its worker, generator, and compiler processes.
 On Unix, the launcher forwards Ctrl-C to the selected child and forwards SIGHUP
-to native or stock execution; they return 130 and 129 after bounded cleanup.
+to native execution; they return 130 and 129 after bounded cleanup.
 Windows native execution uses a kill-on-close job and forwards console
 interruption. Detached prewarm intentionally survives successful setup;
-interrupted or failed work is cleaned up. Direct stock and native execution
-preserve the selected process's standard streams; launcher diagnostics go to
-stderr.
+interrupted or failed work is cleaned up. Native execution preserves the
+process's standard streams; launcher diagnostics go to stderr.
 
 Worker AOT policy is command-specific: one-shot builds compile synchronously;
 watch starts the script worker and compiles AOT in the background. The session

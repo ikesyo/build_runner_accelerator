@@ -1,13 +1,13 @@
 # build_runner_accelerator example
 
 This package replaces the usual `build_runner` command with a project-local
-launcher that can use the Rust frontend when the workspace is supported.
+launcher that requires the Rust frontend and a supported workspace.
 
-Add the pre-release to an existing Dart package that already uses
+Add the package to an existing Dart package that already uses
 `build_runner` and a builder package:
 
 ```bash
-dart pub add dev:build_runner_accelerator:^0.1.0-dev.1
+dart pub add dev:build_runner_accelerator
 ```
 
 Run a build or watch session from that package:
@@ -17,7 +17,9 @@ dart run build_runner_accelerator build
 dart run build_runner_accelerator watch
 ```
 
-The default `auto` mode falls back to stock Dart `build_runner` when native
-execution is unavailable or the workspace is outside the supported native
-manifest subset. Use `--mode dart` to force the fallback, or `--mode rust` to
-make native frontend incompatibilities fail explicitly.
+Execution is native-only in 0.14.0. An unavailable native binary or unsupported
+request fails explicitly. The `--mode` option is removed. To use stock directly,
+run `dart run build_runner build` or `dart run build_runner watch`.
+
+See the [upgrade guide](../docs/compatibility-cleanup.md) before switching back
+to native after stock execution or when legacy output-policy history exists.

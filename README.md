@@ -4,19 +4,19 @@ An experimental Rust frontend for [build_runner](https://pub.dev/packages/build_
 
 ## Installation
 
-The current package version is `0.13.0`.
+The current package version is `0.14.0`.
 
 Add the package to your application:
 
 ```bash
-dart pub add dev:build_runner_accelerator:^0.13.0
+dart pub add dev:build_runner_accelerator:^0.14.0
 ```
 
 Or add it to `pubspec.yaml`:
 
 ```yaml
 dev_dependencies:
-  build_runner_accelerator: ^0.13.0
+  build_runner_accelerator: ^0.14.0
 ```
 
 Then use the project-local command:
@@ -34,17 +34,18 @@ dart run build_runner_accelerator prewarm --background
 
 Prewarm prepares caches but does not run build actions. It is optional.
 
-## Choose a frontend
+## Native execution
 
-| Mode | Behavior |
-| --- | --- |
-| auto (default) | Use native execution when supported; otherwise run stock build_runner. |
-| rust | Require native execution; report an error if the request is unsupported. |
-| dart | Always use stock build_runner. |
+The launcher downloads and verifies a matching native binary. Builds, watches,
+and prewarm fail explicitly when the binary or requested feature is unavailable.
+Stock build_runner is never started by the accelerator. To use stock, run
+`dart run build_runner build` or `dart run build_runner watch` directly.
 
-The launcher downloads and verifies a matching native binary where one is
-available. Auto falls back to stock build_runner on unsupported platforms,
-including macOS Intel. See [launcher and release details](docs/launcher-and-release.md).
+**Breaking in 0.14.0:** automatic stock fallback and `--mode` are removed.
+Remove `--mode auto` and `--mode rust` from accelerator commands. Replace
+`--mode dart` commands with direct stock invocations. macOS Intel needs a
+compatible preinstalled native binary or direct stock execution. See the
+[upgrade and recovery guide](docs/compatibility-cleanup.md).
 
 ## Build selected outputs
 
@@ -71,8 +72,7 @@ failure, and scaling limits.
 
 Filters limit demand; they do not guarantee that unselected generated files
 remain on disk across later builds or watch restarts. Unsupported filter syntax,
-builder types, or prior-state transitions use stock in auto and report an error
-in rust. See [ADR 0032](docs/adr/0032-native-build-filter-demand-and-output-state.md)
+builder types, or prior-state transitions fail with an explicit error. See [ADR 0032](docs/adr/0032-native-build-filter-demand-and-output-state.md)
 for the selection, dependency, deletion, and failure rules.
 
 ## Verify or retain generated outputs
@@ -94,12 +94,11 @@ compatibility limits and state recovery.
 The native frontend supports build_runner `>=2.16.2 <2.17.0`; correctness
 comparisons use stock build_runner 2.16.2. Its supported manifest subset is
 checked for byte-identical outputs and incremental, failure, deletion, rename,
-and watch behavior. Use auto to retain stock compatibility outside that subset.
+and watch behavior. Requests outside that subset fail explicitly.
 
-Native build and watch commands acquire an exclusive workspace lock through
-late fallback; a competing native invocation fails. Direct stock runs,
-`--mode dart`, and auto fallback before native startup bypass that lock. Do not
-run those concurrently with a native command in the same workspace.
+Native build and watch commands acquire an exclusive workspace lock; a competing
+native invocation fails. Direct stock runs bypass that lock. Do not run stock
+concurrently with a native command in the same workspace.
 
 A builder failure leaves native outputs and graph at their last successful
 state. The commit is not crash-atomic: interruption or I/O failure during commit

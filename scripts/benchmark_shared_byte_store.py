@@ -130,7 +130,7 @@ def main():
             shutil.copy2(getattr(args, lane + '_worker'), worker)
             workers[lane] = worker
         command = [args.frontend, 'build', '--root', root, '--dart', args.dart,
-                   '--mode', 'rust', '--jobs', str(args.jobs)]
+                   '--jobs', str(args.jobs)]
         def run(lane, label):
             row = measure(command, label, root,
                           {'BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH': str(workers[lane])})

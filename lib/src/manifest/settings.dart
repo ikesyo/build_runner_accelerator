@@ -7,8 +7,8 @@ import 'package:path/path.dart' as p;
 
 import '../build_filter.dart';
 
-/// The native CLI subset of build_runner 2.16.x. Keep spelling/order in the
-/// fallback vector; this value is only used for configuration resolution.
+/// The native CLI subset of build_runner 2.16.x. Original argument spelling and
+/// order are preserved separately for the native frontend.
 class BuildSettings {
   const BuildSettings({
     this.release = false,

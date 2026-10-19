@@ -72,14 +72,13 @@ def stock(root, flags=(), command='build'):
     return [DART, 'run', 'build_runner', command, *flags]
 
 
-def check(stock_root, native_root, flags, compile_flag='--force-jit', mode='rust'):
+def check(stock_root, native_root, flags, compile_flag='--force-jit'):
     flags = [*flags, compile_flag]
     reference = ok(stock(stock_root, flags), stock_root)
-    actual = ok(launcher(native_root, mode, flags=flags), native_root)
+    actual = ok(launcher(native_root, flags=flags), native_root)
     assert outputs(stock_root) == outputs(native_root), (flags, reference, actual,
                                                          outputs(stock_root), outputs(native_root))
-    if mode == 'rust':
-        assert '(Rust frontend)' in actual, actual
+    assert '(Rust frontend)' in actual, actual
     return actual
 
 
@@ -207,20 +206,15 @@ def watch(root, args, edit, expected):
 def watch_topology_boundary(temporary):
     # Stock 2.16.2's resident reload is not a fresh build when the mapping and
     # enabled applications change. Record stock's observable behavior, then
-    # require a full stock handoff/error rather than partial native execution.
+    # require an error before partial native execution.
     flags = ['--config=named', '--release', '--define=:settings=value=watch-boundary', '--force-jit']
-    fresh = temporary / 'watch-fresh-stock'
-    prepare(fresh)
-    before = (fresh / 'build.named.yaml').read_text()
-    after = before.replace('suffix: .alternate', 'suffix: .out').replace('enabled: false', 'enabled: true')
-    (fresh / 'build.named.yaml').write_text(after)
-    ok(stock(fresh, flags), fresh)
-    expected = outputs(fresh)
-    for mode in ('stock', 'rust', 'auto'):
+    for mode in ('stock', 'rust'):
         root = temporary / f'watch-topology-{mode}'
         prepare(root)
+        before = (root / 'build.named.yaml').read_text()
+        after = before.replace('suffix: .alternate', 'suffix: .out').replace('enabled: false', 'enabled: true')
         log = root.parent / f'{root.name}-topology-watch.log'
-        args = stock(root, flags, 'watch') if mode == 'stock' else launcher(root, mode, 'watch', flags)
+        args = stock(root, flags, 'watch') if mode == 'stock' else launcher(root, 'watch', flags)
         with log.open('w') as stream:
             proc = subprocess.Popen(args, cwd=root, env=ENV, stdout=stream, stderr=stream,
                                     start_new_session=True)
@@ -241,17 +235,6 @@ def watch_topology_boundary(temporary):
                     assert proc.returncode != 0
                     assert 'watch configuration changed builder applications or output topology' in log.read_text()
                     assert outputs(root) == original
-                else:
-                    # A fresh stock handoff sees native outputs as files, not
-                    # entries in its private graph. Compare that exact input
-                    # state too, including stock's retention of old files.
-                    for relative, data in original.items():
-                        (fresh / relative).write_bytes(data)
-                    ok(stock(fresh, flags), fresh)
-                    expected = outputs(fresh)
-                    wait(lambda: outputs(root) == expected, proc, log)
-                    assert 'using Dart fallback' in log.read_text()
-                    assert 'watch configuration changed builder applications or output topology' in log.read_text()
             finally:
                 if proc.poll() is None:
                     os.killpg(proc.pid, signal.SIGINT)
@@ -276,7 +259,7 @@ def watch_nested_reserved_directory(temporary):
     expected = outputs(reference)
     (reference / path).write_text(before)
     actual_stock = watch(reference, stock(reference, flags, 'watch'), edit, expected)
-    actual_native = watch(native, launcher(native, 'rust', 'watch', flags), edit, expected)
+    actual_native = watch(native, launcher(native, 'watch', flags), edit, expected)
     assert actual_native == actual_stock
     print('settings nested config watch: PASS', flush=True)
 
@@ -307,7 +290,7 @@ def watch_normalized_config_paths(temporary, only=None):
                 ok([DART, 'pub', 'get', '--offline'], root)
             flags = [f'-c{key}', '-rr', '--force-jit']
             log = root.parent / f'{root.name}-normalized-watch.log'
-            args = stock(root, flags, 'watch') if mode == 'stock' else launcher(root, mode, 'watch', flags)
+            args = stock(root, flags, 'watch') if mode == 'stock' else launcher(root, 'watch', flags)
             with log.open('w') as stream:
                 proc = subprocess.Popen(args, cwd=root, env=ENV, stdout=stream,
                                         stderr=subprocess.STDOUT, start_new_session=True)
@@ -370,7 +353,7 @@ CASE_GROUPS = {
 }
 WATCH_CONFIGS = {'watch-default': None, 'watch-named': 'named', 'watch-nested': 'dir/name'}
 NORMALIZED_WATCH = {'watch-backslash': 0, 'watch-dot': 1, 'watch-package': 2}
-GROUPS = (*CASE_GROUPS, 'files', 'errors', 'fallback', 'compile',
+GROUPS = (*CASE_GROUPS, 'files', 'errors', 'boundaries', 'compile',
           *WATCH_CONFIGS, 'watch-reserved', *NORMALIZED_WATCH, 'watch-topology')
 
 
@@ -455,8 +438,7 @@ def configuration_files(reference, native):
 
 
 def configuration_errors(reference, native):
-    # Errors preserve stock codes/output retention in auto/dart, and rust
-    # fails explicitly. Syntax failures route before native acquisition.
+    # Invalid settings fail without changing committed native outputs.
     bad_cases = [['--define'], ['--define=x=y'], ['--release=true'], ['--config'],
                  ['--config=missing'], ['-cdir/missing'], ['--config=x/../../outside'],
                  ['-rcnamed'], ['-rd=1'], ['--define=:settings=x=1',
@@ -464,24 +446,19 @@ def configuration_errors(reference, native):
     for flags in bad_cases:
         code, _ = execute(stock(reference, [*flags, '--force-jit']), reference)
         assert code != 0, flags
-        for mode in ('auto', 'dart'):
-            actual, output = execute(launcher(native, mode, flags=[*flags, '--force-jit']), native)
-            assert actual == code, (flags, mode, code, actual, output)
-            assert outputs(reference) == outputs(native), (flags, mode)
-        actual, _ = execute(launcher(native, 'rust', flags=[*flags, '--force-jit']), native)
+        actual, _ = execute(launcher(native, flags=[*flags, '--force-jit']), native)
         assert actual != 0, flags
     # Unknown builder is a stock warning, not an enabling switch.
     output = check(reference, native, ['--define=absent=x=42'])
     assert 'Ignoring options overrides for unknown builder' in output, output
     # Non-JSON values are exact strings, invalid builder option types fail
-    # as a whole (probe refuses the mapping, then auto invokes stock).
-    for mode in ('auto', 'dart'):
-        flags = ['-cdir/name', '-rr', '--define=:settings=value=forwarded']
-        check(reference, native, flags, mode=mode)
+    # as a whole when the probe refuses the mapping.
+    flags = ['-cdir/name', '-rr', '--define=:settings=value=forwarded']
+    check(reference, native, flags)
     for flags in (['--define=:settings=suffix=42'],):
         code, _ = execute(stock(reference, [*flags, '--force-jit']), reference)
-        actual, output = execute(launcher(native, 'auto', flags=[*flags, '--force-jit']), native)
-        assert actual == code != 0, output
+        actual, output = execute(launcher(native, flags=[*flags, '--force-jit']), native)
+        assert actual != 0 and code != 0, output
         assert outputs(reference) == outputs(native)
 
     # Missing/invalid configuration never partially applies options.
@@ -489,49 +466,49 @@ def configuration_errors(reference, native):
         (root / 'build.invalid.yaml').write_text('targets: [invalid yaml')
     flags = ['--config=invalid', '--release', '--force-jit']
     code, _ = execute(stock(reference, flags), reference)
-    actual, output = execute(launcher(native, 'auto', flags=flags), native)
-    assert actual == code != 0, output
+    actual, output = execute(launcher(native, flags=flags), native)
+    assert actual != 0 and code != 0, output
     assert outputs(reference) == outputs(native)
 
 
-def configuration_fallback(temporary):
-    # Early fallback: an unsupported filter plus all configuration flags.
+def configuration_boundaries(temporary):
+    # Unsupported filters fail before binary acquisition.
     early, early_stock = temporary / 'early', temporary / 'early-stock'
     prepare(early)
     prepare(early_stock)
     flags = ['-cdir/name', '-rr', '--define=:settings=value=early',
              '--build-filter=lib/[a].alternate', '--force-jit']
     expected_code, _ = execute(stock(early_stock, flags), early_stock)
-    code, output = execute(launcher(early, 'auto', flags=flags), early,
+    code, output = execute(launcher(early, flags=flags), early,
                            {**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/missing-native-frontend'})
-    assert 'unsupported native CLI' in output and 'unavailable' not in output, output
-    assert code == expected_code == 0, output
+    assert 'filter' in output.lower() and 'unavailable' not in output, output
+    assert code != 0 and expected_code == 0, output
     assert not (early / '.dart_tool/build_runner_accelerator/builder-manifest.json').exists()
-    assert outputs(early_stock) == outputs(early)
+    assert outputs(early) == {}
     # A missing selected file is known before acquisition or generation.
     missing = temporary / 'missing'
     prepare(missing)
     flags = [r'-cdir\missing', '-rr', '--define=:settings=value=missing', '--force-jit']
     expected_code, _ = execute(stock(missing, flags), missing)
-    code, output = execute(launcher(missing, 'auto', flags=flags), missing,
+    code, output = execute(launcher(missing, flags=flags), missing,
                            {**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/missing-native-frontend'})
-    assert code == expected_code != 0, output
+    assert code != 0 and expected_code != 0, output
     assert 'configuration file not found' in output and 'unavailable' not in output, output
     assert not (missing / '.dart_tool/build_runner_accelerator/builder-manifest.json').exists()
-    ok(launcher(missing, 'auto', command='prewarm', flags=flags), missing)
+    assert execute(launcher(missing, command='prewarm', flags=flags), missing)[0] != 0
     assert outputs(missing) == {}
 
-    # Late fallback: stock supports root-relative factory imports, native
+    # Stock supports root-relative factory imports, native
     # rejects this manifest. Config replaces targets but not the factory.
-    late, late_stock = temporary / 'late', temporary / 'late-stock'
-    for root in (late, late_stock):
-        prepare(root)
-        path = root / 'build.yaml'
-        path.write_text(path.read_text().replace('package:settings_builder_app/builder.dart', 'lib/builder.dart'))
+    late = temporary / 'late'
+    prepare(late)
+    path = late / 'build.yaml'
+    path.write_text(path.read_text().replace('package:settings_builder_app/builder.dart', 'lib/builder.dart'))
     flags = [r'-cdir\name', '-rr', '--define=:settings=value=late']
-    check(late_stock, late, flags, mode='auto')
+    assert execute(launcher(late, flags=flags), late)[0] != 0
+    assert outputs(late) == {}
     assert (late / '.dart_tool/build_runner_accelerator/dynamic_worker.dart').exists()
-    code, _ = execute(launcher(late, 'rust', flags=flags), late)
+    code, _ = execute(launcher(late, flags=flags), late)
     assert code != 0
 
     # A valid empty manifest stays native after disabling all builders.
@@ -543,10 +520,10 @@ def configuration_fallback(temporary):
             '      settings_builder_app:settings: {enabled: false}\n'
             '      settings_builder_app:marker: {enabled: false}\n')
     flags = ['-cdir/empty', '-rr', '--define=:settings=value=empty']
-    check(empty_stock, empty, flags, mode='auto')
+    check(empty_stock, empty, flags)
     manifest = json.loads((empty / '.dart_tool/build_runner_accelerator/builder-manifest.json').read_text())
     assert manifest['builders'] == []
-    check(empty_stock, empty, flags, mode='rust')
+    check(empty_stock, empty, flags)
     assert outputs(empty) == {}
     configuration_inactive_factories(empty_stock, empty)
 
@@ -557,7 +534,7 @@ def configuration_publication_recovery(reference, native, compile_flag):
     manifest, worker = state / 'builder-manifest.json', state / 'dynamic_worker.dart'
     committed_manifest, committed_worker = manifest.read_bytes(), worker.read_bytes()
     retained = outputs(native)
-    ok(launcher(native, 'rust', command='prewarm',
+    ok(launcher(native, command='prewarm',
                 flags=['--config=off', compile_flag]), native)
     assert worker.read_bytes() != committed_worker
     assert outputs(native) == retained == outputs(reference)
@@ -587,7 +564,7 @@ def configuration_compile(temporary, reference):
     warmed = temporary / 'prewarm'
     prepare(warmed)
     flags = [r'-cdir\name', '-rr', '--define=:settings=value=warmed']
-    ok(launcher(warmed, 'rust', command='prewarm', flags=flags), warmed)
+    ok(launcher(warmed, command='prewarm', flags=flags), warmed)
     assert outputs(warmed) == {}
     check(reference, warmed, flags, compile_flag='--force-aot')
     check(reference, warmed, ['-cother/name', '-rr'], compile_flag='--force-aot')
@@ -595,7 +572,7 @@ def configuration_compile(temporary, reference):
     check(reference, warmed, [], compile_flag='--force-aot')
     configuration_publication_recovery(reference, warmed, '--force-aot')
     check(reference, warmed, flags)
-    ok(launcher(warmed, 'rust', command='prewarm', flags=[*flags, '--background']), warmed)
+    ok(launcher(warmed, command='prewarm', flags=[*flags, '--background']), warmed)
     deadline = time.monotonic() + 180
     prewarm_log = warmed / '.dart_tool/build_runner_accelerator/prewarm.log'
     while not prewarm_log.exists() or 'AOT prewarm ready:' not in prewarm_log.read_text():
@@ -605,7 +582,7 @@ def configuration_compile(temporary, reference):
     assert manifest['builders'][0]['options']['value'] == 'warmed'
     check(reference, warmed, flags, compile_flag='--force-aot')
     retained = outputs(warmed)
-    ok(launcher(warmed, 'rust', command='prewarm',
+    ok(launcher(warmed, command='prewarm',
                 flags=['--config=off', '--force-aot']), warmed)
     assert outputs(warmed) == retained
     check(reference, warmed, ['--config=off'], compile_flag='--force-aot')
@@ -629,7 +606,7 @@ def configuration_watch(reference, native, selected, compile_flag='--force-aot')
     expected = outputs(reference)
     (reference / path).write_text(before)
     ref_watch = watch(reference, stock(reference, [*flags, compile_flag], 'watch'), edit, expected)
-    actual = watch(native, launcher(native, 'rust', 'watch', [*flags, compile_flag]), edit, expected)
+    actual = watch(native, launcher(native, 'watch', [*flags, compile_flag]), edit, expected)
     assert actual == ref_watch
     # Restore input/config then ensure the restored build matches.
     for root in (reference, native):
@@ -671,7 +648,7 @@ def run_group(group, temporary):
         configuration_cases(reference, native, range(len(SETTINGS_CASES)))
         configuration_files(reference, native)
         configuration_errors(reference, native)
-        configuration_fallback(temporary)
+        configuration_boundaries(temporary)
         configuration_compile(temporary, reference)
         for selected in WATCH_CONFIGS.values():
             configuration_watch(reference, native, selected)
@@ -695,8 +672,8 @@ def run_group(group, temporary):
             configuration_files(reference, native)
         else:
             configuration_errors(reference, native)
-    elif group == 'fallback':
-        configuration_fallback(temporary)
+    elif group == 'boundaries':
+        configuration_boundaries(temporary)
     elif group == 'compile':
         reference = temporary / 'stock'
         prepare(reference)

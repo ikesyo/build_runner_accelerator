@@ -69,8 +69,8 @@ assert_same_outputs() {
 
 assert_rust_frontend() {
   local log=$1
-  ! grep -Fq 'using Dart fallback' "$log" || \
-    fail "Rust frontend unexpectedly used Dart fallback"
+  grep -Fq '(Rust frontend)' "$log" || \
+    fail "Rust frontend completion missing"
 }
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"

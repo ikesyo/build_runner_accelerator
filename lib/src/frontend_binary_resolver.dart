@@ -7,7 +7,7 @@ import 'launcher_process.dart';
 import 'release_cache_metadata.dart';
 import 'release_downloader_api.dart';
 
-const buildRunnerAcceleratorVersion = '0.13.0';
+const buildRunnerAcceleratorVersion = '0.14.0';
 
 /// Resolves the native frontend in the same order as the launcher contract:
 /// explicit override, workspace output, user cache, then release download.
@@ -115,7 +115,7 @@ class FrontendBinaryResolver {
     if (Platform.isMacOS && architecture == 'x64') {
       throw UnsupportedError(
         'macOS Intel (x86_64) is not supported by released frontend artifacts. '
-        'Use --mode dart or set BUILD_RUNNER_ACCELERATOR_BIN.',
+        'Set BUILD_RUNNER_ACCELERATOR_BIN or run dart run build_runner directly.',
       );
     }
     return '$os-$architecture';

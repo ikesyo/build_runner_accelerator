@@ -63,9 +63,8 @@ graph with different matching semantics.
 - the existing simple output-suffix subset used by regular mappings.
 
 Unsupported mapping shapes continue to be rejected by manifest normalization
-or Rust manifest validation. In `--mode auto` this causes a pre-generation
-fallback to stock Dart build_runner; in `--mode rust` it is an explicit
-unsupported error. No package- or Builder-name-specific Rust branch is added.
+or Rust manifest validation. Unsupported requests fail explicitly before native
+actions, as specified by ADR 0036. No package- or Builder-name-specific Rust branch is added.
 Post-process Builders, Drift-specific behavior, workspace semantics, and other
 unrelated compatibility extensions remain outside this change.
 

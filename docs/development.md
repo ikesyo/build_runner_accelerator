@@ -36,11 +36,11 @@ cargo build --release --manifest-path rust/Cargo.toml
 
 # In the application that depends on this checkout:
 BUILD_RUNNER_ACCELERATOR_BIN="/path/to/checkout/rust/target/release/build_runner_accelerator" \
-  dart run build_runner_accelerator build --mode rust
+  dart run build_runner_accelerator build
 ```
 
-Strict rust mode makes unsupported source setups visible instead of silently
-using stock build_runner.
+Unsupported source setups fail explicitly. Use stock build_runner directly
+when its wider feature set is needed.
 
 ## Local checks
 
@@ -78,14 +78,14 @@ Run the closest comparison script when changing a boundary:
 | Filter selection, graph, deletion, or watch | `BUILD_FILTER_CASE_GROUP=watch-source bash scripts/correctness_build_filter.sh` |
 | Settings and config reload | `SETTINGS_CASE_GROUP=paths bash scripts/correctness_settings.sh` |
 | Output verification, retention, or policy routing | `bash scripts/correctness_output_policies.sh` |
-| CLI routing, fallback, or process signals | `bash scripts/correctness_cli.sh` |
+| CLI rejection, migration, or process signals | `bash scripts/correctness_cli.sh` |
 | Watch lifecycle | `bash scripts/watch_smoke.sh` |
 | Freezed/Riverpod compatibility | `scripts/correctness_freezed.sh`, `scripts/watch_smoke_freezed.sh`, `scripts/correctness_riverpod.sh`, `scripts/watch_smoke_riverpod.sh` |
 | Nested path packages and source visibility | `bash scripts/correctness_nested_packages.sh` |
 | Manifest or builder output | The relevant fixture script; see the full verification groups. |
 
 Nested-package checks accept comma-separated `NESTED_PACKAGE_CASE_GROUP` values
-(for example, `default-on,modes`); unset runs every case. CI distributes these
+(for example, `default-on,boundary`); unset runs every case. CI distributes these
 cases across the existing build-filter parallel lanes using measured durations.
 
 The CI workflow runs the same checks in functional groups:
@@ -93,7 +93,7 @@ The CI workflow runs the same checks in functional groups:
 | Group | Coverage |
 | --- | --- |
 | Core | Unit tests, format, Dart analysis, Rust checks, baseline comparisons |
-| Selection | CLI and build-filter parsing, demand, fallback |
+| Selection | CLI and build-filter parsing, demand, unsupported requests |
 | Graph and lifecycle | Incremental state, deletion, failures, watch and configuration transitions |
 | Builder compatibility | Stock comparisons for supported builders and mappings |
 | Release | SDK bounds, package validation, signed artifact and platform checks |

@@ -72,7 +72,7 @@ run_rust() {
   local directory=$1
   local log=$2
   VERIFY_COMMAND_LOG="$log" VERIFY_WORKSPACE="$directory" worker_run_frontend build --root "$directory" --dart "$dart_bin" \
-    --mode rust
+
 }
 prepare_package() {
   local directory=$1

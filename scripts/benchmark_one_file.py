@@ -43,7 +43,7 @@ def main():
 
     def run(lane, label):
         cmd = [str(getattr(args, lane)), 'build', '--root', str(args.root),
-               '--dart', str(args.dart), '--mode', 'rust', '--jobs', '1']
+               '--dart', str(args.dart), '--jobs', '1']
         log = args.results / (label + '.log')
         start = time.perf_counter()
         with log.open('w') as stream:
