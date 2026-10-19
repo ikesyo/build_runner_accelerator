@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.13.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.12.0...v0.13.0) - 2026-10-19
+
+- fix: honor package source sets for nested dependencies by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/112
+- feat: support native build_runner output policies by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/111
+
 ## [v0.12.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.11.0...v0.12.0) - 2026-10-16
 
 - Restore analyzer 14.5 support with build_runner 2.16.2 by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/103
