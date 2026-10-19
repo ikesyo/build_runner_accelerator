@@ -2183,20 +2183,19 @@ def unsupported_builder_comparison(tmp, kinds):
     for kind in kinds:
         tn = tmp / (kind + '-unsupported')
         prepare(tn)
-        for root in (tn,):
-            file = root / 'build.yaml'
-            config = file.read_text()
-            if kind == 'optional':
-                config = config.replace('build_to: source', 'build_to: cache\n    is_optional: true', 1)
-            elif kind == 'trigger':
-                config += """targets:
+        file = tn / 'build.yaml'
+        config = file.read_text()
+        if kind == 'optional':
+            config = config.replace('build_to: source', 'build_to: cache\n    is_optional: true', 1)
+        elif kind == 'trigger':
+            config += """targets:
   $default:
     builders:
       build_filter_app:finish:
         options: {run_only_if_triggered: true}
 """
-            elif kind == 'post':
-                config += """post_process_builders:
+        elif kind == 'post':
+            config += """post_process_builders:
   post:
     import: 'package:build_filter_app/builder.dart'
     builder_factory: post
@@ -2208,15 +2207,15 @@ targets:
       build_filter_app:post:
         enabled: true
 """
-            else:
-                config += """  zero:
+        else:
+            config += """  zero:
     import: 'package:build_filter_app/builder.dart'
     builder_factories: [zero]
     build_extensions: {'.txt': []}
     auto_apply: root_package
     build_to: source
 """
-            file.write_text(config)
+        file.write_text(config)
         before_outputs, before_history = outputs(tn), history(tn)
         code, log = execute(launcher(tn, flags=['--build-filter=lib/a.final']), tn)
         assert outputs(tn) == before_outputs and history(tn) == before_history
@@ -2228,9 +2227,8 @@ def unsupported_fixture_comparison(tmp):
     for fixture in ('optional_builder_app', 'post_process_builder_app'):
         right = tmp / (fixture + '-unsupported')
         shutil.copytree(REPO / 'fixtures' / fixture, right, ignore=shutil.ignore_patterns('.dart_tool'))
-        for root in (right,):
-            pub = root / 'pubspec.yaml'; pub.write_text(pub.read_text().replace('path: ../..', f'path: {REPO}'))
-            code, log = execute([DART, 'pub', 'get', '--offline'], root); assert code == 0, log
+        pub = right / 'pubspec.yaml'; pub.write_text(pub.read_text().replace('path: ../..', f'path: {REPO}'))
+        code, log = execute([DART, 'pub', 'get', '--offline'], right); assert code == 0, log
         flags = ['--build-filter=lib/**', '--force-jit']
         rejected = execute(launcher(right, flags=flags), right)
         assert rejected[0] != 0 and 'outside the supported subset' in rejected[1], rejected

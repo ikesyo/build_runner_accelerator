@@ -3,7 +3,6 @@ import 'dart:io';
 import 'frontend_binary_resolver.dart';
 import 'launcher_options.dart';
 import 'manifest/settings.dart';
-import 'native_graph.dart';
 import 'launcher_process.dart';
 
 export 'frontend_binary_resolver.dart'
@@ -29,12 +28,6 @@ Future<int> runLauncher(List<String> arguments) async {
     throw StateError(
       'Legacy stock output-policy history cannot be reused; stop all builders '
       'and reset both build states as described in docs/compatibility-cleanup.md#safe-recovery.',
-    );
-  }
-  if (options.command == 'watch' &&
-      hasRetainedNativeOutputState(options.root)) {
-    throw StateError(
-      'Native watch after retained output state is unsupported. Run dart run build_runner directly if needed.',
     );
   }
   final config = BuildSettings.parse(options.buildArguments).config;

@@ -13,6 +13,9 @@ import '../cache_directory.dart';
 import 'model.dart';
 import 'source.dart';
 
+// Source trigger parsing cold-compiles build_runner and Analyzer. Allow more
+// time than factory probes, especially when CI runs several cold builds.
+const _sourceTriggerTimeout = Duration(minutes: 2);
 const _factoryProbeTimeout = Duration(seconds: 30);
 const _factoryProbeKillGracePeriod = Duration(seconds: 1);
 const _probeCacheVersion = 1;
@@ -46,12 +49,14 @@ Future<ManifestTriggers> loadManifestTriggers(
     Future<ManifestTriggers?> run(
       String command,
       List<String> arguments,
-      File result,
-    ) => runManifestTriggerProcess(
+      File result, {
+      Duration timeout = _factoryProbeTimeout,
+    }) => runManifestTriggerProcess(
       command,
       arguments,
       root: root,
       result: result,
+      timeout: timeout,
     );
 
     var usedWorker = false;
@@ -79,13 +84,18 @@ Future<ManifestTriggers> loadManifestTriggers(
         );
         final config = _findPackageConfigPath(root);
         if (helper == null || config == null) return null;
-        return run(Platform.resolvedExecutable, [
-          '--packages=$config',
-          helper.toFilePath(),
-          root,
-          sourceResult.path,
-          jsonEncode(configKey),
-        ], sourceResult);
+        return run(
+          Platform.resolvedExecutable,
+          [
+            '--packages=$config',
+            helper.toFilePath(),
+            root,
+            sourceResult.path,
+            jsonEncode(configKey),
+          ],
+          sourceResult,
+          timeout: _sourceTriggerTimeout,
+        );
       },
     );
     if (Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1') {
@@ -121,7 +131,13 @@ Future<ManifestTriggers?> runManifestTriggerProcess(
     kill: process.kill,
     timeout: timeout,
   );
-  if (code == null || !result.existsSync()) return null;
+  if (code == null) {
+    stderr.writeln(
+      'Manifest trigger process timed out after ${timeout.inSeconds}s: $command',
+    );
+    return null;
+  }
+  if (!result.existsSync()) return null;
   try {
     final parsed = decodeManifestTriggers(await result.readAsString());
     return code == 0 ? parsed : null;

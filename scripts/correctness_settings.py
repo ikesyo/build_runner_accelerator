@@ -227,7 +227,7 @@ def watch_topology_boundary(temporary):
                 if mode == 'stock':
                     wait(lambda: 'Starting build #2' in log.read_text()
                          and 'wrote 0 outputs' in log.read_text() and outputs(root) == {}, proc, log)
-                elif mode == 'rust':
+                else:
                     deadline = time.monotonic() + 180
                     while proc.poll() is None:
                         assert time.monotonic() < deadline, log.read_text()

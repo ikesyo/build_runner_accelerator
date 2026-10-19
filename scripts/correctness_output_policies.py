@@ -325,32 +325,16 @@ def modes(tmp):
     pair.check(VERIFY, expected=1, compile_flag='--force-aot')
     pair.check(compile_flag='--force-jit')
     # Even after overwrite repairs files, retained native graph history cannot
-    # enter the resident watch evaluator. Route before any manifest refresh.
+    # enter the resident watch evaluator. Reject before any manifest refresh.
     before = snapshot(pair.native)
     manifest = pair.native / '.dart_tool/build_runner_accelerator/builder-manifest.json'
     manifest_stamp = manifest.read_bytes(), manifest.stat().st_mtime_ns
-    result = execute(launcher(pair.native, 'watch'), pair.native)
-    assert result[0] == 1 and 'watch after retained output state' in result[1], result
-    assert snapshot(pair.native) == before
-    assert (manifest.read_bytes(), manifest.stat().st_mtime_ns) == manifest_stamp
-    # Malformed/obsolete graphs reset instead of interpreting stale retained bits.
-    graph = pair.native / '.dart_tool/build_runner_accelerator/graph-v3.bin'
-    committed = graph.read_bytes()
-    capture = tmp / 'native-argv.json'
-    fake_native = tmp / 'probe-native'
-    fake_native.write_text('#!/usr/bin/env python3\nimport json,sys\n'
-                           f'open({str(capture)!r}, "w").write(json.dumps(sys.argv[1:]))\n'
-                           'sys.exit(23)\n')
-    fake_native.chmod(0o755)
-    bad_schema = bytearray(committed); bad_schema[9:13] = (1).to_bytes(4, 'big')
-    bad_payload = bytearray(committed); bad_payload[13:17] = (0xffffffff).to_bytes(4, 'big')
-    for invalid in (committed[:4] + bytes([99]) + committed[5:], bad_schema, bad_payload):
-        graph.write_bytes(invalid)
-        result = execute(launcher(pair.native, command='watch'), pair.native,
-                         {'BUILD_RUNNER_ACCELERATOR_BIN': str(fake_native)})
-        assert result[0] == 23 and 'watch after retained' not in result[1], result
-        assert json.loads(capture.read_text())[0] == 'watch', result
-    graph.write_bytes(committed)
+    for entry in (launcher(pair.native, 'watch'),
+                  [str(NATIVE), 'watch', '--root', str(pair.native)]):
+        result = execute(entry, pair.native)
+        assert result[0] == 1 and 'watch after retained output state' in result[1], result
+        assert snapshot(pair.native) == before
+        assert (manifest.read_bytes(), manifest.stat().st_mtime_ns) == manifest_stamp
 
 
 def main():

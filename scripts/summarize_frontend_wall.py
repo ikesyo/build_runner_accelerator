@@ -18,7 +18,7 @@ import sys
 
 PREFIX = 'Rust wall trace: '
 CATEGORY_PRIORITY = (
-    'workspace_load', 'manifest_select', 'dart_fallback', 'graph_load', 'config_digest',
+    'workspace_load', 'manifest_select', 'graph_load', 'config_digest',
     'initial_snapshot', 'planning', 'dirty_check', 'transaction_setup',
     'worker_prepare', 'phase_select', 'phase_requests', 'phase_reset',
     'phase_dispatch', 'dep_graph_merge', 'results_record', 'output_commit',
