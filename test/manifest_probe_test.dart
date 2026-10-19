@@ -184,6 +184,23 @@ void main(List<String> args) {
     });
   });
 
+  test('escalates a probe that ignores graceful termination', () async {
+    final exitCode = Completer<int>();
+    final signals = <String>[];
+    final result = await waitForProbeExit(
+      exitCode: exitCode.future,
+      kill: () => signals.add('term'),
+      forceKill: () {
+        signals.add('kill');
+        exitCode.complete(-9);
+      },
+      timeout: const Duration(milliseconds: 20),
+      killGracePeriod: const Duration(milliseconds: 1),
+    );
+    expect(result, isNull);
+    expect(signals, ['term', 'kill']);
+  });
+
   test('kills a probe that exceeds its timeout', () async {
     final exitCode = Completer<int>();
     var killed = false;

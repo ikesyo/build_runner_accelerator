@@ -385,6 +385,9 @@ Future<String> runFactoryProbeProcess(
     kill: () {
       process.kill();
     },
+    forceKill: () {
+      process.kill(ProcessSignal.sigkill);
+    },
     timeout: timeout,
   );
   // Descendants can inherit a pipe. Do not let EOF defeat the process timeout.
@@ -508,6 +511,7 @@ Future<String?> _probeWithWorkerAot(
 Future<int?> waitForProbeExit({
   required Future<int> exitCode,
   required void Function() kill,
+  void Function()? forceKill,
   Duration timeout = _factoryProbeTimeout,
   Duration killGracePeriod = _factoryProbeKillGracePeriod,
 }) async {
@@ -518,8 +522,13 @@ Future<int?> waitForProbeExit({
     try {
       await exitCode.timeout(killGracePeriod);
     } on TimeoutException {
-      // The child may be outside our control; the probe still must not
-      // keep manifest generation blocked.
+      forceKill?.call();
+      // Do not wait indefinitely for an unresponsive child after escalation.
+      try {
+        await exitCode.timeout(killGracePeriod);
+      } on TimeoutException {
+        // The probe still must not keep manifest generation blocked.
+      }
     }
     return null;
   }
