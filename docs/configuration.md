@@ -63,7 +63,7 @@ implementation-directory boundary. Other eligible hidden files are included.
 Native watch requires source sets that cannot reach another configured package
 root. Stock watches only the deepest package identity, retaining different
 parent-alias source/cache evidence until restart; native snapshots cannot
-reproduce that history. Potentially overlapping watch inputs therefore use
+reproduce that history. Potentially overlapping watch inputs therefore
 fail before actions. Literal subtree exclusions such
 as `exclude: ['.dart_tool/**', 'dep/**']` allow native watch. The prefix check is
 conservative when more complex exclusions cannot prove that the subtree is excluded.

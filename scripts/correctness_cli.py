@@ -9,7 +9,10 @@ import subprocess
 import tempfile
 import time
 
+from sync_release_metadata import read_package_version
+
 REPO = Path(__file__).resolve().parents[1]
+PACKAGE_VERSION = read_package_version(REPO / 'pubspec.yaml')
 DART = os.environ.get('DART_BIN', str(REPO / '.toolchains/dart-wrapper'))
 NATIVE = REPO / 'rust/target/debug/build_runner_accelerator'
 LAUNCHER = [DART, f'--packages={REPO}/.dart_tool/package_config.json',
@@ -232,7 +235,10 @@ def main():
             for flags in (['--help'], ['build', '--help'], ['watch', '--version']):
                 log = run([*entry, *flags], base,
                           env={**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/missing-native'})
-                assert 'build_runner_accelerator' in log or log.strip() == '0.14.0', log
+                if flags[-1] == '--version':
+                    assert log.splitlines()[-1] == PACKAGE_VERSION, log
+                else:
+                    assert 'build_runner_accelerator' in log, log
         unavailable = run(launcher(rejected, flags=['--force-jit']), rejected, expected=1,
                           env={**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': str(base / 'missing-native')})
         assert 'unavailable' in unavailable.lower() and files(rejected) == before, unavailable

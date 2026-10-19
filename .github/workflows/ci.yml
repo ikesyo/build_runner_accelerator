@@ -256,6 +256,8 @@ jobs:
             scripts/smoke.sh
             scripts/watch_smoke.sh
             scripts/correctness_upgrade.sh
+            scripts/correctness_cli.*
+            scripts/sync_release_metadata.py
           setup-rust: 'true'
           build-frontend: 'true'
       - name: Prime baseline fixture dependencies
@@ -277,6 +279,8 @@ jobs:
             run: bash scripts/correctness_upgrade.sh
           - name: Run setup-time prewarm correctness
             run: bash scripts/correctness_prewarm.sh
+      - name: Run CLI correctness
+        run: bash scripts/correctness_cli.sh
 
   integration-settings:
     name: 'Integration: native build settings (${{ matrix.id }})'
