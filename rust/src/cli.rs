@@ -1,5 +1,3 @@
-pub(crate) const OUTPUT_POLICY_UNSUPPORTED: &str = "native output policy unsupported:";
-
 use std::env;
 use std::io;
 use std::path::PathBuf;

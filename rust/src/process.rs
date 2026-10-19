@@ -20,7 +20,7 @@ pub(crate) fn supervise() -> std::io::Result<Option<i32>> {
     }
     if std::env::var_os(CHILD_MARKER).is_some() {
         // Internal helpers inherit this group instead of creating a new one.
-        // Stock and explicitly detached prewarm clear the context at spawn.
+        // Explicitly detached prewarm clears the context at spawn.
         return Ok(None);
     }
     // Signal handlers only store an atomic; all subprocess work runs here.

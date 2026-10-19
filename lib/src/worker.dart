@@ -626,7 +626,6 @@ Map<String, int> _activityDurations() {
 }
 
 const _retainedApiUnsupported =
-    'native output policy unsupported: '
     'digest/resolver APIs with retained modified outputs are unsupported; run dart run build_runner directly if needed';
 
 class _RetainedOutputBuildStep extends BuildStepImpl {
