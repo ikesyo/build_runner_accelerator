@@ -20,6 +20,11 @@ if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
 fi
 
 cleanup() {
+  local status=$?
+  if ((status != 0)) && [[ "${VERIFY_KEEP_TEMP_ON_FAILURE:-1}" != 0 ]]; then
+    printf 'package-smoke: retaining failure logs: %s\n' "$test_root" >&2
+    return 0
+  fi
   [[ -e "$test_root" ]] || return 0
   find "$test_root" -depth -type f -delete
   find "$test_root" -depth -type l -delete
@@ -47,26 +52,28 @@ prepare_package() {
   local pubspec=$2
   mkdir -p "$directory/lib"
   cp "$pubspec" "$directory/pubspec.yaml"
+  # Compare the supported fixture solution; fresh resolution can select an
+  # incompatible transitive generator release in only this smoke test.
+  cp "$fixture_dir/pubspec.lock" "$directory/pubspec.lock"
   cp "$fixture_dir/build.yaml" "$directory/build.yaml"
   cp "$fixture_dir/lib/model.dart" "$directory/lib/model.dart"
-  (cd "$directory" && \
-    PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics pub get "${pub_get_args[@]}" >/dev/null)
+  worker_pub_get "$directory" "${pub_get_args[@]}"
 }
 
 prepare_package "$stock_dir" "$fixture_dir/pubspec.yaml"
 prepare_package "$accelerator_dir" "$accelerator_pubspec"
 
-(cd "$stock_dir" && \
-  PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics run build_runner \
-    build --delete-conflicting-outputs >/dev/null)
+verification_run_stock_build "$stock_dir" 'package-smoke/stock' \
+  "$test_root/stock.log" "$dart_bin" "$pub_cache" build --delete-conflicting-outputs
 cp "$stock_dir/lib/model.g.dart" "$test_root/model.g.dart.stock"
 
-(cd "$accelerator_dir" && \
-  PUB_CACHE="$pub_cache" \
+build_timeout=$(verification_timeout_seconds VERIFY_BUILD_TIMEOUT_SECONDS 300)
+verification_run_command_in_dir "$accelerator_dir" 'package-smoke/launcher' \
+  "$test_root/accelerator.log" "$build_timeout" env PUB_CACHE="$pub_cache" \
   BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
   BUILD_RUNNER_ACCELERATOR_WORKER_AOT=0 \
   "$dart_bin" --suppress-analytics run build_runner_accelerator \
-    build >/dev/null)
+    build
 
 cmp "$test_root/model.g.dart.stock" "$accelerator_dir/lib/model.g.dart" || \
   fail 'published-package launcher output differs from stock build_runner'
