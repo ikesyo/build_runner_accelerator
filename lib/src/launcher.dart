@@ -9,8 +9,6 @@ export 'frontend_binary_resolver.dart'
     show FrontendBinaryResolver, buildRunnerAcceleratorVersion;
 export 'launcher_options.dart' show LauncherOptions;
 
-const _workerAotEnvironment = 'BUILD_RUNNER_ACCELERATOR_WORKER_AOT';
-
 Future<int> runLauncher(List<String> arguments) async {
   final options = LauncherOptions.parse(arguments);
   if (options.showHelp) {
@@ -30,7 +28,7 @@ Future<int> runLauncher(List<String> arguments) async {
       'and reset both build states as described in docs/compatibility-cleanup.md#safe-recovery.',
     );
   }
-  final config = BuildSettings.parse(options.buildArguments).config;
+  final config = options.config;
   if (config != null &&
       !File(
         '${options.root}/${BuildSettings.configPath(config)}',
@@ -48,18 +46,10 @@ Future<int> runLauncher(List<String> arguments) async {
       'Run dart run build_runner directly if needed.',
     );
   }
-  final environment = Map<String, String>.from(Platform.environment);
-  if (!options.forceAot && !options.forceJit) {
-    environment.putIfAbsent(
-      _workerAotEnvironment,
-      () => options.command == 'watch' ? 'background' : '1',
-    );
-  }
   return const LauncherProcessRunner().run(
     binary,
     options.rustArguments,
     options.root,
-    environment: environment,
   );
 }
 

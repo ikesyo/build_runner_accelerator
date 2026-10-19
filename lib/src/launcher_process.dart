@@ -73,14 +73,12 @@ class LauncherProcessRunner {
   Future<int> run(
     String executable,
     List<String> arguments,
-    String workingDirectory, {
-    Map<String, String>? environment,
-  }) async {
+    String workingDirectory,
+  ) async {
     final process = await Process.start(
       executable,
       arguments,
       workingDirectory: workingDirectory,
-      environment: environment,
       mode: ProcessStartMode.inheritStdio,
     );
     final subscriptions = <StreamSubscription<ProcessSignal>>[];

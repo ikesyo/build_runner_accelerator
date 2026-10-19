@@ -73,7 +73,7 @@ fn main() -> io::Result<()> {
         "build" => {
             let _wall = wall::Session::new();
             worker_kernel::apply_default_worker_aot_policy(&options.command);
-            build::run(&options, None)
+            build::run(&options)
         }
         "watch" => {
             worker_kernel::apply_default_worker_aot_policy(&options.command);

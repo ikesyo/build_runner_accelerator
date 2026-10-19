@@ -35,8 +35,7 @@ void main() {
     final options = LauncherOptions.parse([]);
     expect(options.command, 'build');
     expect(options.rustArguments.first, 'build');
-    expect(options.buildArguments, isEmpty);
-    expect(options.rustArguments, isNot(contains('--stock-arguments-json')));
+    expect(options.config, isNull);
   });
 
   test('removed modes explain migration', () {
@@ -97,7 +96,7 @@ void main() {
     expect(LauncherOptions.parse(['build', '--version']).showVersion, isTrue);
   });
 
-  test('build settings retain token boundaries without fallback transport', () {
+  test('native settings retain argument boundaries', () {
     final flags = [
       '--config',
       '--mode=rust',
@@ -106,16 +105,16 @@ void main() {
       '--force-jit',
     ];
     final options = LauncherOptions.parse(['build', '--jobs=2', ...flags]);
-    expect(options.buildArguments, flags);
+    expect(options.config, '--mode=rust');
     expect(
       options.rustArguments.skip(options.rustArguments.length - flags.length),
       flags,
     );
-    expect(options.forceJit, isTrue);
     expect(options.rustArguments, containsAll(['--jobs', '2']));
     final value = LauncherOptions.parse(['build', '--config', '--help']);
     expect(value.showHelp, isFalse);
-    expect(value.buildArguments, ['--config', '--help']);
+    expect(value.config, '--help');
+    expect(value.rustArguments, containsAllInOrder(['--config', '--help']));
   });
 
   test('filtered jobs stay implicit unless explicitly selected', () {

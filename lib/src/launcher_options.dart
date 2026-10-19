@@ -10,9 +10,7 @@ class LauncherOptions {
     required this.root,
     required this.dartBinary,
     required this.rustArguments,
-    required this.buildArguments,
-    required this.forceAot,
-    required this.forceJit,
+    required this.config,
     required this.showHelp,
     required this.showVersion,
   });
@@ -165,6 +163,7 @@ class LauncherOptions {
 
     rustArguments.insert(0, command);
     rustArguments.addAll(['--root', root, '--dart', dartBinary]);
+    String? config;
     if (!showHelp && !showVersion) {
       if (!const {
         'build',
@@ -177,6 +176,7 @@ class LauncherOptions {
         );
       }
       final settings = BuildSettings.parse(passthrough);
+      config = settings.config;
       if (command != 'build' &&
           (settings.onlyCheck || settings.keepModifiedOutputs)) {
         throw FormatException('Output policies are supported only with build');
@@ -193,9 +193,7 @@ class LauncherOptions {
       root: root,
       dartBinary: dartBinary,
       rustArguments: List.unmodifiable(rustArguments),
-      buildArguments: List.unmodifiable(passthrough),
-      forceAot: forceAot,
-      forceJit: forceJit,
+      config: config,
       showHelp: showHelp,
       showVersion: showVersion,
     );
@@ -205,9 +203,7 @@ class LauncherOptions {
   final String root;
   final String dartBinary;
   final List<String> rustArguments;
-  final List<String> buildArguments;
-  final bool forceAot;
-  final bool forceJit;
+  final String? config;
   final bool showHelp;
   final bool showVersion;
 }

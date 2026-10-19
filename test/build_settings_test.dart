@@ -81,7 +81,10 @@ void main() {
       final cli = (await BuildRunnerCommandLine.parse(['build', ...flags]))!;
       expect(settings.onlyCheck, cli.outputStrategy.name == 'verify');
       expect(settings.keepModifiedOutputs, cli.outputStrategy.name == 'keep');
-      expect(LauncherOptions.parse(['build', ...flags]).buildArguments, flags);
+      expect(
+        LauncherOptions.parse(['build', ...flags]).rustArguments.skip(5),
+        flags,
+      );
     }
     for (final flags in <List<String>>[
       ['--only-check', '--keep-modified-outputs'],
@@ -158,7 +161,10 @@ void main() {
   test('launcher forwards native settings without reconstructing them', () {
     for (final command in ['build', 'watch', 'prewarm', 'aot-cache-key']) {
       final flags = ['-cdir/named', '-rr', '--define=:b=x=a=b,c'];
-      expect(LauncherOptions.parse([command, ...flags]).buildArguments, flags);
+      expect(
+        LauncherOptions.parse([command, ...flags]).rustArguments.skip(5),
+        flags,
+      );
     }
   });
 
@@ -170,13 +176,14 @@ void main() {
         '--force-aot',
         '--force-jit',
       ]);
-      expect(options.forceAot, isFalse);
-      expect(options.forceJit, isTrue);
+      expect(options.config, '--force-aot');
+      expect(options.rustArguments.skip(5), [
+        '--config',
+        '--force-aot',
+        '--force-jit',
+      ]);
       expect(BuildSettings.parse(['--config', '-d']).deletionFlag, isFalse);
-      expect(
-        LauncherOptions.parse([command, '--config', '-rd']).buildArguments,
-        ['--config', '-rd'],
-      );
+      expect(LauncherOptions.parse([command, '--config', '-rd']).config, '-rd');
       if (command == 'prewarm') {
         expect(
           () => LauncherOptions.parse([command, '-rd']),

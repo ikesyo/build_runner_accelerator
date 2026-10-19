@@ -92,7 +92,7 @@ impl Preflight {
     }
 }
 
-pub(crate) fn run(options: &Options, pool: Option<&mut WorkerPool>) -> io::Result<()> {
+pub(crate) fn run(options: &Options) -> io::Result<()> {
     let load = crate::wall::Span::new("workspace_load");
     let workspace = Workspace::load(options.root.clone())?;
     drop(load);
@@ -100,21 +100,11 @@ pub(crate) fn run(options: &Options, pool: Option<&mut WorkerPool>) -> io::Resul
     let selection = crate::wall::Span::new("manifest_select");
     let build_config = select_frontend(options, &workspace, &loaded_graph.state)?;
     drop(selection);
-    run_with_config(options, pool, workspace, build_config, loaded_graph)
-}
-
-pub(crate) fn run_with_config(
-    options: &Options,
-    pool: Option<&mut WorkerPool>,
-    workspace: Workspace,
-    frontend: NativeFrontend,
-    loaded_graph: LoadedGraph,
-) -> io::Result<()> {
     run_with_config_session(
         options,
-        pool,
+        None,
         workspace,
-        frontend,
+        build_config,
         loaded_graph,
         true,
         &crate::watch::WatchChanges::default(),
