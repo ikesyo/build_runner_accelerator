@@ -216,7 +216,13 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
   final probeRequests = requests.toList(growable: false);
   if (probeRequests.isEmpty) return const {};
   final packageConfig = _findPackageConfigPath(root);
-  if (packageConfig == null) return const {};
+  if (packageConfig == null) {
+    throw FactoryProbeFailure(
+      'setup',
+      'package_config.json not found',
+      probeRequests,
+    );
+  }
 
   File? cacheFile;
   if (cacheKey != null) {
@@ -249,6 +255,7 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
     final probeFile = File(p.join(temporary.path, 'probe.dart'));
     final resultFile = File(p.join(temporary.path, 'result.json'));
     String? responseText;
+    FactoryProbeFailure? workerFailure;
     final readiness =
         Platform.environment['BUILD_RUNNER_ACCELERATOR_MANIFEST_WORKER_AOT'];
     if (readiness != null && workerEntrypoint != null) {
@@ -257,34 +264,38 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
         workerEntrypoint,
       );
       if (executable != null) {
-        responseText = await _probeWithWorkerAot(
-          root,
-          executable,
-          probeRequests,
-          temporary,
-        );
+        try {
+          responseText = await _probeWithWorkerAot(
+            root,
+            executable,
+            probeRequests,
+            temporary,
+          );
+        } on FactoryProbeFailure catch (error) {
+          workerFailure = error;
+        }
       }
     }
     if (responseText == null) {
       await probeFile.writeAsString(_factoryProbeSource(probeRequests));
-      // Process.start is required here so a misbehaving factory probe can be
-      // terminated instead of blocking manifest generation indefinitely.
-      final process = await Process.start(Platform.resolvedExecutable, [
-        '--packages=$packageConfig',
-        probeFile.path,
-        resultFile.path,
-      ], workingDirectory: root);
-      // Consume both pipes while the probe runs; otherwise a verbose probe can
-      // block on a full child-process pipe before the timeout is reached.
-      unawaited(process.stdout.drain<void>());
-      unawaited(process.stderr.drain<void>());
-
-      final exitCode = await waitForProbeExit(
-        exitCode: process.exitCode,
-        kill: process.kill,
-      );
-      if (exitCode != 0 || !resultFile.existsSync()) return const {};
-      responseText = await resultFile.readAsString();
+      try {
+        responseText = await runFactoryProbeProcess(
+          Platform.resolvedExecutable,
+          ['--packages=$packageConfig', probeFile.path, resultFile.path],
+          root: root,
+          result: resultFile,
+          requests: probeRequests,
+        );
+      } on FactoryProbeFailure catch (error) {
+        if (workerFailure != null) {
+          throw FactoryProbeFailure(
+            'all attempts',
+            '$workerFailure\n$error',
+            probeRequests,
+          );
+        }
+        rethrow;
+      }
       if (Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1') {
         stderr.writeln('Dart manifest probe: executor=source');
       }
@@ -297,10 +308,6 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
       _writeProbeCache(cacheFile, responseText);
     }
     return decoded;
-  } catch (_) {
-    // Do not cache unavailable or malformed probe results. The caller rejects
-    // the manifest if a selected factory still lacks a supported mapping.
-    return const {};
   } finally {
     if (temporary != null) {
       try {
@@ -310,6 +317,100 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
       }
     }
   }
+}
+
+/// Probe transport failures are distinct from valid but unsupported mappings.
+class FactoryProbeFailure implements Exception {
+  FactoryProbeFailure(
+    this.kind,
+    this.reason,
+    Iterable<FactoryProbeRequest> requests, {
+    this.stderrTail = '',
+  }) : context = requests
+           .map((request) {
+             final factories = request.definition.isPostProcess
+                 ? [request.definition.postProcess!.builderFactory]
+                 : request.definition.normal!.builderFactories;
+             return '${request.id} (${request.definition.key}: ${factories.join(', ')})';
+           })
+           .join('; ');
+
+  final String kind;
+  final String reason;
+  final String context;
+  final String stderrTail;
+
+  @override
+  String toString() =>
+      'Factory probe $kind: $reason; $context'
+      '${stderrTail.isEmpty ? '' : '\nstderr (tail):\n$stderrTail'}';
+}
+
+/// Drain both pipes concurrently, retain only a bounded stderr tail, and never
+/// accept a timeout's late result. Live and cached mapping validation remain
+/// separate: an incomplete live response must fail instead of publishing a
+/// manifest with timing-dependent optional runtime metadata.
+Future<String> runFactoryProbeProcess(
+  String command,
+  List<String> arguments, {
+  required String root,
+  required File result,
+  required List<FactoryProbeRequest> requests,
+  Duration timeout = _factoryProbeTimeout,
+}) async {
+  const stderrLimit = 8192;
+  var tail = <int>[];
+  FactoryProbeFailure failure(String kind, String reason) =>
+      FactoryProbeFailure(
+        kind,
+        reason,
+        requests,
+        stderrTail: utf8.decode(tail, allowMalformed: true),
+      );
+  if (result.existsSync()) await result.delete();
+  final Process process;
+  try {
+    process = await Process.start(command, arguments, workingDirectory: root);
+  } on ProcessException catch (error) {
+    throw failure('start failure', error.toString());
+  }
+  final stdoutDone = process.stdout.drain<void>();
+  final stderrDone = process.stderr.forEach((chunk) {
+    tail = [...tail, ...chunk];
+    if (tail.length > stderrLimit)
+      tail = tail.sublist(tail.length - stderrLimit);
+  });
+  final code = await waitForProbeExit(
+    exitCode: process.exitCode,
+    kill: () {
+      process.kill();
+    },
+    forceKill: () {
+      process.kill(ProcessSignal.sigkill);
+    },
+    timeout: timeout,
+  );
+  // Descendants can inherit a pipe. Do not let EOF defeat the process timeout.
+  await Future.wait([
+    stdoutDone,
+    stderrDone,
+  ]).timeout(_factoryProbeKillGracePeriod, onTimeout: () => <void>[]);
+  if (code == null) throw failure('timeout', 'exceeded $timeout');
+  if (code != 0) throw failure('nonzero exit', 'exit code $code');
+  if (!result.existsSync()) throw failure('missing result', result.path);
+  final String response;
+  try {
+    response = await result.readAsString();
+    final decoded = decodeFactoryProbeResult(jsonDecode(response), requests);
+    if (!_coversAllProbeableRequests(decoded, requests)) {
+      throw const FormatException('missing or invalid factory entries');
+    }
+  } on FormatException catch (error) {
+    throw failure('malformed response', error.toString());
+  } on FileSystemException catch (error) {
+    throw failure('result read failure', error.toString());
+  }
+  return response;
 }
 
 /// An invocation-local readiness marker is useful only for identical source.
@@ -384,26 +485,17 @@ Future<String?> _probeWithWorkerAot(
           },
       ]),
     );
-    final process = await Process.start(executable, [
-      '--factory-probe',
-      input.path,
-      resultFile.path,
-    ], workingDirectory: root);
-    unawaited(process.stdout.drain<void>());
-    unawaited(process.stderr.drain<void>());
-    final code = await waitForProbeExit(
-      exitCode: process.exitCode,
-      kill: process.kill,
+    final text = await runFactoryProbeProcess(
+      executable,
+      ['--factory-probe', input.path, resultFile.path],
+      root: root,
+      result: resultFile,
+      requests: requests,
     );
-    if (code != 0 || !resultFile.existsSync()) return null;
-    final text = await resultFile.readAsString();
-    if (jsonDecode(text) is! Map) return null;
     if (Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1') {
       stderr.writeln('Dart manifest probe: executor=worker-aot');
     }
     return text;
-  } on Object {
-    return null;
   } finally {
     // A failed executable must not leave a result for the source retry to read.
     try {
@@ -419,6 +511,7 @@ Future<String?> _probeWithWorkerAot(
 Future<int?> waitForProbeExit({
   required Future<int> exitCode,
   required void Function() kill,
+  void Function()? forceKill,
   Duration timeout = _factoryProbeTimeout,
   Duration killGracePeriod = _factoryProbeKillGracePeriod,
 }) async {
@@ -429,8 +522,13 @@ Future<int?> waitForProbeExit({
     try {
       await exitCode.timeout(killGracePeriod);
     } on TimeoutException {
-      // The child may be outside our control; the probe still must not
-      // keep manifest generation blocked.
+      forceKill?.call();
+      // Do not wait indefinitely for an unresponsive child after escalation.
+      try {
+        await exitCode.timeout(killGracePeriod);
+      } on TimeoutException {
+        // The probe still must not keep manifest generation blocked.
+      }
     }
     return null;
   }
@@ -871,7 +969,10 @@ String _factoryProbeSource(Iterable<FactoryProbeRequest> requests) {
     }
     output
       ..writeln('      ];')
-      ..writeln('    } catch (_) {}');
+      ..writeln('    } catch (error, stack) {')
+      ..writeln('      stderr.writeln(error);')
+      ..writeln('      stderr.writeln(stack);')
+      ..writeln('    }');
   }
   output
     ..writeln('  File(args.single).writeAsStringSync(jsonEncode(result));')

@@ -12,7 +12,7 @@ mod transaction;
 mod tests;
 
 use crate::cli::Options;
-use crate::frontend::{NativeFrontend, select_frontend};
+use crate::frontend::{NativeFrontend, prepare_native_frontend};
 use crate::graph::GraphState;
 use crate::metrics::{
     FilesystemMetrics, graph_file_size, print_filesystem_metrics, print_graph_metrics,
@@ -98,7 +98,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     drop(load);
     let loaded_graph = LoadedGraph::load(&workspace)?;
     let selection = crate::wall::Span::new("manifest_select");
-    let build_config = select_frontend(options, &workspace, &loaded_graph.state)?;
+    let build_config = prepare_native_frontend(options, &workspace, &loaded_graph.state)?;
     drop(selection);
     run_with_config_session(
         options,

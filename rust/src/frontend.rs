@@ -8,7 +8,7 @@ use crate::worker_kernel::{
 };
 use crate::workspace::Workspace;
 use std::fs;
-use std::io;
+use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
@@ -34,7 +34,7 @@ impl NativeFrontend {
     }
 }
 
-pub(crate) fn select_frontend(
+pub(crate) fn prepare_native_frontend(
     options: &Options,
     workspace: &Workspace,
     state: &crate::graph::GraphState,
@@ -46,17 +46,22 @@ pub(crate) fn select_frontend(
         return unsupported("watch after retained output state is unsupported");
     }
 
+    let manifest = prepare_manifest(options, workspace)?;
+    let config = validate_native_manifest(options, workspace, manifest, retained_output_state)?;
+    let preflight =
+        preflight_native_state(options, workspace, &config, state, retained_output_state)?;
+    Ok(NativeFrontend { config, preflight })
+}
+
+/// Prepare and validate cache identity without deciding supported state transitions.
+fn prepare_manifest(options: &Options, workspace: &Workspace) -> io::Result<BuilderManifestFile> {
     if let Some(name) = options.settings.config_path()?
         && !workspace.root.join(name.clone()).is_file()
     {
         return unsupported(&format!("configuration file not found: {name}"));
     }
-    let fingerprint = match settings_fingerprint(options, workspace) {
-        Ok(fingerprint) => fingerprint,
-        Err(error) => {
-            return unsupported(&format!("cannot read configuration inputs: {error}"));
-        }
-    };
+    let fingerprint = settings_fingerprint(options, workspace)
+        .map_err(|error| contextual_error("cannot read configuration inputs", error))?;
     let manifest_path = workspace.root.join(MANIFEST_PATH);
     let worker_entrypoint = workspace.root.join(WORKER_ENTRYPOINT_PATH);
     let manifest = match read_manifest(&manifest_path, &fingerprint, &worker_entrypoint)? {
@@ -67,23 +72,18 @@ pub(crate) fn select_frontend(
             // if that normalization changed the workspace input.
             let mut manifest_fingerprint = fingerprint;
             for _ in 0..3 {
-                if let Err(error) = generate_manifest(
+                generate_manifest(
                     options,
                     workspace,
                     &manifest_fingerprint,
                     &manifest_path,
                     &worker_entrypoint,
-                ) {
-                    return unsupported(&format!(
-                        "dynamic builder manifest generation failed: {error}"
-                    ));
-                }
-                let refreshed = match settings_fingerprint(options, workspace) {
-                    Ok(fingerprint) => fingerprint,
-                    Err(error) => {
-                        return unsupported(&format!("cannot read configuration inputs: {error}"));
-                    }
-                };
+                )
+                .map_err(|error| {
+                    contextual_error("dynamic builder manifest generation failed", error)
+                })?;
+                let refreshed = settings_fingerprint(options, workspace)
+                    .map_err(|error| contextual_error("cannot read configuration inputs", error))?;
                 if refreshed == manifest_fingerprint {
                     break;
                 }
@@ -98,6 +98,44 @@ pub(crate) fn select_frontend(
         }
     };
 
+    Ok(manifest)
+}
+
+/// Keep the original I/O error in the source chain as well as the user message.
+#[derive(Debug)]
+struct FrontendError {
+    context: &'static str,
+    source: io::Error,
+}
+impl std::fmt::Display for FrontendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.context, self.source)
+    }
+}
+impl std::error::Error for FrontendError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+fn contextual_error(context: &'static str, source: io::Error) -> io::Error {
+    io::Error::new(source.kind(), FrontendError { context, source })
+}
+
+/// Preparation failures are fatal to watch even when their original I/O kind
+/// is recoverable. Keep this policy separate from the diagnostic source chain.
+pub(crate) fn is_terminal_frontend_error(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::Unsupported
+        || error
+            .get_ref()
+            .is_some_and(|source| source.is::<FrontendError>())
+}
+
+fn validate_native_manifest(
+    options: &Options,
+    workspace: &Workspace,
+    manifest: BuilderManifestFile,
+    retained_output_state: bool,
+) -> io::Result<RustBuildConfig> {
     match rust_build_config_from_manifest(manifest) {
         Ok(config) => {
             workspace.configure_sources(config.asset_sources.as_ref());
@@ -128,34 +166,43 @@ pub(crate) fn select_frontend(
                     "output policies/build filters with optional, post-process, trigger-only or zero-output builders are outside the supported subset",
                 );
             }
-            let mut preflight = None;
-            let transition_reason = if demand_policy || !filters.is_empty() {
-                crate::build::filtered_transition_reason(
-                    workspace,
-                    &config,
-                    demand_policy,
-                    state,
-                    &mut preflight,
-                )?
-            } else if matches!(options.command.as_str(), "build" | "watch") {
-                crate::build::dependency_output_conflict_reason(
-                    workspace,
-                    &config,
-                    state,
-                    &mut preflight,
-                )?
-            } else {
-                None
-            };
-            if let Some(reason) = transition_reason {
-                return unsupported(reason);
-            }
-            Ok(NativeFrontend { config, preflight })
+            Ok(config)
         }
         Err(error) => unsupported(&format!(
             "dynamic builder manifest is outside the supported subset: {error}"
         )),
     }
+}
+
+fn preflight_native_state(
+    options: &Options,
+    workspace: &Workspace,
+    config: &RustBuildConfig,
+    state: &crate::graph::GraphState,
+    retained_output_state: bool,
+) -> io::Result<Option<crate::build::Preflight>> {
+    let settings = &options.settings;
+    let demand_policy =
+        settings.only_check || settings.keep_modified_outputs || retained_output_state;
+    let filters = &settings.build_filters;
+    let mut preflight = None;
+    let transition_reason = if demand_policy || !filters.is_empty() {
+        crate::build::filtered_transition_reason(
+            workspace,
+            config,
+            demand_policy,
+            state,
+            &mut preflight,
+        )?
+    } else if matches!(options.command.as_str(), "build" | "watch") {
+        crate::build::dependency_output_conflict_reason(workspace, config, state, &mut preflight)?
+    } else {
+        None
+    };
+    if let Some(reason) = transition_reason {
+        return unsupported(reason);
+    }
+    Ok(preflight)
 }
 
 /// Settings are runtime inputs to both probing and action graph reuse. File
@@ -405,29 +452,60 @@ fn generate_manifest(
         .arg("--settings-json")
         .arg(&settings_json)
         .current_dir(&workspace.root)
+        .stderr(Stdio::piped())
         .spawn();
+    let diagnostics = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    let mut stderr_done = None;
     let status = match child_result {
         Err(error) => Err(error),
-        Ok(mut child) => loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break Ok(status),
-                Ok(None) => {
-                    if early_compile_ready && early_compile.is_none() && worker_entrypoint.is_file()
-                    {
-                        early_source = fs::read(worker_entrypoint).ok();
-                        early_compile = early_worker_aot_compile(
-                            &workspace.root,
-                            dart_binary,
-                            &worker_entrypoint.to_string_lossy(),
-                            readiness.as_deref(),
-                        );
+        Ok(mut child) => {
+            if let Some(mut pipe) = child.stderr.take() {
+                let tail = std::sync::Arc::clone(&diagnostics);
+                let (done, receiver) = std::sync::mpsc::channel();
+                stderr_done = Some(receiver);
+                std::thread::spawn(move || {
+                    let mut buffer = [0; 4096];
+                    while let Ok(count) = pipe.read(&mut buffer) {
+                        if count == 0 {
+                            break;
+                        }
+                        let _ = io::stderr().write_all(&buffer[..count]);
+                        let mut tail = tail.lock().unwrap();
+                        tail.extend_from_slice(&buffer[..count]);
+                        let excess = tail.len().saturating_sub(32 * 1024);
+                        tail.drain(..excess);
                     }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-                Err(error) => break Err(error),
+                    let _ = done.send(());
+                });
             }
-        },
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break Ok(status),
+                    Ok(None) => {
+                        if early_compile_ready
+                            && early_compile.is_none()
+                            && worker_entrypoint.is_file()
+                        {
+                            early_source = fs::read(worker_entrypoint).ok();
+                            early_compile = early_worker_aot_compile(
+                                &workspace.root,
+                                dart_binary,
+                                &worker_entrypoint.to_string_lossy(),
+                                readiness.as_deref(),
+                            );
+                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    Err(error) => break Err(error),
+                }
+            }
+        }
     };
+    // A descendant may retain stderr after the generator exits. Keep draining
+    // without allowing EOF to block frontend preparation indefinitely.
+    if let Some(done) = stderr_done {
+        let _ = done.recv_timeout(Duration::from_secs(1));
+    }
     // Always join before returning: `prepare_worker_aot` uses pid-named temp
     // files, so it must not overlap a later invocation in this process — even
     // when polling the generator itself failed.
@@ -458,7 +536,8 @@ fn generate_manifest(
         Ok(())
     } else {
         Err(io::Error::other(format!(
-            "manifest generator exited with {status}"
+            "manifest generator exited with {status}\n{}",
+            String::from_utf8_lossy(&diagnostics.lock().unwrap())
         )))
     }
 }
@@ -509,7 +588,8 @@ pub(crate) fn worker_executable(options: &Options, config: &RustBuildConfig) -> 
 
 pub(crate) fn run_aot_cache_key(options: &Options) -> io::Result<()> {
     let workspace = Workspace::load(options.root.clone())?;
-    let build_config = select_frontend(options, &workspace, &crate::graph::GraphState::default())?;
+    let build_config =
+        prepare_native_frontend(options, &workspace, &crate::graph::GraphState::default())?;
     let build_config = build_config.config;
     let worker = worker_executable(options, &build_config)?;
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
@@ -526,7 +606,8 @@ pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
     }
     let _background_lock = take_background_aot_lock();
     let workspace = load_prewarm_workspace(options)?;
-    let build_config = select_frontend(options, &workspace, &crate::graph::GraphState::default())?;
+    let build_config =
+        prepare_native_frontend(options, &workspace, &crate::graph::GraphState::default())?;
     let build_config = build_config.config;
     let worker = worker_executable(options, &build_config)?;
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
@@ -711,6 +792,29 @@ mod tests {
     use super::{EARLY_WORKER_MARKER_MAX_AGE, cleanup_stale_worker_readiness_markers};
     use std::fs::{self, File, FileTimes};
     use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn preparation_context_preserves_io_kind_and_source() {
+        let os_code = if cfg!(windows) { 5 } else { 13 };
+        let error = super::contextual_error("prepare", std::io::Error::from_raw_os_error(os_code));
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(super::is_terminal_frontend_error(&error));
+        assert!(!super::is_terminal_frontend_error(&std::io::Error::other(
+            "builder failed"
+        )));
+        assert!(super::is_terminal_frontend_error(&std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "unsupported transition"
+        )));
+        assert!(error.to_string().contains("prepare"));
+        let context = error.get_ref().unwrap();
+        let source = context
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(source.raw_os_error(), Some(os_code));
+    }
 
     #[test]
     fn breakaway_retry_is_scoped_to_access_denied() {
