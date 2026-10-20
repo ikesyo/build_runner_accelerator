@@ -1,4 +1,4 @@
-use crate::builder::RustBuildConfig;
+use crate::builder::{BuilderKind, RustBuildConfig};
 use crate::graph::{ActionState, GraphState};
 use crate::metrics::FilesystemMetrics;
 use crate::plan::{BuildSpec, output_digest, output_path};
@@ -76,6 +76,9 @@ pub(super) fn analyze(
         apply_output_digests(&mut current_output_digests, digests);
 
         let needs_build = match state.actions.get(&key) {
+            Some(action) if spec.instance.builder.is_optional && action.status == "undemanded" => {
+                true
+            }
             Some(action) if state.is_compatible(config_digest) => state
                 .changed_since_previous_with(
                     action,
@@ -265,6 +268,61 @@ fn collect_parallel<T: Sync, R: Send>(
     })
 }
 
+/// Follow primary and recorded read dependencies from dirty normal roots.
+/// Undemanded producers remain forceable, but cleanup alone cannot make their
+/// possible outputs dirty work. Actual new reads are handled during execution.
+fn required_by_dirty_normal(
+    dirty: &[BuildSpec],
+    specs: &[BuildSpec],
+    state: &GraphState,
+) -> BTreeSet<String> {
+    let mut pending = dirty
+        .iter()
+        .filter(|spec| {
+            spec.instance.builder.kind == BuilderKind::Normal && !spec.instance.builder.is_optional
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if pending.is_empty() {
+        return BTreeSet::new();
+    }
+    let producers = specs
+        .iter()
+        .flat_map(|spec| spec.outputs.iter().map(move |asset| (asset.as_str(), spec)))
+        .collect::<BTreeMap<_, _>>();
+    let mut required = BTreeSet::new();
+    let mut visited_assets = BTreeSet::new();
+    while let Some(spec) = pending.pop() {
+        let key = spec.action_key();
+        if !required.insert(key.clone()) {
+            continue;
+        }
+        let mut assets = vec![spec.input.clone()];
+        if let Some(action) = state.actions.get(&key) {
+            assets.extend(
+                action
+                    .reads
+                    .iter()
+                    .chain(&action.resolver_reads)
+                    .chain(&action.resolver_entrypoints)
+                    .cloned(),
+            );
+        }
+        while let Some(asset) = assets.pop() {
+            if !visited_assets.insert(asset.clone()) {
+                continue;
+            }
+            if let Some(producer) = producers.get(asset.as_str()) {
+                pending.push((*producer).clone());
+            }
+            if let Some(dependencies) = state.resolver_dep_graph.get(&asset) {
+                assets.extend(dependencies.iter().cloned());
+            }
+        }
+    }
+    required
+}
+
 pub(super) fn expand_dirty_dependents(
     dirty: &mut Vec<crate::plan::BuildSpec>,
     specs: &[crate::plan::BuildSpec],
@@ -315,6 +373,16 @@ pub(super) fn expand_dirty_dependents(
         }
     }
 
+    let required = if dirty.iter().any(|spec| {
+        state
+            .actions
+            .get(&spec.action_key())
+            .is_some_and(|action| action.status == "undemanded")
+    }) {
+        required_by_dirty_normal(dirty, specs, state)
+    } else {
+        BTreeSet::new()
+    };
     let mut dirty_keys = dirty
         .iter()
         .map(|spec| spec.action_key())
@@ -323,11 +391,19 @@ pub(super) fn expand_dirty_dependents(
     while cursor < dirty.len() {
         let source_key = dirty[cursor].action_key();
         let source_outputs = match state.actions.get(&source_key) {
+            Some(action) if action.status == "undemanded" && !required.contains(&source_key) => {
+                Vec::new()
+            }
             Some(action) if !action.outputs.is_empty() => action.outputs.clone(),
             // Use planned outputs when the prior action did not record any:
             // a dirty producer may emit them now, so skipped consumers need a
             // chance to check whether their primary input became available.
-            Some(action) if action.status == "not_triggered" || action.status == "success" => {
+            Some(action)
+                if matches!(
+                    action.status.as_str(),
+                    "not_triggered" | "success" | "undemanded"
+                ) =>
+            {
                 specs_by_key
                     .get(&source_key)
                     .map(|spec| spec.outputs.clone())

@@ -417,6 +417,19 @@ enum FilteredExecution<'a> {
 }
 
 impl LazyBuildState {
+    /// Whether an ordinary optional action is invalidated but has no result
+    /// from a normal consumer in this transaction.
+    pub(crate) fn is_undemanded(&self, spec: &BuildSpec) -> bool {
+        let key = spec.action_key();
+        self.force_keys.contains(&key) && !self.built_keys.contains(&key)
+    }
+
+    /// Whether this transaction has evaluated the optional action, including
+    /// a successful result with no outputs.
+    pub(crate) fn has_built(&self, spec: &BuildSpec) -> bool {
+        self.built_keys.contains(&spec.action_key())
+    }
+
     pub fn new(force_keys: BTreeSet<String>) -> Self {
         Self {
             force_keys,
@@ -1367,9 +1380,12 @@ impl FilteredExecution<'_> {
                 .and_then(|state| state.actions.get(&key))
                 .cloned();
             let mut needs_build = !lazy.filtered_compatible
-                || previous
-                    .as_ref()
-                    .is_none_or(|action| action.status == "skipped_missing_input");
+                || previous.as_ref().is_none_or(|action| {
+                    matches!(
+                        action.status.as_str(),
+                        "skipped_missing_input" | "undemanded"
+                    )
+                });
             if let Some(producer) = lazy_specs.get(&spec.input) {
                 let previously_output = lazy
                     .filtered_previous
@@ -1551,6 +1567,40 @@ impl FilteredExecution<'_> {
                     lazy.update_outputs(&spec, overlay, deleted_overlay);
                 }
                 lazy.built_keys.insert(key);
+                return Ok(());
+            }
+        }
+
+        // Ordinary optional chains have the same missing-primary rule as
+        // filtered demand: run the producer first, then skip an absent input.
+        if lazy.filtered_previous.is_none() && lazy_specs.contains_key(&spec.input) {
+            self.ensure_optional_output(
+                workspace,
+                &spec.input,
+                overlay,
+                deleted_overlay,
+                visibility,
+                spec.instance.phase,
+                BuilderKind::Normal,
+                lazy_specs,
+                lazy,
+            )?;
+            if deleted_overlay.contains(&spec.input)
+                || (!overlay.contains_key(&spec.input)
+                    && !workspace.asset_exists_at(
+                        &spec.input,
+                        visibility
+                            .location(&spec.input)
+                            .unwrap_or(spec.instance.builder.build_to),
+                    )?)
+            {
+                let result = crate::build::empty_filtered_result(&spec);
+                for output in &spec.outputs {
+                    deleted_overlay.insert(output.clone());
+                    overlay.remove(output);
+                }
+                lazy.built_keys.insert(key);
+                lazy.results.push(LazyBuildResult { spec, result });
                 return Ok(());
             }
         }

@@ -150,6 +150,60 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
 }
 
 #[test]
+fn undemanded_optional_chain_does_not_dirty_cleanup_without_normal_demand() {
+    let mut first = configured_builder("first", "app:root", 0, 0);
+    Arc::make_mut(&mut first.definition).is_optional = true;
+    let mut second = configured_builder("second", "app:root", 0, 1);
+    Arc::make_mut(&mut second.definition).is_optional = true;
+    let mut cleanup = configured_builder("cleanup", "app:root", 0, 3);
+    Arc::make_mut(&mut cleanup.definition).kind = BuilderKind::PostProcess;
+    let consumer = configured_builder("consumer", "app:root", 0, 2);
+    let first = build_spec(&first, "app|lib/input.seed", &["app|lib/input.stage"]);
+    let second = build_spec(&second, "app|lib/input.stage", &["app|lib/input.ready"]);
+    let cleanup = build_spec(&cleanup, "app|lib/input.ready", &[]);
+    let consumer = build_spec(&consumer, "app|lib/input.ready", &["app|lib/input.final"]);
+    let specs = vec![
+        first.clone(),
+        second.clone(),
+        cleanup.clone(),
+        consumer.clone(),
+    ];
+    let state = GraphState {
+        actions: [
+            (&first, "undemanded"),
+            (&second, "undemanded"),
+            (&cleanup, "skipped_missing_input"),
+        ]
+        .into_iter()
+        .map(|(spec, status)| {
+            (
+                spec.action_key(),
+                ActionState {
+                    builder: spec.instance.builder.id.clone(),
+                    input: spec.input.clone(),
+                    status: status.into(),
+                    ..ActionState::default()
+                },
+            )
+        })
+        .collect(),
+        ..GraphState::default()
+    };
+    let mut dirty = vec![first.clone(), second.clone()];
+    expand_dirty_dependents(&mut dirty, &specs, &state);
+    assert_eq!(dirty.len(), 2, "cleanup cannot supply optional demand");
+    // A new normal consumer has no recorded reads yet. Its primary input
+    // connects both optional stages to real demand before cleanup expansion.
+    dirty.push(consumer.clone());
+    expand_dirty_dependents(&mut dirty, &specs, &state);
+    assert!(
+        dirty
+            .iter()
+            .any(|spec| spec.action_key() == cleanup.action_key())
+    );
+}
+
+#[test]
 fn part_directive_scanner_matches_source_gen_semantics() {
     // Declared with the expected URI.
     assert!(declares_part_directive(
@@ -811,6 +865,54 @@ fn planning_fixture(
         })
         .collect();
     Ok((temporary, workspace, config, snapshot))
+}
+
+#[test]
+fn undemanded_optional_stays_demandable_without_changing_successful_empty_reuse() -> io::Result<()>
+{
+    use super::{dirty, planning};
+    use crate::metrics::FilesystemMetrics;
+    let (_temporary, workspace, mut config, snapshot) = planning_fixture(1)?;
+    config
+        .builders
+        .retain(|builder| builder.definition.is_optional);
+    let mut state = GraphState {
+        schema_version: crate::graph::GRAPH_SCHEMA_VERSION,
+        config_digest: "config".into(),
+        assets: snapshot.clone(),
+        ..GraphState::default()
+    };
+    let plan = planning::create(&workspace, &state, &config, &snapshot)?;
+    let spec = &plan.specs[0];
+    let key = spec.action_key();
+    state.actions.insert(
+        key.clone(),
+        ActionState {
+            builder: spec.instance.builder.id.clone(),
+            input: spec.input.clone(),
+            status: "undemanded".into(),
+            ..ActionState::default()
+        },
+    );
+    let analyze = |state: &GraphState| {
+        dirty::analyze(
+            &workspace,
+            state,
+            &config,
+            "config",
+            &snapshot,
+            &plan,
+            &mut FilesystemMetrics::default(),
+        )
+    };
+    let dirty = analyze(&state)?;
+    assert!(dirty.dirty.is_empty());
+    assert_eq!(dirty.lazy_force_keys, BTreeSet::from([key.clone()]));
+    // A builder that actually ran and emitted nothing must remain reusable
+    // until an input changes; absence alone must not demand it repeatedly.
+    state.actions.get_mut(&key).unwrap().status = "success".into();
+    assert!(analyze(&state)?.lazy_force_keys.is_empty());
+    Ok(())
 }
 
 #[test]

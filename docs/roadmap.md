@@ -57,9 +57,10 @@ followed by expanding Drift beyond the isolated analyzer + modular chain:
 
 - [x] Resolve option-dependent post-process input extensions from the configured
   runtime factory, with stock comparisons for mapping changes and cleanup.
-- [ ] Validate optional producer chains combined with post-process cleanup,
-  including undemanded outputs, nested demand, deletion, failure recovery, and
-  watch. Extend the shared action model only where stock comparisons expose gaps.
+- [x] Validate optional producer chains with post-process cleanup, including
+  source/cache outputs and incremental, failure, and watch lifecycle behavior.
+  See [ADR 0038](adr/0038-optional-post-process-demand.md) for the execution rules
+  and the [fixture guide](../fixtures/optional_cleanup_app/README.md) for coverage.
 - [ ] Extend Drift fixtures to `not_shared` and full `driftCleanup`, then validate
   `registry_builder` and `build_web_compilers` integration separately. Define
   supported versions and workspace configurations before claiming full support.

@@ -54,6 +54,10 @@ pub(super) fn run(
         deleted_actions,
     } = dirty_plan;
     let specs = &plan.specs;
+    let dirty_keys = dirty
+        .iter()
+        .map(|spec| spec.action_key())
+        .collect::<BTreeSet<_>>();
     eprintln!("Rust frontend: {} build action(s)", dirty.len());
     let mut worker_pool = pool;
     let mut pool_metrics = None;
@@ -68,6 +72,7 @@ pub(super) fn run(
     // leaving the dirty set must not restart the resident workers.
     let optional_builder_capability_required = !lazy_specs_by_output.is_empty();
     let mut lazy_state = LazyBuildState::new(lazy_force_keys);
+    let mut pruned_optional = false;
     drop(setup);
     if !dirty.is_empty() {
         let prepare = crate::wall::Span::new("worker_prepare");
@@ -115,15 +120,24 @@ pub(super) fn run(
         for configured_builder_index in execution_order(&build_config.builders) {
             let configured_builder = &build_config.builders[configured_builder_index];
             let builder = configured_builder.definition.as_ref();
+            if builder.kind == BuilderKind::PostProcess && !pruned_optional {
+                prune_undemanded_optional(workspace, state, specs, &lazy_state, &mut transaction)?;
+                pruned_optional = true;
+            }
             let _phase =
                 crate::wall::Span::new("phase").phase(configured_builder.phase, &builder.id);
             let select =
                 crate::wall::Span::new("phase_select").phase(configured_builder.phase, &builder.id);
-            let phase_specs = dirty
+            let phase_specs = specs
                 .iter()
                 .filter(|spec| {
                     spec.instance.target == configured_builder.target
                         && spec.instance.builder.id == builder.id
+                        && (dirty_keys.contains(&spec.action_key())
+                            || (builder.kind == BuilderKind::PostProcess
+                                && lazy_specs_by_output
+                                    .get(&spec.input)
+                                    .is_some_and(|producer| lazy_state.has_built(producer))))
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -132,24 +146,63 @@ pub(super) fn run(
                 if let Some((build_to, is_optional)) =
                     plan.generated_output_locations.get(&spec.input)
                 {
-                    // An optional producer may be invoked lazily by this
-                    // consumer's BuildStep.readAsString. Keep the consumer
-                    // request alive so the resident worker can satisfy that
-                    // demand before deciding that the primary input is
-                    // missing.
-                    if !is_optional {
-                        let output_is_visible = !transaction.deleted_overlay.contains(&spec.input)
-                            && (transaction.overlay.contains_key(&spec.input)
-                                || workspace.asset_exists_at(&spec.input, *build_to)?);
-                        if !output_is_visible {
-                            record_missing_primary_input(
+                    // Normal primary inputs demand their optional producer before
+                    // checking existence. Post-process inputs never create demand.
+                    if *is_optional && builder.kind == BuilderKind::Normal {
+                        // Primary demand executes before the consumer request.
+                        // Refresh the worker first, just as nested demand after
+                        // the ordinary phase reset observes earlier outputs.
+                        if configured_builder.package != initialized_package {
+                            active_pool.initialize(
+                                workspace,
+                                &configured_builder.package,
+                                config_digest,
+                                phase_count,
+                                optional_builder_capability_required,
+                            )?;
+                            initialized_package = configured_builder.package.clone();
+                            transaction.resolver.clear();
+                            resolver_needs_reset = false;
+                        } else if resolver_needs_reset || transaction.resolver.has_changes() {
+                            active_pool.reset_resolver(
+                                &workspace.root,
+                                &transaction.overlay,
+                                std::mem::take(&mut transaction.resolver.resolver_updated),
+                                std::mem::take(&mut transaction.resolver.resolver_deleted),
+                                std::mem::take(&mut transaction.resolver.resolver_cache_updated),
+                                std::mem::take(&mut transaction.resolver.resolver_cache_deleted),
+                                true,
+                            )?;
+                            resolver_needs_reset = false;
+                        }
+                        active_pool.materialize_optional_primary(
+                            workspace,
+                            &spec,
+                            &mut transaction.overlay,
+                            &mut transaction.deleted_overlay,
+                            &plan.visibility,
+                            &lazy_specs_by_output,
+                            &mut lazy_state,
+                        )?;
+                        state
+                            .resolver_dep_graph
+                            .extend(active_pool.take_dep_graph());
+                        for lazy_result in lazy_state.take_results() {
+                            record_build_result(
                                 workspace,
                                 state,
-                                &spec,
+                                &lazy_result.spec,
+                                lazy_result.result,
                                 &mut transaction,
                             )?;
-                            continue;
                         }
+                    }
+                    let output_is_visible = !transaction.deleted_overlay.contains(&spec.input)
+                        && (transaction.overlay.contains_key(&spec.input)
+                            || workspace.asset_exists_at(&spec.input, *build_to)?);
+                    if !output_is_visible {
+                        record_missing_primary_input(workspace, state, &spec, &mut transaction)?;
+                        continue;
                     }
                 }
                 runnable_phase_specs.push(spec);
@@ -295,12 +348,35 @@ pub(super) fn run(
 
         pool_metrics = Some(active_pool.metrics());
     }
+    if !pruned_optional {
+        prune_undemanded_optional(workspace, state, specs, &lazy_state, &mut transaction)?;
+    }
     Ok(ExecutionResult {
         transaction,
         expected_outputs,
         pool_metrics,
         part_filtered_actions,
     })
+}
+
+/// Invalidated optional results without normal demand cannot feed cleanup or
+/// retain stale outputs. Keep them demandable in later transactions.
+fn prune_undemanded_optional(
+    workspace: &Workspace,
+    state: &GraphState,
+    specs: &[BuildSpec],
+    lazy: &LazyBuildState,
+    transaction: &mut PendingTransaction,
+) -> io::Result<()> {
+    for spec in specs {
+        if spec.instance.builder.kind == BuilderKind::Normal
+            && spec.instance.builder.is_optional
+            && lazy.is_undemanded(spec)
+        {
+            record_missing_primary_input(workspace, state, spec, transaction)?;
+        }
+    }
+    Ok(())
 }
 
 /// Every declared optional output points to the same immutable action handle.

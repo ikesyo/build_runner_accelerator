@@ -79,6 +79,7 @@ Run the closest comparison script when changing a boundary:
 | Settings and config reload | `SETTINGS_CASE_GROUP=paths bash scripts/correctness_settings.sh` |
 | Output verification, retention, or policy routing | `bash scripts/correctness_output_policies.sh` |
 | CLI rejection, migration, or process signals | `bash scripts/correctness_cli.sh` |
+| Optional producer and post-process demand | `scripts/correctness_optional_cleanup.sh`, `scripts/watch_smoke_optional_cleanup.sh`; see the [fixture guide](../fixtures/optional_cleanup_app/README.md) |
 | Watch lifecycle | `bash scripts/watch_smoke.sh` |
 | Freezed/Riverpod compatibility | `scripts/correctness_freezed.sh`, `scripts/watch_smoke_freezed.sh`, `scripts/correctness_riverpod.sh`, `scripts/watch_smoke_riverpod.sh` |
 | Nested path packages and source visibility | `bash scripts/correctness_nested_packages.sh` |

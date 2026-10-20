@@ -1,0 +1,41 @@
+builders:
+  first:
+    import: "package:optional_cleanup_app/builders.dart"
+    builder_factories: [first]
+    build_extensions: {".seed": [".stage"]}
+    is_optional: true
+    auto_apply: none
+    build_to: source
+  second:
+    import: "package:optional_cleanup_app/builders.dart"
+    builder_factories: [second]
+    build_extensions: {".stage": [".ready"]}
+    required_inputs: [".stage"]
+    is_optional: true
+    auto_apply: none
+    build_to: source
+  consumer:
+    import: "package:optional_cleanup_app/builders.dart"
+    builder_factories: [consumer]
+    build_extensions: {".ready": [".final"]}
+    required_inputs: [".ready"]
+    auto_apply: none
+    build_to: source
+post_process_builders:
+  cleanup:
+    import: "package:optional_cleanup_app/builders.dart"
+    builder_factory: cleanup
+    input_extensions: [".stage", ".ready"]
+    build_to: source
+targets:
+  $default:
+    sources: [lib/**]
+    builders:
+      optional_cleanup_app:first:
+        generate_for: [lib/*.seed]
+      optional_cleanup_app:second:
+        generate_for: [lib/*.stage]
+      optional_cleanup_app:consumer:
+        enabled: false
+      optional_cleanup_app:cleanup:
+        generate_for: [lib/**]
