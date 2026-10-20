@@ -31,6 +31,10 @@ The following are implemented and covered by the current fixture suite:
   `.dart`/`.drift` runtime mappings, analyzer cache artifact visibility,
   modular `.drift.dart` source outputs, Resolver/BuildStep APIs, stale-output
   cleanup, atomic failure recovery, and native watch.
+- The official `drift_dev:not_shared` source builder and complete
+  `driftCleanup` input set at the same pinned Drift versions, including stock's
+  logical-delete/physical-cache distinction, intermediate visibility,
+  byte-identical lifecycle output, atomic recovery, and native watch.
 - Demand-driven execution for compatible normal `is_optional` builders when a
   later action reads or uses their declared output.
 - Stock-vs-native output comparisons for clean, no-op, incremental, failure,
@@ -52,8 +56,8 @@ The following are implemented and covered by the current fixture suite:
 
 ## Post-release research
 
-The next compatibility milestone is broader optional/post-process support,
-followed by expanding Drift beyond the isolated analyzer + modular chain:
+The next compatibility milestone is integration coverage beyond the validated
+optional/post-process and Drift builder chains:
 
 - [x] Resolve option-dependent post-process input extensions from the configured
   runtime factory, with stock comparisons for mapping changes and cleanup.
@@ -61,9 +65,13 @@ followed by expanding Drift beyond the isolated analyzer + modular chain:
   source/cache outputs and incremental, failure, and watch lifecycle behavior.
   See [ADR 0038](adr/0038-optional-post-process-demand.md) for the execution rules
   and the [fixture guide](../fixtures/optional_cleanup_app/README.md) for coverage.
-- [ ] Extend Drift fixtures to `not_shared` and full `driftCleanup`, then validate
-  `registry_builder` and `build_web_compilers` integration separately. Define
-  supported versions and workspace configurations before claiming full support.
+- [x] Extend the pinned Drift fixture to `not_shared` and the full
+  `driftCleanup` runtime input set. Compare stock/native lifecycle bytes,
+  intermediate visibility, logical cleanup, atomic failure recovery, and watch.
+  See the [fixture guide](../fixtures/drift_analyzer_app/README.md).
+- [ ] Validate `registry_builder` and `build_web_compilers` integration
+  separately. Define supported versions and workspace configurations before
+  claiming full support.
 
 - [ ] Expand the manifest subset toward complete `build.yaml` semantics while
   preserving explicit rejection outside the validated subset. Full post-process behavior and

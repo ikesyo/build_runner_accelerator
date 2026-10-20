@@ -82,6 +82,7 @@ Run the closest comparison script when changing a boundary:
 | Optional producer and post-process demand | `scripts/correctness_optional_cleanup.sh`, `scripts/watch_smoke_optional_cleanup.sh`; see the [fixture guide](../fixtures/optional_cleanup_app/README.md) |
 | Watch lifecycle | `bash scripts/watch_smoke.sh` |
 | Freezed/Riverpod compatibility | `scripts/correctness_freezed.sh`, `scripts/watch_smoke_freezed.sh`, `scripts/correctness_riverpod.sh`, `scripts/watch_smoke_riverpod.sh` |
+| Drift analyzer, modular, not_shared, and cleanup | `scripts/correctness_drift_analyzer.sh`, `scripts/watch_smoke_drift_analyzer.sh`, `scripts/correctness_drift_not_shared.sh`, `scripts/watch_smoke_drift_not_shared.sh` |
 | Nested path packages and source visibility | `bash scripts/correctness_nested_packages.sh` |
 | Manifest or builder output | The relevant fixture script; see the full verification groups. |
 
