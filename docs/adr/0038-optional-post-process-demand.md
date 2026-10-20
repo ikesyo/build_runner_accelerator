@@ -25,7 +25,9 @@ change can wake it.
 Complete normal demand before selecting post-process inputs. Post-process
 actions do not demand optional producers. Invalidate old outputs of dirty
 optional actions that normal consumers did not demand, then select cleanup
-inputs from the remaining normal results.
+inputs from the remaining normal results. An undemanded result does not
+invalidate cleanup by itself. Newly materialized optional results join cleanup
+selection in the same transaction.
 
 Persist an undemanded optional action separately from a successful action that
 emitted nothing. Future normal demand can execute the former; the latter remains

@@ -7,6 +7,23 @@ Builder consumer(BuilderOptions options) =>
     _Producer('.ready', '.final', 'final:');
 PostProcessBuilder cleanup(BuilderOptions options) => _Cleanup();
 
+Builder secondaryConsumer(BuilderOptions options) => _SecondaryConsumer();
+
+class _SecondaryConsumer implements Builder {
+  @override
+  Map<String, List<String>> get buildExtensions => {
+    '.request': ['.final'],
+  };
+  @override
+  Future<void> build(BuildStep step) async {
+    final request = await step.readAsString(step.inputId);
+    final value = request.trim() == 'demand'
+        ? await step.readAsString(step.inputId.changeExtension('.ready'))
+        : 'skipped demand\n';
+    await step.writeAsString(step.allowedOutputs.single, value);
+  }
+}
+
 class _Producer implements Builder {
   _Producer(this.input, this.output, this.prefix);
   final String input;

@@ -11,6 +11,7 @@ fixture_dir="$repo_root/fixtures/optional_cleanup_app"
 # Run both demand states by default; individual configurations remain selectable.
 if [[ -z "${CONFIG:-}" && "${STOCK_ONLY:-0}" != 1 ]]; then
   CONFIG=build.no_demand.yaml bash "$0"
+  CONFIG=build.secondary.yaml bash "$0"
   CONFIG=build.cache.yaml bash "$0"
   CONFIG=build.yaml exec bash "$0"
 fi
@@ -31,6 +32,9 @@ prepare() {
   cp "$fixture_dir/pubspec.yaml" "$fixture_dir/pubspec.lock" "$directory/"
   cp "$fixture_dir/${CONFIG:-build.yaml}" "$directory/build.yaml"
   cp "$fixture_dir/lib/"* "$directory/lib/"
+  if [[ "${CONFIG:-build.yaml}" == build.secondary.yaml ]]; then
+    printf 'skip\n' >"$directory/lib/input.request"
+  fi
   verification_run_pub_get "$directory" "pub-get/$(basename "$directory")" "$dart_bin" "$pub_cache"
 }
 run_stock() {
@@ -79,13 +83,31 @@ compare initial
 run_stock no-op
 run_rust no-op
 compare no-op
+grep -Fq 'No work to do (Rust frontend)' "$temporary_dir/no-op.rust.log" || fail 'native no-op dispatched actions'
 if [[ "${CONFIG:-build.yaml}" == build.no_demand.yaml ]]; then
   check_absent "$stock_dir"
   check_absent "$rust_dir"
   printf 'optional-cleanup: no-demand PASS\n'
   exit 0
 fi
-grep -Fq 'No work to do (Rust frontend)' "$temporary_dir/no-op.rust.log" || fail 'native no-op dispatched actions'
+if [[ "${CONFIG:-build.yaml}" == build.secondary.yaml ]]; then
+  for directory in "$stock_dir" "$rust_dir"; do
+    [[ ! -e "$directory/lib/input.stage.receipt" ]] || fail 'cleanup created demand'
+    printf 'demand\n' >"$directory/lib/input.request"
+  done
+  run_stock secondary-demand
+  run_rust secondary-demand
+  compare secondary-demand
+  for suffix in stage.receipt ready.receipt; do
+    [[ -f "$rust_dir/lib/input.$suffix" ]] || fail "missing cleanup after new secondary demand: $suffix"
+  done
+  run_stock secondary-no-op
+  run_rust secondary-no-op
+  compare secondary-no-op
+  grep -Fq 'No work to do (Rust frontend)' "$temporary_dir/secondary-no-op.rust.log" || fail 'secondary demand no-op dispatched actions'
+  printf 'optional-cleanup: secondary-demand PASS\n'
+  exit 0
+fi
 # Removing normal demand must not let cleanup resurrect an optional chain.
 for directory in "$stock_dir" "$rust_dir"; do
   sed -i '/optional_cleanup_app:consumer:/{n;s/generate_for: .*/enabled: false/;}' "$directory/build.yaml"

@@ -424,6 +424,12 @@ impl LazyBuildState {
         self.force_keys.contains(&key) && !self.built_keys.contains(&key)
     }
 
+    /// Whether this transaction has evaluated the optional action, including
+    /// a successful result with no outputs.
+    pub(crate) fn has_built(&self, spec: &BuildSpec) -> bool {
+        self.built_keys.contains(&spec.action_key())
+    }
+
     pub fn new(force_keys: BTreeSet<String>) -> Self {
         Self {
             force_keys,

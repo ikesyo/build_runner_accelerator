@@ -54,6 +54,10 @@ pub(super) fn run(
         deleted_actions,
     } = dirty_plan;
     let specs = &plan.specs;
+    let dirty_keys = dirty
+        .iter()
+        .map(|spec| spec.action_key())
+        .collect::<BTreeSet<_>>();
     eprintln!("Rust frontend: {} build action(s)", dirty.len());
     let mut worker_pool = pool;
     let mut pool_metrics = None;
@@ -124,11 +128,16 @@ pub(super) fn run(
                 crate::wall::Span::new("phase").phase(configured_builder.phase, &builder.id);
             let select =
                 crate::wall::Span::new("phase_select").phase(configured_builder.phase, &builder.id);
-            let phase_specs = dirty
+            let phase_specs = specs
                 .iter()
                 .filter(|spec| {
                     spec.instance.target == configured_builder.target
                         && spec.instance.builder.id == builder.id
+                        && (dirty_keys.contains(&spec.action_key())
+                            || (builder.kind == BuilderKind::PostProcess
+                                && lazy_specs_by_output
+                                    .get(&spec.input)
+                                    .is_some_and(|producer| lazy_state.has_built(producer))))
                 })
                 .cloned()
                 .collect::<Vec<_>>();
