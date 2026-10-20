@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.14.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.13.0...v0.14.0) - 2026-10-20
+
+- Remove stock fallback and execution modes for 0.14.0 by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/114
+- refactor: parse native build settings once by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/116
+- fix: report factory probe failures and separate native preparation by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/117
+- perf: reuse committed watch graph without cloning by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/118
+- Stabilize cold factory probes and share Dart/Rust CLI contract cases by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/119
+- fix: preserve locked dependencies in current baseline benchmark by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/120
+
 ## [v0.13.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.12.0...v0.13.0) - 2026-10-19
 
 - fix: honor package source sets for nested dependencies by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/112
