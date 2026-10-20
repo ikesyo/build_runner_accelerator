@@ -164,6 +164,9 @@ prepare_package() {
   mkdir -p "$package_dir"
   cp "$fixture_dir/build.yaml" "$package_dir/build.yaml"
   cp -R "$fixture_dir/lib" "$package_dir/lib"
+  # Keep the fixture's tested transitive versions in every isolated package.
+  # Resolving from scratch can select incompatible builder dependencies.
+  cp "$fixture_dir/pubspec.lock" "$package_dir/pubspec.lock"
   sed \
     -e "s/^name: .*/name: $package_name/" \
     -e "s/^  build_runner: .*/  build_runner: $build_runner_version/" \
@@ -175,8 +178,8 @@ prepare_package() {
   if [[ "$pub_get_offline" == 1 ]]; then
     pub_args+=(--offline)
   fi
-  (cd "$package_dir" && PUB_CACHE="$pub_cache" "$dart_bin" "${pub_args[@]}") \
-    >"$package_dir/pub-get.stdout" 2>"$package_dir/pub-get.stderr"
+  run_unmeasured "$package_dir" pub-get \
+    env "PUB_CACHE=$pub_cache" "$dart_bin" "${pub_args[@]}"
 }
 
 build_command() {
@@ -239,8 +242,20 @@ run_unmeasured() {
   local package_dir=$1
   local label=$2
   shift 2
-  (cd "$package_dir" && "$@") \
-    >"$package_dir/$label.stdout" 2>"$package_dir/$label.stderr"
+  local package_label=${package_dir#"$work_root"/}
+  local log_prefix="$results_dir/${package_label//\//.}.$label"
+  local status
+  if (cd "$package_dir" && "$@") \
+    >"$log_prefix.stdout" 2>"$log_prefix.stderr"; then
+    return 0
+  else
+    status=$?
+  fi
+  cat "$log_prefix.stdout" >&2
+  cat "$log_prefix.stderr" >&2
+  printf 'current-baseline: %s failed for %s (exit %s); logs=%s.{stdout,stderr}\n' \
+    "$label" "$package_label" "$status" "$log_prefix" >&2
+  return "$status"
 }
 
 prewarm_aot_worker() {
@@ -311,6 +326,7 @@ measure_case() {
     trace_args+=(--trace "$trace_path")
   fi
 
+  local status=0
   "$python_bin" "$measure_script" \
     --metrics "$metric_path" \
     --stdout "$output_path.stdout" \
@@ -331,7 +347,14 @@ measure_case() {
     --metadata input_count=10 \
     --metadata worker_aot_state="$worker_aot_state" \
     "${trace_args[@]}" \
-    -- "${case_command[@]}"
+    -- "${case_command[@]}" || status=$?
+  if ((status != 0)); then
+    cat "$output_path.stdout" >&2
+    cat "$output_path.stderr" >&2
+    printf 'current-baseline: measured build failed for %s/%s/r%s (exit %s); logs=%s.{stdout,stderr}\n' \
+      "$mode" "$case_name" "$repeat_index" "$status" "$output_path" >&2
+    return "$status"
+  fi
 
   local output_count
   local output_sha
