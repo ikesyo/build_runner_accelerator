@@ -121,6 +121,15 @@ fn contextual_error(context: &'static str, source: io::Error) -> io::Error {
     io::Error::new(source.kind(), FrontendError { context, source })
 }
 
+/// Preparation failures are fatal to watch even when their original I/O kind
+/// is recoverable. Keep this policy separate from the diagnostic source chain.
+pub(crate) fn is_terminal_frontend_error(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::Unsupported
+        || error
+            .get_ref()
+            .is_some_and(|source| source.is::<FrontendError>())
+}
+
 fn validate_native_manifest(
     options: &Options,
     workspace: &Workspace,
@@ -788,6 +797,14 @@ mod tests {
     fn preparation_context_preserves_io_kind_and_source() {
         let error = super::contextual_error("prepare", std::io::Error::from_raw_os_error(13));
         assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(super::is_terminal_frontend_error(&error));
+        assert!(!super::is_terminal_frontend_error(&std::io::Error::other(
+            "builder failed"
+        )));
+        assert!(super::is_terminal_frontend_error(&std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "unsupported transition"
+        )));
         assert!(error.to_string().contains("prepare"));
         let context = error.get_ref().unwrap();
         let source = context

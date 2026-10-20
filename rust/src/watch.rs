@@ -113,7 +113,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         &WatchChanges::default(),
     ) {
         Ok(()) => true,
-        Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
+        Err(error) if crate::frontend::is_terminal_frontend_error(&error) => return Err(error),
         Err(error) => {
             eprintln!("initial watch build failed: {error}");
             false
@@ -176,7 +176,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
                 native_build_succeeded = true;
                 source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
             }
-            Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
+            Err(error) if crate::frontend::is_terminal_frontend_error(&error) => return Err(error),
             Err(error) => {
                 eprintln!("watch build failed: {error}");
             }
