@@ -80,7 +80,7 @@ measure() {
   local output="$temporary_dir/$label.stdout"
   local error="$temporary_dir/$label.stderr"
   TIMEFORMAT="$label real=%3R user=%3U sys=%3S"
-  { time "$@"; } >"$output" 2>"$error" || {
+  { time VERIFY_COMMAND_LOG="$temporary_dir/$label.frontend.log" "$@"; } >"$output" 2>"$error" || {
     cat "$error" >&2
     return 1
   }
@@ -110,7 +110,7 @@ assert_same_outputs
 
 measure stock_noop run_stock "$stock_dir"
 measure rust_noop run_rust "$rust_dir"
-grep -Fq 'No work to do (Rust frontend)' "$temporary_dir/rust_noop.stdout" || \
+grep -Fq 'No work to do (Rust frontend)' "$temporary_dir/rust_noop.frontend.log" || \
   fail 'Rust no-op did not report no work'
 
 printf 'benchmark optional\n' >"$stock_dir/lib/input.txt"
