@@ -795,7 +795,8 @@ mod tests {
 
     #[test]
     fn preparation_context_preserves_io_kind_and_source() {
-        let error = super::contextual_error("prepare", std::io::Error::from_raw_os_error(13));
+        let os_code = if cfg!(windows) { 5 } else { 13 };
+        let error = super::contextual_error("prepare", std::io::Error::from_raw_os_error(os_code));
         assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
         assert!(super::is_terminal_frontend_error(&error));
         assert!(!super::is_terminal_frontend_error(&std::io::Error::other(
@@ -812,7 +813,7 @@ mod tests {
             .unwrap()
             .downcast_ref::<std::io::Error>()
             .unwrap();
-        assert_eq!(source.raw_os_error(), Some(13));
+        assert_eq!(source.raw_os_error(), Some(os_code));
     }
 
     #[test]
