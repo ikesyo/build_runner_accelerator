@@ -33,11 +33,22 @@ input when a later phase consumes a generated output.
 The Dart manifest generator remains the compatibility boundary and source of
 truth for package graph and build configuration semantics. For each selected
 application that needs runtime data—normal builders with multiple factories or
-resolved options, and post-process builders without a validated input
-extension list—it instantiates the configured factory with the resolved options
-and BuilderOptions.isRoot, then serializes a validated runtime mapping into the
-application entry. A single-factory normal builder with no resolved options
+resolved options, and post-process builders with resolved options or without a
+validated input extension list—it instantiates the configured factory with the
+resolved options and BuilderOptions.isRoot, then serializes a validated runtime
+mapping into the application entry. A single-factory normal builder with no resolved options
 uses its validated build.yaml mapping directly.
+
+For post-process builders, a validated runtime `inputExtensions` list takes
+precedence over the deprecated build.yaml `input_extensions` field and known
+cleanup defaults. Nonempty resolved options require probing even when either
+static source is available. Invalid runtime inputs remain unsupported rather
+than falling back to a static list. Applications without options retain the
+existing static/default path when available.
+
+The shared definition keeps its usable static input list. Runtime lists are
+attached to individual applications, so a target with options cannot change
+the inputs of a target using the default configuration.
 
 The Rust side consumes that normalized mapping generically. It does not
 identify built_value, source_gen, or any other package by name. A configured
@@ -72,3 +83,9 @@ validated static mapping; option-dependent and multi-factory cases exercise the
 runtime probe boundary. Generic Rust tests cover multiple mappings,
 capture/literal paths, runtime overrides, empty expected-output lists, output
 collisions, and multi-phase primary-input chains.
+
+The post-process fixture also compares option-dependent input selection against
+stock while keeping the legacy declared extensions unchanged. It covers
+switching to a different input suffix, stale-output removal, no-op, and returning
+to the original mapping. It also compares a target with an input-extension
+option alongside a target without options using the same post-process definition.

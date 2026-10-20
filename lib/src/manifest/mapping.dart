@@ -11,9 +11,10 @@ final _captureGroupRegexp = RegExp(r'\{\{(\w*)\}\}');
 bool requiresRuntimeProbe(SelectedBuilder selectedBuilder) {
   final definition = selectedBuilder.definition;
   if (definition.isPostProcess) {
-    // ignore: deprecated_member_use
-    return definition.postProcess!.inputExtensions == null &&
-        _knownPostProcessInputExtensions(definition.postProcess!) == null;
+    return selectedBuilder.options.isNotEmpty ||
+        // ignore: deprecated_member_use
+        (definition.postProcess!.inputExtensions == null &&
+            _knownPostProcessInputExtensions(definition.postProcess!) == null);
   }
   return definition.normal!.builderFactories.length > 1 ||
       selectedBuilder.options.isNotEmpty;
@@ -226,9 +227,11 @@ ManifestDefinition? _tryConvertPostProcessDefinition(
   // supplies the extension from the runtime FileDeletingBuilder instead.
   // Keep the known built-in cleanup builder in the converted subset so current
   // json_serializable builds can preserve source_gen's .g.part cleanup.
+  // A successful runtime probe is authoritative, including when resolved
+  // options change the inputs advertised by the legacy configuration.
   final inputExtensions =
-      configuredInputExtensions ??
       runtimeInputExtensions ??
+      configuredInputExtensions ??
       _knownPostProcessInputExtensions(definition);
   if (inputExtensions == null || inputExtensions.isEmpty) return null;
   if (!definition.import.startsWith('package:')) return null;

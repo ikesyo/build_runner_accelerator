@@ -64,14 +64,16 @@ worker_attach "$test_root"
 run_rust() {
   local directory=$1
   local log=$2
+  shift 2
   VERIFY_COMMAND_LOG="$log" VERIFY_WORKSPACE="$directory" worker_run_frontend \
-    build --root "$directory" --dart "$dart_bin"
+    build --root "$directory" --dart "$dart_bin" "$@"
 }
 run_stock() {
   local directory=$1
   local log=$2
+  shift 2
   verification_run_stock_build "$directory" "build/stock/$(basename "$directory")" "$log" \
-    "$dart_bin" "$pub_cache" build --delete-conflicting-outputs
+    "$dart_bin" "$pub_cache" build --delete-conflicting-outputs "$@"
 }
 run_stock_clean() {
   local directory=$1
@@ -227,9 +229,62 @@ run_case_stale_output() {
   printf 'post-process-builder: stale-output: pass\n'
 }
 
+run_case_runtime_inputs() {
+  local name=runtime-inputs
+  setup_case "$name"
+  # Stock uses the instantiated builder's inputs, even when the deprecated
+  # build.yaml input_extensions still advertises .gen.txt.
+  local directory
+  for directory in "$stock_dir" "$rust_dir"; do
+    printf 'alternate\n' >"$directory/lib/other.alt"
+    sed -i 's@lib/\*\*/\*.gen.txt@lib/**@; /emit: true/a\          input_extension: .alt' \
+      "$directory/build.yaml"
+  done
+  run_stock "$stock_dir" "$temporary_dir/$name.stock.change.log"
+  run_rust "$rust_dir" "$temporary_dir/$name.rust.change.log"
+  assert_same_file "$stock_dir/lib/input.gen.txt" "$rust_dir/lib/input.gen.txt"
+  assert_same_file "$stock_dir/lib/other.alt.post.txt" "$rust_dir/lib/other.alt.post.txt"
+  assert_no_file "$(stock_post_output "$stock_dir")"
+  assert_no_file "$(post_output "$rust_dir")"
+  run_rust "$rust_dir" "$temporary_dir/$name.rust.no-op.log"
+  grep -Fq 'No work to do (Rust frontend)' \
+    "$temporary_dir/$name.rust.no-op.log" || fail 'runtime mapping no-op failed'
+
+  for directory in "$stock_dir" "$rust_dir"; do
+    sed -i 's/input_extension: .alt/input_extension: .gen.txt/' "$directory/build.yaml"
+  done
+  run_stock "$stock_dir" "$temporary_dir/$name.stock.restore.log"
+  run_rust "$rust_dir" "$temporary_dir/$name.rust.restore.log"
+  assert_same_file "$(stock_post_output "$stock_dir")" "$(post_output "$rust_dir")"
+  assert_no_file "$stock_dir/lib/other.alt.post.txt"
+  assert_no_file "$rust_dir/lib/other.alt.post.txt"
+  printf 'post-process-builder: runtime-inputs: pass\n'
+}
+
+run_case_target_runtime_inputs() {
+  local name=target-runtime-inputs
+  setup_case "$name"
+  local directory
+  for directory in "$stock_dir" "$rust_dir"; do
+    cp "$fixture_dir/build.runtime_inputs.yaml" "$directory/build.runtime_inputs.yaml"
+    mkdir -p "$directory/lib/default" "$directory/lib/alternate"
+    printf 'default\n' >"$directory/lib/default/input.gen.txt"
+    printf 'alternate\n' >"$directory/lib/alternate/input.alt"
+  done
+  run_stock "$stock_dir" "$temporary_dir/$name.stock.log" --config runtime_inputs
+  run_rust "$rust_dir" "$temporary_dir/$name.rust.log" --config runtime_inputs
+  assert_same_file "$stock_dir/lib/default/input.gen.txt.post.txt" \
+    "$rust_dir/lib/default/input.gen.txt.post.txt"
+  assert_same_file "$stock_dir/lib/alternate/input.alt.post.txt" \
+    "$rust_dir/lib/alternate/input.alt.post.txt"
+  printf 'post-process-builder: target-runtime-inputs: pass\n'
+}
+
 verification_run_case post-process/output-delete run_case_output_delete
 verification_run_case post-process/input-change run_case_input_change
 verification_run_case post-process/rename run_case_rename
 verification_run_case post-process/input-delete run_case_input_delete
 verification_run_case post-process/stale-output run_case_stale_output
+verification_run_case post-process/runtime-inputs run_case_runtime_inputs
+verification_run_case post-process/target-runtime-inputs run_case_target_runtime_inputs
 printf 'post-process-builder: all cases passed\n'
