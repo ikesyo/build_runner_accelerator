@@ -16,6 +16,7 @@ import 'source.dart';
 // Source trigger parsing cold-compiles build_runner and Analyzer. Allow more
 // time than factory probes, especially when CI runs several cold builds.
 const _sourceTriggerTimeout = Duration(minutes: 2);
+const _factoryProbeCompileTimeout = Duration(minutes: 2);
 const _factoryProbeTimeout = Duration(seconds: 30);
 const _factoryProbeKillGracePeriod = Duration(seconds: 1);
 const _probeCacheVersion = 1;
@@ -277,14 +278,50 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
       }
     }
     if (responseText == null) {
-      await probeFile.writeAsString(_factoryProbeSource(probeRequests));
+      final source = _factoryProbeSource(probeRequests);
+      await probeFile.writeAsString(source);
+      // This artifact identity is separate from the settings/response key.
+      // Include resolution paths: a kernel embeds absolute package URIs.
+      final helperKey = await _implementationScopedCacheKey(
+        root,
+        packageConfig,
+        sha256
+            .convert(
+              utf8.encode(
+                'factory-kernel-v1\n$source\n$packageConfig\n'
+                '${await File(packageConfig).readAsString()}',
+              ),
+            )
+            .toString(),
+        probeRequests,
+      );
+      final kernel = File(p.join(temporary.path, 'probe.dill'));
+      final helperCache = helperKey == null
+          ? null
+          : File(
+              p.join(
+                acceleratorCacheDirectory(workspaceRoot: root),
+                'probe-kernel',
+                '$helperKey.dill',
+              ),
+            );
       try {
+        await compileFactoryProbeKernel(
+          root: root,
+          packageConfig: packageConfig,
+          source: probeFile,
+          kernel: kernel,
+          cachedKernel: helperCache,
+          requests: probeRequests,
+        );
+        final started = File(p.join(temporary.path, 'started'));
         responseText = await runFactoryProbeProcess(
           Platform.resolvedExecutable,
-          ['--packages=$packageConfig', probeFile.path, resultFile.path],
+          [kernel.path, resultFile.path, started.path],
           root: root,
           result: resultFile,
           requests: probeRequests,
+          started: started,
         );
       } on FactoryProbeFailure catch (error) {
         if (workerFailure != null) {
@@ -357,17 +394,23 @@ Future<String> runFactoryProbeProcess(
   required File result,
   required List<FactoryProbeRequest> requests,
   Duration timeout = _factoryProbeTimeout,
+  File? started,
+  Duration startupTimeout = _factoryProbeTimeout,
+  bool validateMappings = true,
+  String phase = 'factory',
 }) async {
   const stderrLimit = 8192;
   var tail = <int>[];
   FactoryProbeFailure failure(String kind, String reason) =>
       FactoryProbeFailure(
         kind,
-        reason,
+        '$phase: $reason',
         requests,
         stderrTail: utf8.decode(tail, allowMalformed: true),
       );
   if (result.existsSync()) await result.delete();
+  if (started != null && started.existsSync()) await started.delete();
+  final timer = Stopwatch()..start();
   final Process process;
   try {
     process = await Process.start(command, arguments, workingDirectory: root);
@@ -380,24 +423,59 @@ Future<String> runFactoryProbeProcess(
     if (tail.length > stderrLimit)
       tail = tail.sublist(tail.length - stderrLimit);
   });
+  var activePhase = phase;
+  Future<int> execution() async {
+    if (started != null) {
+      // Source main marks the boundary before instantiating any factory.
+      int? exited;
+      unawaited(
+        process.exitCode.then((code) {
+          exited = code;
+        }),
+      );
+      final startup = Stopwatch()..start();
+      while (!started.existsSync()) {
+        if (startup.elapsed >= startupTimeout)
+          throw TimeoutException('probe startup exceeded $startupTimeout');
+        if (exited != null) return exited!;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      _probeMetric('startup', startup.elapsed);
+      activePhase = 'factory';
+      final factory = Stopwatch()..start();
+      try {
+        return await process.exitCode.timeout(timeout);
+      } finally {
+        _probeMetric('factory', factory.elapsed);
+      }
+    }
+    return process.exitCode;
+  }
+
+  activePhase = started == null ? phase : 'startup';
+  // The outer startup deadline includes the inner factory deadline; after the
+  // marker each phase still has its own bound, without sharing a 30s budget.
   final code = await waitForProbeExit(
-    exitCode: process.exitCode,
+    exitCode: execution(),
+    terminated: process.exitCode,
     kill: () {
       process.kill();
     },
     forceKill: () {
       process.kill(ProcessSignal.sigkill);
     },
-    timeout: timeout,
+    timeout: started == null ? timeout : startupTimeout + timeout,
   );
+  if (started == null) _probeMetric(phase, timer.elapsed);
   // Descendants can inherit a pipe. Do not let EOF defeat the process timeout.
   await Future.wait([
     stdoutDone,
     stderrDone,
   ]).timeout(_factoryProbeKillGracePeriod, onTimeout: () => <void>[]);
-  if (code == null) throw failure('timeout', 'exceeded $timeout');
+  if (code == null) throw failure('timeout', '$activePhase deadline exceeded');
   if (code != 0) throw failure('nonzero exit', 'exit code $code');
   if (!result.existsSync()) throw failure('missing result', result.path);
+  if (!validateMappings) return result.path;
   final String response;
   try {
     response = await result.readAsString();
@@ -411,6 +489,74 @@ Future<String> runFactoryProbeProcess(
     throw failure('result read failure', error.toString());
   }
   return response;
+}
+
+void _probeMetric(String phase, Duration elapsed, {String? cache}) {
+  if (Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1') {
+    stderr.writeln(
+      'Dart manifest probe: phase=$phase elapsed_ms=${elapsed.inMilliseconds}'
+      '${cache == null ? '' : ' cache=$cache'}',
+    );
+  }
+}
+
+/// Compile separately from factory execution. Publish only a successful kernel;
+/// a response failure never populates the mapping cache.
+Future<void> compileFactoryProbeKernel({
+  required String root,
+  required String packageConfig,
+  required File source,
+  required File kernel,
+  required List<FactoryProbeRequest> requests,
+  File? cachedKernel,
+  Duration timeout = _factoryProbeCompileTimeout,
+}) async {
+  final timer = Stopwatch()..start();
+  if (cachedKernel != null && cachedKernel.existsSync()) {
+    try {
+      await cachedKernel.copy(kernel.path);
+      _probeMetric('compile', timer.elapsed, cache: 'hit');
+      return;
+    } on FileSystemException {
+      // A cache read failure is a miss.
+    }
+  }
+  await runFactoryProbeProcess(
+    Platform.resolvedExecutable,
+    [
+      'compile',
+      'kernel',
+      '--packages=$packageConfig',
+      '-o',
+      kernel.path,
+      source.path,
+    ],
+    root: root,
+    result: kernel,
+    requests: requests,
+    timeout: timeout,
+    validateMappings: false,
+    phase: 'compile',
+  );
+  if (cachedKernel != null) {
+    File? pending;
+    try {
+      await cachedKernel.parent.create(recursive: true);
+      pending = File(
+        '${cachedKernel.path}.$pid.${DateTime.now().microsecondsSinceEpoch}.tmp',
+      );
+      await kernel.copy(pending.path);
+      await pending.rename(cachedKernel.path);
+    } on FileSystemException {
+      // Cache publication is best effort and never exposes a partial kernel.
+    } finally {
+      try {
+        if (pending != null && pending.existsSync()) await pending.delete();
+      } on FileSystemException {
+        // Best effort cleanup.
+      }
+    }
+  }
 }
 
 /// An invocation-local readiness marker is useful only for identical source.
@@ -511,6 +657,7 @@ Future<String?> _probeWithWorkerAot(
 Future<int?> waitForProbeExit({
   required Future<int> exitCode,
   required void Function() kill,
+  Future<int>? terminated,
   void Function()? forceKill,
   Duration timeout = _factoryProbeTimeout,
   Duration killGracePeriod = _factoryProbeKillGracePeriod,
@@ -520,12 +667,12 @@ Future<int?> waitForProbeExit({
   } on TimeoutException {
     kill();
     try {
-      await exitCode.timeout(killGracePeriod);
+      await (terminated ?? exitCode).timeout(killGracePeriod);
     } on TimeoutException {
       forceKill?.call();
       // Do not wait indefinitely for an unresponsive child after escalation.
       try {
-        await exitCode.timeout(killGracePeriod);
+        await (terminated ?? exitCode).timeout(killGracePeriod);
       } on TimeoutException {
         // The probe still must not keep manifest generation blocked.
       }
@@ -931,10 +1078,11 @@ String _factoryProbeSource(Iterable<FactoryProbeRequest> requests) {
   output
     ..writeln()
     ..writeln('void main(List<String> args) {')
-    ..writeln('  if (args.length != 1) {')
+    ..writeln('  if (args.length != 2) {')
     ..writeln('    exitCode = 64;')
     ..writeln('    return;')
     ..writeln('  }')
+    ..writeln('  File(args[1]).writeAsStringSync(\'ready\');')
     ..writeln('  final result = <String, dynamic>{};');
   for (final request in sorted) {
     final importUri = request.definition.isPostProcess
@@ -975,7 +1123,7 @@ String _factoryProbeSource(Iterable<FactoryProbeRequest> requests) {
       ..writeln('    }');
   }
   output
-    ..writeln('  File(args.single).writeAsStringSync(jsonEncode(result));')
+    ..writeln('  File(args.first).writeAsStringSync(jsonEncode(result));')
     ..writeln('}')
     ..writeln()
     ..writeln(

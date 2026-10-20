@@ -184,6 +184,173 @@ void main(List<String> args) {
     });
   });
 
+  group('compiled source helper', () {
+    late Directory temporary;
+    late File source;
+    late File kernel;
+    late File cached;
+    final requests = [_request(_config(), 'selected')];
+    final packageConfig = File('.dart_tool/package_config.json').absolute.path;
+    setUp(() {
+      temporary = Directory.systemTemp.createTempSync('probe-kernel-');
+      source = File('${temporary.path}/probe.dart');
+      kernel = File('${temporary.path}/probe.dill');
+      cached = File('${temporary.path}/cache/probe.dill');
+    });
+    tearDown(() => temporary.deleteSync(recursive: true));
+
+    Future<void> compile({Duration? timeout}) => compileFactoryProbeKernel(
+      root: temporary.path,
+      packageConfig: packageConfig,
+      source: source,
+      kernel: kernel,
+      cachedKernel: cached,
+      requests: requests,
+      timeout: timeout ?? const Duration(seconds: 20),
+    );
+
+    test(
+      'cold compile and warm helper reuse execute identical mappings',
+      () async {
+        final response = jsonEncode({
+          'selected': [
+            {
+              'factory': 'createBuilder',
+              'build_extensions': {
+                '.dart': ['.g.dart'],
+              },
+            },
+          ],
+        });
+        source.writeAsStringSync("""import 'dart:io';
+void main(List<String> args) {
+  File(args[1]).writeAsStringSync('ready');
+  File(args[0]).writeAsStringSync(${jsonEncode(response)});
+}
+""");
+        Future<String> run() => runFactoryProbeProcess(
+          Platform.resolvedExecutable,
+          [
+            kernel.path,
+            '${temporary.path}/result.json',
+            '${temporary.path}/ready',
+          ],
+          root: temporary.path,
+          result: File('${temporary.path}/result.json'),
+          requests: requests,
+          started: File('${temporary.path}/ready'),
+        );
+        await compile();
+        expect(await run(), response);
+        final bytes = cached.readAsBytesSync();
+        source.deleteSync(); // A warm hit must not invoke the compiler.
+        kernel.deleteSync();
+        await compile();
+        expect(kernel.readAsBytesSync(), bytes);
+        expect(await run(), response);
+      },
+    );
+
+    test('compile errors retain context and never publish a helper', () async {
+      source.writeAsStringSync('invalid Dart source');
+      await expectLater(
+        compile(),
+        throwsA(
+          isA<FactoryProbeFailure>()
+              .having((e) => e.kind, 'kind', 'nonzero exit')
+              .having((e) => e.reason, 'phase', contains('compile'))
+              .having((e) => e.stderrTail, 'compiler error', isNotEmpty)
+              .having((e) => e.context, 'context', contains('createBuilder')),
+        ),
+      );
+      expect(cached.existsSync(), isFalse);
+    });
+
+    test('compile timeout never publishes a helper', () async {
+      source.writeAsStringSync('void main() {}');
+      await expectLater(
+        compile(timeout: const Duration(milliseconds: 1)),
+        throwsA(
+          isA<FactoryProbeFailure>().having((e) => e.kind, 'kind', 'timeout'),
+        ),
+      );
+      expect(cached.existsSync(), isFalse);
+    });
+
+    test('startup has a separate budget from factory execution', () async {
+      source.writeAsStringSync("""import 'dart:io'; import 'dart:async';
+Future<void> main(List<String> args) async {
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  File(args[1]).writeAsStringSync('ready');
+  File(args[0]).writeAsStringSync('invalid response');
+}
+""");
+      await compile();
+      await expectLater(
+        runFactoryProbeProcess(
+          Platform.resolvedExecutable,
+          [kernel.path, '${temporary.path}/result', '${temporary.path}/ready'],
+          root: temporary.path,
+          result: File('${temporary.path}/result'),
+          requests: requests,
+          started: File('${temporary.path}/ready'),
+          timeout: const Duration(milliseconds: 200),
+        ),
+        throwsA(
+          isA<FactoryProbeFailure>().having(
+            (e) => e.kind,
+            'kind',
+            'malformed response',
+          ),
+        ),
+      );
+    });
+
+    test(
+      'startup and factory timeouts reject even an existing result',
+      () async {
+        source.writeAsStringSync("""import 'dart:io'; import 'dart:async';
+void main(List<String> args) {
+  if (args.length > 2) File(args[1]).writeAsStringSync('ready');
+  File(args[0]).writeAsStringSync('{}');
+  Timer.periodic(const Duration(seconds: 1), (_) {});
+}
+""");
+        await compile();
+        for (final factory in [false, true]) {
+          await expectLater(
+            runFactoryProbeProcess(
+              Platform.resolvedExecutable,
+              [
+                kernel.path,
+                '${temporary.path}/result',
+                '${temporary.path}/ready',
+                if (factory) 'factory',
+              ],
+              root: temporary.path,
+              result: File('${temporary.path}/result'),
+              requests: requests,
+              started: File('${temporary.path}/ready'),
+              startupTimeout: factory
+                  ? const Duration(seconds: 10)
+                  : const Duration(milliseconds: 100),
+              timeout: const Duration(milliseconds: 100),
+            ),
+            throwsA(
+              isA<FactoryProbeFailure>()
+                  .having((e) => e.kind, 'kind', 'timeout')
+                  .having(
+                    (e) => e.reason,
+                    'phase',
+                    contains(factory ? 'factory deadline' : 'startup deadline'),
+                  ),
+            ),
+          );
+        }
+      },
+    );
+  });
+
   test('escalates a probe that ignores graceful termination', () async {
     final exitCode = Completer<int>();
     final signals = <String>[];
