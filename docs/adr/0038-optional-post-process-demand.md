@@ -5,46 +5,43 @@
 
 ## Context
 
-Normal optional producers and post-process actions share a planned generated
-input set. A planned input is only a possible output: its producer may never
-be demanded, or may successfully emit nothing. Treating post-process input
-reads like normal consumer demand executes producers that stock skips.
+The planner includes declared optional outputs so later normal builders can
+consume them. These declarations can also match post-process inputs even when
+no normal builder demands the producer. A producer can also run successfully
+without emitting its declared outputs.
+
+Stock build_runner treats normal consumers as a source of optional demand and
+runs post-process actions on the results of normal phases. Execution and graph
+reuse must preserve the distinction between a declared output and an available
+normal result.
 
 ## Decision
 
-Normal consumers materialize optional primary inputs before deciding whether
-to execute. This applies recursively to optional producers with generated
-primary inputs. If a producer emits nothing, skip its downstream primary-input
-actions and remove their old outputs at the existing all-success commit boundary.
-Keep the primary dependency so a later producer change can wake the consumer.
+Resolve an optional primary input before dispatching its normal consumer. Apply
+this rule recursively through optional producer chains. If the producer emits
+nothing, skip the consumer and retain its primary dependency so a later producer
+change can wake it.
 
-Post-process actions do not create optional demand. They run only after normal
-phases, on inputs actually available in the transaction or reusable on disk.
-Their runtime input mappings, target filters, generated asset locations, and
-phase visibility continue to come from the shared manifest/action model.
-Invalidated optional actions that normal consumers did not demand lose their
-old outputs before post-process selection. Their committed `undemanded` state
-remains eligible for future normal demand. The configuration digest domain is
-bumped so older graph evidence cannot authorize reuse under these rules.
-No package name controls this behavior.
+Complete normal demand before selecting post-process inputs. Post-process
+actions do not demand optional producers. Invalidate old outputs of dirty
+optional actions that normal consumers did not demand, then select cleanup
+inputs from the remaining normal results.
 
-Builder failures discard staged outputs, deletions, and graph updates. Native-only
-execution and explicit rejection outside the supported subset remain unchanged.
+Persist an undemanded optional action separately from a successful action that
+emitted nothing. Future normal demand can execute the former; the latter remains
+reusable until its recorded inputs change. Graph reuse must validate this
+execution meaning as part of configuration compatibility.
 
-## Validation and limits
+Keep output writes, stale-output removal, cleanup deletions, and action state in
+one transaction. Publish them only after all required actions succeed.
 
-`fixtures/optional_cleanup_app` compares stock build_runner 2.16.2 with native
-execution for undemanded outputs, two optional producer stages, a normal
-primary consumer, source/cache producer locations, and cleanup receipts produced
-from both generated inputs.
-The fixture's cleanup calls `deletePrimaryInput()`. Stock leaves the generated
-source files on disk in this configuration; physical output comparisons include
-those files as well as receipts and final outputs. This observation does not
-establish complete post-build output-reader or full Drift cleanup compatibility.
+## Rationale
 
-The comparison covers no-op, edits, omitted producer outputs and stale-output
-removal, restoration, demand removal/restoration, normal-output deletion, rename,
-source deletion, and atomic recovery from producer and cleanup failures.
-The watch probe covers edits, failures, recovery, rename, deletion, and recreation.
-The compatibility-lifecycle verification suite retains both probes alongside
-the existing optional and post-process checks.
+Demand at a normal primary-input boundary prevents a consumer from running on
+an output that its producer omitted. Resolving nested primaries uses the same
+rule throughout the dependency chain.
+
+Selecting cleanup inputs after normal demand prevents cleanup from activating
+otherwise unused producers or reading their stale outputs. The shared action
+model already carries builder kind, optionality, phase, and output location,
+so these rules apply uniformly to configured builders.
