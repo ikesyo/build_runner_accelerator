@@ -1,7 +1,7 @@
 use crate::build;
 use crate::builder::{ConfiguredBuilder, RustBuildConfig};
 use crate::cli::Options;
-use crate::frontend::{NativeFrontend, select_frontend, unsupported, worker_executable};
+use crate::frontend::{NativeFrontend, prepare_native_frontend, unsupported, worker_executable};
 use crate::graph::GraphState;
 use crate::pattern::match_capture_pattern;
 use crate::worker::WorkerPool;
@@ -113,7 +113,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         &WatchChanges::default(),
     ) {
         Ok(()) => true,
-        Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
+        Err(error) if crate::frontend::is_terminal_frontend_error(&error) => return Err(error),
         Err(error) => {
             eprintln!("initial watch build failed: {error}");
             false
@@ -179,7 +179,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
                 native_build_succeeded = true;
                 source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
             }
-            Err(error) if error.kind() == io::ErrorKind::Unsupported => return Err(error),
+            Err(error) if crate::frontend::is_terminal_frontend_error(&error) => return Err(error),
             Err(error) => {
                 eprintln!("watch build failed: {error}");
             }
@@ -245,10 +245,10 @@ fn run_watch_build(
         if let Some(config) = &watch_state.cached_configuration {
             NativeFrontend::new(config.clone())
         } else {
-            select_frontend(options, &workspace, &loaded_graph.state)?
+            prepare_native_frontend(options, &workspace, &loaded_graph.state)?
         }
     } else {
-        select_frontend(options, &workspace, &loaded_graph.state)?
+        prepare_native_frontend(options, &workspace, &loaded_graph.state)?
     };
     let build_config = &frontend.config;
     workspace.configure_sources(build_config.asset_sources.as_ref());
