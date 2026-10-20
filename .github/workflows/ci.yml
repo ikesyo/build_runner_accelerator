@@ -732,10 +732,14 @@ jobs:
       - parallel:
           - name: "Compatibility: post-process Builder"
             shell: bash
-            run: bash scripts/correctness_post_process_builder.sh
+            run: |
+              bash scripts/correctness_post_process_builder.sh
+              bash scripts/correctness_optional_cleanup.sh
           - name: "Compatibility: post-process watch"
             shell: bash
-            run: bash scripts/watch_smoke_post_process_builder.sh
+            run: |
+              bash scripts/watch_smoke_post_process_builder.sh
+              bash scripts/watch_smoke_optional_cleanup.sh
           - name: "Compatibility: graph"
             shell: bash
             run: |
