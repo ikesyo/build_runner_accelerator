@@ -38,6 +38,15 @@ pub(crate) struct LoadedGraph {
 }
 
 impl LoadedGraph {
+    pub fn resident(state: GraphState, path: &std::path::Path) -> Self {
+        let _reuse = crate::wall::Span::new("graph_reuse");
+        Self {
+            state,
+            load_us: 0,
+            load_bytes: graph_file_size(path),
+        }
+    }
+
     pub fn load(workspace: &Workspace) -> io::Result<Self> {
         let _load = crate::wall::Span::new("graph_load");
         let started = Instant::now();
@@ -109,6 +118,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         true,
         &crate::watch::WatchChanges::default(),
     )
+    .map(|_| ())
 }
 
 pub(crate) fn run_with_config_session(
@@ -119,7 +129,7 @@ pub(crate) fn run_with_config_session(
     loaded_graph: LoadedGraph,
     session_start: bool,
     changed_paths: &crate::watch::WatchChanges,
-) -> io::Result<()> {
+) -> io::Result<Option<GraphState>> {
     // Watch already resolved the workspace and manifest to initialize or
     // reuse its worker pool. Keep that resolution alive for the build itself.
     let _wall = crate::wall::Session::new();
@@ -236,11 +246,11 @@ pub(crate) fn run_with_config_session(
     };
     planning::report_metrics(&plan, &state, &build_config);
     if planning::report_plan_only(&workspace, &plan) {
-        return Ok(());
+        return Ok(None);
     }
 
     if !filters.is_empty() {
-        return filtered::run(
+        filtered::run(
             options,
             pool,
             &workspace,
@@ -255,7 +265,8 @@ pub(crate) fn run_with_config_session(
             &current_snapshot,
             &changed_paths.paths,
             retained_output_guard,
-        );
+        )?;
+        return Ok((!settings.only_check).then_some(state));
     }
     let dirty = crate::wall::Span::new("dirty_check");
     let dirty_plan = dirty::analyze(
@@ -308,7 +319,7 @@ pub(crate) fn run_with_config_session(
             );
             print_workspace_read_metrics(workspace.read_metrics());
         }
-        return Ok(());
+        return Ok(Some(state));
     }
 
     let executing = crate::wall::Span::new("execution");
@@ -402,7 +413,7 @@ pub(crate) fn run_with_config_session(
     } else {
         println!("Build completed (Rust frontend)");
     }
-    Ok(())
+    Ok(Some(state))
 }
 
 pub(crate) fn empty_filtered_result(spec: &crate::plan::BuildSpec) -> crate::protocol::BuildResult {

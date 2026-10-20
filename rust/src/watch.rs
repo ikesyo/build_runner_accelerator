@@ -1,3 +1,6 @@
+mod graph;
+
+use self::graph::ResidentGraph;
 use crate::build;
 use crate::builder::{ConfiguredBuilder, RustBuildConfig};
 use crate::cli::Options;
@@ -60,6 +63,7 @@ impl WatchEvents {
 struct WatchState {
     cached_configuration: Option<RustBuildConfig>,
     events: WatchEvents,
+    graph: ResidentGraph,
 }
 
 fn added_event_paths(event: &Event) -> Vec<PathBuf> {
@@ -132,7 +136,8 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
             .is_some_and(|root| root != workspace.root);
     }
     if native_build_succeeded {
-        source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
+        source_post_process_outputs =
+            load_source_post_process_outputs(&workspace.root, watch_state.graph.committed());
     }
     println!(
         "Watching {} (native filesystem events)",
@@ -143,11 +148,14 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         if let Some(config) = &watch_state.cached_configuration {
             workspace.configure_sources(config.asset_sources.as_ref());
         }
+        // This flag records whether any build has succeeded. Later builder
+        // failures retain event classification from the committed disk graph.
         let previous_state = if native_build_succeeded {
-            Some(load_watch_graph(
-                &build::graph_path(&workspace),
-                "event_filter",
-            )?)
+            Some(
+                watch_state
+                    .graph
+                    .for_events(&build::graph_path(&workspace))?,
+            )
         } else {
             None
         };
@@ -161,7 +169,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
             &source_post_process_outputs,
             options.interval_ms,
             stock_config_path.as_deref(),
-            previous_state.as_ref(),
+            previous_state,
             !settings.build_filters.is_empty(),
         )?;
 
@@ -177,7 +185,10 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         ) {
             Ok(()) => {
                 native_build_succeeded = true;
-                source_post_process_outputs = load_source_post_process_outputs(&workspace.root);
+                source_post_process_outputs = load_source_post_process_outputs(
+                    &workspace.root,
+                    watch_state.graph.committed(),
+                );
             }
             Err(error) if crate::frontend::is_terminal_frontend_error(&error) => return Err(error),
             Err(error) => {
@@ -238,7 +249,7 @@ fn run_watch_build(
     };
     let _wall = crate::wall::Session::new();
     let workspace = Workspace::load(options.root.clone())?;
-    let loaded_graph = build::LoadedGraph::load(&workspace)?;
+    let loaded_graph = watch_state.graph.take_for_build(&workspace)?;
     let session_start = watch_state.cached_configuration.is_none();
     let filtered = !options.settings.build_filters.is_empty();
     let mut frontend = if reuse_configuration {
@@ -343,7 +354,8 @@ fn run_watch_build(
         worker_pool.pin_worker_artifact();
         *pool = Some(worker_pool);
     }
-    build::run_with_config_session(
+    let state_path = build::graph_path(&workspace);
+    let committed = build::run_with_config_session(
         options,
         pool.as_mut(),
         workspace,
@@ -352,6 +364,9 @@ fn run_watch_build(
         session_start,
         changed_paths,
     )?;
+    // The owned working graph is returned only after successful publication.
+    // Any earlier error drops it; the next attempt then reloads disk state.
+    watch_state.graph.publish(&state_path, committed);
     cycle_metrics.success = true;
     Ok(())
 }
@@ -476,7 +491,10 @@ fn is_configuration_event(workspace: &Workspace, event: &Event, selected: Option
     })
 }
 
-fn load_source_post_process_outputs(root: &Path) -> BTreeSet<String> {
+fn load_source_post_process_outputs(
+    root: &Path,
+    committed: Option<&GraphState>,
+) -> BTreeSet<String> {
     let manifest_path = root.join(".dart_tool/build_runner_accelerator/builder-manifest.json");
     let Ok(contents) = fs::read_to_string(manifest_path) else {
         return BTreeSet::new();
@@ -500,8 +518,16 @@ fn load_source_post_process_outputs(root: &Path) -> BTreeSet<String> {
     }
 
     let graph_path = root.join(".dart_tool/build_runner_accelerator/graph-v3.bin");
-    let Ok(state) = load_watch_graph(&graph_path, "post_process_outputs") else {
-        return BTreeSet::new();
+    let loaded;
+    let state = match committed {
+        Some(state) => state,
+        None => {
+            loaded = match load_watch_graph(&graph_path, "post_process_outputs") {
+                Ok(state) => state,
+                Err(_) => return BTreeSet::new(),
+            };
+            &loaded
+        }
     };
     state
         .actions

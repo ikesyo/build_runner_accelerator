@@ -48,6 +48,7 @@ Benchmarks and mechanical refactors do not need one.
 | [0034](0034-native-output-policies.md) | Output verification, retained generated digests, and policy fallback |
 | [0035](0035-package-source-identity.md) | Package source sets, nested asset identities and watch boundary |
 | [0036](0036-native-only-execution.md) | Native-only execution and removal of stock fallback |
+| [0037](0037-resident-watch-graph.md) | Resident committed graph ownership and disk recovery in native watch |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
 artifacts and launcher behavior are in
