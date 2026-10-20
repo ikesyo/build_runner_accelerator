@@ -30,12 +30,18 @@ void main() {
       });
       final packageConfig = File('$root/.dart_tool/package_config.json')
         ..writeAsStringSync(jsonEncode(config));
+      File('$root/lib/schema.txt').writeAsStringSync('package resource');
       final builder = File('$root/lib/builder.dart');
       final count = File('$root/count');
       final fail = File('$root/fail')..writeAsStringSync('');
       builder.writeAsStringSync("""import 'dart:io';
+import 'dart:isolate';
 import 'package:build/build.dart';
 Builder createBuilder(BuilderOptions options) {
+  final resource = Isolate.resolvePackageUriSync(Uri.parse('package:example/schema.txt'));
+  if (resource == null || File.fromUri(resource).readAsStringSync() != 'package resource') {
+    throw StateError('package resource unavailable');
+  }
   File(${jsonEncode(count.path)}).writeAsStringSync('called\\n', mode: FileMode.append);
   if (File(${jsonEncode(fail.path)}).existsSync()) throw StateError('factory cause');
   return Example();

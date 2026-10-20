@@ -342,7 +342,11 @@ void main(List<String> args) {
                   .having(
                     (e) => e.reason,
                     'phase',
-                    contains(factory ? 'factory deadline' : 'startup deadline'),
+                    contains(
+                      factory
+                          ? 'factory: deadline exceeded'
+                          : 'startup: deadline exceeded',
+                    ),
                   ),
             ),
           );

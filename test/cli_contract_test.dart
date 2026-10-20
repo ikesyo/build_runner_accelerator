@@ -32,6 +32,12 @@ void main() {
       final settings = BuildSettings.parse(arguments);
       final expected = c['settings'] as Map;
       expect(options.config, expected['config']);
+      expect(
+        options.config == null
+            ? null
+            : BuildSettings.configPath(options.config!),
+        expected['config_path'],
+      );
       expect(settings.release, expected['release']);
       expect(settings.defines, expected['defines']);
       expect(settings.buildFilters.length, expected['filters']);

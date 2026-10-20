@@ -317,7 +317,12 @@ Future<Map<String, List<FactoryMapping>>> probeFactoryMappings(
         final started = File(p.join(temporary.path, 'started'));
         responseText = await runFactoryProbeProcess(
           Platform.resolvedExecutable,
-          [kernel.path, resultFile.path, started.path],
+          [
+            '--packages=$packageConfig',
+            kernel.path,
+            resultFile.path,
+            started.path,
+          ],
           root: root,
           result: resultFile,
           requests: probeRequests,
@@ -401,10 +406,11 @@ Future<String> runFactoryProbeProcess(
 }) async {
   const stderrLimit = 8192;
   var tail = <int>[];
+  var activePhase = started == null ? phase : 'startup';
   FactoryProbeFailure failure(String kind, String reason) =>
       FactoryProbeFailure(
         kind,
-        '$phase: $reason',
+        '$activePhase: $reason',
         requests,
         stderrTail: utf8.decode(tail, allowMalformed: true),
       );
@@ -423,7 +429,6 @@ Future<String> runFactoryProbeProcess(
     if (tail.length > stderrLimit)
       tail = tail.sublist(tail.length - stderrLimit);
   });
-  var activePhase = phase;
   Future<int> execution() async {
     if (started != null) {
       // Source main marks the boundary before instantiating any factory.
@@ -452,7 +457,6 @@ Future<String> runFactoryProbeProcess(
     return process.exitCode;
   }
 
-  activePhase = started == null ? phase : 'startup';
   // The outer startup deadline includes the inner factory deadline; after the
   // marker each phase still has its own bound, without sharing a 30s budget.
   final code = await waitForProbeExit(
@@ -472,7 +476,7 @@ Future<String> runFactoryProbeProcess(
     stdoutDone,
     stderrDone,
   ]).timeout(_factoryProbeKillGracePeriod, onTimeout: () => <void>[]);
-  if (code == null) throw failure('timeout', '$activePhase deadline exceeded');
+  if (code == null) throw failure('timeout', 'deadline exceeded');
   if (code != 0) throw failure('nonzero exit', 'exit code $code');
   if (!result.existsSync()) throw failure('missing result', result.path);
   if (!validateMappings) return result.path;

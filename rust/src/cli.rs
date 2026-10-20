@@ -584,12 +584,14 @@ mod tests {
                 "{name}"
             );
             let settings = options.settings;
+            let config_path = settings.config_path().unwrap();
             let actual = serde_json::json!({
-                "config": settings.config, "release": settings.release,
+                "config": settings.config, "config_path": config_path, "release": settings.release,
                 "defines": settings.defines, "filters": settings.build_filters.len(),
                 "only_check": settings.only_check,
                 "keep_modified_outputs": settings.keep_modified_outputs,
                 "deletion": settings.deletion_flag,
+                "force_aot": settings.force_aot, "force_jit": settings.force_jit,
             });
             assert_eq!(actual, case["settings"], "{name}");
         }

@@ -103,6 +103,10 @@ def check_shared_contract(root, fake_dart, capture):
                       env={**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/missing-native'})
             if informational:
                 assert log.strip(), case['name']
+                if case.get('version'):
+                    assert log.splitlines()[-1] == PACKAGE_VERSION, case['name']
+                if case.get('help'):
+                    assert 'build_runner_accelerator' in log, case['name']
             assert {str(p.relative_to(root)): p.read_bytes()
                     for p in root.rglob('*') if p.is_file()} == snapshot, case['name']
             assert not capture.exists(), case['name']
