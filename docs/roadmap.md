@@ -18,6 +18,9 @@ The following are implemented and covered by the current fixture suite:
 - Generic target/package ordering, multiple extension mappings, source/cache
   outputs, the `build_extensions: {"": [...]}` all-asset mapping, and the
   supported post-process subset.
+- Runtime post-process input mappings for applications with resolved options,
+  including overrides of legacy declared extensions, input selection changes,
+  stale-output cleanup, and no-op behavior.
 - Runtime expected-output mapping probes for selected applications that
   need runtime data (including multi-factory and option-dependent builders),
   phase-aware generated-input visibility, and resident-worker Builder/Resource
@@ -49,6 +52,18 @@ The following are implemented and covered by the current fixture suite:
 
 ## Post-release research
 
+The next compatibility milestone is broader optional/post-process support,
+followed by expanding Drift beyond the isolated analyzer + modular chain:
+
+- [x] Resolve option-dependent post-process input extensions from the configured
+  runtime factory, with stock comparisons for mapping changes and cleanup.
+- [ ] Validate optional producer chains combined with post-process cleanup,
+  including undemanded outputs, nested demand, deletion, failure recovery, and
+  watch. Extend the shared action model only where stock comparisons expose gaps.
+- [ ] Extend Drift fixtures to `not_shared` and full `driftCleanup`, then validate
+  `registry_builder` and `build_web_compilers` integration separately. Define
+  supported versions and workspace configurations before claiming full support.
+
 - [ ] Expand the manifest subset toward complete `build.yaml` semantics while
   preserving explicit rejection outside the validated subset. Full post-process behavior and
   workspace semantics remain separate follow-ups.
@@ -63,9 +78,6 @@ The following are implemented and covered by the current fixture suite:
 - [ ] Validate mixed builders and multi-package workspaces from real projects.
 - [ ] Consider builder-specific fast paths only when they beat the generic
   manifest path under the same fixture and SDK conditions.
-- [ ] Extend the Drift probe beyond the isolated analyzer + modular subset:
-  `not_shared`, full `driftCleanup`, `registry_builder`,
-  `build_web_compilers`, and complete Drift workspaces remain out of scope.
 
 ## Verification policy
 

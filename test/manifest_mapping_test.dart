@@ -109,6 +109,75 @@ void main() {
   });
 
   group('post-process definitions', () {
+    test('probes option-dependent inputs despite configured extensions', () {
+      final config = BuildConfig.fromMap('example', const <String>[], {});
+      final target = TargetInfo(
+        package: PackageInfo(name: 'example', path: '.', isRoot: true),
+        target: config.buildTargets.values.single,
+        sources: const PatternSet(<String>['lib/**'], <String>[]),
+      );
+      final definition = DefinitionInfo.postProcess(
+        _postProcessDefinition(BuildTo.source),
+      );
+      expect(
+        requiresRuntimeProbe(
+          SelectedBuilder(definition, target, InputSet(), const {}),
+        ),
+        isFalse,
+      );
+      expect(
+        requiresRuntimeProbe(
+          SelectedBuilder(definition, target, InputSet(), const {
+            'input_extension': '.alternate.txt',
+          }),
+        ),
+        isTrue,
+      );
+    });
+
+    test('runtime inputs override legacy configured extensions', () {
+      final converted = tryConvertDefinition(
+        DefinitionInfo.postProcess(_postProcessDefinition(BuildTo.source)),
+        <FactoryMapping>[
+          FactoryMapping(
+            factory: 'createPostProcessBuilder',
+            buildExtensions: const {},
+            inputExtensions: const <String>['.alternate.txt'],
+          ),
+        ],
+        triggers: const <ManifestTrigger>[],
+      )!.single;
+
+      expect(converted.inputExtensions, <String>['.alternate.txt']);
+    });
+
+    test(
+      'invalid runtime inputs cannot fall back to configured extensions',
+      () {
+        for (final inputs in <List<String>>[
+          <String>[],
+          <String>['{{unsupported}}'],
+        ]) {
+          expect(
+            tryConvertDefinition(
+              DefinitionInfo.postProcess(
+                _postProcessDefinition(BuildTo.source),
+              ),
+              <FactoryMapping>[
+                FactoryMapping(
+                  factory: 'createPostProcessBuilder',
+                  buildExtensions: const {},
+                  inputExtensions: inputs,
+                ),
+              ],
+              triggers: const <ManifestTrigger>[],
+            ),
+            isNull,
+          );
+        }
+      },
+    );
+
     test('preserves a source build_to value', () {
       final converted = tryConvertDefinition(
         DefinitionInfo.postProcess(_postProcessDefinition(BuildTo.source)),

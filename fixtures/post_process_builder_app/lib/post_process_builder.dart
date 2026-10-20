@@ -6,6 +6,8 @@ PostProcessBuilder appendPostProcessBuilder(BuilderOptions options) =>
     _AppendPostProcessBuilder(
       emit: options.config['emit'] as bool? ?? true,
       fail: options.config['fail'] as bool? ?? false,
+      inputExtension:
+          options.config['input_extension'] as String? ?? '.gen.txt',
     );
 
 class _EchoBuilder implements Builder {
@@ -28,13 +30,18 @@ class _EchoBuilder implements Builder {
 }
 
 class _AppendPostProcessBuilder implements PostProcessBuilder {
-  _AppendPostProcessBuilder({required this.emit, required this.fail});
+  _AppendPostProcessBuilder({
+    required this.emit,
+    required this.fail,
+    required this.inputExtension,
+  });
 
   final bool emit;
   final bool fail;
+  final String inputExtension;
 
   @override
-  Iterable<String> get inputExtensions => const <String>['.gen.txt'];
+  Iterable<String> get inputExtensions => <String>[inputExtension];
 
   @override
   Future<void> build(PostProcessBuildStep buildStep) async {

@@ -1,0 +1,17 @@
+targets:
+  alternate:
+    sources:
+      - lib/alternate/**
+    builders:
+      post_process_builder_app:append_post_process:
+        generate_for:
+          - lib/alternate/**
+        options:
+          input_extension: .alt
+  $default:
+    sources:
+      - lib/default/**
+    builders:
+      post_process_builder_app:append_post_process:
+        generate_for:
+          - lib/default/**

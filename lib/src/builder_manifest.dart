@@ -243,12 +243,24 @@ Future<_RuntimeMappings> _probeRuntimeMappings(
               ),
           ]
         : null;
-    final converted = tryConvertDefinition(
-      info,
-      canonicalMappings[info.key] ?? inactiveMappings,
-      triggers: triggers[info.key] ?? const [],
-      builderTypes: builderTypes[info.key],
-    );
+    // Keep a usable static post-process definition as the default for an
+    // application without options. Probed applications carry their own runtime
+    // override; one target's options must not replace another target's inputs.
+    final staticPostProcess = info.isPostProcess
+        ? tryConvertDefinition(
+            info,
+            null,
+            triggers: triggers[info.key] ?? const [],
+          )
+        : null;
+    final converted =
+        staticPostProcess ??
+        tryConvertDefinition(
+          info,
+          canonicalMappings[info.key] ?? inactiveMappings,
+          triggers: triggers[info.key] ?? const [],
+          builderTypes: builderTypes[info.key],
+        );
     if (converted != null && converted.isNotEmpty) {
       compatibleDefinitions[info.key] = converted;
     }
