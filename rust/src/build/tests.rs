@@ -814,6 +814,54 @@ fn planning_fixture(
 }
 
 #[test]
+fn undemanded_optional_stays_demandable_without_changing_successful_empty_reuse() -> io::Result<()>
+{
+    use super::{dirty, planning};
+    use crate::metrics::FilesystemMetrics;
+    let (_temporary, workspace, mut config, snapshot) = planning_fixture(1)?;
+    config
+        .builders
+        .retain(|builder| builder.definition.is_optional);
+    let mut state = GraphState {
+        schema_version: crate::graph::GRAPH_SCHEMA_VERSION,
+        config_digest: "config".into(),
+        assets: snapshot.clone(),
+        ..GraphState::default()
+    };
+    let plan = planning::create(&workspace, &state, &config, &snapshot)?;
+    let spec = &plan.specs[0];
+    let key = spec.action_key();
+    state.actions.insert(
+        key.clone(),
+        ActionState {
+            builder: spec.instance.builder.id.clone(),
+            input: spec.input.clone(),
+            status: "undemanded".into(),
+            ..ActionState::default()
+        },
+    );
+    let analyze = |state: &GraphState| {
+        dirty::analyze(
+            &workspace,
+            state,
+            &config,
+            "config",
+            &snapshot,
+            &plan,
+            &mut FilesystemMetrics::default(),
+        )
+    };
+    let dirty = analyze(&state)?;
+    assert!(dirty.dirty.is_empty());
+    assert_eq!(dirty.lazy_force_keys, BTreeSet::from([key.clone()]));
+    // A builder that actually ran and emitted nothing must remain reusable
+    // until an input changes; absence alone must not demand it repeatedly.
+    state.actions.get_mut(&key).unwrap().status = "success".into();
+    assert!(analyze(&state)?.lazy_force_keys.is_empty());
+    Ok(())
+}
+
+#[test]
 fn planned_actions_share_only_their_configured_instance_and_release_with_the_build()
 -> io::Result<()> {
     use super::{dirty, execution, planning};

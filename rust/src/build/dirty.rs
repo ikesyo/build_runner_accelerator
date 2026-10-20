@@ -76,6 +76,9 @@ pub(super) fn analyze(
         apply_output_digests(&mut current_output_digests, digests);
 
         let needs_build = match state.actions.get(&key) {
+            Some(action) if spec.instance.builder.is_optional && action.status == "undemanded" => {
+                true
+            }
             Some(action) if state.is_compatible(config_digest) => state
                 .changed_since_previous_with(
                     action,
@@ -327,7 +330,12 @@ pub(super) fn expand_dirty_dependents(
             // Use planned outputs when the prior action did not record any:
             // a dirty producer may emit them now, so skipped consumers need a
             // chance to check whether their primary input became available.
-            Some(action) if action.status == "not_triggered" || action.status == "success" => {
+            Some(action)
+                if matches!(
+                    action.status.as_str(),
+                    "not_triggered" | "success" | "undemanded"
+                ) =>
+            {
                 specs_by_key
                     .get(&source_key)
                     .map(|spec| spec.outputs.clone())

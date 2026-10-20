@@ -679,6 +679,36 @@ impl WorkerPool {
 
     #[expect(
         clippy::too_many_arguments,
+        reason = "Primary demand uses the same transaction context as nested asset RPC"
+    )]
+    /// Materializes an optional primary before deciding whether its normal
+    /// consumer exists. Post-process selection must never call this method.
+    pub(crate) fn materialize_optional_primary(
+        &mut self,
+        workspace: &Workspace,
+        spec: &BuildSpec,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
+        deleted: &mut BTreeSet<String>,
+        visibility: &AssetVisibility,
+        lazy_specs: &BTreeMap<String, BuildSpec>,
+        lazy: &mut LazyBuildState,
+    ) -> io::Result<()> {
+        self.prepare_for_requests(&workspace.root, 1)?;
+        self.workers[0].ensure_optional_output(
+            workspace,
+            &spec.input,
+            overlay,
+            deleted,
+            visibility,
+            spec.instance.phase,
+            crate::builder::BuilderKind::Normal,
+            lazy_specs,
+            lazy,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
         reason = "Demand execution shares transaction and visibility state with nested IPC"
     )]
     /// Runs independent filtered roots across workers while a shared coordinator

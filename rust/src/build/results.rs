@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use super::transaction::PendingTransaction;
 
-/// Record the build_runner equivalent of a generated primary input that was
-/// planned but not emitted by its producer. Keeping the empty action in the
+/// Record an action skipped for a missing generated primary input, or an
+/// optional producer that normal consumers did not demand. Keeping the empty action in the
 /// graph makes the missing-output state stable across no-op builds and removes
 /// stale outputs from a previous successful run at the same commit boundary as
 /// ordinary Builder results.
@@ -68,7 +68,12 @@ pub(super) fn record_missing_primary_input(
             glob_reads: Vec::new(),
             outputs: Vec::new(),
             output_digests: BTreeMap::new(),
-            status: "skipped_missing_input".to_owned(),
+            status: if spec.instance.builder.is_optional {
+                "undemanded"
+            } else {
+                "skipped_missing_input"
+            }
+            .to_owned(),
         },
     ));
     Ok(())
