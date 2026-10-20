@@ -48,7 +48,3 @@ source deletion, and atomic recovery from producer and cleanup failures.
 The watch probe covers edits, failures, recovery, rename, deletion, and recreation.
 The compatibility-lifecycle verification suite retains both probes alongside
 the existing optional and post-process checks.
-
-`not_shared`, full `driftCleanup`, registry_builder, build_web_compilers, and
-complete Drift workspaces require separate validation. No performance claim is
-made by these correctness probes.
