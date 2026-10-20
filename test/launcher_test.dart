@@ -31,92 +31,6 @@ void main() {
     expect(dependencies, contains('/src/key_normalization.dart'));
   });
 
-  test('defaults to native build', () {
-    final options = LauncherOptions.parse([]);
-    expect(options.command, 'build');
-    expect(options.rustArguments.first, 'build');
-    expect(options.config, isNull);
-  });
-
-  test('removed modes explain migration', () {
-    for (final mode in ['auto', 'rust', 'dart', 'native']) {
-      for (final args in [
-        ['build', '--mode=$mode'],
-        ['--mode', mode, 'watch'],
-      ]) {
-        expect(
-          () => LauncherOptions.parse(args),
-          throwsA(
-            isA<FormatException>().having(
-              (e) => e.message,
-              'message',
-              contains('--mode was removed in 0.14.0'),
-            ),
-          ),
-        );
-      }
-    }
-  });
-
-  test('unsupported requests fail before native resolution', () {
-    for (final args in [
-      ['--force-jit', 'build'],
-      ['clean'],
-      ['serve'],
-      ['aot-prewarm'],
-      ['build', '--unknown'],
-      ['build', '--output', 'out'],
-      ['build', '--build-filter=lib/[ab].g.dart'],
-      ['build', '--'],
-      ['watch', '--only-check'],
-      ['prewarm', '--keep-modified-outputs'],
-      ['prewarm', '--build-filter=lib/**'],
-      ['build', '--background'],
-    ]) {
-      expect(
-        () => LauncherOptions.parse(args),
-        throwsFormatException,
-        reason: '$args',
-      );
-    }
-    expect(
-      LauncherOptions.parse(['prewarm', '--background']).rustArguments,
-      contains('--background'),
-    );
-  });
-
-  test('launcher owns leading and command help/version', () {
-    for (final args in [
-      ['--help'],
-      ['build', '--help'],
-      ['watch', '-h'],
-    ]) {
-      expect(LauncherOptions.parse(args).showHelp, isTrue);
-    }
-    expect(LauncherOptions.parse(['build', '--version']).showVersion, isTrue);
-  });
-
-  test('native settings retain argument boundaries', () {
-    final flags = [
-      '--config',
-      '--mode=rust',
-      '--define=:b=text=a=b,c',
-      '--build-filter=lib/*.final',
-      '--force-jit',
-    ];
-    final options = LauncherOptions.parse(['build', '--jobs=2', ...flags]);
-    expect(options.config, '--mode=rust');
-    expect(
-      options.rustArguments.skip(options.rustArguments.length - flags.length),
-      flags,
-    );
-    expect(options.rustArguments, containsAll(['--jobs', '2']));
-    final value = LauncherOptions.parse(['build', '--config', '--help']);
-    expect(value.showHelp, isFalse);
-    expect(value.config, '--help');
-    expect(value.rustArguments, containsAllInOrder(['--config', '--help']));
-  });
-
   test('filtered jobs stay implicit unless explicitly selected', () {
     expect(
       LauncherOptions.parse(['build', '--build-filter=lib/**']).rustArguments,
@@ -130,20 +44,6 @@ void main() {
       ]).rustArguments,
       containsAll(['--jobs', '4']),
     );
-  });
-
-  test('invalid launcher values and conflicting compile flags fail', () {
-    for (final args in [
-      ['--jobs', '0'],
-      ['--jobs=abc'],
-      ['--interval-ms=-1'],
-      ['--root'],
-      ['--dart', '--help'],
-      ['--worker='],
-      ['build', '--force-aot', '--force-jit'],
-    ]) {
-      expect(() => LauncherOptions.parse(args), throwsFormatException);
-    }
   });
 
   test('explicit --dart skips lookup', () async {

@@ -60,6 +60,20 @@ Two facts make most of it redundant:
   probeable request — a partial response (e.g. a factory that threw under
   load) is treated as a miss and is never persisted. Writes are best-effort
   (temp file + rename) and never fail manifest generation.
+- The source fallback compiles a kernel helper with a separate two-minute
+  deadline. A marker written at helper main entry separates the 30-second
+  startup deadline from the 30-second factory execution deadline. Opt-in
+  metrics report compile, startup, and factory durations independently; a
+  deadline failure retains its phase as well as the existing transport category.
+  Successful kernels may be reused from `<cache>/probe-kernel/`, keyed by
+  generated source, package-config contents and absolute location, SDK, and
+  the same dependency implementation identity used for probe responses.
+  Unknown implementation identity disables kernel reuse. This artifact key
+  does not change the configuration fingerprint or builder selection. Kernel
+  publication uses a unique temporary file and rename after compiler success;
+  a reusable compiled helper does not imply a successful factory result.
+  Factory failures and incomplete responses still never populate the response
+  cache or permit manifest publication.
 - The probe request set is narrowed: normal builders are probed only when
   `requiresRuntimeProbe` holds or a declared output could carry a `part`
   file (any output ending in `.dart`/`.part`). A builder whose runtime type

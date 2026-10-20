@@ -87,6 +87,31 @@ def launcher(root, command='build', flags=()):
             '--root', str(root), '--jobs=1', *flags]
 
 
+def check_shared_contract(root, fake_dart, capture):
+    cases = json.loads((REPO / 'test/data/cli_contract.json').read_text())
+    # Both real entrypoints consume the same acceptance table. These cases
+    # must finish before starting Dart, acquiring artifacts or writing state.
+    snapshot = {str(p.relative_to(root)): p.read_bytes()
+                for p in root.rglob('*') if p.is_file()}
+    for case in cases:
+        informational = case.get('help') or case.get('version')
+        if case['accepted'] and not informational:
+            continue  # Settings are checked by each entrypoint's unit tests.
+        for entry in (LAUNCHER, [str(NATIVE)]):
+            log = run([*entry, '--root', str(root), '--dart', str(fake_dart), *case['args']],
+                      root, expected=0 if informational else 1,
+                      env={**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/missing-native'})
+            if informational:
+                assert log.strip(), case['name']
+                if case.get('version'):
+                    assert log.splitlines()[-1] == PACKAGE_VERSION, case['name']
+                if case.get('help'):
+                    assert 'build_runner_accelerator' in log, case['name']
+            assert {str(p.relative_to(root)): p.read_bytes()
+                    for p in root.rglob('*') if p.is_file()} == snapshot, case['name']
+            assert not capture.exists(), case['name']
+
+
 def descendants(pid):
     children = {}
     for entry in Path('/proc').glob('[0-9]*/stat'):
@@ -218,27 +243,7 @@ def main():
                             f'with open({str(capture)!r}, "a") as f: f.write(json.dumps(sys.argv[1:])+"\\n")\n'
                             'sys.exit(23)\n')
         fake_dart.chmod(0o755)
-        for command, flags in [('clean', []), ('serve', []), ('build', ['--unknown']),
-                               ('build', ['--output=out']), ('build', ['--build-filter=lib/[a].final']),
-                               ('build', ['--', '--jobs', '2']), ('watch', ['--only-check'])]:
-            for entry in (LAUNCHER, [str(NATIVE)]):
-                log = run([*entry, command, '--root', str(rejected), '--dart', str(fake_dart), *flags],
-                          rejected, expected=1)
-                assert 'unsupported' in log.lower() or 'supported only with build' in log, log
-                assert files(rejected) == before
-                assert not capture.exists()
-                assert not (rejected / '.dart_tool/build_runner_accelerator/graph-v3.bin').exists()
-        for entry in (LAUNCHER, [str(NATIVE)]):
-            for mode in ('auto', 'rust', 'dart'):
-                log = run([*entry, 'build', f'--mode={mode}'], base, expected=1)
-                assert '--mode was removed in 0.14.0' in log
-            for flags in (['--help'], ['build', '--help'], ['watch', '--version']):
-                log = run([*entry, *flags], base,
-                          env={**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/missing-native'})
-                if flags[-1] == '--version':
-                    assert log.splitlines()[-1] == PACKAGE_VERSION, log
-                else:
-                    assert 'build_runner_accelerator' in log, log
+        check_shared_contract(rejected, fake_dart, capture)
         unavailable = run(launcher(rejected, flags=['--force-jit']), rejected, expected=1,
                           env={**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': str(base / 'missing-native')})
         assert 'unavailable' in unavailable.lower() and files(rejected) == before, unavailable

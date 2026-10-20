@@ -84,6 +84,15 @@ Run the closest comparison script when changing a boundary:
 | Nested path packages and source visibility | `bash scripts/correctness_nested_packages.sh` |
 | Manifest or builder output | The relevant fixture script; see the full verification groups. |
 
+The shared CLI contract cases live in `test/data/cli_contract.json`. Dart's
+`cli_contract_test.dart` and Rust's `cli::tests::shared_cli_contract` consume the
+same acceptance and settings expectations independently. The CLI comparison
+script also uses the table for real-process rejection/help/version checks,
+including exit status, unchanged workspace files, and no child Dart execution.
+Keep diagnostic wording checks separate from these behavioral expectations.
+The stock configuration comparisons remain the reference for build_runner
+semantics; sharing test data does not couple either entrypoint's implementation.
+
 Nested-package checks accept comma-separated `NESTED_PACKAGE_CASE_GROUP` values
 (for example, `default-on,boundary`); unset runs every case. CI distributes these
 cases across the existing build-filter parallel lanes using measured durations.
