@@ -122,6 +122,17 @@ output bytes. Keep metrics and traces out of timed runs.
 | Cold start or cache investigation | The harness and experiment links in [benchmarks.md](benchmarks.md) |
 | Per-worker diagnostic trace | `BUILD_RUNNER_ACCELERATOR_METRICS=1` and, where needed, `BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=1` |
 
+With `BUILD_RUNNER_ACCELERATOR_METRICS=1`, watch reports disk graph reloads
+separately from `source=resident` ownership reuse. Ordinary build graph metrics
+report zero load time for resident state; `graph_reuse` in wall tracing marks
+that path. Watch cycle metrics include workspace/configuration preparation and
+worker setup, report success or failure, and exclude event waiting and debounce.
+A failed attempt discards tentative state and returns to the validated disk
+loader; source post-process tracking borrows successful committed state. See
+[ADR 0037](adr/0037-resident-watch-graph.md) for ownership and invalidation.
+`BUILD_RUNNER_ACCELERATOR_WALL_TRACE=1` adds stage intervals; disable both metrics
+and tracing for elapsed-time comparisons.
+
 Keep raw measurements local. Update the public benchmark summary only from a
 reproducible launcher-inclusive run; document new research in a focused
 benchmark note rather than this guide.
