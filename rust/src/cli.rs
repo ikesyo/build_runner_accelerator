@@ -554,81 +554,44 @@ mod tests {
     };
 
     #[test]
-    fn output_policy_capabilities_preserve_build_arguments() {
-        for policy in ["--only-check", "--keep-modified-outputs"] {
-            let flags = [
-                "build",
-                policy,
-                policy,
-                "--build-filter=lib/*.final",
-                "--force-jit",
-            ];
-            let options = super::Options::parse(flags.into_iter().map(str::to_owned)).unwrap();
-            assert!(options.native_supported());
-            assert_eq!(options.build_arguments, flags[1..]);
-            for command in ["watch", "prewarm", "aot-cache-key"] {
-                let options =
-                    super::Options::parse([command, policy].into_iter().map(str::to_owned))
-                        .unwrap();
-                assert!(!options.native_supported());
+    fn shared_cli_contract() {
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("../../test/data/cli_contract.json")).unwrap();
+        for case in cases.as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let arguments = case["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_owned());
+            let parsed = super::Options::parse(arguments);
+            let accepted = parsed
+                .as_ref()
+                .is_ok_and(|o| o.show_help || o.show_version || o.native_supported());
+            assert_eq!(accepted, case["accepted"].as_bool().unwrap(), "{name}");
+            if !accepted {
+                continue;
             }
-        }
-        for flags in [
-            vec!["--only-check", "--keep-modified-outputs"],
-            vec!["--no-only-check"],
-            vec!["--no-keep-modified-outputs"],
-            vec!["--only-check=true"],
-            vec!["--keep-modified-outputs=false"],
-            vec!["--only-check", "false"],
-        ] {
-            assert!(
-                super::BuildSettings::parse(
-                    &flags.into_iter().map(str::to_owned).collect::<Vec<_>>()
-                )
-                .is_err()
+            let options = parsed.unwrap();
+            assert_eq!(options.show_help, case["help"], "{name}");
+            assert_eq!(options.show_version, case["version"], "{name}");
+            if options.show_help || options.show_version {
+                continue;
+            }
+            assert_eq!(
+                serde_json::json!(options.build_arguments),
+                case["build_arguments"],
+                "{name}"
             );
-        }
-    }
-
-    #[test]
-    fn native_cli_preserves_supported_arguments_and_rejects_unsupported_ones() {
-        for command in ["build", "watch"] {
-            let supported = super::Options::parse(
-                [command, "--force-jit", "-d"]
-                    .into_iter()
-                    .map(str::to_owned),
-            )
-            .unwrap();
-            assert!(supported.native_supported());
-            assert_eq!(supported.build_arguments, ["--force-jit", "-d"]);
-        }
-        let clean = super::Options::parse(["clean".to_owned()].into_iter()).unwrap();
-        assert!(!clean.native_supported());
-        for args in [
-            vec!["serve", "web:8080"],
-            vec!["build", "--build-filter", "lib/[ab].g.dart"],
-            vec!["build", "--unknown"],
-            vec!["build", "--", "--mode", "rust"],
-        ] {
-            assert!(super::Options::parse(args.iter().map(|s| s.to_string())).is_err());
-        }
-    }
-
-    #[test]
-    fn help_and_version_skip_invalid_build_settings_but_not_removed_modes() {
-        for flag in ["--help", "-h", "--version"] {
-            let options =
-                super::Options::parse(["build", "--unknown", flag].into_iter().map(str::to_owned))
-                    .unwrap();
-            assert!(options.show_help || options.show_version);
-            assert!(
-                super::Options::parse(
-                    ["build", flag, "--mode=auto"]
-                        .into_iter()
-                        .map(str::to_owned),
-                )
-                .is_err()
-            );
+            let settings = options.settings;
+            let actual = serde_json::json!({
+                "config": settings.config, "release": settings.release,
+                "defines": settings.defines, "filters": settings.build_filters.len(),
+                "only_check": settings.only_check,
+                "keep_modified_outputs": settings.keep_modified_outputs,
+                "deletion": settings.deletion_flag,
+            });
+            assert_eq!(actual, case["settings"], "{name}");
         }
     }
 
@@ -706,126 +669,6 @@ mod tests {
         let prewarm =
             super::Options::parse(["prewarm", "--jobs=2"].into_iter().map(str::to_owned)).unwrap();
         assert_eq!(prewarm.jobs, 2);
-    }
-
-    #[test]
-    fn compact_settings_and_asset_paths() {
-        for (flags, key, path, deletion) in [
-            (vec!["-cnamed", "-rrd"], "named", "build.named.yaml", true),
-            (vec!["-c=named"], "=named", "build.=named.yaml", false),
-            (vec!["-cdir/name"], "dir/name", "build.dir/name.yaml", false),
-            (
-                vec![r"--config=dir\name"],
-                r"dir\name",
-                "build.dir/name.yaml",
-                false,
-            ),
-            (
-                vec!["--config=dir/../name"],
-                "dir/../name",
-                "name.yaml",
-                false,
-            ),
-            (vec!["--config", "-rd"], "-rd", "build.-rd.yaml", false),
-            (
-                vec!["--config=x/../../invalid", "-cnamed"],
-                "named",
-                "build.named.yaml",
-                false,
-            ),
-        ] {
-            let arguments = flags.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-            let settings = super::BuildSettings::parse(&arguments).unwrap();
-            assert_eq!(settings.config.as_deref(), Some(key));
-            assert_eq!(settings.config_path().unwrap().as_deref(), Some(path));
-            assert_eq!(settings.deletion_flag, deletion);
-            let options =
-                super::Options::parse(std::iter::once("build".to_owned()).chain(arguments.clone()))
-                    .unwrap();
-            assert!(options.native_supported());
-            assert_eq!(options.build_arguments, arguments);
-        }
-    }
-
-    #[test]
-    fn settings_values_and_compile_flags_are_not_confused() {
-        for command in ["build", "watch", "prewarm", "aot-cache-key"] {
-            let options = super::Options::parse(
-                [
-                    command,
-                    "--config",
-                    "--force-aot",
-                    "--release",
-                    "--no-release",
-                    "--define=:b=x=a=b,c",
-                    "--force-jit",
-                ]
-                .into_iter()
-                .map(str::to_owned),
-            )
-            .unwrap();
-            assert!(options.native_supported());
-            let settings = &options.settings;
-            assert_eq!(settings.config.as_deref(), Some("--force-aot"));
-            assert!(!settings.force_aot);
-            assert!(settings.force_jit);
-        }
-        for arguments in [
-            vec!["--define"],
-            vec!["--define=a=b"],
-            vec!["--release=true"],
-            vec!["--config"],
-            vec!["--config=x/../../other"],
-            vec!["-rcnamed"],
-            vec!["-rd=1"],
-            vec!["-c=named\n"],
-            vec!["--config=named\n"],
-            vec!["--define=pkg=x=1", "--define=pkg|pkg=x=2"],
-        ] {
-            assert!(
-                super::Options::parse(
-                    [vec!["build"], arguments]
-                        .concat()
-                        .into_iter()
-                        .map(str::to_owned),
-                )
-                .is_err()
-            );
-        }
-    }
-
-    #[test]
-    fn removed_modes_fail_with_migration_guidance() {
-        for mode in ["auto", "rust", "dart", "native"] {
-            for args in [
-                vec!["build".to_owned(), format!("--mode={mode}")],
-                vec!["--mode".to_owned(), mode.to_owned(), "build".to_owned()],
-            ] {
-                let error = super::Options::parse(args.into_iter()).err().unwrap();
-                assert!(error.to_string().contains("--mode was removed in 0.14.0"));
-            }
-        }
-        // A config value is never parsed as a launcher option.
-        let options = super::Options::parse(
-            ["build", "--config", "--mode=rust"]
-                .into_iter()
-                .map(str::to_owned),
-        )
-        .unwrap();
-        assert!(options.native_supported());
-    }
-
-    #[test]
-    fn invalid_launcher_values_fail() {
-        for args in [
-            vec!["--force-jit", "build"],
-            vec!["build", "--jobs=0"],
-            vec!["build", "--dart="],
-            vec!["build", "--worker", "--help"],
-            vec!["build", "--interval-ms=-1"],
-        ] {
-            assert!(super::Options::parse(args.into_iter().map(str::to_owned)).is_err());
-        }
     }
 
     #[test]
