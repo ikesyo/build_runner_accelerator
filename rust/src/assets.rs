@@ -147,9 +147,9 @@ pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> 
     // domain marker when the meaning of the graph inputs changes, so a graph
     // created before the lossless required-input, artifact-visibility, and
     // trigger state model cannot be reused silently.
-    // Virtual primary IDs now exist in every package snapshot independently
-    // of files and are never readable. Invalidate older source-state meaning.
-    let mut bytes = b"build-runner-accelerator-config-v6\0".to_vec();
+    // Older workers could record success after a builder logged a severe
+    // error. Never reuse those action results under scoped builder logging.
+    let mut bytes = b"build-runner-accelerator-config-v7\0".to_vec();
     bytes.extend_from_slice(&fs::read(build_yaml).unwrap_or_default());
     bytes.extend_from_slice(
         &fs::read(workspace.root.join(".dart_tool/package_config.json")).unwrap_or_default(),

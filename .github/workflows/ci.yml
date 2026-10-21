@@ -780,7 +780,10 @@ jobs:
               bash scripts/watch_smoke_registry_override.sh
           - name: "Compatibility: multiple mappings"
             shell: bash
-            run: bash scripts/correctness_multi_mapping_builder.sh
+            run: |
+              bash scripts/correctness_multi_mapping_builder.sh
+              bash scripts/correctness_web_compilers.sh
+              bash scripts/watch_smoke_web_compilers.sh
           - name: "Compatibility: Drift"
             shell: bash
             run: bash scripts/correctness_drift.sh

@@ -6,3 +6,6 @@ targets:
         options:
           compiler: dart2js
           dart2js_args: [-O1]
+      build_web_compilers:dart2js_archive_extractor:
+        options:
+          filter_outputs: true

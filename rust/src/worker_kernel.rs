@@ -538,9 +538,23 @@ fn prepare_aot_context(
         .ok_or_else(|| io::Error::other("worker entrypoint has no parent directory"))?
         .join("aot-sdk");
     let aot_bin = aot_sdk_root.join("bin");
+    let aot_path = aot_bin.join(aot_file_name(&worker_path));
+    if sdk_root
+        .join("bin")
+        .join(aot_file_name(&worker_path))
+        .exists()
+    {
+        return Err(io::Error::other(
+            "Unsupported worker executable name conflicts with an SDK bin entry",
+        ));
+    }
     fs::create_dir_all(&aot_bin)?;
     link_sdk_entry(&sdk_root, &aot_sdk_root, "lib")?;
     link_sdk_entry(&sdk_root, &aot_sdk_root, "version")?;
+    // Builders locate compiler executables and snapshots relative to the
+    // running worker. Keep the real SDK bin entries alongside our AOT binary
+    // so subprocesses see the same SDK as library/summary readers.
+    link_sdk_bin(&sdk_root, &aot_sdk_root)?;
     // Flutter keeps dart:ui outside the Dart SDK root at
     // `<cache>/pkg/sky_engine`. Mirror it next to `aot-sdk` so lookups
     // relative to `Platform.resolvedExecutable` (e.g. build_runner's
@@ -551,7 +565,6 @@ fn prepare_aot_context(
     {
         link_sdk_entry(sdk_parent, aot_parent, "pkg")?;
     }
-    let aot_path = aot_bin.join(aot_file_name(&worker_path));
     let depfile_path = PathBuf::from(format!("{}.d", aot_path.display()));
     let sdk_metadata_path = PathBuf::from(format!("{}.sdk", aot_path.display()));
     Ok(AotContext {
@@ -1158,15 +1171,26 @@ fn aot_file_name(worker: &Path) -> OsString {
     }
 }
 
-fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: &str) -> io::Result<()> {
-    let source = sdk_root.join(name);
+fn link_sdk_bin(sdk_root: &Path, aot_sdk_root: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(sdk_root.join("bin"))? {
+        link_sdk_entry(
+            sdk_root,
+            aot_sdk_root,
+            Path::new("bin").join(entry?.file_name()),
+        )?;
+    }
+    Ok(())
+}
+
+fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: impl AsRef<Path>) -> io::Result<()> {
+    let source = sdk_root.join(name.as_ref());
     if !source.exists() {
         return Err(io::Error::other(format!(
             "Dart SDK entry not found: {}",
             source.display()
         )));
     }
-    let destination = aot_sdk_root.join(name);
+    let destination = aot_sdk_root.join(name.as_ref());
     if let Ok(existing) = fs::read_link(&destination) {
         let existing = if existing.is_absolute() {
             existing
@@ -1678,10 +1702,12 @@ mod tests {
     use super::{
         ANALYSIS_PREWARM_ACTIVE, WorkerArtifact, acquire_background_aot_lock,
         analysis_prewarm_enabled, background_aot_lock_is_stale, catch_worker_aot_panic,
-        parse_depfile_dependencies, pinned_worker_artifact_is_current, spawn_analysis_prewarm,
+        link_sdk_bin, parse_depfile_dependencies, pinned_worker_artifact_is_current,
+        spawn_analysis_prewarm,
     };
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Barrier};
     use std::thread;
@@ -1717,6 +1743,38 @@ mod tests {
             WorkerArtifact::Aot(PathBuf::from("worker.aot")),
             WorkerArtifact::Kernel(PathBuf::from("worker.dill"))
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn aot_sdk_bin_supports_subprocesses_and_sdk_reselection() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("aot-sdk-bin-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let facade = root.join("facade");
+        fs::create_dir_all(facade.join("bin")).unwrap();
+        for version in ["first", "second"] {
+            let sdk = root.join(version);
+            fs::create_dir_all(sdk.join("bin/snapshots")).unwrap();
+            fs::write(sdk.join("bin/snapshots/compiler"), version).unwrap();
+            fs::write(
+                sdk.join("bin/dart"),
+                "#!/bin/sh\ncat \"$(dirname \"$0\")/snapshots/compiler\"\n",
+            )
+            .unwrap();
+            fs::set_permissions(sdk.join("bin/dart"), fs::Permissions::from_mode(0o755)).unwrap();
+            link_sdk_bin(&sdk, &facade).unwrap();
+            link_sdk_bin(&sdk, &facade).unwrap();
+            let result = Command::new(facade.join("bin/dart")).output().unwrap();
+            assert!(result.status.success());
+            assert_eq!(result.stdout, version.as_bytes());
+        }
+        // A conflicting physical entry must be rejected, never overwritten.
+        fs::remove_file(facade.join("bin/dart")).unwrap();
+        fs::write(facade.join("bin/dart"), "owned").unwrap();
+        assert!(link_sdk_bin(&root.join("second"), &facade).is_err());
+        assert_eq!(fs::read(facade.join("bin/dart")).unwrap(), b"owned");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

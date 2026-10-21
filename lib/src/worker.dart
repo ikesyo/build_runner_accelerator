@@ -12,6 +12,8 @@ import 'worker_resolvers.dart' show WorkerResolversImpl;
 import 'package:build_runner/src/build_plan/build_packages.dart'
     show BuildPackages;
 import 'package:build_runner/src/logging/build_log.dart' show buildLog;
+import 'package:build_runner/src/logging/build_log_logger.dart'
+    show BuildLogLogger;
 import 'package:logging/logging.dart';
 import 'package:glob/glob.dart';
 import 'package:package_config/package_config.dart';
@@ -859,6 +861,7 @@ Future<JsonMap> _runBuild(
   var resolverUsed = false;
   try {
     final input = AssetId.parse(inputName);
+    final actionLog = buildLog.loggerForOther(builderId, contextId: input);
     final blockedAssets =
         inheritedBlockedAssets ??
         request.blockedAssets.map(AssetId.parse).toSet();
@@ -953,11 +956,13 @@ Future<JsonMap> _runBuild(
         io: runtime.io,
         deletePrimaryInput: deleted.add,
       );
-      try {
-        await postProcessBuilder.build(postProcessStep);
-      } finally {
-        await postProcessStep.complete();
-      }
+      await BuildLogLogger.scopeLogAsync(() async {
+        try {
+          await postProcessBuilder!.build(postProcessStep);
+        } finally {
+          await postProcessStep.complete();
+        }
+      }, actionLog);
     } else {
       final trackedResolver = _TrackingResolvers(
         runtime.resolver,
@@ -997,23 +1002,30 @@ Future<JsonMap> _runBuild(
         resolvers: resolver,
         resourceManager: runtime.resourceManager,
       );
-      try {
-        await builder.build(step);
-      } finally {
+      await BuildLogLogger.scopeLogAsync(() async {
         try {
-          await step.complete();
+          await builder!.build(step!);
         } finally {
-          // Latch the unsupported API even if a builder catches its exception
-          // or fails later. Never publish the builder's catch-path output.
-          if ((step is _RetainedOutputBuildStep &&
-                  step.unsupportedDigestUsed) ||
-              (trackedResolver.retainedOutputGuard &&
-                  trackedResolver.wasUsed)) {
-            throw UnsupportedError(_retainedApiUnsupported);
+          try {
+            await step!.complete();
+          } finally {
+            // Latch the unsupported API even if a builder catches its exception
+            // or fails later. Never publish the builder's catch-path output.
+            if ((step is _RetainedOutputBuildStep &&
+                    step.unsupportedDigestUsed) ||
+                (trackedResolver.retainedOutputGuard &&
+                    trackedResolver.wasUsed)) {
+              throw UnsupportedError(_retainedApiUnsupported);
+            }
           }
         }
-      }
+      }, actionLog);
       resolverUsed = trackedResolver.wasUsed;
+    }
+    if (actionLog.errors.isNotEmpty) {
+      throw StateError(
+        'Builder $builderId logged errors: ${actionLog.errors.join('\n')}',
+      );
     }
     profile.runBuilderUs = runBuilderTimer.elapsedMicroseconds;
 

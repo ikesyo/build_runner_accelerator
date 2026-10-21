@@ -32,6 +32,10 @@ Use the version 1 protocol in [protocol/v1.md](../../protocol/v1.md):
   capability are specified by [ADR 0027](0027-reset-overlay-blob-transport.md).
 - Both endpoints enforce a 256 MiB complete-frame limit.
 - Worker stdout is reserved for frames. Human diagnostics go to stderr.
+- Execute normal and post-process builder bodies and completion in the official
+  build_runner logging scope. A severe log fails the action even when the
+  builder returns normally; do not publish outputs or graph from that build.
+  Nested optional actions retain independent log scopes.
 - A worker remains resident across actions and watch builds. Resolver state can
   be reset between phases while the process and permitted build-scoped caches
   remain alive.
