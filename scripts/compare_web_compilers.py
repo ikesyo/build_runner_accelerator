@@ -8,11 +8,13 @@ from web_compilers_graph import native_graph
 
 
 def fields(value):
+    """Decode the stock graph's alternating field-name/value representation."""
     assert len(value) % 2 == 0
     return dict(zip(value[::2], value[1::2]))
 
 
 def stock_outputs(root):
+    """Read current published outputs after applying stock post-process deletion."""
     graph = json.loads((root / '.dart_tool/build/asset_graph.json').read_bytes())
     assert graph['version'] == 47, 'update the pinned stock graph reader'
     ids = graph['ids']
@@ -111,6 +113,7 @@ def compare(stock, native, mode="dart2js"):
     assert mode in {"dart2js", "ddc"}, mode
     for subtree in ['lib', 'web']:
         def files(root):
+            """Collect physical source files, including unexpected generated sources."""
             return {str(p.relative_to(root)): p.read_bytes()
                     for p in (root / subtree).rglob('*') if p.is_file()}
         expected, actual = files(stock), files(native)

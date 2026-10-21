@@ -40,7 +40,10 @@ for directory in "$stock_dir" "$rust_dir"; do
   sed -i 's/hello web/changed library/' "$directory/lib/message.dart"
 done
 web_pair library-change
-! cmp -s "$temporary_dir/initial.js" "$rust_dir/.dart_tool/build_runner_accelerator/cache/build_web_compilers_app/$initial_output"
+if cmp -s "$temporary_dir/initial.js" "$rust_dir/.dart_tool/build_runner_accelerator/cache/build_web_compilers_app/$initial_output"; then
+  printf 'web-compilers: library change did not update %s\n' "$initial_output" >&2
+  exit 1
+fi
 for directory in "$stock_dir" "$rust_dir"; do
   sed -i "s/print(message());/print('entry: \${message()}');/" "$directory/web/main.dart"
 done
