@@ -1172,14 +1172,57 @@ fn aot_file_name(worker: &Path) -> OsString {
 }
 
 fn link_sdk_bin(sdk_root: &Path, aot_sdk_root: &Path) -> io::Result<()> {
-    for entry in fs::read_dir(sdk_root.join("bin"))? {
-        link_sdk_entry(
-            sdk_root,
-            aot_sdk_root,
-            Path::new("bin").join(entry?.file_name()),
-        )?;
+    // Keep ownership evidence across SDK switches, including partial failures.
+    // Only links we created may be removed; worker binaries and user files stay.
+    static LINKS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = LINKS_LOCK
+        .lock()
+        .map_err(|_| io::Error::other("SDK bin link lock poisoned"))?;
+    let registry = aot_sdk_root.join("sdk-bin-links.json");
+    let mut owned: Vec<PathBuf> = match fs::read(&registry) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    let entries = fs::read_dir(sdk_root.join("bin"))?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<io::Result<Vec<_>>>()?;
+    owned.extend(entries.iter().map(|name| sdk_root.join("bin").join(name)));
+    owned.sort();
+    owned.dedup();
+    let temporary = temporary_sibling(&registry, std::process::id(), "links");
+    fs::write(
+        &temporary,
+        serde_json::to_vec(&owned).map_err(io::Error::other)?,
+    )?;
+    replace_file(&temporary, &registry)?;
+    for entry in fs::read_dir(aot_sdk_root.join("bin"))? {
+        let entry = entry?;
+        if entries.contains(&entry.file_name()) {
+            continue;
+        }
+        if let Ok(target) = fs::read_link(entry.path())
+            && target.file_name() == Some(entry.file_name().as_os_str())
+            && owned.contains(&target)
+        {
+            remove_sdk_link(&entry.path())?;
+        }
+    }
+    for name in entries {
+        link_sdk_entry(sdk_root, aot_sdk_root, Path::new("bin").join(name))?;
     }
     Ok(())
+}
+
+fn remove_sdk_link(path: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileTypeExt;
+        if fs::symlink_metadata(path)?.file_type().is_symlink_dir() {
+            return fs::remove_dir(path);
+        }
+    }
+    fs::remove_file(path)
 }
 
 fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: impl AsRef<Path>) -> io::Result<()> {
@@ -1204,7 +1247,7 @@ fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: impl AsRef<Path>) 
             return Ok(());
         }
         // A concurrent compile can remove or recreate the same link.
-        if let Err(error) = fs::remove_file(&destination)
+        if let Err(error) = remove_sdk_link(&destination)
             && error.kind() != io::ErrorKind::NotFound
         {
             return Err(error);
@@ -1753,10 +1796,17 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let facade = root.join("facade");
         fs::create_dir_all(facade.join("bin")).unwrap();
+        fs::write(facade.join("bin/worker"), "worker").unwrap();
+        fs::write(facade.join("bin/preserved"), "physical").unwrap();
+        std::os::unix::fs::symlink(root.join("unmanaged"), facade.join("bin/unmanaged")).unwrap();
         for version in ["first", "second"] {
             let sdk = root.join(version);
             fs::create_dir_all(sdk.join("bin/snapshots")).unwrap();
             fs::write(sdk.join("bin/snapshots/compiler"), version).unwrap();
+            if version == "first" {
+                fs::write(sdk.join("bin/obsolete"), "old SDK").unwrap();
+                fs::write(sdk.join("bin/preserved_link"), "old SDK").unwrap();
+            }
             fs::write(
                 sdk.join("bin/dart"),
                 "#!/bin/sh\ncat \"$(dirname \"$0\")/snapshots/compiler\"\n",
@@ -1768,7 +1818,26 @@ mod tests {
             let result = Command::new(facade.join("bin/dart")).output().unwrap();
             assert!(result.status.success());
             assert_eq!(result.stdout, version.as_bytes());
+            if version == "first" {
+                // Obsolete SDK links must disappear even if their target was
+                // removed before reselection.
+                fs::remove_file(sdk.join("bin/obsolete")).unwrap();
+                fs::remove_file(facade.join("bin/preserved_link")).unwrap();
+                fs::write(facade.join("bin/preserved_link"), "user replacement").unwrap();
+            } else {
+                assert!(fs::symlink_metadata(facade.join("bin/obsolete")).is_err());
+                assert_eq!(
+                    fs::read(facade.join("bin/preserved_link")).unwrap(),
+                    b"user replacement"
+                );
+            }
         }
+        assert_eq!(fs::read(facade.join("bin/worker")).unwrap(), b"worker");
+        assert_eq!(fs::read(facade.join("bin/preserved")).unwrap(), b"physical");
+        assert_eq!(
+            fs::read_link(facade.join("bin/unmanaged")).unwrap(),
+            root.join("unmanaged")
+        );
         // A conflicting physical entry must be rejected, never overwritten.
         fs::remove_file(facade.join("bin/dart")).unwrap();
         fs::write(facade.join("bin/dart"), "owned").unwrap();

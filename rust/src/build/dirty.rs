@@ -517,9 +517,14 @@ pub(super) fn expand_dirty_dependents_with_removed(
                 }
             }
             for dependent_key in dependent_keys {
-                if dirty_keys.insert(dependent_key.to_owned())
-                    && let Some(spec) = specs_by_key.get(dependent_key)
-                {
+                let Some(spec) = specs_by_key.get(dependent_key) else {
+                    continue;
+                };
+                // Negative reads of same/future-phase generated assets stay
+                // unavailable even when that producer changes or disappears.
+                let visible = spec.instance.builder.kind == BuilderKind::PostProcess
+                    || (source_kind == BuilderKind::Normal && source_phase < spec.instance.phase);
+                if visible && dirty_keys.insert(dependent_key.to_owned()) {
                     dirty.push((*spec).clone());
                 }
             }

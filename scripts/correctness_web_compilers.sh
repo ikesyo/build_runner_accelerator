@@ -62,13 +62,15 @@ web_pair delete
 web_atomic save
 for directory in "$stock_dir" "$rust_dir"; do
   printf "String message() => missingCompilerSymbol;\n" > "$directory/lib/message.dart"
-  printf "void main() { print('tentative output'); }\n" > "$directory/web/tentative.dart"
+  printf "void main() { print('tentative output'); }\n" > "$directory/web/aaa.dart"
 done
 if web_stock failure; then exit 1; fi
 if web_native failure; then exit 1; fi
 grep -Fq 'missingCompilerSymbol' "$temporary_dir/failure.stock.log"
 grep -Fq 'missingCompilerSymbol' "$temporary_dir/failure.native.log"
 web_atomic check
+[[ -e "$stock_dir/.dart_tool/build/generated/build_web_compilers_app/web/aaa.dart.js" ]]
+[[ ! -e "$rust_dir/.dart_tool/build_runner_accelerator/cache/build_web_compilers_app/web/aaa.dart.js" ]]
 for directory in "$stock_dir" "$rust_dir"; do
   printf "String message() => 'recovered';\n" > "$directory/lib/message.dart"
 done

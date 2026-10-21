@@ -778,7 +778,7 @@ jobs:
               bash scripts/correctness_registry_builder.sh
               bash scripts/correctness_registry_override.sh
               bash scripts/watch_smoke_registry_override.sh
-          - name: "Compatibility: multiple mappings"
+          - name: "Compatibility: multiple mappings and web compilers"
             shell: bash
             run: |
               bash scripts/correctness_multi_mapping_builder.sh

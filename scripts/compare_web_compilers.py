@@ -105,11 +105,14 @@ def compare(stock, native):
         other = stock / '.dart_tool/build/generated' / path
         if path.endswith('.tar.gz') and other.is_file():
             print('web-compilers: logically deleted archive raw-byte equality:', value == other.read_bytes())
-    entrypoints = list((stock / 'web').glob('*.dart'))
+    entrypoints = list((stock / 'web').rglob('*.dart'))
+    entry_outputs = set()
     for entry in entrypoints:
         if 'void main(' in entry.read_text():
-            prefix = f'build_web_compilers_app/web/{entry.stem}.dart.js'
+            prefix = f'build_web_compilers_app/{entry.relative_to(stock)}.js'
+            entry_outputs.update([prefix, prefix + '.map'])
             assert prefix in actual and prefix + '.map' in actual, prefix
+    assert set(actual) == entry_outputs, ('live entrypoint outputs', set(actual) ^ entry_outputs)
     assert not any(p.endswith(cleaned) for p in expected), expected.keys()
     print('web-compilers: raw current output set/bytes match:', ', '.join(sorted(actual)))
 

@@ -212,9 +212,28 @@ fn generated_glob_candidates_invalidate_consumers_with_phase_visibility() {
     let producer = build_spec(&producer, "app|lib/new.seed", &["app|lib/new.stage"]);
     let aggregate = build_spec(&aggregate, "app|lib/index.seed", &["app|lib/index"]);
     let consumer = build_spec(&consumer, "app|lib/main.dart", &["app|lib/main.js"]);
-    let specs = vec![producer.clone(), aggregate.clone(), consumer.clone()];
+    let hidden = build_spec(
+        &configured_builder("hidden", "app:root", 0, 0),
+        "app|lib/hidden.dart",
+        &[],
+    );
+    let specs = vec![
+        producer.clone(),
+        aggregate.clone(),
+        consumer.clone(),
+        hidden.clone(),
+    ];
     let state = GraphState {
         actions: BTreeMap::from([
+            (
+                hidden.action_key(),
+                ActionState {
+                    input: hidden.input.clone(),
+                    reads: vec!["app|lib/new.stage".into(), "app|lib/old.stage".into()],
+                    status: "success".into(),
+                    ..ActionState::default()
+                },
+            ),
             (
                 aggregate.action_key(),
                 ActionState {

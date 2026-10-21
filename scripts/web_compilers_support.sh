@@ -23,7 +23,7 @@ web_native() {
     worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" --jobs 1
 }
 web_compare() {
-  python3 "$script_dir/compare_web_compilers.py" "$stock_dir" "$rust_dir"
+  PYTHONDONTWRITEBYTECODE=1 python3 "$script_dir/compare_web_compilers.py" "$stock_dir" "$rust_dir"
 }
 web_pair() { web_stock "$1"; web_native "$1"; web_compare; }
 web_atomic() {

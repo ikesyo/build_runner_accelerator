@@ -51,6 +51,9 @@ The byte store and the worker AOT store simply needed to join it.
   and snapshots relative to `Platform.resolvedExecutable`. Reject worker
   executable names that collide with SDK bin entries and physical files that
   would be overwritten by SDK links. Refresh links when selecting another SDK.
+  Record SDK-owned link targets and remove obsolete owned bin links on SDK
+  reselection, including dangling links. Preserve worker executables, physical
+  files and unmanaged symlinks; retain ownership evidence across failed setup.
   Restore materializes into it, so SDK facade symlinks, scripts, and
   per-workspace cleanup semantics are unchanged. The shared store only
   answers "has any checkout already compiled this exact key".
