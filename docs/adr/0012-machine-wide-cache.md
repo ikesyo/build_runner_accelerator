@@ -54,6 +54,10 @@ The byte store and the worker AOT store simply needed to join it.
   Record SDK-owned link targets and remove obsolete owned bin links on SDK
   reselection, including dangling links. Preserve worker executables, physical
   files and unmanaged symlinks; retain ownership evidence across failed setup.
+  Prune ownership records for links that no longer match, including after each
+  successful removal or replacement and failed link creation. Serialize the
+  registry read/update and bin link mutations with an OS-held file lock as well
+  as in-process coordination; keep the lock file in place across invocations.
   Restore materializes into it, so SDK facade symlinks, scripts, and
   per-workspace cleanup semantics are unchanged. The shared store only
   answers "has any checkout already compiled this exact key".
