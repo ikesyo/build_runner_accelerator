@@ -75,18 +75,21 @@ registry_override_pair() {
 }
 
 registry_override_capture_atomic() {
-  NATIVE_DIR="$rust_dir" ATOMIC_PATH="$temporary_dir/atomic.json" python3 - <<'PY'
+  ATOMIC_IGNORE="$(printf '%s\n' "$@")" NATIVE_DIR="$rust_dir" ATOMIC_PATH="$temporary_dir/atomic.json" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
 
 root = Path(os.environ['NATIVE_DIR'])
-paths = [root / 'lib/conduit.g.dart', root / 'lib/controller.controller.conduit.json',
-         root / '.dart_tool/build_runner_accelerator/graph-v3.bin']
-paths += list(root.rglob('*.probe.txt'))
-paths += [p for p in (root / '.dart_tool/build_runner_accelerator/cache').rglob('*') if p.is_file()]
-snapshot = {str(p.relative_to(root)): p.read_bytes().hex() for p in paths}
-Path(os.environ['ATOMIC_PATH']).write_text(json.dumps(snapshot))
+# Only caller-edited inputs are excluded. Include every published source/cache
+# path, including paths absent before failure; worker locks/config are transient.
+ignored = os.environ['ATOMIC_IGNORE'].splitlines()
+paths = [root / '.dart_tool/build_runner_accelerator/graph-v3.bin']
+for subtree in ['lib', 'test', 'web', '.dart_tool/build_runner_accelerator/cache']:
+    paths += [p for p in (root / subtree).rglob('*') if p.is_file()]
+snapshot = {str(p.relative_to(root)): p.read_bytes().hex() for p in paths
+            if str(p.relative_to(root)) not in ignored}
+Path(os.environ['ATOMIC_PATH']).write_text(json.dumps({'ignored': ignored, 'files': snapshot}))
 PY
 }
 
@@ -96,7 +99,15 @@ import json
 import os
 from pathlib import Path
 root = Path(os.environ['NATIVE_DIR'])
-for path, before in json.loads(Path(os.environ['ATOMIC_PATH']).read_text()).items():
-    assert (root / path).read_bytes().hex() == before, f'failed build published {path}'
+snapshot = json.loads(Path(os.environ['ATOMIC_PATH']).read_text())
+paths = [root / '.dart_tool/build_runner_accelerator/graph-v3.bin']
+for subtree in ['lib', 'test', 'web', '.dart_tool/build_runner_accelerator/cache']:
+    paths += [p for p in (root / subtree).rglob('*') if p.is_file()]
+current = {str(p.relative_to(root)): p.read_bytes().hex() for p in paths
+           if str(p.relative_to(root)) not in snapshot['ignored']}
+before = snapshot['files']
+assert current.keys() == before.keys(), ('failed build changed published paths', current.keys() ^ before.keys())
+for path in before:
+    assert current[path] == before[path], f'failed build published {path}'
 PY
 }

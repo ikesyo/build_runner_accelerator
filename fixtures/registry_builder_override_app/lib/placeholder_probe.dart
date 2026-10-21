@@ -32,6 +32,14 @@ class _PlaceholderProbe implements Builder {
         unreadable.add(path);
       }
     }
+    // Exercise a glob that can match all four IDs, separately from the ordered
+    // lib snapshot used to observe the registry's generated-input view.
+    final virtualPaths = unreadable.toSet();
+    await for (final id in step.findAssets(Glob('**'))) {
+      if (virtualPaths.contains(id.path)) {
+        throw StateError('enumerable placeholder: $id');
+      }
+    }
     final assets = await step.findAssets(Glob('lib/**')).toList();
     final suffix = step.inputId.path.endsWith(r'$lib$')
         ? r'$lib$'

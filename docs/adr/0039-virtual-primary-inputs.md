@@ -41,6 +41,8 @@ Reject declared outputs at the reserved virtual paths before actions. Such
 outputs are outside the supported subset; an action must not materialize or
 replace a virtual primary. Normal generated outputs continue through the
 existing source/cache overlay and phase visibility rules.
+Runtime result validation also rejects dynamic post-process outputs at these
+IDs before publication; a worker result cannot bypass the reserved identity.
 
 Invalidate old private graph input semantics through the configuration digest
 domain. No IPC fields or graph serialization structures change.

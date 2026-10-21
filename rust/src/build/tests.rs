@@ -462,6 +462,50 @@ fn output_registration_shares_buffers_and_releases_aborted_transaction() -> io::
     Ok(())
 }
 
+#[test]
+fn virtual_primary_outputs_cannot_enter_a_normal_or_post_process_transaction() -> io::Result<()> {
+    use super::results::record_build_result;
+    use super::transaction::PendingTransaction;
+    use crate::protocol::BuildResult;
+
+    let temporary = TemporaryWorkspace::new()?;
+    let workspace = Workspace::load(temporary.0.clone())?;
+    fs::write(temporary.0.join("lib/committed.txt"), b"committed")?;
+    let state = GraphState::default();
+    for kind in [BuilderKind::Normal, BuilderKind::PostProcess] {
+        let mut builder = configured_builder("producer", "app:default", 0, 0);
+        Arc::make_mut(&mut builder.definition).kind = kind;
+        for path in crate::placeholders::PATHS {
+            let asset = format!("app|{path}");
+            // Post-process outputs are dynamic; normal outputs must also be
+            // checked defensively if a result bypasses plan-time validation.
+            let outputs = if kind == BuilderKind::Normal {
+                vec![asset.as_str()]
+            } else {
+                vec![]
+            };
+            let spec = build_spec(&builder, "app|lib/input.txt", &outputs);
+            let result: BuildResult = serde_json::from_value(serde_json::json!({
+                "type": "build_result", "id": 1, "status": "success",
+                "outputs": [{"asset": asset, "bytes": [1, 2]}],
+                "resolver_used": false,
+            }))?;
+            let mut pending = PendingTransaction::new(&[], &state, Vec::new());
+            let error = record_build_result(&workspace, &state, &spec, result, &mut pending)
+                .expect_err("virtual ID must not become a materialized output");
+            assert!(error.to_string().contains("Unsupported runtime output"));
+            assert!(pending.pending_outputs.is_empty());
+            assert!(pending.overlay.is_empty());
+            assert!(!temporary.0.join(path).exists());
+            assert_eq!(
+                fs::read(temporary.0.join("lib/committed.txt"))?,
+                b"committed"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn dirty_test_config(builders: &[ConfiguredBuilder]) -> RustBuildConfig {
     RustBuildConfig {
         asset_sources: None,

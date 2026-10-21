@@ -111,7 +111,7 @@ done
 wait_pair "map['Health']" 'WatchAdded'
 [[ ! -e "$rust_dir/lib/renamed.controller.conduit.json" ]]
 
-registry_override_capture_atomic
+registry_override_capture_atomic lib/controller.record lib/channel.cached
 for directory in "$stock_dir" "$rust_dir"; do
   printf '{invalid JSON\n' > "$directory/lib/controller.record"
   sed -i 's/Channel/BrokenChannel/' "$directory/lib/channel.cached"

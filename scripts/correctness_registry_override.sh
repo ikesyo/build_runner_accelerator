@@ -67,7 +67,7 @@ done
 registry_override_pair delete
 [[ ! -e "$rust_dir/lib/renamed.controller.conduit.json" ]]
 
-registry_override_capture_atomic
+registry_override_capture_atomic lib/controller.record lib/channel.cached
 for directory in "$stock_dir" "$rust_dir"; do
   printf '{invalid JSON\n' > "$directory/lib/controller.record"
   sed -i 's/ChannelV2/BrokenChannel/' "$directory/lib/channel.cached"
@@ -85,9 +85,9 @@ registry_override_pair recovery
 
 # Physical sources at reserved virtual paths have history-dependent stock
 # deletion behavior. Reject the unvalidated shape before actions/publication.
-registry_override_capture_atomic
 for path in '$package$' 'lib/$lib$' 'test/$test$' 'web/$web$'; do
   printf 'reserved physical source\n' > "$rust_dir/$path"
+  registry_override_capture_atomic
   if registry_override_native reserved-source; then exit 1; fi
   grep -Fq 'Unsupported native source at a virtual primary path' "$temporary_dir/reserved-source.native.log"
   registry_override_assert_atomic
