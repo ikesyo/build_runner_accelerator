@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.14.1](https://github.com/ikesyo/build_runner_accelerator/compare/v0.14.0...v0.14.1) - 2026-10-20
+
+- fix: resolve option-dependent post-process inputs by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/121
+- fix: preserve optional demand boundaries during post-process cleanup by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/122
+
 ## [v0.14.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.13.0...v0.14.0) - 2026-10-20
 
 - Remove stock fallback and execution modes for 0.14.0 by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/114
