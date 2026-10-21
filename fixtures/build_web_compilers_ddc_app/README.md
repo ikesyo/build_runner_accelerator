@@ -66,7 +66,10 @@ The sdk copy factory writes both loaders even though AMD only needs require.js.
 
 ## Validation in progress
 
-The stock build is observed before native comparison. Run the regression with:
+The stock build is observed before native comparison. The initial successful
+stock/native pair matched the complete 16-file set and raw bytes, including
+kernel, module/SDK maps, metadata and digests. Ordered root/SDK factory inputs
+and generated module-library glob members matched too. No Resolver was used. Run the regression with:
 
 ```bash
 bash scripts/correctness_web_compilers_ddc.sh
@@ -79,6 +82,15 @@ Cargo jobs 2. Logs stay outside watched trees. Public output sets and raw bytes
 must be compared separately from retained, logically deleted module metadata.
 No path/time/order normalization counts as raw-byte equality.
 
-This guide will record the observed artifact set, lifecycle results and any
-remaining differences after actual compiler runs. No compatibility completion
-is claimed by the source investigation alone.
+The first native attempt failed before publication because physical-source
+collection defaults also constrained action target scope, omitting dependency
+`$package$` SDK producers. Stock `BuildPhaseCreator` passes raw target `sources`
+to `InputMatcher` for actions; collection separately applies package defaults.
+The shared manifest now preserves that distinction and invalidates older
+manifests. The next attempt exposed concurrent asset RPC writes/reader
+ownership when DDC bootstrap demands modules via `Future.wait`. Complete frames
+and per-action round trips are now queued; nested optional actions have separate
+sessions. These are shared fixes, with no package-name branches.
+
+The initial pair passed after those fixes. Lifecycle and paired watch results
+remain in progress; initial success alone is not a completed compatibility claim.

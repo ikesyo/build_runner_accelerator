@@ -468,6 +468,7 @@ class FrameWriter {
   final IOSink _output;
   Future<void> _pending = Future<void>.value();
 
+  /// Enqueues a JSON frame without interleaving it with another send's flush.
   Future<void> send(JsonMap message) async {
     final payload = utf8.encode(jsonEncode(message));
     if (payload.length > _maxFrameLength) {
@@ -554,6 +555,7 @@ class FrameWriter {
     return value.cast<String, dynamic>();
   }
 
+  /// Encodes one raw-byte frame and queues all of its chunks as one write.
   Future<void> _sendBinary(
     List<int> magic,
     JsonMap metadata,

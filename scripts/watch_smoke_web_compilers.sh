@@ -78,14 +78,21 @@ done
 wait_pair library-change
 checkpoint
 for directory in "$stock_dir" "$rust_dir"; do
-  printf "void main() { print('watch added'); }\n" > "$directory/web/extra.dart"
+  printf "String extra() => 'watch added';\n" > "$directory/lib/extra.dart"
+  printf "import 'package:build_web_compilers_app/extra.dart';\nvoid main() { print(extra()); }\n" > "$directory/web/extra.dart"
 done
 wait_pair add
 checkpoint
-for directory in "$stock_dir" "$rust_dir"; do mv "$directory/web/extra.dart" "$directory/web/renamed.dart"; done
+for directory in "$stock_dir" "$rust_dir"; do
+  mv "$directory/lib/extra.dart" "$directory/lib/renamed.dart"
+  mv "$directory/web/extra.dart" "$directory/web/renamed.dart"
+  sed -i 's@/extra.dart@/renamed.dart@' "$directory/web/renamed.dart"
+done
 wait_pair rename
 checkpoint
-for directory in "$stock_dir" "$rust_dir"; do rm "$directory/web/renamed.dart"; done
+for directory in "$stock_dir" "$rust_dir"; do
+  rm "$directory/lib/renamed.dart" "$directory/web/renamed.dart"
+done
 wait_pair delete
 web_atomic save
 for directory in "$stock_dir" "$rust_dir"; do

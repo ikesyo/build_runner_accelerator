@@ -86,6 +86,7 @@ Run the closest comparison script when changing a boundary:
 | Conduit registry dependency boundary and older stock contract | `scripts/correctness_registry_builder.sh`; [stock-only fixture and native blocker](../fixtures/registry_builder_app/README.md) |
 | Conduit registry with a fixture-only Analyzer override | `scripts/correctness_registry_override.sh`, `scripts/watch_smoke_registry_override.sh`; [exact configuration and limits](../fixtures/registry_builder_override_app/README.md) |
 | Published dart2js compiler chain | `scripts/correctness_web_compilers.sh`, `scripts/watch_smoke_web_compilers.sh`; [versions, raw-byte boundary and configuration](../fixtures/build_web_compilers_app/README.md) |
+| Published DDC compiler chain, hot reload disabled | `scripts/correctness_web_compilers_ddc.sh`, `scripts/watch_smoke_web_compilers_ddc.sh`; [artifact contract and configuration](../fixtures/build_web_compilers_ddc_app/README.md) |
 | Nested path packages and source visibility | `bash scripts/correctness_nested_packages.sh` |
 | Manifest or builder output | The relevant fixture script; see the full verification groups. |
 
