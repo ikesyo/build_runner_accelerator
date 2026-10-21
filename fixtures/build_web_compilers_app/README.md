@@ -92,7 +92,15 @@ SDK `bin/dart-cloud`, and run the scripts with `env -u HOME` so the compiler
 subprocess shares the wrapper's writable analytics/cache behavior. This is an
 environment setup detail, not a dependency override or compiler-source patch.
 
-Initial clean/no-op, non-target, library and entrypoint changes matched raw
-public bytes on Dart 3.13.3 / Rust 1.98.1. Lifecycle, compiler failure/recovery,
-watch and mandatory verification are in progress; this is not yet a completed
-compatibility claim.
+On Dart 3.13.3 / Rust 1.98.1 the build regression passed clean/no-op,
+non-target, library and entrypoint changes, library/entrypoint add, rename and
+delete, and actual compiler failure/recovery. CI also passed the AOT paired
+watch regression for library changes, entrypoint add/rename/delete, compiler
+failure and recovery. Public JS/map sets and raw bytes matched after every
+successful stage. The failed compiler left native cache bytes and the graph
+unchanged, including an independent entrypoint that stock partially published.
+
+The comparison also checks ordered root inputs and generated module glob
+members, absence of Resolver entrypoints in this chain, source/cache routing,
+retained module metadata, and stale public-output removal. These results apply
+only to the pinned compiler mode/options and artifact configuration above.

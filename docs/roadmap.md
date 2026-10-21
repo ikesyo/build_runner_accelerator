@@ -87,8 +87,17 @@ optional/post-process and Drift builder chains:
   Keep the fixture-only override distinct from an ordinary supported package
   solution. Other Conduit generators and full project workspaces remain
   unvalidated; do not widen production constraints based on this probe.
-- [ ] Validate `build_web_compilers` integration separately, defining supported
-  versions and workspace configurations before claiming full support.
+- [x] Validate published `build_web_compilers` 4.8.12 with build_runner 2.16.2,
+  build 4.0.11 and Analyzer 14.6.0, without overrides, on Dart 3.13.3: a single
+  package using dart2js `-O1`, dev configuration, `generate_for: [web/**.dart]`,
+  `filter_outputs: true`, and AOT paired watch. See the
+  [fixture guide](../fixtures/build_web_compilers_app/README.md) for raw public
+  JS/map equality, generated module dependencies, cleanup and atomic recovery.
+- [ ] Validate other web compiler modes/configurations and versions: DDC,
+  dart2wasm, release/deferred outputs, the default dev extractor's exposed
+  `.deps`, cold script-worker watch, and multi-package workspaces. Retained
+  compiler archives contain time and scratch/SDK paths and are not raw-byte
+  identical; this probe does not claim otherwise.
 
 - [ ] Expand the manifest subset toward complete `build.yaml` semantics while
   preserving explicit rejection outside the validated subset. Full post-process behavior and
