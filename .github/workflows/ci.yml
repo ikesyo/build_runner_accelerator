@@ -771,29 +771,27 @@ jobs:
         run: |
           (cd fixtures/empty_input_mapping_app && dart --suppress-analytics pub get)
       - parallel:
-          - name: "Compatibility: capture mapping and registry probes"
+          - name: "Compatibility: capture, multiple mappings, and registry probes"
             shell: bash
             run: |
               bash scripts/correctness_capture_builder.sh
+              bash scripts/correctness_multi_mapping_builder.sh
               bash scripts/correctness_registry_builder.sh
               bash scripts/correctness_registry_override.sh
               bash scripts/watch_smoke_registry_override.sh
-          - name: "Compatibility: multiple mappings and web compilers"
+          - name: "Compatibility: web compilers correctness"
             shell: bash
             run: |
-              bash scripts/correctness_multi_mapping_builder.sh
               bash scripts/correctness_web_compilers.sh
-              bash scripts/watch_smoke_web_compilers.sh
-          - name: "Compatibility: Drift"
+          - name: "Compatibility: web compilers watch"
             shell: bash
-            run: bash scripts/correctness_drift.sh
-          - name: "Compatibility: empty-input mapping correctness and watch"
+            run: bash scripts/watch_smoke_web_compilers.sh
+          - name: "Compatibility: Drift and empty-input mapping"
             shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
             run: |
-              bash scripts/correctness_empty_input_mapping.sh
-              bash scripts/watch_smoke_empty_input_mapping.sh
+              bash scripts/correctness_drift.sh
+              PUB_GET_OFFLINE=1 bash scripts/correctness_empty_input_mapping.sh
+              PUB_GET_OFFLINE=1 bash scripts/watch_smoke_empty_input_mapping.sh
 
   compatibility-drift-analyzer:
     name: Compatibility suite (Drift analyzer)
