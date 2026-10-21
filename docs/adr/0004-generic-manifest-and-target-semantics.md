@@ -8,6 +8,7 @@ explicitly; native correctness and supported-subset boundaries remain.
 - Status: Accepted
 - Date: 2026-09-07
 - Amended by [ADR 0035](0035-package-source-identity.md) for source sets and overlapping watch inputs.
+- Amended by [ADR 0039](0039-virtual-primary-inputs.md) for stock virtual primary inputs.
 
 ## Context
 

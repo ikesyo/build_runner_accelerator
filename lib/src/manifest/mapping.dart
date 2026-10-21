@@ -162,6 +162,15 @@ List<ManifestExtension>? manifestExtensions(
     final inputIsAll = entry.key.isEmpty;
     final inputIsAnchored = !inputIsAll && entry.key.startsWith('^');
     final input = inputIsAnchored ? entry.key.substring(1) : entry.key;
+    // These are ordinary suffix mappings over stock's virtual primary inputs.
+    // Keep suffix matching (including real filenames ending in the token),
+    // and preserve literal output paths rather than prefixing them with a dot.
+    final inputIsPlaceholder = const {
+      r'$package$',
+      r'$lib$',
+      r'$test$',
+      r'$web$',
+    }.contains(input);
     final captureNames = _captureGroupNames(input);
     final inputIsCapture = captureNames != null;
     final inputIsExact = inputIsAnchored && !inputIsCapture;
@@ -171,13 +180,13 @@ List<ManifestExtension>? manifestExtensions(
         ? _simpleCapturePath(input)
         : inputIsExact
         ? _simplePath(input)
-        : _simpleExtension(input);
+        : inputIsPlaceholder || _simpleExtension(input);
     if (!inputIsValid) {
       return null;
     }
     final outputSuffixes = entry.value
         .map(
-          inputIsCapture || inputIsExact
+          inputIsCapture || inputIsExact || inputIsPlaceholder
               ? _normalizePathOutput
               : _normalizeOutputSuffix,
         )
@@ -187,7 +196,7 @@ List<ManifestExtension>? manifestExtensions(
           ? (suffix) => !_simpleExtension(suffix)
           : inputIsCapture
           ? (suffix) => !_validCaptureOutput(suffix, captureNames)
-          : inputIsExact
+          : inputIsExact || inputIsPlaceholder
           ? (suffix) => !_simplePath(suffix)
           : (suffix) => !_simpleExtension(suffix),
     )) {

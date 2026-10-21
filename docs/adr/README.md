@@ -50,6 +50,7 @@ Benchmarks and mechanical refactors do not need one.
 | [0036](0036-native-only-execution.md) | Native-only execution and removal of stock fallback |
 | [0037](0037-resident-watch-graph.md) | Resident committed graph ownership and disk recovery in native watch |
 | [0038](0038-optional-post-process-demand.md) | Optional primary-input materialization and post-process actions without demand |
+| [0039](0039-virtual-primary-inputs.md) | Virtual primary identities, suffix mappings, unreadable asset visibility, and graph invalidation |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
 artifacts and launcher behavior are in

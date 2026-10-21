@@ -135,6 +135,12 @@ pub(super) fn record_build_result(
 
     let allowed = spec.outputs.iter().cloned().collect::<BTreeSet<_>>();
     for generated in &result.outputs {
+        if crate::placeholders::is_placeholder_asset(&generated.asset) {
+            return Err(io::Error::other(format!(
+                "Unsupported runtime output at a virtual primary path: {}",
+                generated.asset
+            )));
+        }
         if builder.kind == BuilderKind::Normal && !allowed.contains(&generated.asset) {
             return Err(io::Error::other(format!(
                 "unexpected output from {}: {}",

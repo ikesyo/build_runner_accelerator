@@ -299,6 +299,9 @@ run_compatibility_graph_suite() {
 }
 
 run_compatibility_mapping_suite() {
+  run_script_probe registry-builder correctness_registry_builder.sh 'registry-builder: PASS stock-only='
+  run_script_probe registry-override correctness_registry_override.sh 'registry-override: PASS'
+  run_script_probe registry-override-watch watch_smoke_registry_override.sh 'registry-override-watch: PASS'
   run_script_probe capture correctness_capture_builder.sh 'capture-builder:'
   run_script_probe multi-mapping correctness_multi_mapping_builder.sh 'multi-mapping-builder:'
   run_script_probe empty-input-mapping correctness_empty_input_mapping.sh 'empty-input-mapping:'

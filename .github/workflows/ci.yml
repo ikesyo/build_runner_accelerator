@@ -771,9 +771,13 @@ jobs:
         run: |
           (cd fixtures/empty_input_mapping_app && dart --suppress-analytics pub get)
       - parallel:
-          - name: "Compatibility: capture mapping"
+          - name: "Compatibility: capture mapping and registry probes"
             shell: bash
-            run: bash scripts/correctness_capture_builder.sh
+            run: |
+              bash scripts/correctness_capture_builder.sh
+              bash scripts/correctness_registry_builder.sh
+              bash scripts/correctness_registry_override.sh
+              bash scripts/watch_smoke_registry_override.sh
           - name: "Compatibility: multiple mappings"
             shell: bash
             run: bash scripts/correctness_multi_mapping_builder.sh

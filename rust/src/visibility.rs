@@ -123,7 +123,10 @@ impl AssetVisibility {
         kind: BuilderKind,
         deleted: &BTreeSet<String>,
     ) -> bool {
-        if deleted.contains(asset) || self.post_process_outputs.contains(asset) {
+        if crate::placeholders::is_placeholder_asset(asset)
+            || deleted.contains(asset)
+            || self.post_process_outputs.contains(asset)
+        {
             return true;
         }
         kind == BuilderKind::Normal

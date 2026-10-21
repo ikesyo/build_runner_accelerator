@@ -35,6 +35,10 @@ The following are implemented and covered by the current fixture suite:
   `driftCleanup` input set at the same pinned Drift versions, including stock's
   logical-delete/physical-cache distinction, intermediate visibility,
   byte-identical lifecycle output, atomic recovery, and native watch.
+- Stock virtual primary IDs with normal suffix/scoped action semantics and
+  unreadable asset visibility. An isolated Conduit registry configuration uses
+  a fixture-only Analyzer override for stock/native byte, lifecycle, ordered
+  enumeration, atomic recovery, and paired watch comparisons.
 - Demand-driven execution for compatible normal `is_optional` builders when a
   later action reads or uses their declared output.
 - Stock-vs-native output comparisons for clean, no-op, incremental, failure,
@@ -69,9 +73,22 @@ optional/post-process and Drift builder chains:
   `driftCleanup` runtime input set. Compare stock/native lifecycle bytes,
   intermediate visibility, logical cleanup, atomic failure recovery, and watch.
   See the [fixture guide](../fixtures/drift_analyzer_app/README.md).
-- [ ] Validate `registry_builder` and `build_web_compilers` integration
-  separately. Define supported versions and workspace configurations before
-  claiming full support.
+- [x] Validate Conduit's real `registry_builder` in an isolated fixture using
+  an explicit Analyzer 14.5.0 override with stock/native build_runner 2.16.2.
+  See the [override fixture](../fixtures/registry_builder_override_app/README.md)
+  for configuration, byte comparisons, virtual-input scope and visibility,
+  ordered enumeration, source/cache lifecycle, atomic recovery, and paired watch.
+- [ ] Resolve Conduit's published dependency constraints with a dependency
+  solution compatible with the native baseline. Published
+  `conduit_build_runner` 6.0.0/7.0.0 require Analyzer 12, while stock
+  build_runner 2.16.2 requires Analyzer 14.3 or newer. The
+  [stock-only fixture](../fixtures/registry_builder_app/README.md) records the
+  7.0.0 contract on stock 2.14.1 and checks both dependency conflicts in CI.
+  Keep the fixture-only override distinct from an ordinary supported package
+  solution. Other Conduit generators and full project workspaces remain
+  unvalidated; do not widen production constraints based on this probe.
+- [ ] Validate `build_web_compilers` integration separately, defining supported
+  versions and workspace configurations before claiming full support.
 
 - [ ] Expand the manifest subset toward complete `build.yaml` semantics while
   preserving explicit rejection outside the validated subset. Full post-process behavior and

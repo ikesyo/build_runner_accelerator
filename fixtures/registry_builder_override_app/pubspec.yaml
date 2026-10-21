@@ -1,0 +1,13 @@
+name: registry_builder_app
+publish_to: none
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+dev_dependencies:
+  build: 4.0.11
+  build_runner: 2.16.2
+  conduit_build_runner: 7.0.0
+  build_runner_accelerator:
+    path: ../..
+# Deliberate fixture-only experiment, outside Conduit's published constraint.
+dependency_overrides:
+  analyzer: 14.5.0
