@@ -18,8 +18,10 @@ Read its `build.yaml`, `lib/builders.dart`, `lib/src/dev_compiler_builder.dart`,
 
 The entrypoint option selects `dartdevc` (DDC), not `dart2js`. With hot reload
 false, the entrypoint marker returns without output and `ddcBuilder` creates
-`DevCompilerBuilder`, not `DdcFrontendServerBuilder`. The default module system
-is AMD; library bundles and the frontend server are outside this probe.
+`DevCompilerBuilder`, not `DdcFrontendServerBuilder`. The selected defaults are `use-incremental-compiler: true`,
+`track-unused-inputs: true`, `generate-full-dill: false`,
+`emit-debug-symbols: false`, `canary: false` and
+`ddc-library-bundle: false`. The default module system is AMD; library bundles and the frontend server are outside this probe.
 
 The optional chain is directive parsing (`.module.library`), DDC raw/clean
 meta modules on virtual `lib/$lib$`, per-library `.ddc.module`, kernel summaries
@@ -37,10 +39,30 @@ package config. DDC starts SDK `bin/dart --suppress-analytics compile js-dev
 --persistent_worker`; kernel summaries use `bin/dartaotruntime` with
 `bin/snapshots/kernel_worker_aot.dart.snapshot --persistent_worker`. SDK JS
 compilation uses a separate `dart compile js-dev` process and
-`lib/_internal/ddc_platform.dill`. Runtime copies come from SDK
+`lib/_internal/ddc_platform.dill`; module compilation uses
+`lib/_internal/ddc_outline.dill` and `lib/libraries.json`. Runtime copies come from SDK
 `lib/dev_compiler/amd/require.js` and
 `lib/dev_compiler/ddc/ddc_module_loader.js`. Child processes inherit the parent
 analytics/cache environment. Hot reload's frontend-server path is not exercised.
+
+## Initial stock artifact contract
+
+The first stock build produced 16 current logical outputs, all in the cache:
+
+| Producer / asset | Current artifacts |
+| --- | --- |
+| `lib/message` module | `.ddc.dill`, `.ddc.js`, `.ddc.js.map`, `.ddc.js.metadata` |
+| `web/main` module | `.ddc.js`, `.ddc.js.map`, `.ddc.js.metadata` |
+| `web/main` entrypoint | `.dart.js`, `.dart.bootstrap.js`, `.dart.bootstrap.end.js`, `.digests`, `.dart.ddc_merged_metadata` |
+| `build_web_compilers:lib/src/dev_compiler/` | `dart_sdk.js`, `dart_sdk.js.map`, `require.js`, `ddc_module_loader.js` |
+
+The AMD bootstrap-end file is present with zero bytes. Only the dependency
+library summary was demanded; no entrypoint `.ddc.dill` was emitted. No full
+kernel, debug symbols, `.errors`, tar, wasm, source-tree output, or hot-reload
+marker was emitted. `module_cleanup` logically deleted the six module-library,
+raw/clean meta-module and per-library module artifacts; physical stock cache
+files remain. The disabled source cleanup preserves Dart sources/maps/metadata.
+The sdk copy factory writes both loaders even though AMD only needs require.js.
 
 ## Validation in progress
 

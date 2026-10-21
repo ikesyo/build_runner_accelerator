@@ -466,6 +466,7 @@ class FrameWriter {
   FrameWriter(this._output);
 
   final IOSink _output;
+  Future<void> _pending = Future<void>.value();
 
   Future<void> send(JsonMap message) async {
     final payload = utf8.encode(jsonEncode(message));
@@ -473,9 +474,7 @@ class FrameWriter {
       throw StateError('IPC frame exceeds the 256 MiB safety limit');
     }
     final header = ByteData(4)..setUint32(0, payload.length, Endian.big);
-    _output.add(header.buffer.asUint8List());
-    _output.add(payload);
-    await _output.flush();
+    await _sendChunks([header.buffer.asUint8List(), payload]);
   }
 
   Future<void> sendBuildResult(JsonMap message) async {
@@ -574,14 +573,27 @@ class FrameWriter {
     final header = ByteData(4)..setUint32(0, payloadLength, Endian.big);
     final metadataLength = ByteData(4)
       ..setUint32(0, metadataPayload.length, Endian.big);
-    _output.add(header.buffer.asUint8List());
-    _output.add(magic);
-    _output.add(metadataLength.buffer.asUint8List());
-    _output.add(metadataPayload);
-    for (final chunk in rawChunks) {
-      _output.add(chunk);
-    }
-    await _output.flush();
+    await _sendChunks([
+      header.buffer.asUint8List(),
+      magic,
+      metadataLength.buffer.asUint8List(),
+      metadataPayload,
+      ...rawChunks,
+    ]);
+  }
+
+  /// Keeps a whole frame and its flush exclusive on the shared IOSink.
+  Future<void> _sendChunks(List<List<int>> chunks) {
+    final sent = _pending.then((_) async {
+      for (final chunk in chunks) {
+        _output.add(chunk);
+      }
+      await _output.flush();
+    });
+    // Each caller observes its own failure; the queue must not introduce an
+    // unhandled second error or block later diagnostic/error frames.
+    _pending = sent.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return sent;
   }
 }
 
@@ -602,10 +614,14 @@ class RpcSession {
   final bool postProcess;
   final RpcControlMessageHandler? onControlMessage;
   int _nextId = 1000;
+  Future<void> _pending = Future<void>.value();
 
-  Future<JsonMap> call(String op, Map<String, dynamic> parameters) async {
+  /// Serializes round trips within this action, including nested demand.
+  /// Nested actions own another session, so they can use the shared transport
+  /// while this session is suspended in its control-message handler.
+  Future<JsonMap> call(String op, Map<String, dynamic> parameters) {
     final id = _nextId++;
-    await writer.send(<String, dynamic>{
+    final request = <String, dynamic>{
       'v': 1,
       'type': 'asset_request',
       'id': id,
@@ -617,7 +633,15 @@ class RpcSession {
       // visibility independently of the worker-side blocked_assets hint.
       'phase': phase,
       'kind': postProcess ? 'post_process' : 'normal',
-    });
+    };
+    final result = _pending.then((_) => _call(request, id));
+    _pending = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return result;
+  }
+
+  /// Owns the frame reader until this request and any nested actions complete.
+  Future<JsonMap> _call(JsonMap request, int id) async {
+    await writer.send(request);
     while (true) {
       final response = await reader.next();
       if (response == null) {

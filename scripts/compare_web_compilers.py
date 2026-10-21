@@ -34,6 +34,7 @@ def stock_outputs(root):
 
 
 def compare_evidence(stock, native, mode):
+    """Compare ordered official inputs and generated glob members by factory."""
     graph = json.loads((stock / '.dart_tool/build/asset_graph.json').read_bytes())
     ids, state = graph['ids'], fields(graph['buildState'])
     actions, inputs, globs = native_graph(native)
@@ -50,12 +51,17 @@ def compare_evidence(stock, native, mode):
                     (".ddc.module", "ddc_modules#factory2"),
                     (".ddc.dill", "ddc#factory0"),
                     (".ddc.js", "ddc#factory1"),
-                    (".dart.js", "entrypoint")]
+                    (".dart.js", "entrypoint"),
+                    ("/dart_sdk.js", "sdk_js#factory0"),
+                    ("/require.js", "sdk_js#factory1")]
     checked = 0
+    checked_builders = set()
     for key, result in zip(state['buildStepResults'][::2], state['buildStepResults'][1::2]):
         key, result = fields(key), fields(result)
         primary = ids[key['primaryInput']]
-        if not primary.startswith('build_web_compilers_app|') or not result['outputs']:
+        tracked_primary = primary.startswith('build_web_compilers_app|') or (
+            mode == 'ddc' and primary == 'build_web_compilers|$package$')
+        if not tracked_primary or not result['outputs']:
             continue
         outputs = [ids[i] for i in result['outputs']]
         builder = next((name for suffix, name in suffixes if any(p.endswith(suffix) for p in outputs)), None)
@@ -66,7 +72,13 @@ def compare_evidence(stock, native, mode):
         assert inputs[native_key] == [ids[i] for i in result['inputs']], ('input order', identity, inputs[native_key], result['inputs'])
         assert not result['resolverEntrypoints'] and not actions[native_key]['entrypoints'], identity
         checked += 1
+        checked_builders.add(builder)
     assert checked >= 5, checked
+    if mode == "ddc":
+        assert checked_builders == {name for _, name in suffixes}, checked_builders
+        assert not any(a["outputs"] for a in actions.values()
+                       if a["builder"].startswith(("build_web_compilers:dart2js_modules",
+                                                   "build_web_compilers:dart2wasm_modules")))
     stock_globs = {}
     for key, result in zip(state['globResults'][::2], state['globResults'][1::2]):
         key, result = fields(key), fields(result)
@@ -80,6 +92,8 @@ def compare_evidence(stock, native, mode):
 
 
 def compare(stock, native, mode="dart2js"):
+    """Compare sources and the full logical public cache set without normalization."""
+    assert mode in {"dart2js", "ddc"}, mode
     for subtree in ['lib', 'web']:
         def files(root):
             return {str(p.relative_to(root)): p.read_bytes()

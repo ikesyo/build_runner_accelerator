@@ -20,6 +20,14 @@ with no readable content. Apply the usual target sources, `generate_for`, phase,
 action identity, demand, output validation, deletion, and all-success commit
 rules to actions using these primaries.
 
+Keep physical-source collection filters distinct from action target filters.
+Use package defaults and additional public assets to collect physical sources.
+For action matching, use the configured target's raw `sources` input set,
+with stock's unrestricted null/empty include behavior and explicit exclusions.
+The physical default for a dependency does not suppress its virtual
+`$package$` action. Explicit target and `generate_for` filters still constrain
+virtual primaries and generated chains through their original primary input.
+
 Normalize their documented input tokens as suffix mappings with literal output
 paths. Do not translate them into exact matches: an ordinary filename ending in
 the same token still uses suffix replacement. Anchored exact mappings retain
@@ -46,6 +54,8 @@ IDs before publication; a worker result cannot bypass the reserved identity.
 
 Invalidate old private graph input semantics through the configuration digest
 domain. No IPC fields or graph serialization structures change.
+Invalidate cached manifests that conflated collection defaults with action
+target filters, so old omitted producers cannot survive a frontend update.
 
 ## Rationale
 

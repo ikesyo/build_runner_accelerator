@@ -32,6 +32,12 @@ Use the version 1 protocol in [protocol/v1.md](../../protocol/v1.md):
   capability are specified by [ADR 0027](0027-reset-overlay-blob-transport.md).
 - Both endpoints enforce a 256 MiB complete-frame limit.
 - Worker stdout is reserved for frames. Human diagnostics go to stderr.
+- Serialize each complete frame through its flush on the shared writer. Within
+  one action, serialize asset RPC round trips so concurrent builder futures
+  cannot compete for the frame reader or confuse response ownership. A nested
+  optional action owns a distinct RPC session and may use the same transport
+  while its caller is suspended in the nested-build handler. Keep queues local
+  to their writer/action lifetime; a process-wide RPC lock would deadlock demand.
 - Execute normal and post-process builder bodies and completion in the official
   build_runner logging scope. A severe log fails the action even when the
   builder returns normally; do not publish outputs or graph from that build.
