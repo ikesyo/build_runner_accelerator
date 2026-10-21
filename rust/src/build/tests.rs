@@ -1,4 +1,4 @@
-use super::dirty::expand_dirty_dependents;
+use super::dirty::{expand_dirty_dependents, expand_dirty_dependents_with_removed};
 use super::execution::execution_order;
 use super::part_directive::declares_part_directive;
 use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder, RustBuildConfig};
@@ -201,6 +201,106 @@ fn undemanded_optional_chain_does_not_dirty_cleanup_without_normal_demand() {
             .iter()
             .any(|spec| spec.action_key() == cleanup.action_key())
     );
+}
+
+#[test]
+fn generated_glob_candidates_invalidate_consumers_with_phase_visibility() {
+    let mut producer = configured_builder("producer", "app:root", 0, 0);
+    Arc::make_mut(&mut producer.definition).is_optional = true;
+    let aggregate = configured_builder("aggregate", "app:root", 0, 2);
+    let consumer = configured_builder("consumer", "app:root", 0, 3);
+    let producer = build_spec(&producer, "app|lib/new.seed", &["app|lib/new.stage"]);
+    let aggregate = build_spec(&aggregate, "app|lib/index.seed", &["app|lib/index"]);
+    let consumer = build_spec(&consumer, "app|lib/main.dart", &["app|lib/main.js"]);
+    let hidden = build_spec(
+        &configured_builder("hidden", "app:root", 0, 0),
+        "app|lib/hidden.dart",
+        &[],
+    );
+    let specs = vec![
+        producer.clone(),
+        aggregate.clone(),
+        consumer.clone(),
+        hidden.clone(),
+    ];
+    let state = GraphState {
+        actions: BTreeMap::from([
+            (
+                hidden.action_key(),
+                ActionState {
+                    input: hidden.input.clone(),
+                    reads: vec!["app|lib/old.stage".into()],
+                    status: "success".into(),
+                    ..ActionState::default()
+                },
+            ),
+            (
+                aggregate.action_key(),
+                ActionState {
+                    input: aggregate.input.clone(),
+                    glob_reads: vec![crate::protocol::GlobRead {
+                        package: "app".into(),
+                        pattern: "lib/*.stage".into(),
+                    }],
+                    outputs: aggregate.outputs.clone(),
+                    status: "success".into(),
+                    ..ActionState::default()
+                },
+            ),
+            (
+                consumer.action_key(),
+                ActionState {
+                    input: consumer.input.clone(),
+                    reads: aggregate.outputs.clone(),
+                    status: "success".into(),
+                    ..ActionState::default()
+                },
+            ),
+        ]),
+        ..GraphState::default()
+    };
+    let mut dirty = vec![producer.clone()];
+    expand_dirty_dependents(&mut dirty, &specs, &state);
+    assert_eq!(
+        dirty.len(),
+        3,
+        "new optional candidate invalidates glob and its reader"
+    );
+    let mut conservative = state.clone();
+    conservative
+        .actions
+        .get_mut(&hidden.action_key())
+        .unwrap()
+        .reads
+        .push("app|lib/new.stage".into());
+    let mut dirty = vec![producer.clone()];
+    expand_dirty_dependents(&mut dirty, &specs, &conservative);
+    assert_eq!(
+        dirty.len(),
+        4,
+        "ordinary dirty-producer resolver/read propagation stays conservative"
+    );
+    for (asset, phase, kind, count) in [
+        ("app|lib/old.stage", 0, BuilderKind::Normal, 2),
+        ("app|lib/old.stage", 2, BuilderKind::Normal, 0),
+        ("app|lib/old.stage", 4, BuilderKind::Normal, 0),
+        ("app|lib/old.stage", 0, BuilderKind::PostProcess, 0),
+        ("other|lib/old.stage", 0, BuilderKind::Normal, 0),
+        ("app|lib/old.other", 0, BuilderKind::Normal, 0),
+    ] {
+        let mut dirty = vec![];
+        expand_dirty_dependents_with_removed(
+            &mut dirty,
+            &specs,
+            &state,
+            &[(asset.into(), phase, kind)],
+        );
+        assert_eq!(
+            dirty.len(),
+            count,
+            "removed candidate {asset} / {phase} / {kind:?}"
+        );
+    }
 }
 
 #[test]
@@ -518,6 +618,158 @@ fn dirty_test_config(builders: &[ConfiguredBuilder]) -> RustBuildConfig {
             .map(|builder| (builder.definition.id.clone(), builder.definition.clone()))
             .collect(),
     }
+}
+
+#[test]
+fn removing_target_with_shared_builder_invalidates_glob_consumer() -> io::Result<()> {
+    use super::dirty::analyze;
+    use super::planning::PlannedActions;
+    use crate::digest::digest_bytes;
+    use crate::metrics::FilesystemMetrics;
+    use crate::protocol::GlobRead;
+    use crate::snapshot::{AssetSnapshot, glob_asset_key};
+    use crate::visibility::AssetVisibility;
+
+    let temporary = TemporaryWorkspace::new()?;
+    let workspace = Workspace::load(temporary.0.clone())?;
+    // The shared factory phase differs from both configured phases. Target B
+    // is after the consumer, so it cannot substitute for removed target A.
+    let mut first = configured_builder("producer", "app:first", 0, 4);
+    Arc::make_mut(&mut first.definition).phase = 0;
+    let mut second = first.clone();
+    second.target = "app:second".into();
+    second.target_order = 1;
+    second.phase = 9;
+    let consumer = configured_builder("aggregate", "app:consumer", 2, 6);
+    let old_config = dirty_test_config(&[first.clone(), second.clone(), consumer.clone()]);
+    let new_config = dirty_test_config(&[second.clone(), consumer.clone()]);
+    let old_digest = crate::assets::config_digest(&workspace, &old_config)?;
+    let new_digest = crate::assets::config_digest(&workspace, &new_config)?;
+    assert_ne!(
+        old_digest, new_digest,
+        "target membership gates graph reuse"
+    );
+    assert!(new_config.definition("producer").is_some());
+
+    let first = build_spec(&first, "app|lib/a.seed", &["app|lib/a.stage"]);
+    let second = build_spec(&second, "app|lib/b.seed", &["app|lib/b.stage"]);
+    let consumer = build_spec(&consumer, "app|lib/index.seed", &["app|lib/index.out"]);
+    let glob = GlobRead {
+        package: "app".into(),
+        pattern: "lib/*.stage".into(),
+    };
+    let mut snapshot = BTreeMap::new();
+    for path in [
+        "a.seed",
+        "b.seed",
+        "index.seed",
+        "a.stage",
+        "b.stage",
+        "index.out",
+    ] {
+        fs::write(temporary.0.join("lib").join(path), b"unchanged")?;
+        snapshot.insert(
+            format!("app|lib/{path}"),
+            AssetSnapshot {
+                exists: true,
+                digest: digest_bytes(b"unchanged"),
+                size: 9,
+            },
+        );
+    }
+    // The old output is still on disk and glob membership remains unchanged
+    // until commit. Content and snapshot checks alone cannot dirty the reader.
+    snapshot.insert(
+        glob_asset_key(&glob),
+        AssetSnapshot {
+            exists: true,
+            digest: digest_bytes(b"lib/a.stage"),
+            size: 1,
+        },
+    );
+    let state = GraphState {
+        schema_version: crate::graph::GRAPH_SCHEMA_VERSION,
+        config_digest: old_digest.clone(),
+        assets: snapshot.clone(),
+        actions: [&first, &second, &consumer]
+            .into_iter()
+            .map(|spec| {
+                (
+                    spec.action_key(),
+                    ActionState {
+                        builder: spec.instance.builder.id.clone(),
+                        input: spec.input.clone(),
+                        glob_reads: if spec.action_key() == consumer.action_key() {
+                            vec![glob.clone()]
+                        } else {
+                            vec![]
+                        },
+                        outputs: spec.outputs.clone(),
+                        output_digests: spec
+                            .outputs
+                            .iter()
+                            .map(|asset| (asset.clone(), digest_bytes(b"unchanged")))
+                            .collect(),
+                        status: "success".into(),
+                        ..ActionState::default()
+                    },
+                )
+            })
+            .collect(),
+        ..GraphState::default()
+    };
+    let mut plan = PlannedActions {
+        specs: vec![first.clone(), second.clone(), consumer.clone()],
+        generated_output_locations: BTreeMap::new(),
+        visibility: AssetVisibility::default(),
+    };
+    let check = |config: &RustBuildConfig,
+                 digest: &str,
+                 snapshot: &BTreeMap<String, AssetSnapshot>,
+                 plan: &PlannedActions| {
+        analyze(
+            &workspace,
+            &state,
+            config,
+            digest,
+            snapshot,
+            plan,
+            &mut FilesystemMetrics::default(),
+        )
+    };
+    assert!(
+        check(&old_config, &old_digest, &snapshot, &plan)?
+            .dirty
+            .is_empty()
+    );
+    plan.specs.remove(0);
+    let changed = check(&new_config, &new_digest, &snapshot, &plan)?;
+    assert_eq!(
+        changed
+            .dirty
+            .iter()
+            .map(|spec| spec.action_key())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([second.action_key(), consumer.action_key()])
+    );
+    assert_eq!(changed.deleted_actions.len(), 1);
+    assert_eq!(changed.deleted_actions[0].0, first.action_key());
+
+    // A source deletion within the same configuration still uses target A's
+    // original configured phase, even with the shared factory on target B.
+    fs::remove_file(temporary.0.join("lib/a.seed"))?;
+    snapshot.remove("app|lib/a.seed");
+    let removed_input = check(&old_config, &old_digest, &snapshot, &plan)?;
+    assert_eq!(
+        removed_input
+            .dirty
+            .iter()
+            .map(|spec| spec.action_key())
+            .collect::<Vec<_>>(),
+        vec![consumer.action_key()]
+    );
+    assert!(temporary.0.join("lib/a.stage").exists());
+    Ok(())
 }
 
 #[test]

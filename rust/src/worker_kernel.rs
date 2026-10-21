@@ -538,9 +538,23 @@ fn prepare_aot_context(
         .ok_or_else(|| io::Error::other("worker entrypoint has no parent directory"))?
         .join("aot-sdk");
     let aot_bin = aot_sdk_root.join("bin");
+    let aot_path = aot_bin.join(aot_file_name(&worker_path));
+    if sdk_root
+        .join("bin")
+        .join(aot_file_name(&worker_path))
+        .exists()
+    {
+        return Err(io::Error::other(
+            "Unsupported worker executable name conflicts with an SDK bin entry",
+        ));
+    }
     fs::create_dir_all(&aot_bin)?;
     link_sdk_entry(&sdk_root, &aot_sdk_root, "lib")?;
     link_sdk_entry(&sdk_root, &aot_sdk_root, "version")?;
+    // Builders locate compiler executables and snapshots relative to the
+    // running worker. Keep the real SDK bin entries alongside our AOT binary
+    // so subprocesses see the same SDK as library/summary readers.
+    link_sdk_bin(&sdk_root, &aot_sdk_root)?;
     // Flutter keeps dart:ui outside the Dart SDK root at
     // `<cache>/pkg/sky_engine`. Mirror it next to `aot-sdk` so lookups
     // relative to `Platform.resolvedExecutable` (e.g. build_runner's
@@ -551,7 +565,6 @@ fn prepare_aot_context(
     {
         link_sdk_entry(sdk_parent, aot_parent, "pkg")?;
     }
-    let aot_path = aot_bin.join(aot_file_name(&worker_path));
     let depfile_path = PathBuf::from(format!("{}.d", aot_path.display()));
     let sdk_metadata_path = PathBuf::from(format!("{}.sdk", aot_path.display()));
     Ok(AotContext {
@@ -1158,15 +1171,117 @@ fn aot_file_name(worker: &Path) -> OsString {
     }
 }
 
-fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: &str) -> io::Result<()> {
-    let source = sdk_root.join(name);
+fn link_sdk_bin(sdk_root: &Path, aot_sdk_root: &Path) -> io::Result<()> {
+    // Keep ownership evidence across SDK switches, including partial failures.
+    // Only links we created may be removed; worker binaries and user files stay.
+    static LINKS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = LINKS_LOCK
+        .lock()
+        .map_err(|_| io::Error::other("SDK bin link lock poisoned"))?;
+    // Keep the lock file in place so every process locks the same inode.
+    // Hold the OS lock through both registry updates and link mutations.
+    let registry_lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(aot_sdk_root.join("sdk-bin-links.lock"))?;
+    registry_lock.lock()?;
+    let registry = aot_sdk_root.join("sdk-bin-links.json");
+    let mut owned: Vec<PathBuf> = match fs::read(&registry) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    prune_sdk_bin_links(aot_sdk_root, &registry, &mut owned)?;
+    let mut entries = fs::read_dir(sdk_root.join("bin"))?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<io::Result<Vec<_>>>()?;
+    entries.sort();
+    for entry in fs::read_dir(aot_sdk_root.join("bin"))? {
+        let entry = entry?;
+        if entries.contains(&entry.file_name()) {
+            continue;
+        }
+        if let Ok(target) = fs::read_link(entry.path())
+            && target.file_name() == Some(entry.file_name().as_os_str())
+            && owned.contains(&target)
+        {
+            remove_sdk_link(&entry.path())?;
+            prune_sdk_bin_links(aot_sdk_root, &registry, &mut owned)?;
+        }
+    }
+    for name in entries {
+        let source = sdk_root.join("bin").join(&name);
+        let new_claim = !owned.contains(&source);
+        if new_claim {
+            // Write ahead so an interrupted setup can recognize its links.
+            owned.push(source);
+            owned.sort();
+            write_sdk_bin_registry(&registry, &owned)?;
+        }
+        let result = link_sdk_entry(sdk_root, aot_sdk_root, Path::new("bin").join(name));
+        if new_claim || result.is_err() {
+            // Forget replaced links and failed intents, including on errors.
+            prune_sdk_bin_links(aot_sdk_root, &registry, &mut owned)?;
+        }
+        result?;
+    }
+    Ok(())
+}
+
+fn prune_sdk_bin_links(facade: &Path, registry: &Path, owned: &mut Vec<PathBuf>) -> io::Result<()> {
+    let mut active = Vec::new();
+    for target in owned.iter() {
+        let Some(name) = target.file_name() else {
+            continue;
+        };
+        let link = facade.join("bin").join(name);
+        let metadata = match fs::symlink_metadata(&link) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        if metadata.file_type().is_symlink() && fs::read_link(link)? == *target {
+            active.push(target.clone());
+        }
+    }
+    if active != *owned {
+        write_sdk_bin_registry(registry, &active)?;
+        *owned = active;
+    }
+    Ok(())
+}
+
+fn write_sdk_bin_registry(registry: &Path, owned: &[PathBuf]) -> io::Result<()> {
+    let temporary = temporary_sibling(registry, std::process::id(), "links");
+    fs::write(
+        &temporary,
+        serde_json::to_vec(owned).map_err(io::Error::other)?,
+    )?;
+    replace_file(&temporary, registry)
+}
+
+fn remove_sdk_link(path: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileTypeExt;
+        if fs::symlink_metadata(path)?.file_type().is_symlink_dir() {
+            return fs::remove_dir(path);
+        }
+    }
+    fs::remove_file(path)
+}
+
+fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: impl AsRef<Path>) -> io::Result<()> {
+    let source = sdk_root.join(name.as_ref());
     if !source.exists() {
         return Err(io::Error::other(format!(
             "Dart SDK entry not found: {}",
             source.display()
         )));
     }
-    let destination = aot_sdk_root.join(name);
+    let destination = aot_sdk_root.join(name.as_ref());
     if let Ok(existing) = fs::read_link(&destination) {
         let existing = if existing.is_absolute() {
             existing
@@ -1180,7 +1295,7 @@ fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: &str) -> io::Resul
             return Ok(());
         }
         // A concurrent compile can remove or recreate the same link.
-        if let Err(error) = fs::remove_file(&destination)
+        if let Err(error) = remove_sdk_link(&destination)
             && error.kind() != io::ErrorKind::NotFound
         {
             return Err(error);
@@ -1678,10 +1793,12 @@ mod tests {
     use super::{
         ANALYSIS_PREWARM_ACTIVE, WorkerArtifact, acquire_background_aot_lock,
         analysis_prewarm_enabled, background_aot_lock_is_stale, catch_worker_aot_panic,
-        parse_depfile_dependencies, pinned_worker_artifact_is_current, spawn_analysis_prewarm,
+        link_sdk_bin, parse_depfile_dependencies, pinned_worker_artifact_is_current,
+        spawn_analysis_prewarm,
     };
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Barrier};
     use std::thread;
@@ -1717,6 +1834,173 @@ mod tests {
             WorkerArtifact::Aot(PathBuf::from("worker.aot")),
             WorkerArtifact::Kernel(PathBuf::from("worker.dill"))
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn aot_sdk_bin_supports_subprocesses_and_sdk_reselection() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("aot-sdk-bin-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let facade = root.join("facade");
+        fs::create_dir_all(facade.join("bin")).unwrap();
+        fs::write(facade.join("bin/worker"), "worker").unwrap();
+        fs::write(facade.join("bin/preserved"), "physical").unwrap();
+        std::os::unix::fs::symlink(root.join("unmanaged"), facade.join("bin/unmanaged")).unwrap();
+        for version in ["first", "second"] {
+            let sdk = root.join(version);
+            fs::create_dir_all(sdk.join("bin/snapshots")).unwrap();
+            fs::write(sdk.join("bin/snapshots/compiler"), version).unwrap();
+            if version == "first" {
+                fs::write(sdk.join("bin/obsolete"), "old SDK").unwrap();
+                fs::write(sdk.join("bin/preserved_link"), "old SDK").unwrap();
+            }
+            fs::write(
+                sdk.join("bin/dart"),
+                "#!/bin/sh\ncat \"$(dirname \"$0\")/snapshots/compiler\"\n",
+            )
+            .unwrap();
+            fs::set_permissions(sdk.join("bin/dart"), fs::Permissions::from_mode(0o755)).unwrap();
+            link_sdk_bin(&sdk, &facade).unwrap();
+            link_sdk_bin(&sdk, &facade).unwrap();
+            let result = Command::new(facade.join("bin/dart")).output().unwrap();
+            assert!(result.status.success());
+            assert_eq!(result.stdout, version.as_bytes());
+            if version == "first" {
+                // Obsolete SDK links must disappear even if their target was
+                // removed before reselection.
+                fs::remove_file(sdk.join("bin/obsolete")).unwrap();
+                fs::remove_file(facade.join("bin/preserved_link")).unwrap();
+                fs::write(facade.join("bin/preserved_link"), "user replacement").unwrap();
+            } else {
+                assert!(fs::symlink_metadata(facade.join("bin/obsolete")).is_err());
+                assert_eq!(
+                    fs::read(facade.join("bin/preserved_link")).unwrap(),
+                    b"user replacement"
+                );
+            }
+        }
+        assert_eq!(fs::read(facade.join("bin/worker")).unwrap(), b"worker");
+        assert_eq!(fs::read(facade.join("bin/preserved")).unwrap(), b"physical");
+        assert_eq!(
+            fs::read_link(facade.join("bin/unmanaged")).unwrap(),
+            root.join("unmanaged")
+        );
+        let registry = || -> Vec<PathBuf> {
+            serde_json::from_slice(&fs::read(facade.join("sdk-bin-links.json")).unwrap()).unwrap()
+        };
+        let mut expected = vec![
+            root.join("second/bin/dart"),
+            root.join("second/bin/snapshots"),
+        ];
+        expected.sort();
+        assert_eq!(registry(), expected, "SDK history must not remain owned");
+        // A user can recreate a formerly managed link after its removal. It
+        // must stay unmanaged even when it points to that old SDK's bin path.
+        let user_target = root.join("first/bin/obsolete");
+        std::os::unix::fs::symlink(&user_target, facade.join("bin/obsolete")).unwrap();
+        link_sdk_bin(&root.join("second"), &facade).unwrap();
+        assert_eq!(
+            fs::read_link(facade.join("bin/obsolete")).unwrap(),
+            user_target
+        );
+        assert_eq!(registry(), expected);
+        // A conflicting physical entry must be rejected, never overwritten.
+        fs::remove_file(facade.join("bin/dart")).unwrap();
+        fs::write(facade.join("bin/dart"), "owned").unwrap();
+        assert!(link_sdk_bin(&root.join("second"), &facade).is_err());
+        assert_eq!(fs::read(facade.join("bin/dart")).unwrap(), b"owned");
+        assert_eq!(registry(), vec![root.join("second/bin/snapshots")]);
+        // A partially successful SDK switch retains active links, but neither
+        // removed SDK paths nor a failed physical-file conflict stay owned.
+        let third = root.join("third");
+        fs::create_dir_all(third.join("bin")).unwrap();
+        fs::write(third.join("bin/a_tool"), "new SDK").unwrap();
+        fs::write(third.join("bin/z_conflict"), "new SDK").unwrap();
+        fs::write(facade.join("bin/z_conflict"), "user file").unwrap();
+        assert!(link_sdk_bin(&third, &facade).is_err());
+        assert_eq!(registry(), vec![third.join("bin/a_tool")]);
+        assert_eq!(
+            fs::read(facade.join("bin/z_conflict")).unwrap(),
+            b"user file"
+        );
+        assert_eq!(
+            fs::read_link(facade.join("bin/obsolete")).unwrap(),
+            user_target
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sdk_bin_registry_serializes_processes() {
+        const CHILD_ROOT: &str = "BUILD_RUNNER_ACCELERATOR_TEST_SDK_LINK_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            let root = PathBuf::from(root);
+            fs::write(root.join("started"), b"started").unwrap();
+            link_sdk_bin(&root.join("sdk"), &root.join("facade")).unwrap();
+            return;
+        }
+        let root =
+            std::env::temp_dir().join(format!("sdk-bin-process-lock-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("sdk/bin")).unwrap();
+        fs::create_dir_all(root.join("facade/bin")).unwrap();
+        fs::write(root.join("sdk/bin/dart"), b"SDK").unwrap();
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(root.join("facade/sdk-bin-links.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "worker_kernel::tests::sdk_bin_registry_serializes_processes",
+                "--nocapture",
+            ])
+            .env(CHILD_ROOT, &root)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !root.join("started").exists() && std::time::Instant::now() < deadline {
+            assert!(child.try_wait().unwrap().is_none());
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if !root.join("started").exists() {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("SDK registry child did not start");
+        }
+        thread::sleep(std::time::Duration::from_millis(100));
+        let blocked = child.try_wait().unwrap().is_none();
+        let untouched = !root.join("facade/sdk-bin-links.json").exists()
+            && fs::symlink_metadata(root.join("facade/bin/dart")).is_err();
+        drop(lock);
+        while child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if child.try_wait().unwrap().is_none() {
+            let _ = child.kill();
+        }
+        let status = child.wait().unwrap();
+        assert!(
+            blocked && untouched,
+            "another process must not mutate a locked registry"
+        );
+        assert!(status.success());
+        assert_eq!(
+            fs::read_link(root.join("facade/bin/dart")).unwrap(),
+            root.join("sdk/bin/dart")
+        );
+        let owned: Vec<PathBuf> =
+            serde_json::from_slice(&fs::read(root.join("facade/sdk-bin-links.json")).unwrap())
+                .unwrap();
+        assert_eq!(owned, vec![root.join("sdk/bin/dart")]);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

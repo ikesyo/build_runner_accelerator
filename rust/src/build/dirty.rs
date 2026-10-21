@@ -63,6 +63,7 @@ pub(super) fn analyze(
     let mut dirty = Vec::new();
     let mut dirty_roots = Vec::new();
     let dirty_context = state.dirty_context(current_snapshot);
+    let compatible = state.is_compatible(config_digest);
     for (spec, digests) in specs.iter().zip(spec_output_digests) {
         let key = spec.action_key();
         // A file at a declared but previously omitted output is a conflict,
@@ -79,13 +80,12 @@ pub(super) fn analyze(
             Some(action) if spec.instance.builder.is_optional && action.status == "undemanded" => {
                 true
             }
-            Some(action) if state.is_compatible(config_digest) => state
-                .changed_since_previous_with(
-                    action,
-                    &dirty_context,
-                    current_snapshot,
-                    &current_output_digests,
-                ),
+            Some(action) if compatible => state.changed_since_previous_with(
+                action,
+                &dirty_context,
+                current_snapshot,
+                &current_output_digests,
+            ),
             _ => true,
         };
         if needs_build || has_unrecorded_output {
@@ -95,7 +95,33 @@ pub(super) fn analyze(
             }
         }
     }
-    expand_dirty_dependents(&mut dirty_roots, specs, state);
+    let expected_keys: BTreeSet<String> = specs.iter().map(|spec| spec.action_key()).collect();
+    let deleted_actions: Vec<(String, ActionState)> = state
+        .actions
+        .iter()
+        .filter(|(key, action)| {
+            build_config.definition(&action.builder).is_some() && !expected_keys.contains(*key)
+        })
+        .map(|(key, action)| (key.clone(), action.clone()))
+        .collect();
+    let removed_outputs = deleted_actions
+        .iter()
+        // A changed configuration already invalidates every retained action.
+        // Only compatible graphs need phase-aware removal edges; their target,
+        // configured phase and builder kind still match the current manifest.
+        // Never reconstruct an old target's phase from a factory definition.
+        .filter(|_| compatible)
+        .flat_map(|(key, action)| {
+            let producer = build_config.builders.iter().find(|builder| {
+                builder.definition.id == action.builder
+                    && key.starts_with(&format!("{}|", builder.target))
+            });
+            action.outputs.iter().filter_map(move |asset| {
+                producer.map(|producer| (asset.clone(), producer.phase, producer.definition.kind))
+            })
+        })
+        .collect::<Vec<_>>();
+    expand_dirty_dependents_with_removed(&mut dirty_roots, specs, state, &removed_outputs);
     let mut dirty_keys = dirty
         .iter()
         .map(|spec| spec.action_key())
@@ -111,16 +137,6 @@ pub(super) fn analyze(
     }
     filesystem_metrics.dirty_check_us = dirty_check_started.elapsed().as_micros();
 
-    let expected_keys: BTreeSet<String> = specs.iter().map(|spec| spec.action_key()).collect();
-    let deleted_actions: Vec<(String, ActionState)> = state
-        .actions
-        .iter()
-        .filter(|(action_key, action)| {
-            build_config.definition(&action.builder).is_some()
-                && !expected_keys.contains(*action_key)
-        })
-        .map(|(key, action)| (key.clone(), action.clone()))
-        .collect();
     Ok(DirtyPlan {
         dirty,
         lazy_force_keys,
@@ -323,10 +339,20 @@ fn required_by_dirty_normal(
     required
 }
 
+#[cfg(test)]
 pub(super) fn expand_dirty_dependents(
     dirty: &mut Vec<crate::plan::BuildSpec>,
     specs: &[crate::plan::BuildSpec],
     state: &GraphState,
+) {
+    expand_dirty_dependents_with_removed(dirty, specs, state, &[]);
+}
+
+pub(super) fn expand_dirty_dependents_with_removed(
+    dirty: &mut Vec<crate::plan::BuildSpec>,
+    specs: &[crate::plan::BuildSpec],
+    state: &GraphState,
+    removed_outputs: &[(String, u32, BuilderKind)],
 ) {
     let specs_by_key = specs
         .iter()
@@ -334,7 +360,13 @@ pub(super) fn expand_dirty_dependents(
         .collect::<BTreeMap<_, _>>();
     let mut dependents_by_asset = BTreeMap::<&str, Vec<&str>>::new();
     let mut actions_by_entrypoint = BTreeMap::<&str, Vec<&str>>::new();
+    let mut glob_dependents = Vec::new();
     for (action_key, action) in &state.actions {
+        if let Some(spec) = specs_by_key.get(action_key) {
+            for glob in &action.glob_reads {
+                glob_dependents.push((action_key.as_str(), spec.instance.phase, glob));
+            }
+        }
         for dependency in action.reads.iter().chain(action.resolver_reads.iter()) {
             dependents_by_asset
                 .entry(dependency.as_str())
@@ -388,34 +420,64 @@ pub(super) fn expand_dirty_dependents(
         .map(|spec| spec.action_key())
         .collect::<BTreeSet<_>>();
     let mut cursor = 0;
-    while cursor < dirty.len() {
-        let source_key = dirty[cursor].action_key();
-        let source_outputs = match state.actions.get(&source_key) {
-            Some(action) if action.status == "undemanded" && !required.contains(&source_key) => {
-                Vec::new()
-            }
-            Some(action) if !action.outputs.is_empty() => action.outputs.clone(),
-            // Use planned outputs when the prior action did not record any:
-            // a dirty producer may emit them now, so skipped consumers need a
-            // chance to check whether their primary input became available.
-            Some(action)
-                if matches!(
-                    action.status.as_str(),
-                    "not_triggered" | "success" | "undemanded"
-                ) =>
-            {
-                specs_by_key
+    let mut removed_cursor = 0;
+    while cursor < dirty.len() || removed_cursor < removed_outputs.len() {
+        let (source_outputs, source_phase, source_kind, removed) = if cursor < dirty.len() {
+            let source_key = dirty[cursor].action_key();
+            let source_outputs = match state.actions.get(&source_key) {
+                Some(action)
+                    if action.status == "undemanded" && !required.contains(&source_key) =>
+                {
+                    Vec::new()
+                }
+                Some(action) if !action.outputs.is_empty() => action
+                    .outputs
+                    .iter()
+                    .cloned()
+                    .chain(
+                        specs_by_key
+                            .get(&source_key)
+                            .into_iter()
+                            .flat_map(|spec| spec.outputs.iter().cloned()),
+                    )
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
+                // Use planned outputs when the prior action did not record any:
+                // a dirty producer may emit them now, so skipped consumers need a
+                // chance to check whether their primary input became available.
+                Some(action)
+                    if matches!(
+                        action.status.as_str(),
+                        "not_triggered" | "success" | "undemanded"
+                    ) =>
+                {
+                    specs_by_key
+                        .get(&source_key)
+                        .map(|spec| spec.outputs.clone())
+                        .unwrap_or_default()
+                }
+                // Missing-primary-input actions are also committed after an
+                // otherwise successful build, so this arm remains reachable.
+                Some(_) => Vec::new(),
+                None => specs_by_key
                     .get(&source_key)
                     .map(|spec| spec.outputs.clone())
-                    .unwrap_or_default()
-            }
-            // Missing-primary-input actions are also committed after an
-            // otherwise successful build, so this arm remains reachable.
-            Some(_) => Vec::new(),
-            None => specs_by_key
-                .get(&source_key)
-                .map(|spec| spec.outputs.clone())
-                .unwrap_or_default(),
+                    .unwrap_or_default(),
+            };
+            let source = &dirty[cursor];
+            let result = (
+                source_outputs,
+                source.instance.phase,
+                source.instance.builder.kind,
+                false,
+            );
+            cursor += 1;
+            result
+        } else {
+            let (asset, phase, kind) = &removed_outputs[removed_cursor];
+            removed_cursor += 1;
+            (vec![asset.clone()], *phase, *kind, true)
         };
         let mut ancestors_seen = BTreeSet::<&str>::new();
         for output in &source_outputs {
@@ -425,6 +487,19 @@ pub(super) fn expand_dirty_dependents(
                 .flatten()
                 .copied()
                 .collect();
+            // Globs observe earlier-phase generated candidates, including new
+            // optional outputs and removed producers whose cache bytes remain.
+            // A recorded content read cannot represent a new glob member.
+            if source_kind == BuilderKind::Normal {
+                dependent_keys.extend(glob_dependents.iter().filter_map(|(key, phase, glob)| {
+                    (source_phase < *phase
+                        && output.split_once('|').is_some_and(|(package, path)| {
+                            package == glob.package
+                                && crate::workspace::matches_glob(&glob.pattern, path)
+                        }))
+                    .then_some(*key)
+                }));
+            }
             // Assets whose resolver dependency closure contains this output
             // are exactly its ancestors in the dep graph plus the output
             // itself. A BFS per queried output replaces per-action closure
@@ -448,13 +523,19 @@ pub(super) fn expand_dirty_dependents(
                 }
             }
             for dependent_key in dependent_keys {
-                if dirty_keys.insert(dependent_key.to_owned())
-                    && let Some(spec) = specs_by_key.get(dependent_key)
-                {
+                let Some(spec) = specs_by_key.get(dependent_key) else {
+                    continue;
+                };
+                // Do not turn removed hidden outputs into new invalidation
+                // edges. Preserve ordinary dirty-producer propagation: its
+                // resolver evidence can conservatively include future parts.
+                let visible = !removed
+                    || spec.instance.builder.kind == BuilderKind::PostProcess
+                    || (source_kind == BuilderKind::Normal && source_phase < spec.instance.phase);
+                if visible && dirty_keys.insert(dependent_key.to_owned()) {
                     dirty.push((*spec).clone());
                 }
             }
         }
-        cursor += 1;
     }
 }

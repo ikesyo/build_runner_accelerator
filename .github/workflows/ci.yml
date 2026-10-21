@@ -771,19 +771,23 @@ jobs:
         run: |
           (cd fixtures/empty_input_mapping_app && dart --suppress-analytics pub get)
       - parallel:
-          - name: "Compatibility: capture mapping and registry probes"
+          - name: "Compatibility: capture, multiple mappings, and registry override"
             shell: bash
             run: |
               bash scripts/correctness_capture_builder.sh
-              bash scripts/correctness_registry_builder.sh
+              bash scripts/correctness_multi_mapping_builder.sh
               bash scripts/correctness_registry_override.sh
               bash scripts/watch_smoke_registry_override.sh
-          - name: "Compatibility: multiple mappings"
+          - name: "Compatibility: web compilers correctness and registry constraints"
             shell: bash
-            run: bash scripts/correctness_multi_mapping_builder.sh
-          - name: "Compatibility: Drift"
+            run: |
+              bash scripts/correctness_web_compilers.sh
+              bash scripts/correctness_registry_builder.sh
+          - name: "Compatibility: web compilers watch and Drift"
             shell: bash
-            run: bash scripts/correctness_drift.sh
+            run: |
+              bash scripts/watch_smoke_web_compilers.sh
+              bash scripts/correctness_drift.sh
           - name: "Compatibility: empty-input mapping correctness and watch"
             shell: bash
             env:

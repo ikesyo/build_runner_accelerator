@@ -46,7 +46,19 @@ The byte store and the worker AOT store simply needed to join it.
   files (executable, depfile, SDK metadata) are copied into the shared slot
   via temp-file rename, best-effort.
 - The workspace `aot-sdk` directory remains the live artifact location:
-  restore materializes into it, so SDK facade symlinks, scripts, and
+  mirror the selected SDK's bin entries alongside the worker executable as
+  well as its libraries and version. Builders can locate compiler subprocesses
+  and snapshots relative to `Platform.resolvedExecutable`. Reject worker
+  executable names that collide with SDK bin entries and physical files that
+  would be overwritten by SDK links. Refresh links when selecting another SDK.
+  Record SDK-owned link targets and remove obsolete owned bin links on SDK
+  reselection, including dangling links. Preserve worker executables, physical
+  files and unmanaged symlinks; retain ownership evidence across failed setup.
+  Prune ownership records for links that no longer match, including after each
+  successful removal or replacement and failed link creation. Serialize the
+  registry read/update and bin link mutations with an OS-held file lock as well
+  as in-process coordination; keep the lock file in place across invocations.
+  Restore materializes into it, so SDK facade symlinks, scripts, and
   per-workspace cleanup semantics are unchanged. The shared store only
   answers "has any checkout already compiled this exact key".
 - Both stores are populated by `build` and by `aot-prewarm`. No user action
