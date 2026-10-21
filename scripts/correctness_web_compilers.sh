@@ -25,20 +25,22 @@ cleanup() {
 }
 trap cleanup EXIT
 web_prepare
+initial_output=web/main.dart.js
+if [[ "${WEB_COMPILERS_MODE:-dart2js}" == ddc ]]; then initial_output=lib/message.ddc.js; fi
 web_pair clean
 web_pair no-op
 grep -Fq 'No work to do (Rust frontend)' "$temporary_dir/no-op.native.log"
-cp "$rust_dir/.dart_tool/build_runner_accelerator/cache/build_web_compilers_app/web/main.dart.js" "$temporary_dir/initial.js"
+cp "$rust_dir/.dart_tool/build_runner_accelerator/cache/build_web_compilers_app/$initial_output" "$temporary_dir/initial.js"
 for directory in "$stock_dir" "$rust_dir"; do
   printf 'unrelated edit\n' >> "$directory/web/notes.txt"
 done
 web_pair non-target
-cmp "$temporary_dir/initial.js" "$rust_dir/.dart_tool/build_runner_accelerator/cache/build_web_compilers_app/web/main.dart.js"
+cmp "$temporary_dir/initial.js" "$rust_dir/.dart_tool/build_runner_accelerator/cache/build_web_compilers_app/$initial_output"
 for directory in "$stock_dir" "$rust_dir"; do
   sed -i 's/hello web/changed library/' "$directory/lib/message.dart"
 done
 web_pair library-change
-! cmp -s "$temporary_dir/initial.js" "$rust_dir/.dart_tool/build_runner_accelerator/cache/build_web_compilers_app/web/main.dart.js"
+! cmp -s "$temporary_dir/initial.js" "$rust_dir/.dart_tool/build_runner_accelerator/cache/build_web_compilers_app/$initial_output"
 for directory in "$stock_dir" "$rust_dir"; do
   sed -i "s/print(message());/print('entry: \${message()}');/" "$directory/web/main.dart"
 done
