@@ -81,6 +81,11 @@ bash scripts/watch_smoke_web_compilers.sh
 
 The scripts set `BUILD_MAX_WORKERS_PER_TASK=1` and native `--jobs 1`. They keep
 logs outside watched workspaces and retain failed workspaces for diagnosis.
+The paired watch script selects synchronous worker AOT
+(`BUILD_RUNNER_ACCELERATOR_WORKER_AOT=force`); callers can explicitly override it.
+Cold background-AOT watch selected a script worker and did not complete the
+initial build within the 600-second CI wait. That execution configuration is
+outside this fixture's completed validation scope.
 Use the repository toolchain overrides as described in `docs/development.md`.
 On the managed environment used here, source `.toolchains/task-env.sh`, select
 SDK `bin/dart-cloud`, and run the scripts with `env -u HOME` so the compiler

@@ -229,7 +229,7 @@ fn generated_glob_candidates_invalidate_consumers_with_phase_visibility() {
                 hidden.action_key(),
                 ActionState {
                     input: hidden.input.clone(),
-                    reads: vec!["app|lib/new.stage".into(), "app|lib/old.stage".into()],
+                    reads: vec!["app|lib/old.stage".into()],
                     status: "success".into(),
                     ..ActionState::default()
                 },
@@ -265,6 +265,20 @@ fn generated_glob_candidates_invalidate_consumers_with_phase_visibility() {
         dirty.len(),
         3,
         "new optional candidate invalidates glob and its reader"
+    );
+    let mut conservative = state.clone();
+    conservative
+        .actions
+        .get_mut(&hidden.action_key())
+        .unwrap()
+        .reads
+        .push("app|lib/new.stage".into());
+    let mut dirty = vec![producer.clone()];
+    expand_dirty_dependents(&mut dirty, &specs, &conservative);
+    assert_eq!(
+        dirty.len(),
+        4,
+        "ordinary dirty-producer resolver/read propagation stays conservative"
     );
     for (asset, phase, kind, count) in [
         ("app|lib/old.stage", 0, BuilderKind::Normal, 2),

@@ -417,7 +417,7 @@ pub(super) fn expand_dirty_dependents_with_removed(
     let mut cursor = 0;
     let mut removed_cursor = 0;
     while cursor < dirty.len() || removed_cursor < removed_outputs.len() {
-        let (source_outputs, source_phase, source_kind) = if cursor < dirty.len() {
+        let (source_outputs, source_phase, source_kind, removed) = if cursor < dirty.len() {
             let source_key = dirty[cursor].action_key();
             let source_outputs = match state.actions.get(&source_key) {
                 Some(action)
@@ -465,13 +465,14 @@ pub(super) fn expand_dirty_dependents_with_removed(
                 source_outputs,
                 source.instance.phase,
                 source.instance.builder.kind,
+                false,
             );
             cursor += 1;
             result
         } else {
             let (asset, phase, kind) = &removed_outputs[removed_cursor];
             removed_cursor += 1;
-            (vec![asset.clone()], *phase, *kind)
+            (vec![asset.clone()], *phase, *kind, true)
         };
         let mut ancestors_seen = BTreeSet::<&str>::new();
         for output in &source_outputs {
@@ -520,9 +521,11 @@ pub(super) fn expand_dirty_dependents_with_removed(
                 let Some(spec) = specs_by_key.get(dependent_key) else {
                     continue;
                 };
-                // Negative reads of same/future-phase generated assets stay
-                // unavailable even when that producer changes or disappears.
-                let visible = spec.instance.builder.kind == BuilderKind::PostProcess
+                // Do not turn removed hidden outputs into new invalidation
+                // edges. Preserve ordinary dirty-producer propagation: its
+                // resolver evidence can conservatively include future parts.
+                let visible = !removed
+                    || spec.instance.builder.kind == BuilderKind::PostProcess
                     || (source_kind == BuilderKind::Normal && source_phase < spec.instance.phase);
                 if visible && dirty_keys.insert(dependent_key.to_owned()) {
                     dirty.push((*spec).clone());

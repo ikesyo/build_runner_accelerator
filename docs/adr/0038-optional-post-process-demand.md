@@ -42,9 +42,9 @@ through normal dependency edges while retaining the undemanded-action rule.
 Same/future-phase outputs, post-process outputs, and other-package candidates
 do not create glob dependencies. Removed producers invalidate their consumers
 even when physical cache bytes remain until commit.
-Recorded negative reads of same/future-phase generated assets remain
-unavailable when that producer changes or disappears; these hidden reads do
-not invalidate the consumer.
+Removal of a same/future-phase producer does not invalidate recorded negative
+reads of its hidden outputs. Retain the existing conservative propagation for
+dirty producers and resolver closures, which can include generated parts.
 
 Keep output writes, stale-output removal, cleanup deletions, and action state in
 one transaction. Publish them only after all required actions succeed.

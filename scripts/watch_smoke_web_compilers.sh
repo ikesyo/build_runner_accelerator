@@ -7,6 +7,10 @@ source "$script_dir/worker.sh"
 source "$script_dir/web_compilers_support.sh"
 : "${VERIFY_WATCH_TIMEOUT_SECONDS:=600}"
 export VERIFY_WATCH_TIMEOUT_SECONDS
+# Validate the SDK facade and compiler subprocess with a stable AOT worker.
+# Keep an explicit override available for separate cold-script investigations.
+: "${BUILD_RUNNER_ACCELERATOR_WORKER_AOT:=force}"
+export BUILD_RUNNER_ACCELERATOR_WORKER_AOT
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/web-compilers-watch.XXXXXX")
