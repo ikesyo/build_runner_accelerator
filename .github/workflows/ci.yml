@@ -803,7 +803,9 @@ jobs:
             fixtures/drift_analyzer_app/pubspec.lock
             rust/Cargo.lock
             scripts/correctness_drift_analyzer.sh
+            scripts/correctness_drift_not_shared.sh
             scripts/watch_smoke_drift_analyzer.sh
+            scripts/watch_smoke_drift_not_shared.sh
             scripts/worker.sh
           setup-rust: 'true'
           build-frontend: 'true'
@@ -817,7 +819,9 @@ jobs:
             env:
               PUB_GET_OFFLINE: '1'
               CASE_FILTER: core
-            run: bash scripts/correctness_drift_analyzer.sh
+            run: |
+              bash scripts/correctness_drift_analyzer.sh
+              bash scripts/correctness_drift_not_shared.sh
           - name: "Drift analyzer: rename and delete"
             shell: bash
             env:
@@ -834,7 +838,9 @@ jobs:
             shell: bash
             env:
               PUB_GET_OFFLINE: '1'
-            run: bash scripts/watch_smoke_drift_analyzer.sh
+            run: |
+              bash scripts/watch_smoke_drift_analyzer.sh
+              bash scripts/watch_smoke_drift_not_shared.sh
 
   native-build:
     name: Native build (${{ matrix.target_id }})

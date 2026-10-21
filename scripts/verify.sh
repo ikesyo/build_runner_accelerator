@@ -306,6 +306,8 @@ run_compatibility_mapping_suite() {
   run_script_probe drift correctness_drift.sh 'drift-compatibility:'
   run_script_probe drift-analyzer correctness_drift_analyzer.sh 'drift-analyzer-compatibility:'
   run_script_probe drift-analyzer-watch watch_smoke_drift_analyzer.sh 'drift-analyzer-watch:'
+  run_script_probe drift-not-shared correctness_drift_not_shared.sh 'drift-not-shared-compatibility:'
+  run_script_probe drift-not-shared-watch watch_smoke_drift_not_shared.sh 'drift-not-shared-watch:'
 }
 
 run_full() {
