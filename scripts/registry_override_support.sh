@@ -13,12 +13,6 @@ registry_override_prepare() {
     cp -R "$repo_root/fixtures/registry_builder_override_app/lib/." "$directory/lib/"
     # A real source ending in the token must retain normal suffix replacement.
     printf 'ordinary source\n' > "$directory/lib/suffix\$lib\$"
-    # Virtual IDs stay unreadable even if a file occupies their reserved path.
-    local path
-    for path in '$package$' 'lib/$lib$' 'test/$test$' 'web/$web$'; do
-      mkdir -p "$(dirname -- "$directory/$path")"
-      printf 'not virtual content\n' > "$directory/$path"
-    done
     verification_run_pub_get "$directory" "registry-override/pub/$(basename "$directory")" \
       "$dart_bin" "$pub_cache" "${pub_get_args[@]}"
   done
@@ -67,11 +61,7 @@ for path in ['lib/placeholder.probe.txt', 'test/placeholder.probe.txt',
              'web/placeholder.probe.txt', 'lib/suffixplaceholder.probe.txt']:
     probe = json.loads((native / path).read_text())
     assert probe['unreadable'] == ['$package$', 'lib/$lib$', 'test/$test$', 'web/$web$']
-    for reserved in probe['unreadable']:
-        # Stock lists a physical file at a reserved path, despite canRead=false.
-        # Purely virtual identities do not themselves become glob candidates.
-        listed = reserved in probe['assets']
-        assert listed == (reserved.startswith('lib/') and (native / reserved).is_file()), probe
+    assert all(p not in probe['assets'] for p in probe['unreadable']), probe
     assert not any(p.endswith('.probe.txt') for p in probe['assets']), probe
     assert not any(p.endswith('.channel.conduit.json') and p not in expected_cache
                    for p in probe['assets']), probe

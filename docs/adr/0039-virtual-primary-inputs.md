@@ -26,13 +26,16 @@ the same token still uses suffix replacement. Anchored exact mappings retain
 their existing meaning. The all-asset mapping can match virtual inputs just as
 it matches other primary candidates.
 
-Block reads of the four reserved IDs in the shared phase-aware asset view,
-including when a physical file has the same path. `canRead` returns false, reads
-fail as missing. Virtual identities do not themselves become glob candidates;
-however, a physical source at a reserved path is enumerated by stock globs while
-remaining unreadable. Preserve that distinction between filesystem enumeration
-and read access. Snapshot existence records the availability of a primary
-identity, not the availability of bytes.
+Block reads of the four reserved IDs in the shared phase-aware asset view.
+`canRead` returns false, reads fail as missing, and virtual identities are not
+filesystem candidates for globs. Snapshot existence records the availability
+of a primary identity, not the availability of bytes.
+
+Reject eligible physical sources at the reserved paths before actions. Stock
+can enumerate such sources despite their unreadability, and their deletion can
+remove virtual-action outputs depending on prior graph classification. That
+source/placeholder alias transition is outside the supported model; do not
+silently treat a physical alias as a stable virtual identity.
 
 Reject declared outputs at the reserved virtual paths before actions. Such
 outputs are outside the supported subset; an action must not materialize or

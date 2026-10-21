@@ -83,6 +83,17 @@ for directory in "$stock_dir" "$rust_dir"; do
 done
 registry_override_pair recovery
 
+# Physical sources at reserved virtual paths have history-dependent stock
+# deletion behavior. Reject the unvalidated shape before actions/publication.
+registry_override_capture_atomic
+for path in '$package$' 'lib/$lib$' 'test/$test$' 'web/$web$'; do
+  printf 'reserved physical source\n' > "$rust_dir/$path"
+  if registry_override_native reserved-source; then exit 1; fi
+  grep -Fq 'Unsupported native source at a virtual primary path' "$temporary_dir/reserved-source.native.log"
+  registry_override_assert_atomic
+  find "$rust_dir/$path" -maxdepth 0 -type f -delete
+done
+
 # generate_for applies to the virtual input, not to its fixed output path.
 for directory in "$stock_dir" "$rust_dir"; do
   sed -i '/conduit_build_runner:registry_builder:/a\        generate_for: ["lib/**"]' "$directory/build.yaml"
@@ -101,15 +112,6 @@ registry_override_pair empty
 if grep -Fq "map['" "$rust_dir/lib/conduit.g.dart"; then exit 1; fi
 registry_override_pair empty-no-op
 grep -Fq 'No work to do (Rust frontend)' "$temporary_dir/empty-no-op.native.log"
-
-# Removing the physical aliases must leave virtual actions available, while
-# removing the aliases from glob enumeration.
-for directory in "$stock_dir" "$rust_dir"; do
-  for path in '$package$' 'lib/$lib$' 'test/$test$' 'web/$web$'; do
-    find "$directory/$path" -maxdepth 0 -type f -delete
-  done
-done
-registry_override_pair virtual-only
 
 # The virtual primary also participates in selected-output demand. Compare the
 # demanded registry and producer; unselected source-file retention is separate.

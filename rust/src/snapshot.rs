@@ -30,7 +30,9 @@ pub fn scan_packages(workspace: &Workspace, packages: &BTreeSet<String>) -> io::
     for package in packages {
         for (asset, path) in workspace.list_package_assets(package)? {
             if crate::placeholders::is_placeholder_asset(&asset) {
-                continue;
+                return Err(io::Error::other(format!(
+                    "Unsupported native source at a virtual primary path: {asset}"
+                )));
             }
             let bytes = std::fs::read(&path)?;
             snapshot.insert(

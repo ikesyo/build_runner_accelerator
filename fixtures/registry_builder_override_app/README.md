@@ -44,10 +44,10 @@ bash scripts/watch_smoke_registry_override.sh
 Build checks compare complete source inventories and bytes, all current cache
 outputs, and ordered `findAssets('lib/**')` results from later-phase probes.
 The probes run on `$lib$`, `$test$`, and `$web$`; the real registry runs on
-`$package$`. They verify that all four virtual IDs are unreadable, while a real
-source ending in `$lib$` keeps normal suffix replacement. Files placed at the
-four reserved virtual paths remain unreadable but can appear in stock globs;
-purely virtual IDs do not add entries to enumeration.
+`$package$`. They verify that all four virtual IDs are unreadable and absent
+from enumeration, while a real source ending in `$lib$` keeps normal suffix
+replacement. A physical source at a reserved virtual path is rejected before
+actions without changing generated outputs or the graph.
 Scope checks exclude and restore the registry's virtual primary
 with `generate_for` and check stale fixed-output removal.
 
@@ -73,4 +73,8 @@ not support for the full Conduit builder set, a runnable Conduit server, or an
 override-free supported package solution. Duplicate class-name tie ordering,
 other Analyzer versions, mixed real project workspaces, and performance remain
 outside this probe. Reserved virtual paths as declared outputs fail explicitly.
+Physical sources at these paths are also unsupported: stock can enumerate them
+despite unreadability, and deleting them can remove outputs of virtual actions
+until a clean graph is created. The native fixture rejects this history-dependent
+shape instead of treating it as an ordinary virtual input.
 The shared virtual-input decision is [ADR 0039](../../docs/adr/0039-virtual-primary-inputs.md).

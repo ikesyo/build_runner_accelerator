@@ -123,20 +123,10 @@ impl AssetVisibility {
         kind: BuilderKind,
         deleted: &BTreeSet<String>,
     ) -> bool {
-        crate::placeholders::is_placeholder_asset(asset)
-            || self.is_hidden(asset, phase, kind, deleted)
-    }
-
-    /// Phase/deletion visibility for enumeration. A real file at a reserved
-    /// placeholder path can match a stock glob even though it cannot be read.
-    pub(crate) fn is_hidden(
-        &self,
-        asset: &str,
-        phase: u32,
-        kind: BuilderKind,
-        deleted: &BTreeSet<String>,
-    ) -> bool {
-        if deleted.contains(asset) || self.post_process_outputs.contains(asset) {
+        if crate::placeholders::is_placeholder_asset(asset)
+            || deleted.contains(asset)
+            || self.post_process_outputs.contains(asset)
+        {
             return true;
         }
         kind == BuilderKind::Normal
