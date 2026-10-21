@@ -88,9 +88,9 @@ deletion, while excluding them from registry enumeration. The regression checks
 both physical retention and the absence of stale/duplicate registry bindings;
 it does not confuse a cache directory listing with the builder's visible inputs.
 
-Native output bytes, native atomic recovery, paired watch behavior, and precise
-enumeration order are unvalidated because the dependency solution is blocked.
-Class-name sorting makes distinct-name registry output independent of enumeration
-order. Code inspection shows the native manifest also rejects the `$package$` mapping;
-support for virtual primaries must be designed and compared with the supported
-stock runner once a compatible real builder dependency solution exists.
+This override-free reference cannot resolve the native baseline. The separate
+[override fixture](../registry_builder_override_app/README.md) uses Analyzer
+14.5.0 with stock/native build_runner 2.16.2 to compare output bytes, ordered
+enumeration, atomic recovery, and paired watch. It also exercises the shared
+virtual-primary model from [ADR 0039](../../docs/adr/0039-virtual-primary-inputs.md).
+That experiment does not change the published dependency conflict above.

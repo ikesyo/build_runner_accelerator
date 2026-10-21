@@ -1,0 +1,45 @@
+targets:
+  $default:
+    builders:
+      conduit_build_runner:serializable_builder:
+        enabled: false
+      conduit_build_runner:channel_builder:
+        enabled: false
+      conduit_build_runner:configuration_builder:
+        enabled: false
+      conduit_build_runner:controller_builder:
+        enabled: false
+      conduit_build_runner:managed_object_builder:
+        enabled: false
+      conduit_build_runner:registry_builder:
+        enabled: true
+      registry_builder_app:placeholder_probe:
+        enabled: true
+      registry_builder_app:source_manifest:
+        enabled: true
+      registry_builder_app:cache_manifest:
+        enabled: true
+
+builders:
+  source_manifest:
+    import: 'package:registry_builder_app/fixture_builder.dart'
+    builder_factories: ['sourceManifest']
+    build_extensions: {'.record': ['.controller.conduit.json']}
+    auto_apply: none
+    build_to: source
+  cache_manifest:
+    import: 'package:registry_builder_app/fixture_builder.dart'
+    builder_factories: ['cacheManifest']
+    build_extensions: {'.cached': ['.channel.conduit.json']}
+    auto_apply: none
+    build_to: cache
+  placeholder_probe:
+    import: 'package:registry_builder_app/placeholder_probe.dart'
+    builder_factories: ['placeholderProbe']
+    build_extensions:
+      '$lib$': ['placeholder.probe.txt']
+      '$test$': ['placeholder.probe.txt']
+      '$web$': ['placeholder.probe.txt']
+    auto_apply: none
+    build_to: source
+    required_inputs: ['.g.dart']

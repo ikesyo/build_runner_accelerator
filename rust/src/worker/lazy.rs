@@ -50,7 +50,7 @@ fn filtered_glob_members(
     let mut sources = Vec::new();
     let mut generated = Vec::new();
     for asset in candidates {
-        if visibility.is_blocked(&asset, phase, kind, deleted) {
+        if visibility.is_hidden(&asset, phase, kind, deleted) {
             continue;
         }
         if !overlay.contains_key(&asset)

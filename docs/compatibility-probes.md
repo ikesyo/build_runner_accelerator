@@ -29,7 +29,8 @@ supported.
 | API Dash `har` target | Passed after narrowing | Supported subset | The initial probe expected a Freezed output for an input outside that builder's effective `generate_for`; the narrowed target completed with matching outputs. |
 | Invoice Ninja model target | Passed | Supported subset | Isolated Freezed/JSON target completed with byte-identical outputs. |
 | Official Conduit stamp-only target | Passed | Supported subset | `conduit_build_runner`'s `stamp_builder` completed. |
-| `fixtures/registry_builder_app` / Official Conduit registry | Stock-only reference; native blocked | Dependency conflict and unsupported virtual primary | Published `conduit_build_runner` 6.0.0/7.0.0 require Analyzer 12, incompatible with the native stock 2.16.2 baseline (Analyzer 14.3+). The 7.0.0 reference pins older stock 2.14.1 and exercises the real registry factory, five manifest kinds, source/cache generated inputs, lifecycle, and failure/recovery. No stock/native equality is claimed; see the [fixture guide](../fixtures/registry_builder_app/README.md). |
+| `fixtures/registry_builder_app` / Official Conduit registry | Stock-only reference; ordinary native resolution blocked | Published dependency conflict | Published `conduit_build_runner` 6.0.0/7.0.0 require Analyzer 12, incompatible with the native stock 2.16.2 baseline (Analyzer 14.3+). The 7.0.0 reference pins older stock 2.14.1 and exercises the real registry factory, five manifest kinds, source/cache generated inputs, lifecycle, and failure/recovery. No stock/native equality is claimed for this override-free reference; see the [fixture guide](../fixtures/registry_builder_app/README.md). |
+| `fixtures/registry_builder_override_app` | Regression fixture with explicit override | Isolated stock/native registry configuration | Published Conduit 7.0.0 with a fixture-only Analyzer 14.5.0 override, build 4.0.11, and stock/native build_runner 2.16.2. Compares fixed registry output, source/cache generated manifests, all four virtual primaries, ordered enumeration, clean/no-op, changes, add/delete/rename, scope changes, empty aggregation, atomic failure recovery, and paired watch. This does not establish an override-free package solution or other Conduit generator support; see the [fixture guide](../fixtures/registry_builder_override_app/README.md). |
 | Drift `examples/app` / `examples/with_built_value` | Not supported | Explicit rejection | The full examples still include `build_web_compilers`, full Drift workspace configuration, and other builders outside this focused subset. The focused `fixtures/drift_app` probe covers the compatible `drift_dev` factory/output path. |
 
 Some full repository roots also could not be resolved under the probe's
@@ -72,9 +73,10 @@ compatibility probe does not make a performance claim.
 2. Extend the isolated Drift probe to additional official builders only
    after their manifest shape and API requirements are known; do not encode
    them as builder-name special cases in the Rust planner.
-3. Unblock Conduit's `registry_builder` dependency solution before validating
-   virtual primary mapping and native lifecycle/watch; investigate
-   `build_web_compilers` separately. Drift `not_shared` and full `driftCleanup`
+3. Unblock Conduit's published dependency solution independently of the validated
+   registry override fixture; investigate `build_web_compilers` separately.
+   Other Conduit generators and full workspaces need separate probes.
+   Drift `not_shared` and full `driftCleanup`
    are now covered by the [Drift fixture](../fixtures/drift_analyzer_app/README.md).
 
 ## Drift analyzer boundary
@@ -120,8 +122,9 @@ fixed costs.
 
 `not_shared` and full `driftCleanup` are covered by the later
 [not_shared fixture configuration](../fixtures/drift_analyzer_app/README.md).
-Conduit's `registry_builder`, `build_web_compilers`, and full Drift
-examples/workspaces remain outside native support. This
+The override-free Conduit package solution, `build_web_compilers`, and full Drift
+examples/workspaces remain outside this native scope. Conduit's registry has a
+separate isolated override fixture as listed above. This
 modular support requires the monolithic `drift_dev:drift_dev` builder to remain
 disabled in the focused fixture. Unsupported manifest shapes or API requirements
 fail explicitly before output publication.

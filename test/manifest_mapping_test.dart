@@ -5,6 +5,30 @@ import 'package:test/test.dart';
 
 void main() {
   group('manifestExtensions', () {
+    test('preserves stock placeholder suffix mappings and literal paths', () {
+      for (final input in [r'$package$', r'$lib$', r'$test$', r'$web$']) {
+        final extension = manifestExtensions({
+          input: ['registry.dart'],
+        })!.single;
+        expect(extension.inputSuffix, input);
+        expect(extension.inputMatch, 'suffix');
+        expect(extension.inputAnchored, isFalse);
+        expect(extension.outputSuffixes, ['registry.dart']);
+        expect(
+          manifestExtensions({
+            input: ['../escape.dart'],
+          }),
+          isNull,
+        );
+      }
+      expect(
+        manifestExtensions({
+          r'$unknown$': ['registry.dart'],
+        }),
+        isNull,
+      );
+    });
+
     test('normalizes suffix outputs without changing the input mapping', () {
       final extension = manifestExtensions(<String, List<String>>{
         '.dart': <String>['g.dart'],

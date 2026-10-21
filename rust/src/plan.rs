@@ -248,6 +248,11 @@ pub(crate) fn outputs_for(builder: &BuilderDefinition, input: &str) -> io::Resul
         matched_extension = true;
         for suffix in &extension.output_suffixes {
             let output = output_for(extension, input, suffix)?;
+            if crate::placeholders::is_placeholder_asset(&output) {
+                return Err(io::Error::other(format!(
+                    "builder declares a virtual placeholder output: {output}"
+                )));
+            }
             if !seen.insert(output.clone()) {
                 return Err(io::Error::other(format!(
                     "builder declares duplicate output for {input}: {output}"
@@ -432,6 +437,12 @@ mod tests {
             outputs_for(&builder, "app|lib/special.txt").unwrap(),
             vec!["app|lib/special.generated.txt"]
         );
+        for path in crate::placeholders::PATHS {
+            let mut invalid = builder.as_ref().clone();
+            invalid.extensions[0].output_suffixes = vec![path.to_owned()];
+            let error = outputs_for(&invalid, "app|lib/special.txt").unwrap_err();
+            assert!(error.to_string().contains("virtual placeholder output"));
+        }
     }
 
     #[test]

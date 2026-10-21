@@ -249,7 +249,7 @@ impl WorkerClient {
                 );
                 let mut assets = Vec::new();
                 for asset in candidates {
-                    if visibility.is_blocked(asset.as_str(), phase, kind, deleted_overlay)
+                    if visibility.is_hidden(asset.as_str(), phase, kind, deleted_overlay)
                         || !asset_exists(workspace, &asset, overlay, visibility)?
                     {
                         continue;

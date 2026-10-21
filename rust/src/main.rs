@@ -9,6 +9,7 @@ mod graph;
 mod manifest_generator;
 mod metrics;
 mod pattern;
+mod placeholders;
 mod plan;
 mod process;
 mod protocol;
