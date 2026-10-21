@@ -29,7 +29,7 @@ supported.
 | API Dash `har` target | Passed after narrowing | Supported subset | The initial probe expected a Freezed output for an input outside that builder's effective `generate_for`; the narrowed target completed with matching outputs. |
 | Invoice Ninja model target | Passed | Supported subset | Isolated Freezed/JSON target completed with byte-identical outputs. |
 | Official Conduit stamp-only target | Passed | Supported subset | `conduit_build_runner`'s `stamp_builder` completed. |
-| Official Conduit full builder set | Not supported | Explicit rejection | `registry_builder` is outside the current manifest/worker subset. |
+| `fixtures/registry_builder_app` / Official Conduit registry | Stock-only reference; native blocked | Dependency conflict and unsupported virtual primary | Published `conduit_build_runner` 6.0.0/7.0.0 require Analyzer 12, incompatible with the native stock 2.16.2 baseline (Analyzer 14.3+). The 7.0.0 reference pins older stock 2.14.1 and exercises the real registry factory, five manifest kinds, source/cache generated inputs, lifecycle, and failure/recovery. No stock/native equality is claimed; see the [fixture guide](../fixtures/registry_builder_app/README.md). |
 | Drift `examples/app` / `examples/with_built_value` | Not supported | Explicit rejection | The full examples still include `build_web_compilers`, full Drift workspace configuration, and other builders outside this focused subset. The focused `fixtures/drift_app` probe covers the compatible `drift_dev` factory/output path. |
 
 Some full repository roots also could not be resolved under the probe's
@@ -72,8 +72,10 @@ compatibility probe does not make a performance claim.
 2. Extend the isolated Drift probe to additional official builders only
    after their manifest shape and API requirements are known; do not encode
    them as builder-name special cases in the Rust planner.
-3. Investigate `registry_builder`, `not_shared`, full `driftCleanup`, and
-   `build_web_compilers` as separate compatibility additions.
+3. Unblock Conduit's `registry_builder` dependency solution before validating
+   virtual primary mapping and native lifecycle/watch; investigate
+   `build_web_compilers` separately. Drift `not_shared` and full `driftCleanup`
+   are now covered by the [Drift fixture](../fixtures/drift_analyzer_app/README.md).
 
 ## Drift analyzer boundary
 
@@ -116,8 +118,10 @@ inventories. No performance measurement was made; this probe makes no speed
 claim, and small targets may be dominated by frontend/worker startup and IPC
 fixed costs.
 
-`not_shared`, full `driftCleanup`, `registry_builder`,
-`build_web_compilers`, and full Drift examples/workspaces are excluded. This
+`not_shared` and full `driftCleanup` are covered by the later
+[not_shared fixture configuration](../fixtures/drift_analyzer_app/README.md).
+Conduit's `registry_builder`, `build_web_compilers`, and full Drift
+examples/workspaces remain outside native support. This
 modular support requires the monolithic `drift_dev:drift_dev` builder to remain
 disabled in the focused fixture. Unsupported manifest shapes or API requirements
 fail explicitly before output publication.

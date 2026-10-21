@@ -69,9 +69,17 @@ optional/post-process and Drift builder chains:
   `driftCleanup` runtime input set. Compare stock/native lifecycle bytes,
   intermediate visibility, logical cleanup, atomic failure recovery, and watch.
   See the [fixture guide](../fixtures/drift_analyzer_app/README.md).
-- [ ] Validate `registry_builder` and `build_web_compilers` integration
-  separately. Define supported versions and workspace configurations before
-  claiming full support.
+- [ ] Validate Conduit's `registry_builder` integration with a dependency
+  solution compatible with the native baseline. Published
+  `conduit_build_runner` 6.0.0/7.0.0 require Analyzer 12, while stock
+  build_runner 2.16.2 requires Analyzer 14.3 or newer. The
+  [stock-only fixture](../fixtures/registry_builder_app/README.md) records the
+  7.0.0 contract on stock 2.14.1 and checks both dependency conflicts in CI.
+  Native `$package$` virtual-primary mapping, byte comparisons, atomic recovery,
+  and watch remain unvalidated; do not widen dependencies or infer support from
+  the older stock reference.
+- [ ] Validate `build_web_compilers` integration separately, defining supported
+  versions and workspace configurations before claiming full support.
 
 - [ ] Expand the manifest subset toward complete `build.yaml` semantics while
   preserving explicit rejection outside the validated subset. Full post-process behavior and
