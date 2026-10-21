@@ -1,4 +1,4 @@
-use super::dirty::expand_dirty_dependents;
+use super::dirty::{expand_dirty_dependents, expand_dirty_dependents_with_removed};
 use super::execution::execution_order;
 use super::part_directive::declares_part_directive;
 use crate::builder::{BuildTo, BuilderDefinition, BuilderKind, ConfiguredBuilder, RustBuildConfig};
@@ -201,6 +201,73 @@ fn undemanded_optional_chain_does_not_dirty_cleanup_without_normal_demand() {
             .iter()
             .any(|spec| spec.action_key() == cleanup.action_key())
     );
+}
+
+#[test]
+fn generated_glob_candidates_invalidate_consumers_with_phase_visibility() {
+    let mut producer = configured_builder("producer", "app:root", 0, 0);
+    Arc::make_mut(&mut producer.definition).is_optional = true;
+    let aggregate = configured_builder("aggregate", "app:root", 0, 2);
+    let consumer = configured_builder("consumer", "app:root", 0, 3);
+    let producer = build_spec(&producer, "app|lib/new.seed", &["app|lib/new.stage"]);
+    let aggregate = build_spec(&aggregate, "app|lib/index.seed", &["app|lib/index"]);
+    let consumer = build_spec(&consumer, "app|lib/main.dart", &["app|lib/main.js"]);
+    let specs = vec![producer.clone(), aggregate.clone(), consumer.clone()];
+    let state = GraphState {
+        actions: BTreeMap::from([
+            (
+                aggregate.action_key(),
+                ActionState {
+                    input: aggregate.input.clone(),
+                    glob_reads: vec![crate::protocol::GlobRead {
+                        package: "app".into(),
+                        pattern: "lib/*.stage".into(),
+                    }],
+                    outputs: aggregate.outputs.clone(),
+                    status: "success".into(),
+                    ..ActionState::default()
+                },
+            ),
+            (
+                consumer.action_key(),
+                ActionState {
+                    input: consumer.input.clone(),
+                    reads: aggregate.outputs.clone(),
+                    status: "success".into(),
+                    ..ActionState::default()
+                },
+            ),
+        ]),
+        ..GraphState::default()
+    };
+    let mut dirty = vec![producer.clone()];
+    expand_dirty_dependents(&mut dirty, &specs, &state);
+    assert_eq!(
+        dirty.len(),
+        3,
+        "new optional candidate invalidates glob and its reader"
+    );
+    for (asset, phase, kind, count) in [
+        ("app|lib/old.stage", 0, BuilderKind::Normal, 2),
+        ("app|lib/old.stage", 2, BuilderKind::Normal, 0),
+        ("app|lib/old.stage", 4, BuilderKind::Normal, 0),
+        ("app|lib/old.stage", 0, BuilderKind::PostProcess, 0),
+        ("other|lib/old.stage", 0, BuilderKind::Normal, 0),
+        ("app|lib/old.other", 0, BuilderKind::Normal, 0),
+    ] {
+        let mut dirty = vec![];
+        expand_dirty_dependents_with_removed(
+            &mut dirty,
+            &specs,
+            &state,
+            &[(asset.into(), phase, kind)],
+        );
+        assert_eq!(
+            dirty.len(),
+            count,
+            "removed candidate {asset} / {phase} / {kind:?}"
+        );
+    }
 }
 
 #[test]

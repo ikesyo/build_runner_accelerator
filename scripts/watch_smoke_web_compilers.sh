@@ -34,7 +34,7 @@ stock_successes() { grep -Fc 'Built with build_runner/aot in' "$stock_log" || tr
 native_successes() { grep -Ec 'Rust watch cycle metrics: .* success=true' "$native_log" || true; }
 checkpoint() { stock_before=$(stock_successes); native_before=$(native_successes); }
 wait_pair() {
-  for _ in $(seq 1 "$(verification_watch_poll_iterations 1800)"); do
+  for _ in $(seq 1 "$(verification_watch_poll_iterations 200)"); do
     if (( $(stock_successes) > stock_before && $(native_successes) > native_before )) &&
       web_compare > "$temporary_dir/compare.log" 2>&1; then return; fi
     kill -0 "$stock_pid" && kill -0 "$native_pid" || break
@@ -47,7 +47,7 @@ web_prepare
 worker_start_process_group_in_dir "$stock_dir" "$stock_log" \
   env PUB_CACHE="$pub_cache" "$dart_bin" --suppress-analytics run build_runner watch
 stock_pid=$worker_last_pid
-for _ in $(seq 1 "$(verification_watch_poll_iterations 1800)"); do
+for _ in $(seq 1 "$(verification_watch_poll_iterations 200)"); do
   (( $(stock_successes) > 0 )) && break
   kill -0 "$stock_pid"
   sleep 0.2
@@ -80,8 +80,9 @@ wait_pair
 web_atomic save
 for directory in "$stock_dir" "$rust_dir"; do
   printf "String message() => missingCompilerSymbol;\n" > "$directory/lib/message.dart"
+  printf "void main() { print('tentative watch output'); }\n" > "$directory/web/aaa.dart"
 done
-for _ in $(seq 1 "$(verification_watch_poll_iterations 600)"); do
+for _ in $(seq 1 "$(verification_watch_poll_iterations 200)"); do
   if grep -Fq 'missingCompilerSymbol' "$stock_log" &&
      grep -Eq 'Rust watch cycle metrics: .* success=false' "$native_log"; then break; fi
   sleep 0.2

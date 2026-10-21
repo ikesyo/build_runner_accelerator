@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+from web_compilers_graph import native_graph
+
 
 def fields(value):
     assert len(value) % 2 == 0
@@ -31,6 +33,44 @@ def stock_outputs(root):
     return outputs
 
 
+def compare_evidence(stock, native):
+    graph = json.loads((stock / '.dart_tool/build/asset_graph.json').read_bytes())
+    ids, state = graph['ids'], fields(graph['buildState'])
+    actions, inputs, globs = native_graph(native)
+    by_identity = {(a['builder'], a['input']): key for key, a in actions.items()}
+    suffixes = [('.module.library', 'module_library'),
+                ('.meta_module.raw', 'dart2js_modules#factory0'),
+                ('.meta_module.clean', 'dart2js_modules#factory1'),
+                ('.dart2js.module', 'dart2js_modules#factory2'),
+                ('.dart.js', 'entrypoint')]
+    checked = 0
+    for key, result in zip(state['buildStepResults'][::2], state['buildStepResults'][1::2]):
+        key, result = fields(key), fields(result)
+        primary = ids[key['primaryInput']]
+        if not primary.startswith('build_web_compilers_app|') or not result['outputs']:
+            continue
+        outputs = [ids[i] for i in result['outputs']]
+        builder = next((name for suffix, name in suffixes if any(p.endswith(suffix) for p in outputs)), None)
+        if builder is None:
+            continue
+        identity = (f'build_web_compilers:{builder}', primary)
+        native_key = by_identity[identity]
+        assert inputs[native_key] == [ids[i] for i in result['inputs']], ('input order', identity, inputs[native_key], result['inputs'])
+        assert not result['resolverEntrypoints'] and not actions[native_key]['entrypoints'], identity
+        checked += 1
+    assert checked >= 5, checked
+    stock_globs = {}
+    for key, result in zip(state['globResults'][::2], state['globResults'][1::2]):
+        key, result = fields(key), fields(result)
+        if key['package'] == 'build_web_compilers_app':
+            stock_globs[f"{key['package']}|{key['glob']}"] = [ids[i] for i in result['results']]
+    actual_globs = {}
+    for key, action in actions.items():
+        if action['builder'] == 'build_web_compilers:dart2js_modules#factory0' and action['input'].startswith('build_web_compilers_app|'):
+            actual_globs.update(globs[key])
+    assert stock_globs == actual_globs, ('ordered generated glob', stock_globs, actual_globs)
+
+
 def compare(stock, native):
     for subtree in ['lib', 'web']:
         def files(root):
@@ -40,6 +80,7 @@ def compare(stock, native):
         assert expected.keys() == actual.keys(), (subtree, expected.keys() ^ actual.keys())
         for path in expected:
             assert expected[path] == actual[path], f'source byte mismatch: {path}'
+    compare_evidence(stock, native)
     outputs = stock_outputs(stock)
     expected = {}
     for asset, cached in outputs.items():
@@ -60,6 +101,10 @@ def compare(stock, native):
     assert expected.keys() == actual.keys(), ('cache set mismatch', expected.keys() ^ actual.keys())
     mismatches = [path for path in expected if expected[path] != actual[path]]
     assert not mismatches, ('raw cache byte mismatch', mismatches)
+    for path, value in physical_intermediates.items():
+        other = stock / '.dart_tool/build/generated' / path
+        if path.endswith('.tar.gz') and other.is_file():
+            print('web-compilers: logically deleted archive raw-byte equality:', value == other.read_bytes())
     entrypoints = list((stock / 'web').glob('*.dart'))
     for entry in entrypoints:
         if 'void main(' in entry.read_text():

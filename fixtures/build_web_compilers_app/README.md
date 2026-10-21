@@ -3,7 +3,9 @@
 This single-package probe pins the unmodified published
 `build_web_compilers` 4.8.12 and stock `build_runner` 2.16.2. It uses Dart
 3.13.3, `compiler: dart2js`, `dart2js_args: [-O1]`, dev configuration, and
-`generate_for: [web/**.dart]`. No dependency overrides are used. Production
+`generate_for: [web/**.dart]`. The public post-process option
+`dart2js_archive_extractor.filter_outputs: true` is explicitly enabled.
+No dependency overrides are used. Production
 constraints are unchanged. DDC, hot reload, dart2wasm, deferred loading,
 release configuration and multi-package/workspace compatibility are separate
 research scopes.
@@ -43,8 +45,49 @@ The selected mode avoids DDC's kernel worker, SDK JS and frontend-server
 requirements while exercising real compilation and the optional module chain.
 This choice does not imply support for those other modes.
 
+## Comparison boundary
+
+For each live entrypoint the current public cache outputs are `.dart.js` and
+`.dart.js.map`. The source tree has no generated outputs in this mode. Source
+file sets/bytes are compared too. There are no DDC bootstrap, kernel, digest,
+module JS, or wasm outputs in this configuration. Module metadata is generated
+input to the compiler chain, not a final public output.
+
+The comparison reads stock graph format 47 to determine current logical
+outputs, applies the documented cleanup input contract to the native cache,
+and compares the complete remaining native file set and raw bytes. It also
+compares retained module metadata bytes where both physical caches contain the
+same path. Stale JS/maps cannot be hidden by the intermediate exclusion.
+No output bytes are normalized.
+
+Stock retains physical `.module.library`, raw/clean meta modules,
+`.dart2js.module`, and `.dart.js.tar.gz` files after logical cleanup. Native can
+retain the same intermediate files. Raw archives **do not match**: the tar
+entry mtime comes from filesystem metadata and `.deps` includes the random
+scratch directory plus SDK paths (the native AOT SDK facade differs too).
+The default dev extractor exposes `.deps`, so that configuration is outside
+this byte-identical claim. The selected `filter_outputs: true` discards `.deps`
+and logically deletes the archive using the unmodified public builder.
+Normalizing paths or times is not counted as raw byte equality.
+
 ## Validation
 
-Investigation is in progress. A successful solver run is not a compatibility
-claim. Record raw file-set and byte comparisons separately from any diagnostic
-normalization, including timestamps or scratch paths in archives/maps.
+Run sequentially with one SDK and Pub cache:
+
+```bash
+bash scripts/correctness_web_compilers.sh
+bash scripts/watch_smoke_web_compilers.sh
+```
+
+The scripts set `BUILD_MAX_WORKERS_PER_TASK=1` and native `--jobs 1`. They keep
+logs outside watched workspaces and retain failed workspaces for diagnosis.
+Use the repository toolchain overrides as described in `docs/development.md`.
+On the managed environment used here, source `.toolchains/task-env.sh`, select
+SDK `bin/dart-cloud`, and run the scripts with `env -u HOME` so the compiler
+subprocess shares the wrapper's writable analytics/cache behavior. This is an
+environment setup detail, not a dependency override or compiler-source patch.
+
+Initial clean/no-op, non-target, library and entrypoint changes matched raw
+public bytes on Dart 3.13.3 / Rust 1.98.1. Lifecycle, compiler failure/recovery,
+watch and mandatory verification are in progress; this is not yet a completed
+compatibility claim.
