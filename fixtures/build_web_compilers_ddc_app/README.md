@@ -64,7 +64,7 @@ raw/clean meta-module and per-library module artifacts; physical stock cache
 files remain. The disabled source cleanup preserves Dart sources/maps/metadata.
 The sdk copy factory writes both loaders even though AMD only needs require.js.
 
-## Validation in progress
+## Validation
 
 The stock build is observed before native comparison. The initial successful
 stock/native pair matched the complete 16-file set and raw bytes, including
@@ -92,5 +92,29 @@ ownership when DDC bootstrap demands modules via `Future.wait`. Complete frames
 and per-action round trips are now queued; nested optional actions have separate
 sessions. These are shared fixes, with no package-name branches.
 
-The initial pair passed after those fixes. Lifecycle and paired watch results
-remain in progress; initial success alone is not a completed compatibility claim.
+The build regression passed all nine successful comparisons: clean/no-op,
+non-target, dependency library and entrypoint edits, add, rename, delete and
+recovery. Each compares the complete current public set and raw bytes; generated
+module candidates/input order and configured chain order are also checked.
+Removing/renaming the added library and entrypoint removes stale public module,
+kernel and bootstrap outputs. No full dill, symbols or hot-reload marker is
+produced by this configuration.
+
+The failure case uses an actual undefined identifier in the dependency library
+and adds an independent entrypoint. Both real compilers fail; stock can publish
+the independent entrypoint while native cache bytes and graph remain exactly
+at their preceding successful state. Repairing the identifier restores complete
+raw equality. This is the all-success commit boundary, not crash atomicity.
+
+CI run [810](https://github.com/ikesyo/build_runner_accelerator/actions/runs/39634089049)
+passed, including the DDC build and AOT paired watch probes and existing related
+compatibility checks. The local paired watch and mandatory quick/full checks
+are still in progress. The first four mapping lanes took 386/322/380/386 seconds;
+the measured 47-second multiple-mapping probe moves to the shorter second lane.
+No jobs or parallel lanes were added. These timings guide test distribution;
+no product performance improvement is claimed.
+
+The claim is limited to this pinned configuration and tested inputs. Hot reload,
+library bundles/frontend server, other compiler flags (full kernel, symbols,
+canary, environment definitions, nonincremental compilation), conditional-import
+pruning, other package/SDK versions and full workspaces are unvalidated.

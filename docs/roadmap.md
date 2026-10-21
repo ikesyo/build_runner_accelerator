@@ -93,7 +93,14 @@ optional/post-process and Drift builder chains:
   `filter_outputs: true`, and AOT paired watch. See the
   [fixture guide](../fixtures/build_web_compilers_app/README.md) for raw public
   JS/map equality, generated module dependencies, cleanup and atomic recovery.
-- [ ] Validate other web compiler modes/configurations and versions: DDC,
+- [x] Validate the minimal published DDC chain at the same pinned versions:
+  single root package, `compiler: dartdevc`, dev, `generate_for: [web/**.dart]`,
+  AMD defaults and hot reload disabled. See the
+  [DDC fixture](../fixtures/build_web_compilers_ddc_app/README.md) for the full
+  public kernel/module/bootstrap/SDK artifact set, raw bytes, optional demand,
+  ordered inputs, compiler failure/atomic recovery and AOT paired watch.
+- [ ] Validate other web compiler modes/configurations and versions: DDC hot
+  reload, library bundles/frontend server and nondefault compiler flags,
   dart2wasm, release/deferred outputs, the default dev extractor's exposed
   `.deps`, cold script-worker watch, and multi-package workspaces. Retained
   compiler archives contain time and scratch/SDK paths and are not raw-byte

@@ -770,27 +770,27 @@ jobs:
         shell: bash
         run: |
           (cd fixtures/empty_input_mapping_app && dart --suppress-analytics pub get)
-      # Keep one compiler probe per lane. Run 805 measured dart2js build/watch
-      # at 218s/170s; ancillary groups measured 96s, 109s, 85s, 58s,
-      # 108s and empty-input build/watch 175s/69s. Recheck DDC lane times in CI.
+      # One compiler probe per lane, retaining the existing concurrency bound.
+      # Run 810 measured lanes at 386/322/380/386s. Move the 47s multiple-
+      # mapping probe from lane 3 to lane 2 to reduce the measured imbalance.
       - parallel:
           - name: "Compatibility: dart2js correctness and empty-input correctness"
             shell: bash
             run: |
               bash scripts/correctness_web_compilers.sh
               PUB_GET_OFFLINE=1 bash scripts/correctness_empty_input_mapping.sh
-          - name: "Compatibility: dart2js watch and registry contracts"
+          - name: "Compatibility: dart2js watch, multiple mappings, and registry contracts"
             shell: bash
             run: |
               bash scripts/watch_smoke_web_compilers.sh
+              bash scripts/correctness_multi_mapping_builder.sh
               bash scripts/correctness_registry_override.sh
               bash scripts/correctness_registry_builder.sh
-          - name: "Compatibility: DDC correctness, mappings, and empty-input watch"
+          - name: "Compatibility: DDC correctness, capture, and empty-input watch"
             shell: bash
             run: |
               bash scripts/correctness_web_compilers_ddc.sh
               bash scripts/correctness_capture_builder.sh
-              bash scripts/correctness_multi_mapping_builder.sh
               PUB_GET_OFFLINE=1 bash scripts/watch_smoke_empty_input_mapping.sh
           - name: "Compatibility: DDC watch, registry watch, and Drift"
             shell: bash

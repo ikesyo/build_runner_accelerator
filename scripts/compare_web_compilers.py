@@ -34,7 +34,7 @@ def stock_outputs(root):
 
 
 def compare_evidence(stock, native, mode):
-    """Compare ordered official inputs and generated glob members by factory."""
+    """Compare configured chain order, official inputs and generated globs."""
     graph = json.loads((stock / '.dart_tool/build/asset_graph.json').read_bytes())
     ids, state = graph['ids'], fields(graph['buildState'])
     actions, inputs, globs = native_graph(native)
@@ -54,6 +54,11 @@ def compare_evidence(stock, native, mode):
                     (".dart.js", "entrypoint"),
                     ("/dart_sdk.js", "sdk_js#factory0"),
                     ("/require.js", "sdk_js#factory1")]
+        manifest_path = native / '.dart_tool/build_runner_accelerator/builder-manifest.json'
+        manifest = json.loads(manifest_path.read_bytes())
+        scopes = {(b['id'], b['package']): (b['target_order'], b['phase'])
+                  for b in manifest['builders']}
+    timeline = []
     checked = 0
     checked_builders = set()
     for key, result in zip(state['buildStepResults'][::2], state['buildStepResults'][1::2]):
@@ -61,10 +66,11 @@ def compare_evidence(stock, native, mode):
         primary = ids[key['primaryInput']]
         tracked_primary = primary.startswith('build_web_compilers_app|') or (
             mode == 'ddc' and primary == 'build_web_compilers|$package$')
-        if not tracked_primary or not result['outputs']:
+        marker = mode == 'ddc' and primary == 'build_web_compilers_app|web/$web$'
+        if not tracked_primary or (not result['outputs'] and not marker):
             continue
         outputs = [ids[i] for i in result['outputs']]
-        builder = next((name for suffix, name in suffixes if any(p.endswith(suffix) for p in outputs)), None)
+        builder = 'entrypoint_marker' if marker else next((name for suffix, name in suffixes if any(p.endswith(suffix) for p in outputs)), None)
         if builder is None:
             continue
         identity = (f'build_web_compilers:{builder}', primary)
@@ -73,9 +79,18 @@ def compare_evidence(stock, native, mode):
         assert not result['resolverEntrypoints'] and not actions[native_key]['entrypoints'], identity
         checked += 1
         checked_builders.add(builder)
+        if mode == 'ddc':
+            scope = scopes[(identity[0], primary.split('|')[0])]
+            timeline.append((key['phaseNumber'], scope, identity))
     assert checked >= 5, checked
     if mode == "ddc":
-        assert checked_builders == {name for _, name in suffixes}, checked_builders
+        assert checked_builders == {name for _, name in suffixes} | {"entrypoint_marker"}, checked_builders
+        # Numeric phase IDs differ between engines; compare the configured
+        # timeline using target order and phase, never BuilderDefinition.phase.
+        stock_order = [identity for _, _, identity in sorted(timeline)]
+        native_order = [identity for _, _, identity in
+                        sorted(timeline, key=lambda row: (row[1], row[2]))]
+        assert stock_order == native_order, ('configured chain order', stock_order, native_order)
         assert not any(a["outputs"] for a in actions.values()
                        if a["builder"].startswith(("build_web_compilers:dart2js_modules",
                                                    "build_web_compilers:dart2wasm_modules")))
@@ -114,7 +129,9 @@ def compare(stock, native, mode="dart2js"):
     # These public cleanup builders delete their inputs logically. Both engines
     # can retain physical normal outputs after cleanup; they are not published
     # entry artifacts. Never normalize the bytes of any current output.
-    cleaned = ('.module.library', '.meta_module.raw', '.meta_module.clean', '.module', '.tar.gz')
+    cleaned = ('.module.library', '.meta_module.raw', '.meta_module.clean', '.module')
+    if mode == 'dart2js':
+        cleaned += ('.tar.gz',)
     physical_intermediates = {p: value for p, value in actual.items() if p.endswith(cleaned)}
     actual = {p: value for p, value in actual.items() if not p.endswith(cleaned)}
     for path, value in physical_intermediates.items():
@@ -129,7 +146,17 @@ def compare(stock, native, mode="dart2js"):
             print('web-compilers: logically deleted archive raw-byte equality:', value == other.read_bytes())
     if mode == "ddc":
         assert any(p.endswith(".ddc.js") for p in actual), actual.keys()
-        assert "build_web_compilers/lib/src/dev_compiler/dart_sdk.js" in actual
+        sdk_prefix = "build_web_compilers/lib/src/dev_compiler/"
+        assert all(sdk_prefix + name in actual for name in
+                   ["dart_sdk.js", "dart_sdk.js.map", "require.js", "ddc_module_loader.js"])
+        for entry in (stock / "web").rglob("*.dart"):
+            if "void main(" not in entry.read_text():
+                continue
+            prefix = f"build_web_compilers_app/{entry.relative_to(stock)}"
+            assert all(prefix + suffix in actual for suffix in
+                       [".js", ".bootstrap.js", ".bootstrap.end.js", ".ddc_merged_metadata"]), prefix
+            assert prefix.removesuffix(".dart") + ".digests" in actual, prefix
+            assert actual[prefix + ".bootstrap.end.js"] == b"", prefix
         assert not any(p.endswith((".ddc.full.dill", ".ddc.js.symbols", ".ddc.js.errors")) for p in actual)
         print("web-compilers: DDC complete raw current output set/bytes match:", ", ".join(sorted(actual)))
         return
