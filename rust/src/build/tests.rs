@@ -621,6 +621,158 @@ fn dirty_test_config(builders: &[ConfiguredBuilder]) -> RustBuildConfig {
 }
 
 #[test]
+fn removing_target_with_shared_builder_invalidates_glob_consumer() -> io::Result<()> {
+    use super::dirty::analyze;
+    use super::planning::PlannedActions;
+    use crate::digest::digest_bytes;
+    use crate::metrics::FilesystemMetrics;
+    use crate::protocol::GlobRead;
+    use crate::snapshot::{AssetSnapshot, glob_asset_key};
+    use crate::visibility::AssetVisibility;
+
+    let temporary = TemporaryWorkspace::new()?;
+    let workspace = Workspace::load(temporary.0.clone())?;
+    // The shared factory phase differs from both configured phases. Target B
+    // is after the consumer, so it cannot substitute for removed target A.
+    let mut first = configured_builder("producer", "app:first", 0, 4);
+    Arc::make_mut(&mut first.definition).phase = 0;
+    let mut second = first.clone();
+    second.target = "app:second".into();
+    second.target_order = 1;
+    second.phase = 9;
+    let consumer = configured_builder("aggregate", "app:consumer", 2, 6);
+    let old_config = dirty_test_config(&[first.clone(), second.clone(), consumer.clone()]);
+    let new_config = dirty_test_config(&[second.clone(), consumer.clone()]);
+    let old_digest = crate::assets::config_digest(&workspace, &old_config)?;
+    let new_digest = crate::assets::config_digest(&workspace, &new_config)?;
+    assert_ne!(
+        old_digest, new_digest,
+        "target membership gates graph reuse"
+    );
+    assert!(new_config.definition("producer").is_some());
+
+    let first = build_spec(&first, "app|lib/a.seed", &["app|lib/a.stage"]);
+    let second = build_spec(&second, "app|lib/b.seed", &["app|lib/b.stage"]);
+    let consumer = build_spec(&consumer, "app|lib/index.seed", &["app|lib/index.out"]);
+    let glob = GlobRead {
+        package: "app".into(),
+        pattern: "lib/*.stage".into(),
+    };
+    let mut snapshot = BTreeMap::new();
+    for path in [
+        "a.seed",
+        "b.seed",
+        "index.seed",
+        "a.stage",
+        "b.stage",
+        "index.out",
+    ] {
+        fs::write(temporary.0.join("lib").join(path), b"unchanged")?;
+        snapshot.insert(
+            format!("app|lib/{path}"),
+            AssetSnapshot {
+                exists: true,
+                digest: digest_bytes(b"unchanged"),
+                size: 9,
+            },
+        );
+    }
+    // The old output is still on disk and glob membership remains unchanged
+    // until commit. Content and snapshot checks alone cannot dirty the reader.
+    snapshot.insert(
+        glob_asset_key(&glob),
+        AssetSnapshot {
+            exists: true,
+            digest: digest_bytes(b"lib/a.stage"),
+            size: 1,
+        },
+    );
+    let state = GraphState {
+        schema_version: crate::graph::GRAPH_SCHEMA_VERSION,
+        config_digest: old_digest.clone(),
+        assets: snapshot.clone(),
+        actions: [&first, &second, &consumer]
+            .into_iter()
+            .map(|spec| {
+                (
+                    spec.action_key(),
+                    ActionState {
+                        builder: spec.instance.builder.id.clone(),
+                        input: spec.input.clone(),
+                        glob_reads: if spec.action_key() == consumer.action_key() {
+                            vec![glob.clone()]
+                        } else {
+                            vec![]
+                        },
+                        outputs: spec.outputs.clone(),
+                        output_digests: spec
+                            .outputs
+                            .iter()
+                            .map(|asset| (asset.clone(), digest_bytes(b"unchanged")))
+                            .collect(),
+                        status: "success".into(),
+                        ..ActionState::default()
+                    },
+                )
+            })
+            .collect(),
+        ..GraphState::default()
+    };
+    let mut plan = PlannedActions {
+        specs: vec![first.clone(), second.clone(), consumer.clone()],
+        generated_output_locations: BTreeMap::new(),
+        visibility: AssetVisibility::default(),
+    };
+    let check = |config: &RustBuildConfig,
+                 digest: &str,
+                 snapshot: &BTreeMap<String, AssetSnapshot>,
+                 plan: &PlannedActions| {
+        analyze(
+            &workspace,
+            &state,
+            config,
+            digest,
+            snapshot,
+            plan,
+            &mut FilesystemMetrics::default(),
+        )
+    };
+    assert!(
+        check(&old_config, &old_digest, &snapshot, &plan)?
+            .dirty
+            .is_empty()
+    );
+    plan.specs.remove(0);
+    let changed = check(&new_config, &new_digest, &snapshot, &plan)?;
+    assert_eq!(
+        changed
+            .dirty
+            .iter()
+            .map(|spec| spec.action_key())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([second.action_key(), consumer.action_key()])
+    );
+    assert_eq!(changed.deleted_actions.len(), 1);
+    assert_eq!(changed.deleted_actions[0].0, first.action_key());
+
+    // A source deletion within the same configuration still uses target A's
+    // original configured phase, even with the shared factory on target B.
+    fs::remove_file(temporary.0.join("lib/a.seed"))?;
+    snapshot.remove("app|lib/a.seed");
+    let removed_input = check(&old_config, &old_digest, &snapshot, &plan)?;
+    assert_eq!(
+        removed_input
+            .dirty
+            .iter()
+            .map(|spec| spec.action_key())
+            .collect::<Vec<_>>(),
+        vec![consumer.action_key()]
+    );
+    assert!(temporary.0.join("lib/a.stage").exists());
+    Ok(())
+}
+
+#[test]
 fn dirty_outputs_read_each_physical_path_once_per_pass() -> io::Result<()> {
     use super::dirty::collect_output_digests;
     use crate::plan::{output_digest, output_path};

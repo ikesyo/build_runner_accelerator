@@ -45,6 +45,10 @@ even when physical cache bytes remain until commit.
 Removal of a same/future-phase producer does not invalidate recorded negative
 reads of its hidden outputs. Retain the existing conservative propagation for
 dirty producers and resolver closures, which can include generated parts.
+Phase-aware removal edges apply within a compatible configuration. Removing a
+target, or changing a configured phase or builder kind, changes the configuration
+digest and invalidates every retained action; old target metadata is not reused
+under that different configuration.
 
 Keep output writes, stale-output removal, cleanup deletions, and action state in
 one transaction. Publish them only after all required actions succeed.

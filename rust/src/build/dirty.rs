@@ -63,6 +63,7 @@ pub(super) fn analyze(
     let mut dirty = Vec::new();
     let mut dirty_roots = Vec::new();
     let dirty_context = state.dirty_context(current_snapshot);
+    let compatible = state.is_compatible(config_digest);
     for (spec, digests) in specs.iter().zip(spec_output_digests) {
         let key = spec.action_key();
         // A file at a declared but previously omitted output is a conflict,
@@ -79,13 +80,12 @@ pub(super) fn analyze(
             Some(action) if spec.instance.builder.is_optional && action.status == "undemanded" => {
                 true
             }
-            Some(action) if state.is_compatible(config_digest) => state
-                .changed_since_previous_with(
-                    action,
-                    &dirty_context,
-                    current_snapshot,
-                    &current_output_digests,
-                ),
+            Some(action) if compatible => state.changed_since_previous_with(
+                action,
+                &dirty_context,
+                current_snapshot,
+                &current_output_digests,
+            ),
             _ => true,
         };
         if needs_build || has_unrecorded_output {
@@ -106,6 +106,11 @@ pub(super) fn analyze(
         .collect();
     let removed_outputs = deleted_actions
         .iter()
+        // A changed configuration already invalidates every retained action.
+        // Only compatible graphs need phase-aware removal edges; their target,
+        // configured phase and builder kind still match the current manifest.
+        // Never reconstruct an old target's phase from a factory definition.
+        .filter(|_| compatible)
         .flat_map(|(key, action)| {
             let producer = build_config.builders.iter().find(|builder| {
                 builder.definition.id == action.builder
