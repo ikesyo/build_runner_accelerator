@@ -78,6 +78,11 @@ done
 wait_pair library-change
 checkpoint
 for directory in "$stock_dir" "$rust_dir"; do
+  sed -i "s/print(message());/print('watch entry: \${message()}');/" "$directory/web/main.dart"
+done
+wait_pair entry-change
+checkpoint
+for directory in "$stock_dir" "$rust_dir"; do
   printf "String extra() => 'watch added';\n" > "$directory/lib/extra.dart"
   printf "import 'package:build_web_compilers_app/extra.dart';\nvoid main() { print(extra()); }\n" > "$directory/web/extra.dart"
 done
