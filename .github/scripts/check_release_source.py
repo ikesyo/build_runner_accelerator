@@ -7,6 +7,8 @@ import subprocess
 import time
 from urllib.parse import quote
 
+SUBPROCESS_TIMEOUT = 120
+
 
 def validate_identity(tag, source, tag_sha, workflow_ref, workflow_sha, *, dry_run=False):
     if not re.fullmatch(r'v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?', tag):
@@ -39,7 +41,8 @@ def main():
     parser.add_argument('--identity-only', action='store_true')
     args = parser.parse_args()
     def git(*args):
-        return subprocess.check_output(['git', *args], text=True).strip()
+        return subprocess.check_output(['git', *args], text=True,
+                                       timeout=SUBPROCESS_TIMEOUT).strip()
     tag = os.environ['RELEASE_TAG']
     if not re.fullmatch(r'v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?', tag):
         raise ValueError('invalid release tag')
@@ -48,13 +51,14 @@ def main():
     if requested_ref:
         requested_sha = subprocess.check_output([
             'gh', 'api', f'repos/{os.environ["GITHUB_REPOSITORY"]}/commits/{quote(requested_ref, safe="")}',
-            '--jq', '.sha'], text=True).strip()
+            '--jq', '.sha'], text=True, timeout=SUBPROCESS_TIMEOUT).strip()
         validate_requested_source(source, requested_sha)
     dry_run = os.environ.get('RELEASE_DRY_RUN') == 'true'
     tag_sha = None
     if not dry_run:
         subprocess.run(['git', 'fetch', '--no-tags', 'origin',
-                        f'refs/tags/{tag}:refs/tags/{tag}'], check=True)
+                        f'refs/tags/{tag}:refs/tags/{tag}'], check=True,
+                       timeout=SUBPROCESS_TIMEOUT)
         tag_sha = git('rev-parse', f'refs/tags/{tag}^{{commit}}')
     validate_identity(tag, source, tag_sha, os.environ['GITHUB_REF'],
                       os.environ['GITHUB_SHA'], dry_run=dry_run)
@@ -65,7 +69,7 @@ def main():
             pages = json.loads(subprocess.check_output([
                 'gh', 'api', '--paginate', '--slurp',
                 f'repos/{os.environ["GITHUB_REPOSITORY"]}/actions/workflows/ci.yml/runs?head_sha={source}&per_page=100'
-            ], text=True))
+            ], text=True, timeout=SUBPROCESS_TIMEOUT))
             runs = [run for page in pages for run in page['workflow_runs']]
             run = successful_ci(runs, source)
             if run:

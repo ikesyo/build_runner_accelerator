@@ -81,7 +81,13 @@ def stop(process):
     try:
         process.wait(timeout=20)
     except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
+        if os.name == 'nt':
+            process.kill()
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         process.wait(timeout=10)
 
 

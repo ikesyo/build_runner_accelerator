@@ -35,7 +35,8 @@ class ReleaseSourceTest(unittest.TestCase):
 
 
 class ReleaseGateIntegrationTest(unittest.TestCase):
-    def gate(self, runs, *, dry_run=False, identity_only=False, requested_sha=None):
+    def gate(self, runs, *, dry_run=False, identity_only=False, requested_sha=None,
+             timeout_on=None):
         import contextlib
         import io
         import json
@@ -54,7 +55,13 @@ class ReleaseGateIntegrationTest(unittest.TestCase):
             if requested_sha:
                 env['SOURCE_REF'] = 'candidate'
 
+            commands = []
+
             def output(command, **kwargs):
+                commands.append(command)
+                self.assertEqual(kwargs['timeout'], check_release_source.SUBPROCESS_TIMEOUT)
+                if command[0] == timeout_on:
+                    raise check_release_source.subprocess.TimeoutExpired(command, kwargs['timeout'])
                 if command[0] == 'git':
                     return sha + '\n'
                 if '/commits/' in command[2]:
@@ -67,10 +74,16 @@ class ReleaseGateIntegrationTest(unittest.TestCase):
                 with patch.dict(os.environ, env, clear=True), \
                      patch('sys.argv', ['gate'] + (['--identity-only'] if identity_only else [])), \
                      patch.object(check_release_source.subprocess, 'check_output', side_effect=output), \
-                     patch.object(check_release_source.subprocess, 'run') as fetch, \
+                     patch.object(check_release_source.subprocess, 'run', side_effect=(
+                         check_release_source.subprocess.TimeoutExpired('git fetch', 120)
+                         if timeout_on == 'fetch' else None)) as fetch, \
                      contextlib.redirect_stdout(io.StringIO()):
                     check_release_source.main()
                 self.assertEqual(fetch.call_count, 0 if dry_run else 1)
+                if not dry_run:
+                    self.assertIn(['git', 'rev-parse', 'refs/tags/v1.0.0^{commit}'], commands)
+                    self.assertEqual(fetch.call_args.kwargs['timeout'],
+                                     check_release_source.SUBPROCESS_TIMEOUT)
                 self.assertIn(f'sha={sha}', (root / 'output').read_text())
                 return json.loads((root / 'release-source.json').read_text())
             finally:
@@ -95,3 +108,9 @@ class ReleaseGateIntegrationTest(unittest.TestCase):
     def test_requested_source_mismatch_stops_before_build(self):
         with self.assertRaisesRegex(ValueError, 'immutable workflow commit'):
             self.gate([], dry_run=True, identity_only=True, requested_sha='b' * 40)
+
+    def test_subprocess_timeout_fails_gate(self):
+        import subprocess
+        for command in ('git', 'fetch', 'gh'):
+            with self.subTest(command=command), self.assertRaises(subprocess.TimeoutExpired):
+                self.gate([], timeout_on=command)
