@@ -706,10 +706,12 @@ class _ProfilingResolvers extends Resolvers {
 }
 
 Future<PackageConfig> _loadPackageConfig() async {
-  final packageConfigUri = await Isolate.packageConfig;
-  if (packageConfigUri == null) {
-    throw StateError('The worker isolate has no package_config.json');
-  }
+  // A compiled executable can omit the isolate's package-config URI (notably
+  // on Windows). Workers always run in the workspace root, which is checked
+  // against the initialize request before any build action is accepted.
+  final packageConfigUri =
+      await Isolate.packageConfig ??
+      File('.dart_tool/package_config.json').absolute.uri;
   return loadPackageConfigUri(packageConfigUri);
 }
 
