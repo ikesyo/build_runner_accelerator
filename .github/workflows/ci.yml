@@ -770,31 +770,34 @@ jobs:
         shell: bash
         run: |
           (cd fixtures/empty_input_mapping_app && dart --suppress-analytics pub get)
+      # One compiler probe per lane, retaining the existing concurrency bound.
+      # Run 810 measured lanes at 386/322/380/386s. Move the 47s multiple-
+      # mapping probe from lane 3 to lane 2 to reduce the measured imbalance.
       - parallel:
-          - name: "Compatibility: capture, multiple mappings, and registry override"
-            shell: bash
-            run: |
-              bash scripts/correctness_capture_builder.sh
-              bash scripts/correctness_multi_mapping_builder.sh
-              bash scripts/correctness_registry_override.sh
-              bash scripts/watch_smoke_registry_override.sh
-          - name: "Compatibility: web compilers correctness and registry constraints"
+          - name: "Compatibility: dart2js correctness and empty-input correctness"
             shell: bash
             run: |
               bash scripts/correctness_web_compilers.sh
-              bash scripts/correctness_registry_builder.sh
-          - name: "Compatibility: web compilers watch and Drift"
+              PUB_GET_OFFLINE=1 bash scripts/correctness_empty_input_mapping.sh
+          - name: "Compatibility: dart2js watch, multiple mappings, and registry contracts"
             shell: bash
             run: |
               bash scripts/watch_smoke_web_compilers.sh
-              bash scripts/correctness_drift.sh
-          - name: "Compatibility: empty-input mapping correctness and watch"
+              bash scripts/correctness_multi_mapping_builder.sh
+              bash scripts/correctness_registry_override.sh
+              bash scripts/correctness_registry_builder.sh
+          - name: "Compatibility: DDC correctness, capture, and empty-input watch"
             shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
             run: |
-              bash scripts/correctness_empty_input_mapping.sh
-              bash scripts/watch_smoke_empty_input_mapping.sh
+              bash scripts/correctness_web_compilers_ddc.sh
+              bash scripts/correctness_capture_builder.sh
+              PUB_GET_OFFLINE=1 bash scripts/watch_smoke_empty_input_mapping.sh
+          - name: "Compatibility: DDC watch, registry watch, and Drift"
+            shell: bash
+            run: |
+              bash scripts/watch_smoke_web_compilers_ddc.sh
+              bash scripts/watch_smoke_registry_override.sh
+              bash scripts/correctness_drift.sh
 
   compatibility-drift-analyzer:
     name: Compatibility suite (Drift analyzer)

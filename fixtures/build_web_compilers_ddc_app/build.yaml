@@ -1,0 +1,11 @@
+targets:
+  $default:
+    builders:
+      build_web_compilers:entrypoint:
+        generate_for: [web/**.dart]
+        options:
+          compiler: dartdevc
+          web-hot-reload: false
+      build_web_compilers:dart2js_archive_extractor:
+        options:
+          filter_outputs: true

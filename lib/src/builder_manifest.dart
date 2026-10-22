@@ -309,6 +309,9 @@ bool _declaresPartFamilyOutputs(DefinitionInfo info) =>
       ),
     );
 
+/// Emits action scopes independently of physical-source collection defaults.
+/// Configured phases and raw target filters remain authoritative for every
+/// normal, optional and post-process application.
 _NormalizedManifest _normalizeManifest(
   _ResolvedInputs resolved,
   _ApplicationSelection selection,
@@ -414,6 +417,10 @@ _NormalizedManifest _normalizeManifest(
     }
   }
   for (final target in resolved.orderedTargets) {
+    // Stock uses raw target sources for action matching, without the defaults
+    // used to collect physical sources. Virtual primaries are planned even
+    // outside those defaults (for example a dependency's `$package$`).
+    final actionSources = patterns(target.target.sources);
     final componentIndex =
         resolved.targetOrder.componentIndex[target.target.key]!;
     final memberIndex = resolved.targetOrder.memberIndex[target.target.key]!;
@@ -475,8 +482,8 @@ _NormalizedManifest _normalizeManifest(
           converted.toJson(
             generateFor: selectedPatterns.include,
             generateForExclude: selectedPatterns.exclude,
-            targetSources: target.sources.include,
-            targetSourcesExclude: target.sources.exclude,
+            targetSources: actionSources.include,
+            targetSourcesExclude: actionSources.exclude,
             options: _jsonMap(selectedBuilder.options),
             isRoot: target.package.isRoot,
             partDirectiveSuffix: _partDirectiveSuffix(

@@ -1,0 +1,9 @@
+name: build_web_compilers_app
+publish_to: none
+environment:
+  sdk: '>=3.13.0 <3.15.0-z'
+dev_dependencies:
+  build_runner: 2.16.2
+  build_web_compilers: 4.8.12
+  build_runner_accelerator:
+    path: ../..

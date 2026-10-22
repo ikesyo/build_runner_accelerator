@@ -1,31 +1,38 @@
 #!/usr/bin/env bash
-# Published dart2js fixture setup; no modifications to hosted package sources.
+# Published web compiler fixture setup; no modifications to hosted package sources.
+# Copy the selected pinned fixture into isolated stock/native package roots.
 web_prepare() {
   export BUILD_MAX_WORKERS_PER_TASK=1
   worker_ensure_frontend
   mkdir -p "$workspace_root/fixtures"
   worker_attach "$workspace_root"
   local directory
+  local fixture=${WEB_COMPILERS_FIXTURE:-build_web_compilers_app}
   for directory in "$stock_dir" "$rust_dir"; do
     mkdir -p "$directory"
-    cp "$repo_root/fixtures/build_web_compilers_app/"{pubspec.yaml,pubspec.lock,build.yaml} "$directory/"
-    cp -R "$repo_root/fixtures/build_web_compilers_app/"{lib,web} "$directory/"
+    cp "$repo_root/fixtures/$fixture/"{pubspec.yaml,pubspec.lock,build.yaml} "$directory/"
+    cp -R "$repo_root/fixtures/$fixture/"{lib,web} "$directory/"
     verification_run_pub_get "$directory" "web-compilers/pub/$(basename "$directory")" \
       "$dart_bin" "$pub_cache" "${pub_get_args[@]}"
   done
 }
+# Run the real published builders as the independent reference for one stage.
 web_stock() {
   verification_run_stock_build "$stock_dir" "web-compilers/stock/$1" \
     "$temporary_dir/$1.stock.log" "$dart_bin" "$pub_cache" build
 }
+# Run the same stage through the native frontend with one builder job.
 web_native() {
   VERIFY_COMMAND_LOG="$temporary_dir/$1.native.log" VERIFY_WORKSPACE="$rust_dir" \
     worker_run_frontend build --root "$rust_dir" --dart "$dart_bin" --jobs 1
 }
+# Compare current public bytes and graph evidence for the selected compiler.
 web_compare() {
-  PYTHONDONTWRITEBYTECODE=1 python3 "$script_dir/compare_web_compilers.py" "$stock_dir" "$rust_dir"
+  PYTHONDONTWRITEBYTECODE=1 python3 "$script_dir/compare_web_compilers.py" "$stock_dir" "$rust_dir" "${WEB_COMPILERS_MODE:-dart2js}"
 }
+# Build both roots before comparing their successfully published state.
 web_pair() { web_stock "$1"; web_native "$1"; web_compare; }
+# Save or verify all native cache bytes and graph across an expected failure.
 web_atomic() {
   python3 - "$rust_dir" "$temporary_dir/atomic.json" "$1" <<'PY'
 import json
