@@ -89,6 +89,7 @@ Run the closest comparison script when changing a boundary:
 | Published DDC compiler chain, hot reload disabled | `scripts/correctness_web_compilers_ddc.sh`, `scripts/watch_smoke_web_compilers_ddc.sh`; [artifact contract and configuration](../fixtures/build_web_compilers_ddc_app/README.md) |
 | Nested path packages and source visibility | `bash scripts/correctness_nested_packages.sh` |
 | Manifest or builder output | The relevant fixture script; see the full verification groups. |
+| Literal filename suffix mapping and real Dart CLI adoption | `scripts/correctness_multi_mapping_builder.sh`; optional [pinned FVM replay](probes/fvm/README.md) |
 
 The shared CLI contract cases live in `test/data/cli_contract.json`. Dart's
 `cli_contract_test.dart` and Rust's `cli::tests::shared_cli_contract` consume the

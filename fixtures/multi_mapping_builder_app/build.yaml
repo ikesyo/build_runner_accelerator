@@ -8,6 +8,8 @@ builders:
         - ".multi"
       "^lib/special.txt":
         - "lib/special.generated.txt"
+      "schema.yaml":
+        - "lib/generated_schema.dart"
     auto_apply: none
     build_to: source
 
@@ -16,9 +18,11 @@ targets:
     sources:
       include:
         - lib/**
+        - schema.yaml
     builders:
       multi_mapping_builder_app:multi_mapping_builder:
         generate_for:
           - lib/**/*.txt
+          - "**schema.yaml"
         options:
           suffix: ".runtime"

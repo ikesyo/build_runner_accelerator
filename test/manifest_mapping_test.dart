@@ -5,6 +5,36 @@ import 'package:test/test.dart';
 
 void main() {
   group('manifestExtensions', () {
+    test('preserves literal filename suffixes and output paths', () {
+      for (final input in ['schema.yaml', 'config/schema.yaml']) {
+        final extension = manifestExtensions({
+          input: ['lib/generated_schema.dart'],
+        })!.single;
+        expect(extension.inputSuffix, input);
+        expect(extension.inputMatch, 'suffix');
+        expect(extension.inputAnchored, isFalse);
+        expect(extension.outputSuffixes, ['lib/generated_schema.dart']);
+      }
+      for (final input in [
+        'config/../schema.yaml',
+        '/schema.yaml',
+        '*schema.yaml',
+      ]) {
+        expect(
+          manifestExtensions({
+            input: ['lib/schema.dart'],
+          }),
+          isNull,
+        );
+      }
+      expect(
+        manifestExtensions({
+          'schema.yaml': ['../schema.dart'],
+        }),
+        isNull,
+      );
+    });
+
     test('preserves stock placeholder suffix mappings and literal paths', () {
       for (final input in [r'$package$', r'$lib$', r'$test$', r'$web$']) {
         final extension = manifestExtensions({

@@ -117,7 +117,15 @@ optional/post-process and Drift builder chains:
   selection using reproducible benchmarks.
 - [ ] Validate resolver-aware batching on larger mixed-builder workspaces before
   changing the default worker count.
-- [ ] Validate mixed builders and multi-package workspaces from real projects.
+- [x] Probe the root Dart CLI package of FVM at a fixed commit with published
+  dart_mappable_builder 4.10.0 and build_version 2.2.1: introduced dependency
+  solution, stock/native initial/no-op/model edit and paired watch, complete
+  public file sets and raw bytes. See the [FVM replay](probes/fvm/README.md)
+  for the upstream-to-introduced dependency changes and the shared literal
+  filename suffix fix. This does not validate FVM's old lock on native,
+  other commits/solutions/options, nested projects or Flutter runtime tests.
+- [ ] Validate additional mixed builders and multi-package workspaces from
+  real projects beyond the pinned single-root FVM probe.
 - [ ] Consider builder-specific fast paths only when they beat the generic
   manifest path under the same fixture and SDK conditions.
 

@@ -33,6 +33,12 @@ Use a generated, workspace-specific manifest as the generic boundary:
   the lossless `required_inputs` suffix list, optional outputs, normal and
   supported post-process builders, and multiple literal/capture
   extension mappings.
+- Non-dot filename/path input suffixes retain ordinary suffix matching and
+  literal output fragments. For example, `schema.yaml -> lib/schema.dart`
+  produces `lib/schema.dart` at the root and `nested/lib/schema.dart` from
+  `nested/schema.yaml`; it is not an anchored exact match. These literal
+  fragments are not normalized by adding a dot. The existing path safety
+  subset and ADR 0039's virtual-primary restrictions still apply.
 - Compatible normal `is_optional` builders remain in the action plan but are
   omitted from eager execution. A later action's asset read can request the
   exact optional action through the resident worker, preserving the same
