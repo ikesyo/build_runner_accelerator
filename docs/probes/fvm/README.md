@@ -1,0 +1,146 @@
+# FVM real-project probe
+
+Pinned source: [btwld/fvm@6f4c0a2528ef2a293e5f84d216a37be30411b3a5](https://github.com/btwld/fvm/tree/6f4c0a2528ef2a293e5f84d216a37be30411b3a5),
+version 4.3.2. The root is a Dart CLI package, with SDK `>=3.6.0 <4.0.0`,
+no Flutter SDK dependency, and no workspace resolution. Nested projects are
+present but are not workspace members. Only root-package code generation is
+under test. Upstream's MIT license (Copyright 2019 Leo Farias) is retained in
+each checkout; this probe does not vendor its source. Upstream AGENTS.md and
+release workflows prescribe `dart run build_runner build` (older workflows
+also pass `--delete-conflicting-outputs`, ignored by stock 2.16.2).
+
+## Resolution and builder contract
+
+The upstream lock exists. Dart 3.13.3 `pub get` succeeded without changing its
+bytes. It pins build_runner 2.4.15, build 2.4.2, Analyzer 7.3.0,
+dart_mappable_builder/dart_mappable 4.5.0 and build_version 2.1.1. On this SDK,
+that old stock command reported successful generation (57 outputs including
+private artifacts, 165 actions) and warned that Analyzer supports language
+3.8 while the SDK is 3.13. The process remained alive after its success log;
+it was interrupted after more than six minutes with exit 130. This is not a
+successful command-exit result or a native compatibility claim for that lock.
+
+Adding only the accelerator as a path dev dependency resolves successfully
+under the original FVM constraints, without overrides. It necessarily selects
+the native supported build_runner window. The complete 27-package change set
+is in [dependency-changes.md](dependency-changes.md); the full introduced
+solution is [pubspec.lock](pubspec.lock). It includes build_runner 2.16.2,
+build 4.0.11, build_config 1.3.3, Analyzer 14.6.0,
+dart_mappable_builder/dart_mappable 4.10.0 and build_version 2.2.1. The solver
+also updates production dart_mappable and meta within their existing
+constraints. These resolution changes are part of the adoption cost; they
+are not changes to the application's dependency declarations.
+
+The paired comparison uses this **same introduced solution in both trees**,
+not the upstream old lock for stock versus a new lock for native.
+
+Published build.yaml and factory implementations establish:
+
+| Application | Configured native phase | Inputs | Declared outputs | Behavior |
+| --- | --- | --- | --- | --- |
+| dart_mappable_builder:dart_mappable_builder | 1 | `.dart`, root `generate_for: [lib/**]` | `.mapper.dart`, `.init.dart`, source | Analyzer resolver reads; required `.freezed.dart` ordering; no initializer configured |
+| build_version:build_version | 2 | suffix `pubspec.yaml` | literal `lib/src/version.dart`, source | Reads root pubspec version; skips nested pubspec primary IDs |
+
+Stock has the same application order. dart_mappable sees 73 inputs and emits
+12 mapper files; build_version sees four matching pubspec inputs but emits
+only the root version. source_gen combining/cleanup factories are available
+in the catalog but have no active application in the generated native manifest.
+Catalog presence is not evidence that a builder ran. The builders use Dart
+BuildStep/resolver/formatter APIs and do not launch Flutter or other external
+tools. Stock and native infrastructure compile their Dart workers with the
+same Dart SDK. No Flutter SDK was installed.
+
+## Reproduce
+
+Run from the accelerator checkout after selecting one SDK/cache. In the managed
+environment, `.toolchains/task-env.sh` was initially absent and was recreated
+as local ignored setup. `DART_BIN` points to the SDK's `bin/dart-cloud`,
+`DART_SDK` to that SDK, `PUB_CACHE` to the checkout's `.pub-cache`, and
+`CARGO_BIN` to the installed Rust 1.98.1 toolchain executable. Cargo jobs are
+2. The SDK wrapper removes HOME; the replay also removes HOME from the whole
+environment so subprocesses inherit it. Logs remain outside watched trees.
+No `/tmp` environment configuration file is used. Networked pub get needs
+pub.dev package metadata, archives, and its advisories API.
+
+```bash
+source .toolchains/task-env.sh
+export BUILD_MAX_WORKERS_PER_TASK=1
+export BUILD_RUNNER_ACCELERATOR_CACHE="$PWD/.toolchains/accelerator-cache"
+export BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/release/build_runner_accelerator"
+"$CARGO_BIN" build --locked --release --manifest-path rust/Cargo.toml -j 2
+
+git clone https://github.com/btwld/fvm.git /workspace/fvm-source
+git -C /workspace/fvm-source checkout --detach 6f4c0a2528ef2a293e5f84d216a37be30411b3a5
+(cd /workspace/fvm-source && "$DART_BIN" pub get --enforce-lockfile)
+git -C /workspace/fvm-source diff --exit-code -- pubspec.lock
+git -C /workspace/fvm-source worktree add --detach /workspace/fvm-stock 6f4c0a2528ef2a293e5f84d216a37be30411b3a5
+git -C /workspace/fvm-source worktree add --detach /workspace/fvm-native 6f4c0a2528ef2a293e5f84d216a37be30411b3a5
+```
+
+Prepare both worktrees with exactly one added dev dependency and the recorded
+solution. The saved lock's path is the observed `/workspace/build_runner_accelerator`;
+rewrite only that local path if the checkout lives elsewhere:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+repo = Path.cwd()
+lock = (repo / 'docs/probes/fvm/pubspec.lock').read_text()
+lock = lock.replace('/workspace/build_runner_accelerator', str(repo))
+for directory in ['/workspace/fvm-stock', '/workspace/fvm-native']:
+    root = Path(directory)
+    spec = root / 'pubspec.yaml'
+    text = spec.read_text().replace('dev_dependencies:\n',
+        f'dev_dependencies:\n  build_runner_accelerator:\n    path: {repo}\n')
+    spec.write_text(text)
+    (root / 'pubspec.lock').write_text(lock)
+PY
+(cd /workspace/fvm-stock && "$DART_BIN" pub get --enforce-lockfile)
+(cd /workspace/fvm-native && "$DART_BIN" pub get --enforce-lockfile)
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/probe_fvm.py \
+  /workspace/fvm-stock /workspace/fvm-native /workspace/fvm-evidence
+```
+
+The replay runs stock first and then native (`--jobs 1`), initial build, no-op,
+an enum model edit (`Level.probe` in `lib/src/models/log_level_model.dart`),
+and short paired watch. Watch starts sequentially, reverts the edit, then
+replays that same edit. Every completed checkpoint compares all current
+published output IDs from both private graphs and their raw bytes, plus the
+entire physical root `lib` tree to detect extra files. It asserts 13 source
+outputs, no native cache outputs, no-op stability, actual mapper changes, and
+watch convergence to the same initial/edited bytes. No byte normalization is
+performed. The private graph readers are pinned to stock schema 47/native
+payload 6 and fail if those change. `report.json` records complete output
+paths, sizes, SHA-256 and build command results; phase logs retain diagnostics.
+
+## Findings and validation
+
+Before the fix, native manifest generation failed explicitly on build_version's
+runtime mapping before actions. The shared converter admitted dot extensions,
+captures, anchored paths and virtual tokens but rejected an ordinary filename
+suffix. It now preserves literal filename/path suffixes and output fragments,
+without anchoring them or adding a dot. Rust already supports this action shape.
+No package-name production branches, constraint changes, timeout relaxation,
+or graph/phase visibility changes were needed. ADR 0004 records the decision.
+
+The existing multi-mapping regression now covers root and prefixed/nested
+`schema.yaml` suffix replacement, runtime options, no-op, change, native
+failure preserving committed output and graph, recovery, and output removal
+after primary deletion. It ran successfully with jobs 1. It reuses an existing
+CI lane; the full FVM replay is manual rather than a new external-project CI job.
+
+On 2026-10-22 the fresh FVM replay passed all six checkpoints: initial, no-op,
+model change, watch initial, watch revert, and watch reapply. All 13 current
+public files matched by complete set and raw bytes at every checkpoint; the
+mapper change and exact watch round trip were asserted. Initial and changed
+inventories are retained in [output-digests.json](output-digests.json).
+Both frontends returned zero for each build; native no-op reported no work and
+stock no-op wrote zero outputs. The optional replay took about 100 seconds
+including fresh worker compilation, builds, and watch on the two-core managed
+environment; this is an observation for deciding CI cost, not a speedup claim.
+
+Required verification results are recorded after completion.
+This is a compatibility probe, not a performance benchmark. The result does
+not cover other FVM commits, upstream's old lock on native, other dependency
+solutions/SDKs, nested projects, FVM runtime commands/integration tests requiring
+Flutter, all dart_mappable options or workspace-wide compatibility.

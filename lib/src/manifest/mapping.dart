@@ -176,9 +176,7 @@ List<ManifestExtension>? manifestExtensions(
     // to normalize (for example schema.yaml -> lib/schema.dart).
     final inputIsLiteralSuffix =
         inputIsPlaceholder ||
-        (!input.startsWith('.') &&
-            !input.contains(r'$') &&
-            _simplePath(input));
+        (!input.startsWith('.') && !input.contains(r'$') && _simplePath(input));
     final captureNames = _captureGroupNames(input);
     final inputIsCapture = captureNames != null;
     final inputIsExact = inputIsAnchored && !inputIsCapture;

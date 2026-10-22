@@ -1,0 +1,111 @@
+{
+  "commit": "6f4c0a2528ef2a293e5f84d216a37be30411b3a5",
+  "initial": {
+    "lib/src/api/models/json_response.mapper.dart": {
+      "bytes": 26496,
+      "sha256": "cafcc93e169de20f17741b728601f985627df39fac7ef38bd79df762160242e4"
+    },
+    "lib/src/models/cache_flutter_version_model.mapper.dart": {
+      "bytes": 8367,
+      "sha256": "3bb62adcecb42891a6d6161142f3c6cbbebc68f5a6bf7152afcc73b9889a5bf6"
+    },
+    "lib/src/models/cleanup_model.mapper.dart": {
+      "bytes": 9528,
+      "sha256": "ca0bf7699c5f1a928ea4773fea8cca02024423f427075325d62863116ee0f3ef"
+    },
+    "lib/src/models/config_model.mapper.dart": {
+      "bytes": 33594,
+      "sha256": "75a2e07ba4d9fa2f1c5e8a6da63dc6cf4efd98484a46321d9c4bbfe6a66bff5c"
+    },
+    "lib/src/models/flutter_root_version_file.mapper.dart": {
+      "bytes": 10402,
+      "sha256": "53d00bd1482fa324a6072e32fcb8e7e3823f0dd66dd1916545e940d757c96d53"
+    },
+    "lib/src/models/flutter_version_model.mapper.dart": {
+      "bytes": 11256,
+      "sha256": "a9c6512d7f4a15fa8c912d365898168612b23c11f162b7197aad923923e64635"
+    },
+    "lib/src/models/git_reference_model.mapper.dart": {
+      "bytes": 8317,
+      "sha256": "e22101cb10c96d2f670df97c7c6ab0fb856680be43a5cc8d0e5f27b57e65d473"
+    },
+    "lib/src/models/log_level_model.mapper.dart": {
+      "bytes": 1865,
+      "sha256": "4870d69b35ff40bc6db61a75dffea122c309f9ff19d8482c8919c55161affb07"
+    },
+    "lib/src/models/project_model.mapper.dart": {
+      "bytes": 7721,
+      "sha256": "be2e14253d9146da77f908441633a79ba22d9990ab622ced09f5f7c176f8abf1"
+    },
+    "lib/src/services/releases_service/models/flutter_releases_model.mapper.dart": {
+      "bytes": 7062,
+      "sha256": "d99cb03b7952a5aa1e605e40457e5e20557ce01262742964824fd5b51dc79fbd"
+    },
+    "lib/src/services/releases_service/models/version_model.mapper.dart": {
+      "bytes": 12295,
+      "sha256": "91be4d3c010d8a2be240ded01dbd5490cbd0672837c101fdbe77cadf393f5012"
+    },
+    "lib/src/utils/context.mapper.dart": {
+      "bytes": 12135,
+      "sha256": "cc56387ac802604739f620619acf25ab1134399e14e3603ec6e28dbee0665c58"
+    },
+    "lib/src/version.dart": {
+      "bytes": 66,
+      "sha256": "5da002a45e2fb07a53c9950b4fa0ebec17cf0854a4c3e80e58b7c320c7471ea3"
+    }
+  },
+  "model-change": {
+    "lib/src/api/models/json_response.mapper.dart": {
+      "bytes": 26496,
+      "sha256": "cafcc93e169de20f17741b728601f985627df39fac7ef38bd79df762160242e4"
+    },
+    "lib/src/models/cache_flutter_version_model.mapper.dart": {
+      "bytes": 8367,
+      "sha256": "3bb62adcecb42891a6d6161142f3c6cbbebc68f5a6bf7152afcc73b9889a5bf6"
+    },
+    "lib/src/models/cleanup_model.mapper.dart": {
+      "bytes": 9528,
+      "sha256": "ca0bf7699c5f1a928ea4773fea8cca02024423f427075325d62863116ee0f3ef"
+    },
+    "lib/src/models/config_model.mapper.dart": {
+      "bytes": 33594,
+      "sha256": "75a2e07ba4d9fa2f1c5e8a6da63dc6cf4efd98484a46321d9c4bbfe6a66bff5c"
+    },
+    "lib/src/models/flutter_root_version_file.mapper.dart": {
+      "bytes": 10402,
+      "sha256": "53d00bd1482fa324a6072e32fcb8e7e3823f0dd66dd1916545e940d757c96d53"
+    },
+    "lib/src/models/flutter_version_model.mapper.dart": {
+      "bytes": 11256,
+      "sha256": "a9c6512d7f4a15fa8c912d365898168612b23c11f162b7197aad923923e64635"
+    },
+    "lib/src/models/git_reference_model.mapper.dart": {
+      "bytes": 8317,
+      "sha256": "e22101cb10c96d2f670df97c7c6ab0fb856680be43a5cc8d0e5f27b57e65d473"
+    },
+    "lib/src/models/log_level_model.mapper.dart": {
+      "bytes": 1963,
+      "sha256": "fe00434a35019a244b2ab9598d64a4f7f2b1e4cb103742680709048ae54832de"
+    },
+    "lib/src/models/project_model.mapper.dart": {
+      "bytes": 7721,
+      "sha256": "be2e14253d9146da77f908441633a79ba22d9990ab622ced09f5f7c176f8abf1"
+    },
+    "lib/src/services/releases_service/models/flutter_releases_model.mapper.dart": {
+      "bytes": 7062,
+      "sha256": "d99cb03b7952a5aa1e605e40457e5e20557ce01262742964824fd5b51dc79fbd"
+    },
+    "lib/src/services/releases_service/models/version_model.mapper.dart": {
+      "bytes": 12295,
+      "sha256": "91be4d3c010d8a2be240ded01dbd5490cbd0672837c101fdbe77cadf393f5012"
+    },
+    "lib/src/utils/context.mapper.dart": {
+      "bytes": 12135,
+      "sha256": "cc56387ac802604739f620619acf25ab1134399e14e3603ec6e28dbee0665c58"
+    },
+    "lib/src/version.dart": {
+      "bytes": 66,
+      "sha256": "5da002a45e2fb07a53c9950b4fa0ebec17cf0854a4c3e80e58b7c320c7471ea3"
+    }
+  }
+}

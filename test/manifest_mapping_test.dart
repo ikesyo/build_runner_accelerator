@@ -20,9 +20,19 @@ void main() {
         '/schema.yaml',
         '*schema.yaml',
       ]) {
-        expect(manifestExtensions({input: ['lib/schema.dart']}), isNull);
+        expect(
+          manifestExtensions({
+            input: ['lib/schema.dart'],
+          }),
+          isNull,
+        );
       }
-      expect(manifestExtensions({'schema.yaml': ['../schema.dart']}), isNull);
+      expect(
+        manifestExtensions({
+          'schema.yaml': ['../schema.dart'],
+        }),
+        isNull,
+      );
     });
 
     test('preserves stock placeholder suffix mappings and literal paths', () {
