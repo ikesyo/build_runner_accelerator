@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:build/build.dart';
+import 'package:build_runner/src/bootstrap/build_process_state.dart'
+    show buildProcessState;
 import 'package:crypto/crypto.dart' show Digest;
 import 'package:build_runner/src/build/build_step_impl.dart' show BuildStepImpl;
 import 'package:build_runner/src/build/library_cycle_graph/phased_asset_deps.dart'
@@ -709,9 +711,16 @@ Future<PackageConfig> _loadPackageConfig() async {
   // A compiled executable can omit the isolate's package-config URI (notably
   // on Windows). Workers always run in the workspace root, which is checked
   // against the initialize request before any build action is accepted.
-  final packageConfigUri =
-      await Isolate.packageConfig ??
-      File('.dart_tool/package_config.json').absolute.uri;
+  var packageConfigUri = await Isolate.packageConfig;
+  if (packageConfigUri == null) {
+    packageConfigUri = File('.dart_tool/package_config.json').absolute.uri;
+    // build_runner's SDK summary generator uses its process state rather than
+    // the PackageConfig passed to our resolver. Seed it through the same API
+    // that build_runner uses when starting an AOT build isolate.
+    buildProcessState.deserializeAndSet(
+      jsonEncode({'packageConfigUri': packageConfigUri.toString()}),
+    );
+  }
   return loadPackageConfigUri(packageConfigUri);
 }
 
