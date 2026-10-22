@@ -60,18 +60,29 @@ same Dart SDK. No Flutter SDK was installed.
 
 ## Reproduce
 
-Run from the accelerator checkout after selecting one SDK/cache. In the managed
-environment, `.toolchains/task-env.sh` was initially absent and was recreated
-as local ignored setup. `DART_BIN` points to the SDK's `bin/dart-cloud`,
-`DART_SDK` to that SDK, `PUB_CACHE` to the checkout's `.pub-cache`, and
-`CARGO_BIN` to the installed Rust 1.98.1 toolchain executable. Cargo jobs are
-2. The SDK wrapper removes HOME; the replay also removes HOME from the whole
-environment so subprocesses inherit it. Logs remain outside watched trees.
+Run from the accelerator checkout after provisioning Dart 3.13.3 and Rust
+1.98.1. The explicit setup below assumes the managed environment's installed
+SDK/toolchain layout under `.toolchains`; point `DART_SDK`, `RUSTUP_HOME`,
+`CARGO_HOME` and `CARGO_BIN` to your installations if they live elsewhere.
+`DART_BIN` uses the SDK-local `bin/dart-cloud` wrapper available in this managed
+environment. Both frontends must use the same SDK/cache. These exports work
+without an ignored `.toolchains/task-env.sh` file. Cargo jobs are 2. The SDK
+wrapper removes HOME; the replay also removes HOME from the whole environment
+so subprocesses inherit it. Logs remain outside watched trees.
 No `/tmp` environment configuration file is used. Networked pub get needs
 pub.dev package metadata, archives, and its advisories API.
 
 ```bash
-source .toolchains/task-env.sh
+export DART_SDK="$PWD/.toolchains/dart/dart-sdk"
+export DART_BIN="$DART_SDK/bin/dart-cloud"
+export PUB_CACHE="$PWD/.pub-cache"
+export RUSTUP_HOME="$PWD/.toolchains/rustup"
+export CARGO_HOME="$PWD/.toolchains/cargo"
+export CARGO_BIN="$RUSTUP_HOME/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin/cargo"
+export PATH="$(dirname -- "$CARGO_BIN"):$DART_SDK/bin:$PATH"
+export CARGO_BUILD_JOBS=2
+export XDG_CONFIG_HOME="$PWD/.toolchains/analytics-config"
+export DART_SUPPRESS_ANALYTICS=true
 export BUILD_MAX_WORKERS_PER_TASK=1
 export BUILD_RUNNER_ACCELERATOR_CACHE="$PWD/.toolchains/accelerator-cache"
 export BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/release/build_runner_accelerator"
