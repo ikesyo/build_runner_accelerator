@@ -5,6 +5,10 @@ builder configuration were preserved; no overrides. The original pub get
 left the upstream lock byte-identical. The complete introduced/removed/version
 change set follows (pub reports 27 changed dependencies, counting removals).
 
+The lock SDK range changes from `>=3.6.0 <4.0.0` to `>=3.13.0 <4.0.0`,
+because selected Analyzer 14.6.0/_fe_analyzer_shared 110.0.0 require Dart
+^3.13.0. The root pubspec SDK constraint was not changed.
+
 | Package | Original lock | With accelerator |
 | --- | --- | --- |
 | _fe_analyzer_shared | 80.0.0 | 110.0.0 |

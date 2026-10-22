@@ -150,6 +150,10 @@ List<ManifestDefinition>? tryConvertDefinition(
   return converted;
 }
 
+/// Convert declared mappings into the supported manifest matching subset.
+///
+/// Unanchored filename/path keys remain suffixes with literal output fragments.
+/// Unsupported shapes return null before native actions can be planned.
 List<ManifestExtension>? manifestExtensions(
   Map<String, List<String>> buildExtensions,
 ) {

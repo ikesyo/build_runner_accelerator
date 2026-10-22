@@ -31,6 +31,13 @@ also updates production dart_mappable and meta within their existing
 constraints. These resolution changes are part of the adoption cost; they
 are not changes to the application's dependency declarations.
 
+The lock's effective SDK range also changes from `>=3.6.0 <4.0.0` to
+`>=3.13.0 <4.0.0`: selected Analyzer 14.6.0 and _fe_analyzer_shared 110.0.0
+each declare `sdk: ^3.13.0`. FVM's root SDK declaration is unchanged. This
+recorded solution was tested only on Dart 3.13.3, including both frontends;
+do not use the accelerator package's wider SDK range as evidence that this
+exact FVM lock works on earlier SDKs.
+
 The paired comparison uses this **same introduced solution in both trees**,
 not the upstream old lock for stock versus a new lock for native.
 
@@ -41,7 +48,8 @@ Published build.yaml and factory implementations establish:
 | dart_mappable_builder:dart_mappable_builder | 1 | `.dart`, root `generate_for: [lib/**]` | `.mapper.dart`, `.init.dart`, source | Analyzer resolver reads; required `.freezed.dart` ordering; no initializer configured |
 | build_version:build_version | 2 | suffix `pubspec.yaml` | literal `lib/src/version.dart`, source | Reads root pubspec version; skips nested pubspec primary IDs |
 
-Stock has the same application order. dart_mappable sees 73 inputs and emits
+Stock uses phases 0 then 1 in the same application order; numeric phase IDs
+are not compared as equal. dart_mappable sees 73 inputs and emits
 12 mapper files; build_version sees four matching pubspec inputs but emits
 only the root version. source_gen combining/cleanup factories are available
 in the catalog but have no active application in the generated native manifest.
@@ -128,6 +136,10 @@ The existing multi-mapping regression now covers root and prefixed/nested
 failure preserving committed output and graph, recovery, and output removal
 after primary deletion. It ran successfully with jobs 1. It reuses an existing
 CI lane; the full FVM replay is manual rather than a new external-project CI job.
+The added failure/recovery/delete commands took 0/1/1/1/0 seconds respectively
+in the local instrumented mapping run (whole-second command logging), reusing
+its existing worker compilations. This small regression cost and the shared
+mapping contract justify retaining those checks in the existing lane.
 
 On 2026-10-22 the fresh FVM replay passed all six checkpoints: initial, no-op,
 model change, watch initial, watch revert, and watch reapply. All 13 current
@@ -139,7 +151,25 @@ stock no-op wrote zero outputs. The optional replay took about 100 seconds
 including fresh worker compilation, builds, and watch on the two-core managed
 environment; this is an observation for deciding CI cost, not a speedup claim.
 
-Required verification results are recorded after completion.
+Local verification on the same Dart 3.13.3 / Rust 1.98.1 toolchains:
+
+| Command / check | Result |
+| --- | --- |
+| `dart test test/manifest_mapping_test.dart` | 11 passed |
+| `MULTI_MAPPING_JOBS=1 bash scripts/correctness_multi_mapping_builder.sh` | Passed, including literal suffix failure/recovery/deletion |
+| `bash scripts/verify.sh` | Passed after an initial formatting failure was corrected |
+| `VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh` | Passed, including the arbitrary-only tail; 654 seconds |
+| `VERIFY_LEVEL=full VERIFY_FULL_SUITES=compatibility-mapping bash scripts/verify.sh` | Passed; 1531 seconds; mapping, compiler, registry, empty-input and Drift build/watch cases |
+| `bash scripts/watch_smoke.sh` | Passed; generated-output deletion, source edit and conditional dependency edit |
+
+Both mandatory quick commands were executed in this task; no result was reused
+from #127/#128. Rust tests within quick passed 155 tests with one ignored;
+Dart analysis and formatting passed. The full command above selects the related
+mapping group, not every local full suite. It reuses the existing compiler
+fixtures without adding DDC modes. CI [817](https://github.com/ikesyo/build_runner_accelerator/actions/runs/39719177196)
+at 1044c09 passed overall, including Rust clippy and Dart tests/SDK checks.
+Final-head CI and review status are tracked in [PR 129](https://github.com/ikesyo/build_runner_accelerator/pull/129).
+
 This is a compatibility probe, not a performance benchmark. The result does
 not cover other FVM commits, upstream's old lock on native, other dependency
 solutions/SDKs, nested projects, FVM runtime commands/integration tests requiring

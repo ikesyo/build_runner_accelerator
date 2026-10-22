@@ -37,6 +37,7 @@ def compare(stock, native):
         assert data == (native / path).read_bytes(), ('raw bytes', path)
         evidence[path] = {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
     def files(root):
+        """Include every physical lib file, including undeclared extra outputs."""
         return {str(p.relative_to(root)): p.read_bytes()
                 for p in (root / 'lib').rglob('*') if p.is_file()}
     assert files(stock) == files(native), 'physical lib set/bytes differ'
