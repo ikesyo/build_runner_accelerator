@@ -12,7 +12,8 @@ publication order: signed GitHub Release first, pub.dev second.
    Gate code is always checked out at the immutable caller SHA.
 2. Run locked Rust tests and Dart minimum/current package checks in parallel.
    The current Dart lane runs `dart pub publish --dry-run`. Subsequent native
-   and publication checkouts use the verified SHA.
+   and publication checkouts use the immutable caller SHA, which the source
+   gate verifies against the tag and optional source_ref.
 3. Build with `cargo build --locked --release` in the existing five lanes.
    Package using `scripts/package_frontend.py`, including VERSION and
    SOURCE_COMMIT. Each lane runs `scripts/distribution_e2e.py` on its actual
@@ -104,7 +105,8 @@ explicitly in its own workspace and is never an accelerator fallback.
 
 The E2E serves the actual archive and signed manifest over local HTTPS. It
 changes trust **only in the disposable copy**: an ephemeral signing public key
-for per-target/aggregate dry-runs, and a local TLS CA. The final production-sign
+for per-target/aggregate dry-runs, and a local TLS CA signing a localhost
+server-auth certificate. The test server requires TLS 1.2 or newer. The final production-sign
 installation check retains the package's production signing key. TLS hostname
 and certificate checks and signature, version, protocol, length, digest, extraction and cache
 checks remain enabled. No test key, HTTP exception or trust override is added
@@ -179,3 +181,21 @@ was 2.39. This does not validate execution on a glibc 2.39 host. macOS, Windows,
 Linux arm64, the five-target Actions dry-run, production-key signing and OIDC
 publication were not executed locally. No tags, pushes, releases, production
 secret changes, changelog edits or version bumps were made.
+
+## CI follow-up
+
+The first PR run passed Linux x64/arm64 distribution E2E and the existing
+correctness jobs. Windows exposed an existing workspace file-URI conversion
+bug: `file:///C:/...` was joined to the package-config directory instead of
+being read as `C:/...`. The native resolver now removes the URI-only drive
+prefix on Windows; targeted path-resolution tests cover this conversion.
+
+macOS rejected the original self-signed server certificate. Test HTTPS now
+uses a dedicated ephemeral CA and a CA-signed localhost leaf with explicit
+serverAuth, key usage, basic constraints and SAN extensions. Certificate and
+hostname checks remain enabled, and no system trust store is changed.
+
+CodeQL's checkout provenance warnings are addressed by using `github.sha`
+directly in every checkout, retaining the source/tag equality gate. The local
+HTTPS server also explicitly requires TLS 1.2 or newer. These checks are kept
+enabled; no alert suppression is introduced.

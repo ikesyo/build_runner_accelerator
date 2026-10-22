@@ -85,6 +85,31 @@ def stop(process):
         process.wait(timeout=10)
 
 
+def create_https_certificates(root):
+    """Use a CA and a server-auth leaf accepted by platform trust engines."""
+    ca, ca_key = root / 'ca.pem', root / 'ca-key.pem'
+    certificate, tls_key = root / 'localhost.pem', root / 'localhost-key.pem'
+    request, extensions = root / 'localhost.csr', root / 'localhost.ext'
+    run([OPENSSL, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+         '-subj', '/CN=Distribution E2E Test CA',
+         '-addext', 'basicConstraints=critical,CA:TRUE,pathlen:0',
+         '-addext', 'keyUsage=critical,keyCertSign,cRLSign',
+         '-keyout', ca_key, '-out', ca], cwd=root)
+    run([OPENSSL, 'req', '-new', '-newkey', 'rsa:2048', '-nodes',
+         '-subj', '/CN=localhost', '-keyout', tls_key, '-out', request], cwd=root)
+    extensions.write_text(
+        'basicConstraints=critical,CA:FALSE\n'
+        'keyUsage=critical,digitalSignature,keyEncipherment\n'
+        'extendedKeyUsage=serverAuth\n'
+        'subjectAltName=DNS:localhost,IP:127.0.0.1\n'
+        'subjectKeyIdentifier=hash\n'
+        'authorityKeyIdentifier=keyid,issuer\n')
+    run([OPENSSL, 'x509', '-req', '-in', request, '-CA', ca, '-CAkey', ca_key,
+         '-CAcreateserial', '-days', '1', '-sha256', '-extfile', extensions,
+         '-out', certificate], cwd=root)
+    return ca, certificate, tls_key
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dart', required=True, type=Path)
@@ -163,16 +188,13 @@ def main():
             assert count == 1
             trust_file.write_text(text)
 
-        certificate, tls_key = root / 'localhost.pem', root / 'localhost-key.pem'
-        run([OPENSSL, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-             '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1',
-             '-keyout', tls_key, '-out', certificate], cwd=root)
+        ca, certificate, tls_key = create_https_certificates(root)
         # Trust only an additional local CA in the disposable consumer copy.
         # This also covers the launcher's downloader subprocess on every OS;
         # VM root-cert flags do not propagate to that child. No TLS bypass.
         transport = payload / 'lib/src/release_transport.dart'
         original = transport.read_text()
-        certificate_literal = json.dumps(str(certificate)).replace('$', r'\$')
+        certificate_literal = json.dumps(str(ca)).replace('$', r'\$')
         trust = ('HttpClient(context: SecurityContext(withTrustedRoots: true)'
                  f'..setTrustedCertificates({certificate_literal}))')
         assert original.count('_httpClient ?? HttpClient()') == 1
@@ -191,6 +213,7 @@ def main():
         server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(
             Handler, directory=str(serving.parent)))
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certificate, tls_key)
         server.socket = context.wrap_socket(server.socket, server_side=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

@@ -607,13 +607,28 @@ fn package_name(path: &Path) -> io::Result<String> {
 
 fn resolve_uri(base: &Path, uri: &str) -> PathBuf {
     let decoded = percent_decode(uri);
-    let path = decoded.strip_prefix("file://").unwrap_or(&decoded);
+    let path = match decoded.strip_prefix("file://") {
+        // A file URI's /C:/ path is not a Windows filesystem path. Leaving the
+        // slash in place makes dependency configuration reads fail with OS 123.
+        Some(path) if cfg!(windows) => windows_file_uri_path(path),
+        Some(path) => path,
+        None => &decoded,
+    };
     let path = PathBuf::from(path);
     if path.is_absolute() {
         path
     } else {
         base.join(path)
     }
+}
+
+fn windows_file_uri_path(path: &str) -> &str {
+    path.strip_prefix('/')
+        .filter(|rest| {
+            let bytes = rest.as_bytes();
+            bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+        })
+        .unwrap_or(path)
 }
 
 fn percent_decode(value: &str) -> String {
@@ -940,6 +955,37 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn file_uri_windows_drive_prefix_is_not_part_of_the_path() {
+        assert_eq!(
+            super::windows_file_uri_path("/C:/pub-cache/pkg/"),
+            "C:/pub-cache/pkg/"
+        );
+        assert_eq!(
+            super::windows_file_uri_path("/d:/package space/"),
+            "d:/package space/"
+        );
+        for path in ["/tmp/pkg/", "/", "/C", "C:/pkg/"] {
+            assert_eq!(super::windows_file_uri_path(path), path);
+        }
+    }
+
+    #[test]
+    fn package_file_uris_resolve_to_native_absolute_paths() {
+        let temp = TempDir::new();
+        let expected = temp.path().join("package space");
+        let uri_path = expected
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace(' ', "%20");
+        let uri = format!("file://{}{uri_path}", if cfg!(windows) { "/" } else { "" });
+        assert_eq!(super::resolve_uri(temp.path(), &uri), expected);
+        assert_eq!(
+            super::resolve_uri(temp.path(), "relative%20package/"),
+            temp.path().join("relative package")
+        );
     }
 
     #[test]
