@@ -171,6 +171,14 @@ List<ManifestExtension>? manifestExtensions(
       r'$test$',
       r'$web$',
     }.contains(input);
+    // Literal filename/path suffixes use the same replacement semantics as
+    // extensions. Their output is a literal path fragment, not an extension
+    // to normalize (for example schema.yaml -> lib/schema.dart).
+    final inputIsLiteralSuffix =
+        inputIsPlaceholder ||
+        (!input.startsWith('.') &&
+            !input.contains(r'$') &&
+            _simplePath(input));
     final captureNames = _captureGroupNames(input);
     final inputIsCapture = captureNames != null;
     final inputIsExact = inputIsAnchored && !inputIsCapture;
@@ -180,13 +188,13 @@ List<ManifestExtension>? manifestExtensions(
         ? _simpleCapturePath(input)
         : inputIsExact
         ? _simplePath(input)
-        : inputIsPlaceholder || _simpleExtension(input);
+        : inputIsLiteralSuffix || _simpleExtension(input);
     if (!inputIsValid) {
       return null;
     }
     final outputSuffixes = entry.value
         .map(
-          inputIsCapture || inputIsExact || inputIsPlaceholder
+          inputIsCapture || inputIsExact || inputIsLiteralSuffix
               ? _normalizePathOutput
               : _normalizeOutputSuffix,
         )
@@ -196,7 +204,7 @@ List<ManifestExtension>? manifestExtensions(
           ? (suffix) => !_simpleExtension(suffix)
           : inputIsCapture
           ? (suffix) => !_validCaptureOutput(suffix, captureNames)
-          : inputIsExact || inputIsPlaceholder
+          : inputIsExact || inputIsLiteralSuffix
           ? (suffix) => !_simplePath(suffix)
           : (suffix) => !_simpleExtension(suffix),
     )) {

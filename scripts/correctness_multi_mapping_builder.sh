@@ -85,6 +85,8 @@ write_package() {
     "$directory/lib/multi_mapping_builder.dart"
   printf 'ordinary input\n' >"$directory/lib/input.txt"
   printf 'special input\n' >"$directory/lib/special.txt"
+  printf 'root schema\n' >"$directory/schema.yaml"
+  printf 'nested schema\n' >"$directory/lib/prefixschema.yaml"
   verification_run_pub_get "$directory" "pub-get/$(basename "$directory")" \
     "$dart_bin" "$pub_cache" "${pub_get_args[@]}"
 }
@@ -111,10 +113,12 @@ run_rust "$rust_dir" "$temporary_dir/initial.rust.log"
 for output in \
   lib/input.runtime \
   lib/special.runtime \
-  lib/special.generated.txt; do
+  lib/special.generated.txt \
+  lib/generated_schema.dart \
+  lib/prefixlib/generated_schema.dart; do
   assert_same_file "$stock_dir/$output" "$rust_dir/$output"
 done
-assert_contains "$temporary_dir/initial.rust.log" 'Rust frontend: 2 build action(s)'
+assert_contains "$temporary_dir/initial.rust.log" 'Rust frontend: 4 build action(s)'
 
 run_rust "$rust_dir" "$temporary_dir/no-op.rust.log"
 assert_contains "$temporary_dir/no-op.rust.log" 'No work to do (Rust frontend)'
@@ -145,4 +149,29 @@ assert_no_file "$rust_dir/lib/special.runtime"
 assert_no_file "$rust_dir/lib/special.generated.txt"
 assert_contains "$temporary_dir/delete.rust.log" 'Rust frontend: 0 build action(s)'
 
-printf 'multi-mapping-builder: union=yes no-op=yes change=yes rename=yes delete=yes jobs=%s\n' "$mapping_jobs"
+# A filename suffix keeps the ordinary prefix even when it contains a directory.
+# Fail after a committed generation, then check both output and graph recovery.
+cp "$rust_dir/lib/generated_schema.dart" "$temporary_dir/schema.before"
+cp "$rust_dir/.dart_tool/build_runner_accelerator/graph-v3.bin" "$temporary_dir/graph.before"
+printf 'FAIL\n' >"$rust_dir/schema.yaml"
+if run_rust "$rust_dir" "$temporary_dir/schema-fail.rust.log"; then
+  fail 'invalid schema unexpectedly succeeded'
+fi
+assert_same_file "$temporary_dir/schema.before" "$rust_dir/lib/generated_schema.dart"
+assert_same_file "$temporary_dir/graph.before" "$rust_dir/.dart_tool/build_runner_accelerator/graph-v3.bin"
+printf 'changed schema\n' >"$stock_dir/schema.yaml"
+printf 'changed schema\n' >"$rust_dir/schema.yaml"
+run_stock "$stock_dir" "$temporary_dir/schema-recover.stock.log"
+run_rust "$rust_dir" "$temporary_dir/schema-recover.rust.log"
+assert_same_file "$stock_dir/lib/generated_schema.dart" "$rust_dir/lib/generated_schema.dart"
+assert_contains "$rust_dir/lib/generated_schema.dart" 'changed schema'
+rm "$stock_dir/schema.yaml" "$rust_dir/schema.yaml" \
+  "$stock_dir/lib/prefixschema.yaml" "$rust_dir/lib/prefixschema.yaml"
+run_stock "$stock_dir" "$temporary_dir/schema-delete.stock.log"
+run_rust "$rust_dir" "$temporary_dir/schema-delete.rust.log"
+for directory in "$stock_dir" "$rust_dir"; do
+  assert_no_file "$directory/lib/generated_schema.dart"
+  assert_no_file "$directory/lib/prefixlib/generated_schema.dart"
+done
+
+printf 'multi-mapping-builder: union=yes literal-suffix=yes recovery=yes no-op=yes change=yes rename=yes delete=yes jobs=%s\n' "$mapping_jobs"
