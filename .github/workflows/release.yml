@@ -10,8 +10,13 @@ on:
         description: Release tag to build and publish.
         required: true
         type: string
+      dry_run:
+        description: Verify all artifacts with a temporary signing key; do not publish.
+        required: true
+        default: true
+        type: boolean
       source_ref:
-        description: Source ref to build. Defaults to the release tag.
+        description: Must match the workflow commit; for publication run at the release tag.
         required: false
         type: string
 
@@ -19,6 +24,7 @@ permissions:
   contents: read
 
 env:
+  RELEASE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
@@ -36,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.source_ref || inputs.tag || github.ref }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
         with:
@@ -57,18 +63,29 @@ jobs:
         run: dart pub publish --dry-run
 
   rust-tests:
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
     name: Rust unit tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.source_ref || inputs.tag || github.ref }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
         with:
           toolchain: 1.98.1
+      - name: Require exact release source
+        id: source
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/check_release_source.py --identity-only
       - name: Rust unit tests
-        run: cargo test --manifest-path rust/Cargo.toml
+        run: cargo test --locked --manifest-path rust/Cargo.toml
 
   build-frontend:
     name: Build ${{ matrix.target_id }}
@@ -104,7 +121,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.source_ref || inputs.tag || github.ref }}
+          ref: ${{ needs.rust-tests.outputs.source_sha }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
         with:
@@ -127,7 +144,7 @@ jobs:
           echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
       - name: Build Rust frontend
         shell: bash
-        run: cargo build --release --manifest-path rust/Cargo.toml --target "$RUST_TARGET"
+        run: cargo build --locked --release --manifest-path rust/Cargo.toml --target "$RUST_TARGET"
       - name: Native binary smoke
         shell: bash
         run: |
@@ -135,25 +152,25 @@ jobs:
           if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
           "$binary" --version
           "$binary" --help
-      - name: Package archive
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - name: Package archive and verify Dart-only consumer
         shell: bash
         run: |
-          staging="release/$TARGET_ID"
-          mkdir -p "$staging"
           binary="rust/target/$RUST_TARGET/release/build_runner_accelerator"
           if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
-          cp "$binary" "$staging/"
-          printf '%s\n' "$PACKAGE_VERSION" > "$staging/VERSION"
-          cp README.md "$staging/README.md"
-          if [[ -f LICENSE ]]; then cp LICENSE "$staging/LICENSE"; fi
-          if [[ "${{ matrix.archive }}" == tar.gz ]]; then
-            tar -C release -czf "build_runner_accelerator-$TARGET_ID.tar.gz" "$TARGET_ID"
-          else
-            (
-              cd release
-              7z a -tzip "../build_runner_accelerator-$TARGET_ID.zip" "$TARGET_ID/*"
-            )
-          fi
+          python3 scripts/package_frontend.py --binary "$binary" --target "$TARGET_ID" --output . \
+            --evidence "distribution-results/$TARGET_ID"
+          python3 scripts/distribution_e2e.py --dart "$(command -v dart)" --target "$TARGET_ID" \
+            --archive "build_runner_accelerator-$TARGET_ID.${{ matrix.archive }}" \
+            --results "distribution-results/$TARGET_ID"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: distribution-release-${{ matrix.target_id }}
+          path: distribution-results/${{ matrix.target_id }}
+          if-no-files-found: error
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-${{ matrix.target_id }}
@@ -161,21 +178,36 @@ jobs:
           if-no-files-found: error
 
   publish-release:
-    name: Publish release
-    needs: build-frontend
+    name: Verify and publish release
+    timeout-minutes: 40
+    needs: [rust-tests, build-frontend]
     permissions:
       contents: write
+      actions: read
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.source_ref || inputs.tag || github.ref }}
+          ref: ${{ needs.rust-tests.outputs.source_sha }}
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-*
           path: dist
           merge-multiple: true
+      - name: Require successful exact-commit correctness CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          RELEASE_CI_WAIT_SECONDS: '1800'
+        run: |
+          python3 .github/scripts/check_release_source.py
+          cp release-source.json dist/release-source.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-source
+          path: release-source.json
+          if-no-files-found: error
       - name: Read release version
         shell: bash
         run: |
@@ -185,24 +217,34 @@ jobs:
         run: |
           python3 scripts/create_release_manifest.py \
             --version "$PACKAGE_VERSION" \
+            --source-commit "${{ needs.rust-tests.outputs.source_sha }}" \
             --artifacts-dir dist \
             --output dist/release-manifest.json
-          (cd dist && sha256sum *.tar.gz *.zip release-manifest.json > SHA256SUMS)
+          (cd dist && sha256sum *.tar.gz *.zip release-manifest.json release-source.json > SHA256SUMS)
       - name: Sign release manifest
         shell: bash
         env:
-          RELEASE_SIGNING_KEY: |
-            ${{ secrets.BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY }}
+          RELEASE_SIGNING_KEY: ${{ (github.event_name != 'workflow_dispatch' || !inputs.dry_run) && secrets.BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY || '' }}
         run: |
-          test -n "$RELEASE_SIGNING_KEY"
           umask 077
-          printf '%s\n' "$RELEASE_SIGNING_KEY" > signing-key.pem
+          trap 'rm -f signing-key.pem signing-key-openssl.pem' EXIT
+          if [[ "$RELEASE_DRY_RUN" == true ]]; then
+            openssl genpkey -algorithm ED25519 -out signing-key.pem
+            openssl pkey -in signing-key.pem -pubout -outform DER \
+              | tail -c 32 | base64 -w0 > dist/test-public-key.txt
+          else
+            test -n "$RELEASE_SIGNING_KEY"
+            printf '%s\n' "$RELEASE_SIGNING_KEY" > signing-key.pem
+          fi
           python3 .github/scripts/normalize_ed25519_private_key.py \
             signing-key.pem signing-key-openssl.pem
           mv signing-key-openssl.pem signing-key.pem
           expected_public_key=$(awk '
             /^const releaseSigningPublicKeyBase64 =/ { getline; gsub(/[ '\'';]/, ""); print }
           ' lib/src/release_downloader.dart)
+          if [[ "$RELEASE_DRY_RUN" == true ]]; then
+            expected_public_key=$(cat dist/test-public-key.txt)
+          fi
           actual_public_key=$(openssl pkey -in signing-key.pem -pubout -outform DER \
             | tail -c 32 | base64 -w0)
           test "$actual_public_key" = "$expected_public_key"
@@ -211,7 +253,37 @@ jobs:
           openssl pkeyutl -sign -rawin -inkey signing-key.pem \
             -in dist/SHA256SUMS -out dist/SHA256SUMS.sig
           rm -f signing-key.pem
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - name: Verify all final signed artifacts before publication
+        run: |
+          test_key_args=()
+          if [[ "$RELEASE_DRY_RUN" == true ]]; then
+            test_key_args+=(--test-public-key dist/test-public-key.txt)
+          fi
+          python3 scripts/distribution_e2e.py "${test_key_args[@]}" --dart "$(command -v dart)" --target linux-x64 \
+            --archive dist/build_runner_accelerator-linux-x64.tar.gz --signed-dist dist --verify-install-only \
+            --results distribution-results/production
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: distribution-production
+          path: distribution-results/production
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: env.RELEASE_DRY_RUN == 'true'
+        with:
+          name: dry-run-signed-distribution
+          path: dist
+          if-no-files-found: error
+      - name: Recheck tag and correctness before publication
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/check_release_source.py
       - name: Publish GitHub Release
+        if: env.RELEASE_DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -222,11 +294,12 @@ jobs:
           if [[ "$PACKAGE_VERSION" == *-* ]]; then
             release_args+=(--prerelease)
           fi
-          gh release create "$RELEASE_TAG" dist/* "${release_args[@]}"
+          gh release create "$RELEASE_TAG" --verify-tag dist/* "${release_args[@]}"
 
   publish-pub-dev:
     name: Publish package to pub.dev
     needs: publish-release
+    if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
     permissions:
       id-token: write
     uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1

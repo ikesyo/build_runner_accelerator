@@ -80,3 +80,20 @@ valid repository license and a successful Dart package dry run.
   worker, and protocol version skew would become a normal failure mode.
 - Require users to install a system binary: retained only as an advanced
   override, not the default installation path.
+
+## Release reproducibility and distribution validation (2026-10)
+
+Release correctness is attached to one immutable source SHA. Publication requires
+successful non-PR correctness CI for that SHA, tag/caller/source equality, locked
+Cargo tests/builds, and E2E of the packaged archives on the five existing target
+lanes. The signed manifest includes the source SHA; archives carry VERSION and
+SOURCE_COMMIT. All final signed archives are verified/installed before external publication,
+with a host binary smoke test, retaining GitHub Release → pub.dev order and tagpr ownership.
+
+Manual dispatch defaults to a dry-run using ephemeral test signing keys and no
+publication. Tests isolate trust in disposable package copies, keep HTTPS and
+signature verification enabled, and never alter the shipped public-key pin.
+Consumer processes have no Cargo/Rust in PATH, workspace binaries or existing
+caches. Stock remains an independent reference under ADR 0036.
+See [distribution validation](../distribution-validation.md) for ordered gates,
+replay commands, evidence, timing and unverified OS minimums.

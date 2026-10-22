@@ -65,4 +65,5 @@ jobs:
           gh workflow run release.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref "$RELEASE_TAG" \
-            --field "tag=$RELEASE_TAG"
+            --field "tag=$RELEASE_TAG" \
+            --field "dry_run=false"

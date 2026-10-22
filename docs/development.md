@@ -155,8 +155,10 @@ benchmark note rather than this guide.
 
 ## Release checks
 
-The release workflow builds the platform artifacts, verifies version/help,
-and signs the manifest. The signing key is a CI secret; its public key is
-pinned in the package. See the
-[launcher and release contract](launcher-and-release.md) and [roadmap](roadmap.md)
-for release targets and remaining gates.
+The release workflow requires successful correctness CI for the exact source
+commit, locked Cargo builds/tests, and packaged-artifact E2E in the existing
+five target lanes. It verifies/installs all final signed archives and smoke-tests the host binary
+before publication. Manual dispatch defaults to a non-publishing dry-run with a
+temporary signing key. See [distribution validation](distribution-validation.md)
+for verification order, replay commands, timing evidence, and platform limits.
+The production public key remains pinned in the package.

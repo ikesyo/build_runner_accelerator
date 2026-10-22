@@ -52,9 +52,20 @@ The following are implemented and covered by the current fixture suite:
 
 - [x] Add the repository license and make `dart pub publish --dry-run` pass.
 - [ ] Configure the release signing secret and publish a tagged test release.
-- [ ] Verify a clean install on Dart-only machines without Cargo or Rust.
+- [x] Implement locked release builds/tests, same-commit correctness/source/tag
+  gates, and a non-publishing workflow dry-run. Replay via the
+  [distribution validation guide](distribution-validation.md#workflow-dry-run-no-tag-or-production-secret-required).
+- [x] Add signed-archive Dart-only consumer E2E to the existing five target lanes:
+  prewarm, initial build, no-op, incremental and watch with stock byte comparisons.
+  [Local replay and evidence](distribution-validation.md#local-replay) distinguish
+  implemented checks from platform runs that still need execution.
+- [ ] Record a successful five-target workflow dry-run on the candidate commit
+  and retain its distribution evidence; local Linux evidence alone is insufficient.
 - [ ] Add macOS code signing/notarization and Windows Authenticode gates.
-- [ ] Exercise the released frontend in CI AOT prewarm/cache workflows.
+- [x] Exercise packaged frontends through launcher prewarm/cache in the
+  distribution lanes; replay with `scripts/distribution_e2e.py` as documented
+  [here](distribution-validation.md#local-replay). This does not claim that a
+  public tagged release has been exercised.
 - [ ] Re-run the release matrix against the supported Dart SDK range and
   record the exact compatibility window.
 

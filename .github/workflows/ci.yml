@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Test Ed25519 key normalization
+      - name: Test source gates, manifests, and Ed25519 normalization
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
 
   byte-store-benchmark-helpers:
@@ -903,3 +903,23 @@ jobs:
           if [[ "$RUNNER_OS" != Windows ]]; then chmod +x "$binary"; fi
           "$binary" --version
           "$binary" --help
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: '3.13.3'
+      - name: Verify packaged distribution with a Dart-only consumer
+        shell: bash
+        run: |
+          binary="rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator"
+          extension=tar.gz
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; extension=zip; fi
+          python3 scripts/package_frontend.py --binary "$binary" --target '${{ matrix.target_id }}' --output dist \
+            --evidence 'distribution-results/${{ matrix.target_id }}'
+          python3 scripts/distribution_e2e.py --dart "$(command -v dart)" --target '${{ matrix.target_id }}' \
+            --archive "dist/build_runner_accelerator-${{ matrix.target_id }}.$extension" \
+            --results 'distribution-results/${{ matrix.target_id }}'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: distribution-ci-${{ matrix.target_id }}
+          path: distribution-results/${{ matrix.target_id }}
+          if-no-files-found: error
