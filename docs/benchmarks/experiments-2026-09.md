@@ -98,7 +98,7 @@ BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 \
   LANE=accelerator ACCELERATOR_JOBS=1 \
   BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
   scripts/benchmark_current_baseline.sh
-scripts/correctness_aot_worker.sh
+scripts/correctness_aot_prewarm.sh
 BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1 \
   BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/debug/build_runner_accelerator" \
   scripts/watch_smoke_current_json.sh

@@ -311,66 +311,68 @@ fn dynamic_manifest_preserves_configured_input_exclusions() {
 
 #[test]
 fn dynamic_manifest_preserves_multiple_outputs() {
-    let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
-        "fingerprint": "fingerprint",
-        "trigger_digest": "stock-trigger-digest",
-        "worker_entrypoint": "dynamic_worker.dart",
-        "builders": [{
-            "required_input_suffixes": [],
-            "excluded_input_suffixes": [],
-            "generate_for_exclude": [],
-            "target_sources": [],
-            "target_sources_exclude": [],
-            "triggers": [],
-            "options": {},
-            "is_optional": false,
-            "output_is_optional": false,
-            "target_order": 0,
-            "id": "example:builder",
-            "kind": "normal",
-            "extensions": [{
-                "input_suffix": ".txt",
-                "input_match": "suffix",
-                "input_anchored": false,
-                "output_suffixes": [".gen.txt", ".meta.txt"]
+    for output_suffixes in [vec![".gen.txt"], vec![".gen.txt", ".meta.txt"]] {
+        let manifest: BuilderManifestFile = serde_json::from_value(json!({
+            "version": 10, "asset_sources": {},
+            "fingerprint": "fingerprint",
+            "trigger_digest": "stock-trigger-digest",
+            "worker_entrypoint": "dynamic_worker.dart",
+            "builders": [{
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
+                "target_order": 0,
+                "id": "example:builder",
+                "kind": "normal",
+                "extensions": [{
+                    "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
+                    "output_suffixes": output_suffixes
+                }],
+                "build_to": "source",
+                "phase": 0,
+                "target": "example:example",
+                "package": "example",
+                "is_root": true,
+                "generate_for": ["lib/**/*.txt"]
             }],
-            "build_to": "source",
-            "phase": 0,
-            "target": "example:example",
-            "package": "example",
-            "is_root": true,
-            "generate_for": ["lib/**/*.txt"]
-        }],
-        "definitions": [{
-            "required_input_suffixes": [],
-            "excluded_input_suffixes": [],
-            "generate_for": [],
-            "generate_for_exclude": [],
-            "target_sources": [],
-            "target_sources_exclude": [],
-            "triggers": [],
-            "options": {},
-            "is_optional": false,
-            "output_is_optional": false,
-            "id": "example:builder",
-            "kind": "normal",
-            "extensions": [{
-                "input_suffix": ".txt",
-                "input_match": "suffix",
-                "input_anchored": false,
-                "output_suffixes": [".gen.txt", ".meta.txt"]
-            }],
-            "build_to": "source",
-            "phase": 0
-        }]
-    }))
-    .unwrap();
-    let config = rust_build_config_from_manifest(manifest).unwrap();
-    assert_eq!(
-        config.builders[0].definition.extensions[0].output_suffixes,
-        vec![".gen.txt", ".meta.txt"]
-    );
+            "definitions": [{
+                "required_input_suffixes": [],
+                "excluded_input_suffixes": [],
+                "generate_for": [],
+                "generate_for_exclude": [],
+                "target_sources": [],
+                "target_sources_exclude": [],
+                "triggers": [],
+                "options": {},
+                "is_optional": false,
+                "output_is_optional": false,
+                "id": "example:builder",
+                "kind": "normal",
+                "extensions": [{
+                    "input_suffix": ".txt",
+                    "input_match": "suffix",
+                    "input_anchored": false,
+                    "output_suffixes": output_suffixes
+                }],
+                "build_to": "source",
+                "phase": 0
+            }]
+        }))
+        .unwrap();
+        let config = rust_build_config_from_manifest(manifest).unwrap();
+        assert_eq!(
+            config.builders[0].definition.extensions[0].output_suffixes,
+            output_suffixes
+        );
+    }
 }
 
 #[test]
@@ -960,70 +962,6 @@ fn dynamic_manifest_accepts_source_post_process_definition() {
     let config = rust_build_config_from_manifest(manifest).unwrap();
     assert_eq!(config.builders[0].definition.kind, BuilderKind::PostProcess);
     assert_eq!(config.builders[0].definition.build_to, BuildTo::Source);
-}
-
-#[test]
-fn singular_output_field_is_accepted_during_manifest_transition() {
-    let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
-        "fingerprint": "fingerprint",
-        "trigger_digest": "stock-trigger-digest",
-        "worker_entrypoint": "dynamic_worker.dart",
-        "builders": [{
-            "required_input_suffixes": [],
-            "excluded_input_suffixes": [],
-            "generate_for_exclude": [],
-            "target_sources": [],
-            "target_sources_exclude": [],
-            "triggers": [],
-            "options": {},
-            "is_optional": false,
-            "output_is_optional": false,
-            "target_order": 0,
-            "id": "example:builder",
-            "kind": "normal",
-            "extensions": [{
-                "input_suffix": ".txt",
-                "input_match": "suffix",
-                "input_anchored": false,
-                "output_suffixes": [".gen.txt"],
-            }],
-            "build_to": "source",
-            "phase": 0,
-            "target": "example:example",
-            "package": "example",
-            "is_root": true,
-            "generate_for": ["lib/**/*.txt"]
-        }],
-        "definitions": [{
-            "required_input_suffixes": [],
-            "excluded_input_suffixes": [],
-            "generate_for": [],
-            "generate_for_exclude": [],
-            "target_sources": [],
-            "target_sources_exclude": [],
-            "triggers": [],
-            "options": {},
-            "is_optional": false,
-            "output_is_optional": false,
-            "id": "example:builder",
-            "kind": "normal",
-            "extensions": [{
-                "input_suffix": ".txt",
-                "input_match": "suffix",
-                "input_anchored": false,
-                "output_suffixes": [".gen.txt"],
-            }],
-            "build_to": "source",
-            "phase": 0
-        }]
-    }))
-    .unwrap();
-    let config = rust_build_config_from_manifest(manifest).unwrap();
-    assert_eq!(
-        config.builders[0].definition.extensions[0].output_suffixes,
-        [".gen.txt"]
-    );
 }
 
 #[test]

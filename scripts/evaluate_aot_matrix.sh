@@ -17,7 +17,7 @@ for p in "${ps[@]}"; do for sdk in "${sdks[@]}"; do for c in "${cs[@]}"; do
     printf '%s\t%s\t%s\tskipped\tnot-local-host\n' "$p" "$sdk" "$c" >> "$out"; continue
   fi
   case "$c" in
-    current_json_app) check="$root/scripts/correctness_aot_worker.sh";;
+    current_json_app) check="$root/scripts/correctness_aot_prewarm.sh";;
     multi_mapping_builder_app) check="$root/scripts/correctness_multi_mapping_builder.sh";;
     arbitrary_dependency_app) check="$root/scripts/correctness_arbitrary_dependency_builder.sh";;
     *) printf '%s\t%s\t%s\tskipped\tunknown-case\n' "$p" "$sdk" "$c" >> "$out"; continue;;

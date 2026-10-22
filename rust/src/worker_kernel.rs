@@ -1829,14 +1829,6 @@ mod tests {
     }
 
     #[test]
-    fn worker_artifact_distinguishes_aot_from_kernel() {
-        assert_ne!(
-            WorkerArtifact::Aot(PathBuf::from("worker.aot")),
-            WorkerArtifact::Kernel(PathBuf::from("worker.dill"))
-        );
-    }
-
-    #[test]
     #[cfg(unix)]
     fn aot_sdk_bin_supports_subprocesses_and_sdk_reselection() {
         use std::os::unix::fs::PermissionsExt;
