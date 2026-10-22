@@ -1,5 +1,5 @@
 use crate::digest::digest_bytes;
-use crate::workspace::Workspace;
+use crate::workspace::{Workspace, canonicalize};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::env;
@@ -289,7 +289,7 @@ fn configured_worker_kernel() -> io::Result<Option<PathBuf>> {
             ),
         ));
     }
-    Ok(Some(fs::canonicalize(path)?))
+    Ok(Some(canonicalize(path)?))
 }
 
 fn configured_worker_aot() -> io::Result<Option<PathBuf>> {
@@ -306,7 +306,7 @@ fn configured_worker_aot() -> io::Result<Option<PathBuf>> {
             ),
         ));
     }
-    Ok(Some(fs::canonicalize(path)?))
+    Ok(Some(canonicalize(path)?))
 }
 
 /// Command-dependent default worker AOT policy used when the environment
@@ -481,7 +481,7 @@ fn restore_shared_aot(context: &AotContext) -> io::Result<Option<PathBuf>> {
     for (temp, destination) in staged {
         replace_file(&temp, &destination)?;
     }
-    Ok(Some(fs::canonicalize(&context.aot_path)?))
+    Ok(Some(canonicalize(&context.aot_path)?))
 }
 
 /// Publish the freshly compiled artifact so other checkouts and workspaces
@@ -588,7 +588,7 @@ fn current_aot_from_context(context: &AotContext) -> io::Result<Option<PathBuf>>
         &context.worker_path,
         &context.cache_key,
     ) {
-        return Ok(Some(fs::canonicalize(&context.aot_path)?));
+        return Ok(Some(canonicalize(&context.aot_path)?));
     }
     Ok(None)
 }
@@ -623,7 +623,7 @@ pub(crate) fn pinned_worker_artifact_is_current(
             if !worker_artifact_is_current(&kernel_path, &depfile_path, &worker_path) {
                 return Ok(false);
             }
-            Ok(fs::canonicalize(kernel_path)?.as_path() == path.as_path())
+            Ok(canonicalize(kernel_path)?.as_path() == path.as_path())
         }
     }
 }
@@ -783,7 +783,7 @@ fn prepare_worker_aot(
     replace_file(&temp_sdk_metadata, &context.sdk_metadata_path)?;
     replace_file(&temp_aot, &context.aot_path)?;
     publish_shared_aot(&context);
-    fs::canonicalize(context.aot_path)
+    canonicalize(context.aot_path)
 }
 
 fn spawn_background_worker_aot(
@@ -956,7 +956,7 @@ fn aot_cache_key(workspace: &Workspace, worker_path: &Path, sdk_root: &Path) -> 
 }
 
 pub(crate) fn aot_sdk_identity(sdk_root: &Path) -> io::Result<(String, String)> {
-    let sdk_root = fs::canonicalize(sdk_root)?;
+    let sdk_root = canonicalize(sdk_root)?;
     let version = fs::read(sdk_root.join("version"))?;
     let allowed_experiments = fs::read(
         sdk_root
@@ -977,12 +977,11 @@ fn build_aot_metadata(
 ) -> io::Result<AotMetadata> {
     let dependencies = parse_depfile_dependencies(&fs::read_to_string(depfile)?)
         .ok_or_else(|| io::Error::other("AOT compiler depfile has no dependencies"))?;
-    let package_config_path =
-        fs::canonicalize(workspace.root.join(".dart_tool/package_config.json"))?;
-    let canonical_sdk_root = fs::canonicalize(sdk_root)?;
+    let package_config_path = canonicalize(workspace.root.join(".dart_tool/package_config.json"))?;
+    let canonical_sdk_root = canonicalize(sdk_root)?;
     let mut dependency_digests = BTreeMap::new();
     for dependency in dependencies {
-        let dependency = fs::canonicalize(dependency)?;
+        let dependency = canonicalize(dependency)?;
         if dependency == package_config_path || dependency.strip_prefix(&canonical_sdk_root).is_ok()
         {
             continue;
@@ -1095,7 +1094,7 @@ fn dart_sdk_root(dart_binary: &str) -> io::Result<PathBuf> {
     if let Some(value) = env::var_os("DART_SDK") {
         let path = PathBuf::from(value);
         if path.join("lib").is_dir() {
-            return fs::canonicalize(path);
+            return canonicalize(path);
         }
     }
 
@@ -1114,7 +1113,7 @@ pub(crate) fn dart_sdk_root_for_binary(dart_binary: &str) -> io::Result<PathBuf>
     } else {
         find_on_path(dart_binary)?
     };
-    let dart_path = fs::canonicalize(dart_path)?;
+    let dart_path = canonicalize(dart_path)?;
     let bin_dir = dart_path
         .parent()
         .ok_or_else(|| io::Error::other("Dart executable has no parent directory"))?;
@@ -1291,7 +1290,7 @@ fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: impl AsRef<Path>) 
                 .unwrap_or_else(|| Path::new("."))
                 .join(existing)
         };
-        if fs::canonicalize(existing).ok() == fs::canonicalize(&source).ok() {
+        if canonicalize(existing).ok() == canonicalize(&source).ok() {
             return Ok(());
         }
         // A concurrent compile can remove or recreate the same link.
@@ -1336,7 +1335,7 @@ fn link_sdk_entry(sdk_root: &Path, aot_sdk_root: &Path, name: impl AsRef<Path>) 
                     .unwrap_or_else(|| Path::new("."))
                     .join(existing)
             };
-            if fs::canonicalize(existing).ok() == fs::canonicalize(&source).ok() {
+            if canonicalize(existing).ok() == canonicalize(&source).ok() {
                 return Ok(());
             }
         }
@@ -1354,7 +1353,7 @@ fn prepare_worker_kernel(
     let kernel_path = worker_path.with_extension("dill");
     let depfile_path = PathBuf::from(format!("{}.d", kernel_path.display()));
     if worker_artifact_is_current(&kernel_path, &depfile_path, &worker_path) {
-        return fs::canonicalize(kernel_path);
+        return canonicalize(kernel_path);
     }
 
     let process_id = std::process::id();
@@ -1382,7 +1381,7 @@ fn prepare_worker_kernel(
     // interrupted, the old kernel is conservatively treated as stale.
     replace_file(&temp_depfile, &depfile_path)?;
     replace_file(&temp_kernel, &kernel_path)?;
-    fs::canonicalize(kernel_path)
+    canonicalize(kernel_path)
 }
 
 fn absolute_worker_path(root: &Path, worker_path: &Path) -> io::Result<PathBuf> {
@@ -1391,7 +1390,7 @@ fn absolute_worker_path(root: &Path, worker_path: &Path) -> io::Result<PathBuf> 
     } else {
         root.join(worker_path)
     };
-    fs::canonicalize(path)
+    canonicalize(path)
 }
 
 fn worker_artifact_is_current(artifact: &Path, depfile: &Path, worker: &Path) -> bool {
