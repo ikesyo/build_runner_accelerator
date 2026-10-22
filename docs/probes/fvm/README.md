@@ -64,8 +64,10 @@ Run from the accelerator checkout after provisioning Dart 3.13.3 and Rust
 1.98.1. The explicit setup below assumes the managed environment's installed
 SDK/toolchain layout under `.toolchains`; point `DART_SDK`, `RUSTUP_HOME`,
 `CARGO_HOME` and `CARGO_BIN` to your installations if they live elsewhere.
-`DART_BIN` uses the SDK-local `bin/dart-cloud` wrapper available in this managed
-environment. Both frontends must use the same SDK/cache. These exports work
+`DART_BIN` uses the SDK-local `bin/dart-cloud` wrapper in this managed
+environment. For a non-managed SDK without that wrapper, also set
+`DART_BIN="$DART_SDK/bin/dart"` after selecting `DART_SDK`, before running any
+pub or probe commands. Both frontends must use the same SDK/cache. These exports work
 without an ignored `.toolchains/task-env.sh` file. Cargo jobs are 2. The SDK
 wrapper removes HOME; the replay also removes HOME from the whole environment
 so subprocesses inherit it. Logs remain outside watched trees.
@@ -75,6 +77,8 @@ pub.dev package metadata, archives, and its advisories API.
 ```bash
 export DART_SDK="$PWD/.toolchains/dart/dart-sdk"
 export DART_BIN="$DART_SDK/bin/dart-cloud"
+# For a non-managed SDK without dart-cloud, override the preceding line:
+# export DART_BIN="$DART_SDK/bin/dart"
 export PUB_CACHE="$PWD/.pub-cache"
 export RUSTUP_HOME="$PWD/.toolchains/rustup"
 export CARGO_HOME="$PWD/.toolchains/cargo"
