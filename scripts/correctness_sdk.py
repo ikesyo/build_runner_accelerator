@@ -158,6 +158,7 @@ def main():
                              if (r / 'lib/model.summary').exists())
                  and all((r / 'lib/model.summary').exists() for r in (stock_root, native_root)))
             compare(f'watch regeneration ({name})')
+        assert all(p.poll() is None for p, _ in processes), 'watch exited after final regeneration'
     finally:
         for process, log in processes:
             if process.poll() is None:
