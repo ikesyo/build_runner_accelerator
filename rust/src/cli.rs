@@ -183,6 +183,8 @@ fn build_option_takes_value(argument: &str) -> bool {
 pub(crate) struct BuildSettings {
     pub(crate) only_check: bool,
     pub(crate) keep_modified_outputs: bool,
+    /// Implicit pre-2.16 policy; does not select the explicit demand-only mode.
+    pub(crate) legacy_keep_modified_outputs: bool,
     pub(crate) release: bool,
     pub(crate) defines: Vec<String>,
     pub(crate) config: Option<String>,
@@ -193,6 +195,10 @@ pub(crate) struct BuildSettings {
 }
 
 impl BuildSettings {
+    pub(crate) fn keeps_modified_outputs(&self) -> bool {
+        self.keep_modified_outputs || self.legacy_keep_modified_outputs
+    }
+
     pub(crate) fn parse(arguments: &[String]) -> io::Result<Self> {
         let mut expanded = Vec::new();
         let mut original = arguments.iter();

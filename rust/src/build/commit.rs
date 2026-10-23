@@ -262,7 +262,10 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
     let metadata = crate::wall::Span::new("commit_metadata");
     workspace.clear_asset_caches()?;
     // Retain demand reuse even after ordinary builds repair upstream bytes.
-    state.retained_output_state |= keep_modified_outputs;
+    // Explicit demand policies keep their existing sticky guard. The legacy
+    // default uses the normal scheduler and re-selects retention from the
+    // resolved runner on every invocation, including after a version upgrade.
+    state.retained_output_state |= keep_modified_outputs && source_snapshot_evidence.is_none();
     state.schema_version = GRAPH_SCHEMA_VERSION;
     state.config_digest = config_digest;
     drop(metadata);
@@ -311,7 +314,10 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
             }
         }
     }
-    if keep_modified_outputs && let Some((initial, _, _)) = filtered_snapshot_evidence {
+    let retained_snapshot = filtered_snapshot_evidence
+        .map(|(initial, _, _)| initial)
+        .or_else(|| source_snapshot_evidence.map(|(initial, _)| initial));
+    if keep_modified_outputs && let Some(initial) = retained_snapshot {
         // Retained bytes may differ from their logical digest. Keep that
         // evidence until the producer actually runs, including across restarts.
         for action in state.actions.values() {

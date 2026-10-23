@@ -24,6 +24,7 @@ impl DirtyPlan {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn analyze(
     workspace: &Workspace,
     state: &GraphState,
@@ -31,6 +32,7 @@ pub(super) fn analyze(
     config_digest: &str,
     current_snapshot: &BTreeMap<String, crate::snapshot::AssetSnapshot>,
     plan: &PlannedActions,
+    retained_outputs: &BTreeSet<String>,
     filesystem_metrics: &mut FilesystemMetrics,
 ) -> io::Result<DirtyPlan> {
     let dirty_check_started = Instant::now();
@@ -56,8 +58,30 @@ pub(super) fn analyze(
             deleted_actions: Vec::new(),
         });
     }
-    let (recorded_output_digests, spec_output_digests) =
+    let (mut recorded_output_digests, mut spec_output_digests) =
         collect_output_digests(workspace, state, build_config, specs, output_digest)?;
+    // The snapshot already retains logical digests for legacy kept outputs.
+    // Apply the same policy to the disk digests used by output reuse checks.
+    // A missing file remains missing and must still trigger its producer.
+    if !retained_outputs.is_empty() {
+        let retained_digests: BTreeMap<_, _> = state
+            .actions
+            .values()
+            .flat_map(|action| &action.output_digests)
+            .filter(|(asset, _)| retained_outputs.contains(*asset))
+            .map(|(asset, digest)| (asset.clone(), digest.clone()))
+            .collect();
+        for (asset, digest) in recorded_output_digests
+            .iter_mut()
+            .chain(spec_output_digests.iter_mut().flatten())
+        {
+            if digest.is_some()
+                && let Some(previous) = retained_digests.get(*asset)
+            {
+                *digest = Some(previous.clone());
+            }
+        }
+    }
     let mut current_output_digests = BTreeMap::new();
     apply_output_digests(&mut current_output_digests, recorded_output_digests);
     let mut dirty = Vec::new();

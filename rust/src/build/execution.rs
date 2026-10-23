@@ -26,6 +26,7 @@ pub(super) struct ExecutionInputs<'a> {
     pub(super) config_digest: &'a str,
     pub(super) plan: &'a PlannedActions,
     pub(super) dirty_plan: DirtyPlan,
+    pub(super) retained_output_guard: bool,
 }
 
 pub(super) struct ExecutionResult {
@@ -47,6 +48,7 @@ pub(super) fn run(
         config_digest,
         plan,
         dirty_plan,
+        retained_output_guard,
     } = inputs;
     let DirtyPlan {
         dirty,
@@ -94,6 +96,7 @@ pub(super) fn run(
             worker_pool = owned_pool.as_mut();
         }
         let active_pool = worker_pool.expect("worker pool was just initialized");
+        active_pool.set_retained_output_guard(retained_output_guard);
         let first_package = dirty
             .first()
             .map(|spec| spec.instance.package.clone())

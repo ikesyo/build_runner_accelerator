@@ -182,22 +182,26 @@ pub(crate) fn run_with_config_session(
     let settings = &options.settings;
     let mut filters = settings.build_filters.clone();
     let mut retained_output_guard = false;
-    if settings.only_check || settings.keep_modified_outputs || state.retained_output_state {
-        if filters.is_empty() {
-            filters.push(crate::build_filter::BuildFilter::parse("asset:**/**")?);
-        }
-        if settings.keep_modified_outputs && state.is_compatible(&config_digest) {
-            // Stock retains existing output bytes with their previous digest.
-            // Missing outputs are NOT retained and must trigger their producer.
-            for action in state.actions.values() {
-                for output in &action.outputs {
-                    if let Some(current) = current_snapshot.get(output)
-                        && current.exists
-                        && let Some(previous) = state.assets.get(output)
-                    {
-                        retained_output_guard |= current.digest != previous.digest;
-                        current_snapshot.insert(output.clone(), previous.clone());
+    let mut retained_outputs = std::collections::BTreeSet::new();
+    if (settings.only_check || settings.keep_modified_outputs || state.retained_output_state)
+        && filters.is_empty()
+    {
+        filters.push(crate::build_filter::BuildFilter::parse("asset:**/**")?);
+    }
+    if settings.keeps_modified_outputs() && state.is_compatible(&config_digest) {
+        // Stock retains existing output bytes with their previous digest.
+        // Missing outputs are NOT retained and must trigger their producer.
+        for action in state.actions.values() {
+            for output in &action.outputs {
+                if let Some(current) = current_snapshot.get(output)
+                    && current.exists
+                    && let Some(previous) = state.assets.get(output)
+                {
+                    if current.digest != previous.digest {
+                        retained_output_guard = true;
+                        retained_outputs.insert(output.clone());
                     }
+                    current_snapshot.insert(output.clone(), previous.clone());
                 }
             }
         }
@@ -280,9 +284,28 @@ pub(crate) fn run_with_config_session(
         &config_digest,
         &current_snapshot,
         &plan,
+        &retained_outputs,
         &mut filesystem_metrics,
     )?;
     drop(dirty);
+    if settings.legacy_keep_modified_outputs && retained_output_guard {
+        let dirty_keys: std::collections::BTreeSet<_> = dirty_plan
+            .dirty
+            .iter()
+            .map(|spec| spec.action_key())
+            .collect();
+        // Clear the guard only when each edited output has a changed primary
+        // input. Broad resolver invalidation alone does not prove replacement
+        // is valid: stock can skip that producer and retain its edited bytes.
+        // Preserve the existing conservative API guard when any edit survives.
+        retained_output_guard = retained_outputs.iter().any(|asset| {
+            !state.actions.iter().any(|(key, action)| {
+                dirty_keys.contains(key)
+                    && action.outputs.contains(asset)
+                    && state.assets.get(&action.input) != current_snapshot.get(&action.input)
+            })
+        });
+    }
     let no_work = !dirty_plan.has_work();
     // Cache outputs own their package paths too. Verify deliberately leaves
     // conflicts there, so an ordinary build must stage their removal even
@@ -337,6 +360,7 @@ pub(crate) fn run_with_config_session(
             config_digest: &config_digest,
             plan: &plan,
             dirty_plan,
+            retained_output_guard,
         },
     )?;
     drop(executing);
@@ -379,7 +403,7 @@ pub(crate) fn run_with_config_session(
         &mut state,
         commit::CommitInputs {
             only_check: false,
-            keep_modified_outputs: false,
+            keep_modified_outputs: settings.legacy_keep_modified_outputs,
             workspace: &workspace,
             state_path: &state_path,
             build_config: &build_config,

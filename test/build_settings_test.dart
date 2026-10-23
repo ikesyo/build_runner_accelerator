@@ -69,6 +69,15 @@ void main() {
   });
 
   test('output policy syntax agrees with stock', () async {
+    final baseline = (await BuildRunnerCommandLine.parse(['build']))!;
+    try {
+      (baseline as dynamic).outputStrategy;
+    } on NoSuchMethodError {
+      markTestSkipped(
+        'Stock before 2.16 does not expose explicit output policies',
+      );
+      return;
+    }
     for (final flags in <List<String>>[
       [],
       ['--only-check'],
@@ -79,8 +88,14 @@ void main() {
     ]) {
       final settings = BuildSettings.parse(flags);
       final cli = (await BuildRunnerCommandLine.parse(['build', ...flags]))!;
-      expect(settings.onlyCheck, cli.outputStrategy.name == 'verify');
-      expect(settings.keepModifiedOutputs, cli.outputStrategy.name == 'keep');
+      expect(
+        settings.onlyCheck,
+        (cli as dynamic).outputStrategy.name == 'verify',
+      );
+      expect(
+        settings.keepModifiedOutputs,
+        (cli as dynamic).outputStrategy.name == 'keep',
+      );
       expect(
         LauncherOptions.parse(['build', ...flags]).rustArguments.skip(5),
         flags,
@@ -96,7 +111,7 @@ void main() {
       expect(() => BuildSettings.parse(flags), throwsFormatException);
       await expectLater(() async {
         final cli = (await BuildRunnerCommandLine.parse(['build', ...flags]))!;
-        cli.outputStrategy;
+        (cli as dynamic).outputStrategy;
       }, throwsA(anything));
       expect(
         () => LauncherOptions.parse(['build', ...flags]),

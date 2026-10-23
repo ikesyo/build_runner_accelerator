@@ -154,7 +154,7 @@ pub(super) fn run(
         demand_snapshot,
         state.is_compatible(config_digest),
     );
-    lazy.keep_modified_outputs = settings.keep_modified_outputs;
+    lazy.keep_modified_outputs = settings.keeps_modified_outputs();
     let mut owned_pool = None;
     let dirty_roots = lazy.probe_filtered_roots(
         workspace,
@@ -366,7 +366,7 @@ pub(super) fn run(
         state,
         commit::CommitInputs {
             only_check: settings.only_check,
-            keep_modified_outputs: settings.keep_modified_outputs,
+            keep_modified_outputs: settings.keeps_modified_outputs(),
             workspace,
             state_path,
             build_config: config,

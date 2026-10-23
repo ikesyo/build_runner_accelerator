@@ -30,7 +30,7 @@ fn main() -> io::Result<()> {
     if let Some(code) = process::supervise()? {
         std::process::exit(code);
     }
-    let options = cli::Options::parse(env::args().skip(1))?;
+    let mut options = cli::Options::parse(env::args().skip(1))?;
     if options.show_help {
         print_usage();
         return Ok(());
@@ -60,6 +60,10 @@ fn main() -> io::Result<()> {
         "build" | "watch" => Some(workspace_lock::WorkspaceLock::acquire(&options.root)?),
         _ => None,
     };
+    if matches!(options.command.as_str(), "build" | "watch") && !options.settings.only_check {
+        options.settings.legacy_keep_modified_outputs =
+            runner_compatibility::legacy_output_defaults(&options.root)?;
+    }
     let settings = &options.settings;
     if settings.force_aot {
         // Single-threaded startup, before any workers are spawned.

@@ -735,6 +735,7 @@ fn removing_target_with_shared_builder_invalidates_glob_consumer() -> io::Result
             digest,
             snapshot,
             plan,
+            &BTreeSet::new(),
             &mut FilesystemMetrics::default(),
         )
     };
@@ -1029,6 +1030,7 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
             "config",
             &snapshot,
             &plan,
+            &BTreeSet::new(),
             &mut FilesystemMetrics::default(),
         )
     };
@@ -1060,6 +1062,42 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
         BTreeSet::from([optional_spec.action_key()])
     );
 
+    // Legacy retention reuses the logical output digest while the file exists,
+    // but must still rebuild a missing output. The repair default above sees
+    // the edit and schedules the producer instead.
+    let retained = BTreeSet::from(["app|lib/shared.out".to_owned()]);
+    let retained_state = GraphState {
+        actions: BTreeMap::from([(
+            source_spec.action_key(),
+            state.actions[&source_spec.action_key()].clone(),
+        )]),
+        ..state.clone()
+    };
+    let retained_config = dirty_test_config(&[source]);
+    let retained_plan = PlannedActions {
+        specs: vec![source_spec.clone()],
+        generated_output_locations: BTreeMap::new(),
+        visibility: AssetVisibility::default(),
+    };
+    let retained_check = || {
+        analyze(
+            &workspace,
+            &retained_state,
+            &retained_config,
+            "config",
+            &snapshot,
+            &retained_plan,
+            &retained,
+            &mut FilesystemMetrics::default(),
+        )
+    };
+    assert!(retained_check()?.dirty.is_empty());
+    fs::remove_file(temporary.0.join("lib/shared.out"))?;
+    assert_eq!(
+        retained_check()?.dirty[0].action_key(),
+        source_spec.action_key()
+    );
+
     fs::write(temporary.0.join("lib/shared.out"), b"source")?;
     fs::remove_file(&cache_path)?;
     let result = check()?;
@@ -1083,6 +1121,7 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
         "config",
         &snapshot,
         &plan,
+        &BTreeSet::new(),
         &mut FilesystemMetrics::default(),
     )?;
     assert_eq!(
@@ -1199,6 +1238,7 @@ fn undemanded_optional_stays_demandable_without_changing_successful_empty_reuse(
             "config",
             &snapshot,
             &plan,
+            &BTreeSet::new(),
             &mut FilesystemMetrics::default(),
         )
     };
@@ -1268,6 +1308,7 @@ fn planned_actions_share_only_their_configured_instance_and_release_with_the_bui
         "config",
         &snapshot,
         &plan,
+        &BTreeSet::new(),
         &mut FilesystemMetrics::default(),
     )?;
     assert_eq!(dirty.dirty.len(), 6);
@@ -1318,6 +1359,7 @@ fn planning_retention_benchmark() -> io::Result<()> {
         "config",
         &snapshot,
         &plan,
+        &BTreeSet::new(),
         &mut FilesystemMetrics::default(),
     )?;
     let index = execution::optional_specs_by_output(&plan.specs);
