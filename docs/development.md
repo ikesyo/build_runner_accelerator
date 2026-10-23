@@ -52,6 +52,10 @@ when its wider feature set is needed.
 
 ## Local checks
 
+For an optional containerized entry point that includes Rust and Dart unit
+tests, see [Dagger local checks](dagger.md). Existing host commands remain
+available and are required for native performance/platform comparisons.
+
 After pub get, run formatting, analysis, tests, and Rust checks:
 
 ```bash

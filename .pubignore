@@ -1,5 +1,7 @@
 # Repository-only development and release inputs.
 /.github/
+/.dagger/
+/dagger.json
 /AGENTS.md
 /docs/
 /fixtures/

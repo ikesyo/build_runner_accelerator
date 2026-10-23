@@ -1,0 +1,12 @@
+[project]
+name = "local-checks"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["dagger-io==0.21.11"]
+
+[build-system]
+requires = ["uv_build>=0.8.4,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py312"

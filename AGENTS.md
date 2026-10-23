@@ -75,6 +75,33 @@ granularity.
 
 ## Verification
 
+Dagger is an optional Linux-container entry point for local verification. Use
+the pinned CLI version from `dagger.json` and follow `docs/dagger.md`:
+
+```bash
+dagger call check
+dagger call rust-unit
+dagger call dart-unit
+dagger call verify
+dagger call verify --arbitrary-builder
+dagger call verify --level=full --suites=compatibility-graph
+```
+
+`check` includes Rust/Dart unit tests, formatting, Clippy and Dart analysis;
+`verify` runs the existing correctness wrapper and is not a replacement for
+both unit suites. Keep orchestration in Dagger and test semantics in existing
+scripts. Read toolchain pins from the existing repository files. Keep concurrent
+lanes bounded (currently two for `check`), isolate writable workspaces, and do
+not share a writable Cargo target directory or fixture state between lanes.
+
+An unchanged Dagger invocation may return cached successful test results. For
+fresh evidence, use `--run-id=<unique-value>`; this preserves setup/dependency
+reuse while rerunning checks. Report cache reuse separately from actual test
+execution. Keep benchmarks and host-specific watch/platform verification on
+the native host, with the same SDK and cache for stock/native comparisons.
+Dagger Linux checks do not replace macOS/Windows or release-artifact coverage.
+Existing host commands below remain supported when Docker is unavailable.
+
 For CI changes, prefer parallel steps within existing jobs over expanding the
 matrix for each test group. Keep runner concurrency bounded and share setup;
 additional jobs consume concurrency slots and can increase queue time.
