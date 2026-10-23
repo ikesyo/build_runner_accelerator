@@ -62,7 +62,22 @@ impl ResidentGraph {
         });
     }
 
+    fn recover(&mut self, path: &Path) -> io::Result<()> {
+        match crate::build::recovery::recover(path) {
+            Ok(false) => Ok(()),
+            Ok(true) => {
+                self.0 = None;
+                Ok(())
+            }
+            Err(error) => {
+                self.0 = None;
+                Err(error)
+            }
+        }
+    }
+
     pub fn for_events(&mut self, path: &Path) -> io::Result<&GraphState> {
+        self.recover(path)?;
         let stamp = Stamp::read(path)?;
         if !self
             .0
@@ -79,6 +94,7 @@ impl ResidentGraph {
 
     pub fn take_for_build(&mut self, workspace: &Workspace) -> io::Result<LoadedGraph> {
         let path = crate::build::graph_path(workspace);
+        self.recover(&path)?;
         if let Some(entry) = self.0.take() {
             let stamp = Stamp::read(&path)?;
             if stamp.is_some() && entry.stamp == stamp {

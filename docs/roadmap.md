@@ -11,7 +11,7 @@ The following are implemented and covered by the current fixture suite:
 
 - Rust frontend and resident Dart worker with a versioned IPC protocol.
 - Workspace snapshots, dependency-aware action graphs, dirty propagation,
-  overlay visibility, and all-success atomic commits.
+  overlay visibility, and recoverable all-success publication.
 - Native watch with worker reuse.
 - Manifest-first builder loading from official `PackageGraph` and
   `BuildConfig` resolution.
@@ -30,15 +30,15 @@ The following are implemented and covered by the current fixture suite:
   the pinned Drift versions, including `discover`/`analyzer` factories,
   `.dart`/`.drift` runtime mappings, analyzer cache artifact visibility,
   modular `.drift.dart` source outputs, Resolver/BuildStep APIs, stale-output
-  cleanup, atomic failure recovery, and native watch.
+  cleanup, builder-failure output protection, and native watch.
 - The official `drift_dev:not_shared` source builder and complete
   `driftCleanup` input set at the same pinned Drift versions, including stock's
   logical-delete/physical-cache distinction, intermediate visibility,
-  byte-identical lifecycle output, atomic recovery, and native watch.
+  byte-identical lifecycle output, builder-failure recovery, and native watch.
 - Stock virtual primary IDs with normal suffix/scoped action semantics and
   unreadable asset visibility. An isolated Conduit registry configuration uses
   a fixture-only Analyzer override for stock/native byte, lifecycle, ordered
-  enumeration, atomic recovery, and paired watch comparisons.
+  enumeration, builder-failure recovery, and paired watch comparisons.
 - Demand-driven execution for compatible normal `is_optional` builders when a
   later action reads or uses their declared output.
 - Stock-vs-native output comparisons for clean, no-op, incremental, failure,
@@ -82,13 +82,13 @@ optional/post-process and Drift builder chains:
   and the [fixture guide](../fixtures/optional_cleanup_app/README.md) for coverage.
 - [x] Extend the pinned Drift fixture to `not_shared` and the full
   `driftCleanup` runtime input set. Compare stock/native lifecycle bytes,
-  intermediate visibility, logical cleanup, atomic failure recovery, and watch.
+  intermediate visibility, logical cleanup, builder-failure output protection, and watch.
   See the [fixture guide](../fixtures/drift_analyzer_app/README.md).
 - [x] Validate Conduit's real `registry_builder` in an isolated fixture using
   an explicit Analyzer 14.5.0 override with stock/native build_runner 2.16.2.
   See the [override fixture](../fixtures/registry_builder_override_app/README.md)
   for configuration, byte comparisons, virtual-input scope and visibility,
-  ordered enumeration, source/cache lifecycle, atomic recovery, and paired watch.
+  ordered enumeration, source/cache lifecycle, builder-failure recovery, and paired watch.
 - [ ] Resolve Conduit's published dependency constraints with a dependency
   solution compatible with the native baseline. Published
   `conduit_build_runner` 6.0.0/7.0.0 require Analyzer 12, while stock
@@ -103,13 +103,13 @@ optional/post-process and Drift builder chains:
   package using dart2js `-O1`, dev configuration, `generate_for: [web/**.dart]`,
   `filter_outputs: true`, and AOT paired watch. See the
   [fixture guide](../fixtures/build_web_compilers_app/README.md) for raw public
-  JS/map equality, generated module dependencies, cleanup and atomic recovery.
+  JS/map equality, generated module dependencies, cleanup and builder-failure recovery.
 - [x] Validate the minimal published DDC chain at the same pinned versions:
   single root package, `compiler: dartdevc`, dev, `generate_for: [web/**.dart]`,
   AMD defaults and hot reload disabled. See the
   [DDC fixture](../fixtures/build_web_compilers_ddc_app/README.md) for the full
   public kernel/module/bootstrap/SDK artifact set, raw bytes, optional demand,
-  ordered inputs, compiler failure/atomic recovery and AOT paired watch.
+  ordered inputs, compiler-failure output protection and AOT paired watch.
 - [ ] Validate other web compiler modes/configurations and versions: DDC hot
   reload, library bundles/frontend server and nondefault compiler flags,
   dart2wasm, release/deferred outputs, the default dev extractor's exposed

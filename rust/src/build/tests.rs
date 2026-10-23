@@ -410,7 +410,8 @@ impl TemporaryWorkspace {
             "build-stage-output-reuse-{}-{nonce}",
             std::process::id()
         ));
-        let temporary = Self(root);
+        fs::create_dir_all(&root)?;
+        let temporary = Self(crate::workspace::canonicalize(root)?);
         fs::create_dir_all(temporary.0.join(".dart_tool"))?;
         fs::create_dir_all(temporary.0.join("lib"))?;
         fs::write(temporary.0.join("pubspec.yaml"), "name: app\n")?;
@@ -1363,4 +1364,405 @@ fn planning_retention_benchmark() -> io::Result<()> {
         )?;
     }
     Ok(())
+}
+
+// Uses the real publication function with both source/cache writes, dynamic
+// obsolete output deletion, and cold artifact cleanup. Hooks exist only in tests.
+fn recovery_commit_fixture(root: &std::path::Path) -> io::Result<()> {
+    use super::commit::{CommitInputs, commit};
+    use super::transaction::PendingTransaction;
+    let workspace = Workspace::load(root.to_owned())?;
+    let source = configured_builder("source", "app:default", 0, 0);
+    let mut cache = configured_builder("cache", "app:default", 0, 1);
+    Arc::make_mut(&mut cache.definition).build_to = BuildTo::Cache;
+    let config = RustBuildConfig {
+        asset_sources: None,
+        builders: vec![source.clone(), cache.clone()],
+        definitions: BTreeMap::from([
+            (source.definition.id.clone(), source.definition.clone()),
+            (cache.definition.id.clone(), cache.definition.clone()),
+        ]),
+        worker_entrypoint: None,
+        manifest_signature: None,
+        trigger_digest: None,
+    };
+    let path = super::graph_path(&workspace);
+    let mut state = GraphState::load(&path)?;
+    let deleted = state
+        .actions
+        .iter()
+        .map(|(key, action)| (key.clone(), action.clone()))
+        .collect();
+    let mut transaction = PendingTransaction::new(&[], &state, deleted);
+    transaction
+        .pending_deletions
+        .push((source.definition.clone(), "app|lib/obsolete.out".to_owned()));
+    transaction.pending_outputs.push((
+        source.definition.clone(),
+        "app|lib/updated.out".to_owned(),
+        Arc::from(&b"new source"[..]),
+    ));
+    transaction.pending_outputs.push((
+        cache.definition.clone(),
+        "app|lib/new.cache".to_owned(),
+        Arc::from(&b"new cache"[..]),
+    ));
+    commit(
+        &mut state,
+        CommitInputs {
+            only_check: false,
+            keep_modified_outputs: false,
+            workspace: &workspace,
+            state_path: &path,
+            build_config: &config,
+            config_digest: "committed".to_owned(),
+            scanned_packages: &BTreeSet::from(["app".to_owned()]),
+            expected_outputs: BTreeSet::new(),
+            source_snapshot_evidence: None,
+            filtered_snapshot_evidence: None,
+            transaction,
+        },
+    )?;
+    Ok(())
+}
+
+fn seed_recovery_fixture(root: &std::path::Path) -> io::Result<()> {
+    fs::write(root.join("lib/updated.out"), b"old source")?;
+    fs::write(root.join("lib/obsolete.out"), b"obsolete source")?;
+    fs::write(root.join("lib/handwritten.txt"), b"handwritten")?;
+    fs::create_dir_all(root.join(".dart_tool/build_runner_accelerator/cache/app/lib"))?;
+    fs::write(
+        root.join(".dart_tool/build_runner_accelerator/cache/app/lib/old.cache"),
+        b"obsolete cache",
+    )?;
+    GraphState {
+        schema_version: crate::graph::GRAPH_SCHEMA_VERSION,
+        retained_output_state: true,
+        actions: BTreeMap::from([(
+            "obsolete-action".to_owned(),
+            ActionState {
+                builder: "source".to_owned(),
+                input: "app|lib/removed.txt".to_owned(),
+                outputs: vec!["app|lib/obsolete.out".to_owned()],
+                status: "success".to_owned(),
+                ..ActionState::default()
+            },
+        )]),
+        output_locations: BTreeMap::from([("app|lib/obsolete.out".to_owned(), false)]),
+        ..GraphState::default()
+    }
+    .save(&root.join(".dart_tool/build_runner_accelerator/graph-v3.bin"))
+}
+
+fn assert_recovered_fixture(root: &std::path::Path) -> io::Result<()> {
+    let graph = root.join(".dart_tool/build_runner_accelerator/graph-v3.bin");
+    super::recovery::recover(&graph)?;
+    super::recovery::recover(&graph)?;
+    assert_eq!(fs::read(root.join("lib/updated.out"))?, b"old source");
+    assert_eq!(fs::read(root.join("lib/obsolete.out"))?, b"obsolete source");
+    assert_eq!(fs::read(root.join("lib/handwritten.txt"))?, b"handwritten");
+    assert_eq!(
+        fs::read(root.join(".dart_tool/build_runner_accelerator/cache/app/lib/old.cache"))?,
+        b"obsolete cache"
+    );
+    assert!(
+        !root
+            .join(".dart_tool/build_runner_accelerator/cache/app/lib/new.cache")
+            .exists()
+    );
+    let restored = GraphState::load(&graph)?;
+    assert!(restored.config_digest.is_empty());
+    assert!(restored.retained_output_state);
+    assert_eq!(
+        restored.actions["obsolete-action"].outputs,
+        ["app|lib/obsolete.out"]
+    );
+    assert_eq!(
+        restored.output_locations.get("app|lib/obsolete.out"),
+        Some(&false)
+    );
+    recovery_commit_fixture(root)?;
+    assert_eq!(fs::read(root.join("lib/updated.out"))?, b"new source");
+    assert!(!root.join("lib/obsolete.out").exists());
+    assert!(
+        !root
+            .join(".dart_tool/build_runner_accelerator/cache/app/lib/old.cache")
+            .exists()
+    );
+    assert_eq!(
+        fs::read(root.join(".dart_tool/build_runner_accelerator/cache/app/lib/new.cache"))?,
+        b"new cache"
+    );
+    assert!(!super::recovery::pending(&graph));
+    Ok(())
+}
+
+#[test]
+fn interrupted_commit_boundaries_restore_outputs_and_graph() -> io::Result<()> {
+    for point in [
+        "after_deletions",
+        "after_output",
+        "before_graph",
+        "after_graph",
+    ] {
+        let temporary = TemporaryWorkspace::new()?;
+        seed_recovery_fixture(&temporary.0)?;
+        thread_local! { static POINT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) }; }
+        POINT.with(|value| *value.borrow_mut() = point.to_owned());
+        super::commit::COMMIT_BOUNDARY.with(|hook| {
+            *hook.borrow_mut() = Some(|name| {
+                POINT.with(|point| {
+                    if name == *point.borrow() {
+                        Err(io::Error::other("injected I/O failure"))
+                    } else {
+                        Ok(())
+                    }
+                })
+            })
+        });
+        let result = recovery_commit_fixture(&temporary.0);
+        super::commit::COMMIT_BOUNDARY.with(|hook| *hook.borrow_mut() = None);
+        assert!(result.is_err(), "{point}");
+        assert_recovered_fixture(&temporary.0)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn graph_save_io_failure_preserves_undo_evidence() -> io::Result<()> {
+    let temporary = TemporaryWorkspace::new()?;
+    seed_recovery_fixture(&temporary.0)?;
+    let blocked = temporary
+        .0
+        .join(".dart_tool/build_runner_accelerator/graph-v3.bin.tmp");
+    fs::create_dir(&blocked)?;
+    assert!(recovery_commit_fixture(&temporary.0).is_err());
+    fs::remove_dir(&blocked)?;
+    assert_recovered_fixture(&temporary.0)
+}
+
+#[test]
+fn recovery_refuses_external_edits_without_deleting_handwritten_files() -> io::Result<()> {
+    let temporary = TemporaryWorkspace::new()?;
+    seed_recovery_fixture(&temporary.0)?;
+    super::commit::COMMIT_BOUNDARY
+        .with(|hook| *hook.borrow_mut() = Some(|_| Err(io::Error::other("injected"))));
+    let result = recovery_commit_fixture(&temporary.0);
+    super::commit::COMMIT_BOUNDARY.with(|hook| *hook.borrow_mut() = None);
+    assert!(result.is_err());
+    fs::write(temporary.0.join("lib/updated.out"), b"manual edit")?;
+    let graph = temporary
+        .0
+        .join(".dart_tool/build_runner_accelerator/graph-v3.bin");
+    let error = GraphState::load(&graph).unwrap_err().to_string();
+    assert!(error.contains("move externally edited files aside"));
+    assert!(super::recovery::pending(&graph));
+    assert_eq!(
+        fs::read(temporary.0.join("lib/updated.out"))?,
+        b"manual edit"
+    );
+    fs::remove_file(temporary.0.join("lib/updated.out"))?;
+    assert_recovered_fixture(&temporary.0)
+}
+
+#[test]
+fn killed_commit_child() -> io::Result<()> {
+    let Some(root) = std::env::var_os("ACCELERATOR_TEST_COMMIT_ROOT") else {
+        return Ok(());
+    };
+    super::commit::COMMIT_BOUNDARY.with(|hook| {
+        *hook.borrow_mut() = Some(|name| {
+            if name == std::env::var("ACCELERATOR_TEST_COMMIT_POINT").unwrap() {
+                use std::io::Write;
+                println!("COMMIT_BOUNDARY_READY");
+                io::stdout().flush()?;
+                let mut line = String::new();
+                io::stdin().read_line(&mut line)?;
+                panic!("parent must kill this process");
+            }
+            Ok(())
+        })
+    });
+    recovery_commit_fixture(&PathBuf::from(root))
+}
+
+#[test]
+fn process_kill_at_commit_boundaries_needs_no_exit_cleanup() -> io::Result<()> {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    for point in [
+        "after_deletions",
+        "output_temporary_created",
+        "after_output",
+        "after_graph",
+    ] {
+        let temporary = TemporaryWorkspace::new()?;
+        seed_recovery_fixture(&temporary.0)?;
+        let mut child = Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "build::tests::killed_commit_child",
+                "--nocapture",
+            ])
+            .env("ACCELERATOR_TEST_COMMIT_ROOT", &temporary.0)
+            .env("ACCELERATOR_TEST_COMMIT_POINT", point)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let mut reader = BufReader::new(child.stdout.take().unwrap());
+        loop {
+            let mut line = String::new();
+            assert_ne!(
+                reader.read_line(&mut line)?,
+                0,
+                "child exited before {point}"
+            );
+            if line.trim() == "COMMIT_BOUNDARY_READY" {
+                break;
+            }
+        }
+        child.kill()?;
+        assert!(!child.wait()?.success());
+        assert_recovered_fixture(&temporary.0)?;
+    }
+    Ok(())
+}
+
+/// Test-only real CLI adapter: the production executable contains no fault
+/// injection environment variables or blocking hooks.
+#[test]
+fn native_commit_process_child() -> io::Result<()> {
+    let Ok(arguments) = std::env::var("ACCELERATOR_TEST_NATIVE_ARGUMENTS") else {
+        return Ok(());
+    };
+    let arguments: Vec<String> = serde_json::from_str(&arguments)?;
+    let options = crate::cli::Options::parse(arguments.into_iter())?;
+    let _lock = crate::workspace_lock::WorkspaceLock::acquire(&options.root)?;
+    super::commit::COMMIT_BOUNDARY.with(|hook| {
+        *hook.borrow_mut() = Some(|name| {
+            thread_local! { static FIRED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+            if std::env::var("ACCELERATOR_TEST_COMMIT_POINT")
+                .ok()
+                .as_deref()
+                == Some(name) && !FIRED.with(|fired| fired.replace(true))
+            {
+                use std::io::Write;
+                println!("COMMIT_BOUNDARY_READY");
+                io::stdout().flush()?;
+                let mut line = String::new();
+                io::stdin().read_line(&mut line)?;
+                return Err(io::Error::other("test publication I/O error"));
+            }
+            Ok(())
+        })
+    });
+    match options.command.as_str() {
+        "watch" => crate::watch::run(&options),
+        _ => super::run(&options),
+    }
+}
+
+#[test]
+fn interrupted_recovery_is_repeatable() -> io::Result<()> {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    let temporary = TemporaryWorkspace::new()?;
+    seed_recovery_fixture(&temporary.0)?;
+    super::commit::COMMIT_BOUNDARY
+        .with(|hook| *hook.borrow_mut() = Some(|_| Err(io::Error::other("injected"))));
+    let result = recovery_commit_fixture(&temporary.0);
+    super::commit::COMMIT_BOUNDARY.with(|hook| *hook.borrow_mut() = None);
+    assert!(result.is_err());
+    let mut child = Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "build::tests::killed_commit_child",
+            "--nocapture",
+        ])
+        .env("ACCELERATOR_TEST_COMMIT_ROOT", &temporary.0)
+        .env("ACCELERATOR_TEST_COMMIT_POINT", "after_restore")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    for line in BufReader::new(child.stdout.take().unwrap()).lines() {
+        if line?.trim() == "COMMIT_BOUNDARY_READY" {
+            child.kill()?;
+            assert!(!child.wait()?.success());
+            return assert_recovered_fixture(&temporary.0);
+        }
+    }
+    panic!("recovery child exited without reaching restore boundary");
+}
+
+#[test]
+fn only_check_refuses_pending_recovery_without_mutating_outputs_or_graph() -> io::Result<()> {
+    let temporary = TemporaryWorkspace::new()?;
+    seed_recovery_fixture(&temporary.0)?;
+    super::commit::COMMIT_BOUNDARY.with(|hook| {
+        *hook.borrow_mut() = Some(|name| {
+            if name == "after_output" {
+                Err(io::Error::other("injected"))
+            } else {
+                Ok(())
+            }
+        });
+    });
+    let result = recovery_commit_fixture(&temporary.0);
+    super::commit::COMMIT_BOUNDARY.with(|hook| *hook.borrow_mut() = None);
+    assert!(result.is_err());
+    let graph = temporary
+        .0
+        .join(".dart_tool/build_runner_accelerator/graph-v3.bin");
+    let old_graph = fs::read(&graph)?;
+    let output = fs::read(temporary.0.join("lib/updated.out"))?;
+    let options = crate::cli::Options::parse(
+        [
+            "build".to_owned(),
+            "--root".to_owned(),
+            temporary.0.to_string_lossy().into_owned(),
+            "--only-check".to_owned(),
+        ]
+        .into_iter(),
+    )?;
+    let error = super::run(&options).unwrap_err().to_string();
+    assert!(error.contains("without --only-check"), "{error}");
+    assert!(super::recovery::pending(&graph));
+    assert_eq!(fs::read(&graph)?, old_graph);
+    assert_eq!(fs::read(temporary.0.join("lib/updated.out"))?, output);
+    assert!(!temporary.0.join("lib/obsolete.out").exists());
+    assert_recovered_fixture(&temporary.0)
+}
+
+#[test]
+fn deletion_io_error_does_not_silently_publish_a_graph() -> io::Result<()> {
+    let temporary = TemporaryWorkspace::new()?;
+    seed_recovery_fixture(&temporary.0)?;
+    thread_local! { static ROOT: std::cell::RefCell<PathBuf> = const { std::cell::RefCell::new(PathBuf::new()) }; }
+    ROOT.with(|root| *root.borrow_mut() = temporary.0.clone());
+    super::commit::COMMIT_BOUNDARY.with(|hook| {
+        *hook.borrow_mut() = Some(|name| {
+            if name == "before_deletions" {
+                ROOT.with(|root| {
+                    let path = root.borrow().join("lib/obsolete.out");
+                    fs::remove_file(&path)?;
+                    fs::create_dir(path)
+                })?;
+            }
+            Ok(())
+        });
+    });
+    let graph = temporary
+        .0
+        .join(".dart_tool/build_runner_accelerator/graph-v3.bin");
+    let before = fs::read(&graph)?;
+    let result = recovery_commit_fixture(&temporary.0);
+    super::commit::COMMIT_BOUNDARY.with(|hook| *hook.borrow_mut() = None);
+    assert!(result.is_err());
+    assert_eq!(fs::read(&graph)?, before);
+    assert!(super::recovery::pending(&graph));
+    // An unexpected directory is not recursively deleted by recovery.
+    assert!(super::recovery::recover(&graph).is_err());
+    assert!(temporary.0.join("lib/obsolete.out").is_dir());
+    fs::remove_dir(temporary.0.join("lib/obsolete.out"))?;
+    assert_recovered_fixture(&temporary.0)
 }

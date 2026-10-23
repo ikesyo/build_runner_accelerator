@@ -94,8 +94,9 @@ not inspect output-policy history.
 
 Keep the existing all-success commit boundary: builder failure or interruption
 during actions leaves native outputs and graph unchanged. Stock can publish
-partial results on failure. Filesystem commit remains non-crash-atomic as defined
-in ADR 0002; this change adds no rollback journal.
+partial results on failure. Publication is not a simultaneously atomic filesystem snapshot.
+[ADR 0040](0040-interrupted-commit-recovery.md) adds undo recovery before graph
+reuse, including retained logical digests and ownership history.
 
 The supported version window remains `>=2.16.2 <2.17.0`. Stock evidence comes from
 `build_runner_command_line.dart`, `build_plan/output_strategy.dart`,

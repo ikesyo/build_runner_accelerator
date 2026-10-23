@@ -57,7 +57,7 @@ sources filter the primary input (including generated-input chains), and
 package visibility is not widened by the mapping. `build_to: source` and
 `build_to: cache` retain their existing output visibility and later-phase
 overlay behavior. Output collisions, stale outputs, action identity, and
-atomic commit use the same generic graph rules as other mappings.
+all-success publication use the same generic graph rules as other mappings.
 
 This change supports ordinary Builders with simple output suffixes, including
 regular and empty-key mappings together, static/runtime mappings, source/cache
@@ -111,7 +111,7 @@ The validated subset is:
   `resolver.findLibraryByName`, `assetIdForElement`, `inputLibrary`, and
   package language-version access through `packageConfig`.
 - Stale cache/source output removal, missing declared output handling, and
-  native atomic commit behavior after modular writes and then fails.
+  native builder-failure output protection after modular writes and then fails.
 
 Stock and native output relative paths and bytes match in this fixture. Their
 persistent cache roots and diagnostics differ, and the failure probe checks the

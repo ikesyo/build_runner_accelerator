@@ -4,6 +4,7 @@ mod execution;
 mod filtered;
 mod part_directive;
 mod planning;
+pub(crate) mod recovery;
 mod results;
 mod snapshot;
 mod transaction;
@@ -105,6 +106,9 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     let load = crate::wall::Span::new("workspace_load");
     let workspace = Workspace::load(options.root.clone())?;
     drop(load);
+    if options.settings.only_check {
+        recovery::require_clean_verification(&graph_path(&workspace))?;
+    }
     let loaded_graph = LoadedGraph::load(&workspace)?;
     let selection = crate::wall::Span::new("manifest_select");
     let build_config = prepare_native_frontend(options, &workspace, &loaded_graph.state)?;

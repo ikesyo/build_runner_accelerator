@@ -24,7 +24,7 @@ planning, scheduling, and output commits are suitable for a native frontend.
 Split the system into a Rust frontend and a resident Dart worker:
 
 - Rust owns workspace snapshots, dependency and glob invalidation, action
-  planning, phase orchestration, scheduling, overlays, atomic commits, and
+  planning, phase orchestration, scheduling, overlays, recoverable all-success publication, and
   native watch.
 - Dart owns builder factories, BuildStep, AssetReader, Analyzer-backed Resolver
   work, and builder/resource lifetimes.

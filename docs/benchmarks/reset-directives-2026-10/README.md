@@ -22,7 +22,7 @@ AssetId, mtime, mutable buffer identity and inherited digests cannot prove reuse
 - Deletion removes the old per-asset record; recreation checks disk/missing state.
   Next-build reset clears existing records. New String/result pairs are temporary.
 - Blob validation/lifetime, reader invalidation, visibility, dependency recording,
-  optional demand and atomic commit are unchanged, as are scheduling/AOT policies.
+  optional demand and all-success publication are unchanged, as are scheduling/AOT policies.
 
 A bounded full-String LRU was rejected: seven-sample extraction medians for equal
 large outputs were 49.657→26.585 ms, but unique-content misses were

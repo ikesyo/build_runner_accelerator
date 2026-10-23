@@ -4,7 +4,7 @@
 
 build_runner_accelerator is a pre-release Rust-accelerated frontend for
 build_runner. Rust owns the filesystem snapshot, incremental action graph,
-phase orchestration, overlay, and atomic commit. A Dart worker continues to
+phase orchestration, overlay, and recoverable all-success publication. A Dart worker continues to
 execute Dart builders, BuildStep, AssetReader, and Analyzer-backed resolver
 work.
 
@@ -32,6 +32,9 @@ Read these files before making a non-trivial change:
   diagnostics belong on stderr.
 - Successful builds commit outputs and the graph only after all dirty actions
   succeed. Do not weaken the existing overlay and failure-recovery behavior.
+- Recover unfinished publication under the workspace lock before graph reuse.
+  Preserve undo evidence when recovery is unsafe; `--only-check` must refuse
+  recovery writes rather than silently change files. See ADR 0040.
 - Same-phase generated outputs are hidden from the action that owns them;
   source outputs are exposed to later phases through the overlay and a
   resolver-only phase reset, without restarting the resident worker.

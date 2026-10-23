@@ -25,7 +25,7 @@ use std::{
 /// changes. Only demanded actions enter the next graph, while each demanded
 /// action publishes all of its sibling outputs together. A worker/probe error
 /// returns before filesystem commit; an error during commit can still leave
-/// partial filesystem changes because the commit sequence is not crash-atomic.
+/// partial filesystem changes until undo recovery runs before graph reuse.
 #[expect(
     clippy::too_many_arguments,
     reason = "Filtered execution consumes the same planned transaction inputs as ordinary execution"

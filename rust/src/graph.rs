@@ -93,10 +93,13 @@ impl GraphState {
         processed != degrees.len()
     }
 
+    /// Under the workspace writer lock, recover unfinished publication before
+    /// reading or invalidating state. Recovery errors never invalidate ownership.
     /// Loads persisted incremental evidence, or starts with an empty graph if
     /// the file is absent or invalid. Invalid bytes are diagnosed and left in
     /// place until a later save; unrelated filesystem errors propagate.
     pub fn load(path: &Path) -> io::Result<Self> {
+        crate::build::recovery::recover(path)?;
         match Self::load_checked(path) {
             Err(error) if error.kind() == io::ErrorKind::InvalidData => {
                 eprintln!(
@@ -127,6 +130,12 @@ impl GraphState {
             }
             Err(error) => return Err(error),
         };
+        Self::decode_checked(&contents, true)
+    }
+
+    /// Recovery must preserve ownership rather than silently invalidating an
+    /// obsolete backup. The ordinary loader retains its existing reset policy.
+    pub(crate) fn decode_checked(contents: &[u8], invalidate_obsolete: bool) -> io::Result<Self> {
         if contents.len() < GRAPH_HEADER_LENGTH {
             return Err(invalid_graph("graph file is truncated"));
         }
@@ -155,6 +164,11 @@ impl GraphState {
         let mut decoder = Decoder::new(&contents[GRAPH_HEADER_LENGTH..]);
         let schema_version = decoder.read_u32()?;
         if schema_version != GRAPH_SCHEMA_VERSION {
+            if !invalidate_obsolete {
+                return Err(invalid_graph(
+                    "undo graph has an unsupported schema; use the matching frontend or reconcile outputs manually",
+                ));
+            }
             eprintln!(
                 "build_runner_accelerator: invalidating graph schema {schema_version}; expected {GRAPH_SCHEMA_VERSION}"
             );

@@ -157,6 +157,9 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
                     .for_events(&build::graph_path(&workspace))?,
             )
         } else {
+            // Even an initial publication failure must roll back before waiting
+            // or classifying events against a partially changed output tree.
+            crate::build::recovery::recover(&build::graph_path(&workspace))?;
             None
         };
         let (configuration_changed, changed_paths) = wait_for_relevant_event(
