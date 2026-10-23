@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.15.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.14.1...v0.15.0) - 2026-10-23
+
+- test: validate Drift not_shared cleanup compatibility by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/124
+- feat: support virtual primaries and validate Conduit registry with override by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/126
+- fix: validate dart2js chain and repair shared execution contracts by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/127
+- fix: support published DDC demand chain with shared manifest and RPC semantics by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/128
+- fix: support literal filename suffix mappings found in FVM by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/129
+- test: consolidate redundant manifest and AOT coverage by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/130
+- ci: verify reproducible release artifacts before publishing by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/131
+
 ## [v0.14.1](https://github.com/ikesyo/build_runner_accelerator/compare/v0.14.0...v0.14.1) - 2026-10-20
 
 - fix: resolve option-dependent post-process inputs by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/121
