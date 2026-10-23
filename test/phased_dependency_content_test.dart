@@ -24,6 +24,7 @@ void main() {
   RemoteBuilderFilesystem filesystem({
     Map<AssetId, AssetContent> committed = const {},
     Map<String, List<Glob>> inputRestrictions = const {},
+    RemoteBuildState? state,
   }) {
     final packages = buildPackagesFor(
       PackageConfig([
@@ -35,11 +36,13 @@ void main() {
     return RemoteBuilderFilesystem(
       inputRestrictions: inputRestrictions,
       buildPackages: packages,
-      buildState: RemoteBuildState(
-        {'app', 'dep'},
-        phaseCount: 8,
-        committedContents: committed,
-      ),
+      buildState:
+          state ??
+          RemoteBuildState(
+            {'app', 'dep'},
+            phaseCount: 8,
+            committedContents: committed,
+          ),
       readerWriter: io,
     );
   }
@@ -65,6 +68,33 @@ void main() {
     io = RemoteAssetReaderWriter(readCache: cache, readableCache: {});
     analyzer = AnalysisDriverFilesystem();
   });
+
+  test(
+    'Analyzer state seeds a committed snapshot, not remote source reads',
+    () {
+      final content = AssetContent.string('class Committed {}');
+      final committed = {id: content};
+      final state = RemoteBuildState(
+        {'app'},
+        phaseCount: 2,
+        committedContents: committed,
+      );
+      committed[id] = AssetContent.string('class Later {}');
+      expect(state.isSource(other), isTrue);
+      expect(state.isMissingSource(other), isFalse);
+      state.updateSourceContent(other, AssetContent.string('class Other {}'));
+      expect(state.contentOfSource(other)!.stringValue(), 'class Other {}');
+      expect(state.committedContentOf(other), isNull);
+      expect(state.committedContentOf(id), same(content));
+      final fs = filesystem(state: state);
+      analyzer.startBuild(
+        builderFilesystem: fs,
+        buildInputs: cleanBuildInputs(),
+      );
+      expect(analyzer.get('/app/lib/input.dart').content, 'class Committed {}');
+      expect(analyzer.get('/app/lib/other.dart').exists, isFalse);
+    },
+  );
 
   test(
     'builder public restrictions precede phase and content caches',

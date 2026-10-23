@@ -245,7 +245,11 @@ class RemoteAssetReaderWriter extends ReaderWriter {
   }
 
   @override
-  Future<bool> canRead(AssetId id, {bool inArtifactTree = false}) async {
+  Future<bool> canRead(
+    AssetId id, {
+    bool inArtifactTree = false,
+    bool hidden = false,
+  }) async {
     _state.observedReads.add(id);
     final primaryInput = _state.primaryInput;
     if (primaryInput != null && id != primaryInput) return false;
@@ -273,7 +277,11 @@ class RemoteAssetReaderWriter extends ReaderWriter {
   }
 
   @override
-  Future<Digest> digest(AssetId id, {bool inArtifactTree = false}) async {
+  Future<Digest> digest(
+    AssetId id, {
+    bool inArtifactTree = false,
+    bool hidden = false,
+  }) async {
     return (await readContent(id)).digestFor(id);
   }
 
@@ -285,6 +293,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
   Future<List<int>> readAsBytes(
     AssetId id, {
     bool inArtifactTree = false,
+    bool hidden = false,
   }) async => List<int>.from((await readContent(id)).bytes);
 
   /// Internal immutable snapshot for collectors, decoding and hashing. Uses
@@ -349,6 +358,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
     AssetId id, {
     Encoding encoding = utf8,
     bool inArtifactTree = false,
+    bool hidden = false,
   }) async => encoding.decode((await readContent(id)).bytes);
 
   @override
@@ -356,6 +366,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
     AssetId id,
     List<int> bytes, {
     bool inArtifactTree = false,
+    bool hidden = false,
   }) async {
     _state.outputs[id] = Uint8List.fromList(bytes);
   }
@@ -366,6 +377,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
     String contents, {
     Encoding encoding = utf8,
     bool inArtifactTree = false,
+    bool hidden = false,
   }) => writeAsBytes(
     id,
     encoding.encode(contents),
@@ -428,7 +440,8 @@ class _RemoteAssetPathProvider implements AssetPathProvider {
   @override
   String pathFor(
     AssetId id, {
-    required bool inArtifactTree,
+    bool inArtifactTree = false,
+    bool hide = false,
     bool checkWriteAllowed = false,
   }) => '/${id.package}/${id.path}';
 }

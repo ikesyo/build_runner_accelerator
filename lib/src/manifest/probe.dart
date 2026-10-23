@@ -1159,7 +1159,15 @@ String? _findPackageConfigPath(String root) {
       '.dart_tool',
       'package_config.json',
     );
-    if (File(candidate).existsSync()) return candidate;
+    if (File(candidate).existsSync()) {
+      final compatible = p.join(
+        packageConfigRoot,
+        '.dart_tool',
+        'build_runner_accelerator',
+        'runner-package_config.json',
+      );
+      return File(compatible).existsSync() ? compatible : candidate;
+    }
     final parent = p.dirname(packageConfigRoot);
     if (parent == packageConfigRoot) return null;
     packageConfigRoot = parent;

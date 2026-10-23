@@ -108,3 +108,7 @@ diagnostics, status and subsequent builds using the input-controlled
 source/cache multi-output chains, failure, interruption before commit, lossless
 fallback and compile modes. Watch policies test delegation; native watch support
 requires separate validation of stock's resident event/reuse behavior.
+
+ADR 0042 expands the runner window to `>=2.15.3 <2.17.0` through an isolated
+resolver backport. It also selects 2.15.3's legacy keep-modified default internally;
+explicit policy behavior and retained-output safety limits remain unchanged.

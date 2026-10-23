@@ -81,3 +81,6 @@ The pinned upstream evidence is in `build_plan/build_filter.dart`,
 exit status, builder history, incremental transitions, and watch behavior.
 Implementation details: [filtered evaluator](../../rust/src/build/filtered.rs),
 [commit path](../../rust/src/build/commit.rs), and [protocol v1](../../protocol/v1.md).
+
+ADR 0042 expands the runner window to `>=2.15.3 <2.17.0` through an isolated
+resolver backport; the behavior decisions in this ADR are unchanged.

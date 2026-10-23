@@ -94,10 +94,12 @@ compatibility limits and state recovery.
 
 ## Compatibility and recovery
 
-The native frontend supports build_runner `>=2.16.2 <2.17.0`; correctness
+The native frontend supports build_runner `>=2.15.3 <2.17.0`; correctness
 comparisons use stock build_runner 2.16.2. Its supported manifest subset is
 checked for byte-identical outputs and incremental, failure, deletion, rename,
 and watch behavior. Requests outside that subset fail explicitly.
+An isolated [resolver backport](docs/dependency-window-review.md) keeps Analyzer
+13.3 and newer usable without separate release lines.
 
 Native build and watch commands acquire an exclusive workspace lock; a competing
 native invocation fails. Direct stock runs bypass that lock. Do not run stock

@@ -382,10 +382,7 @@ fn generate_manifest(
             let result = Command::new(dart_binary)
                 .arg(format!(
                     "--packages={}",
-                    workspace
-                        .root
-                        .join(".dart_tool/package_config.json")
-                        .display()
+                    crate::runner_compatibility::package_config(&workspace.root).display()
                 ))
                 .arg(&helper)
                 .arg(&workspace.root)
@@ -429,10 +426,7 @@ fn generate_manifest(
     command
         .arg(format!(
             "--packages={}",
-            workspace
-                .root
-                .join(".dart_tool/package_config.json")
-                .display()
+            crate::runner_compatibility::package_config(&workspace.root).display()
         ))
         .arg(artifact);
     command.env_remove("BUILD_RUNNER_ACCELERATOR_MANIFEST_WORKER_AOT");

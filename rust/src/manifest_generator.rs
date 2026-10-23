@@ -76,7 +76,7 @@ fn cache_key_for_sdk(root: &Path, sdk: &Path, generator: &Path) -> io::Result<St
     // configs that merely share text but resolve differently.
     // Relative package URIs use the --packages location as their base, even
     // when the config file itself is a symlink to a shared file elsewhere.
-    let config = root.join(".dart_tool/package_config.json");
+    let config = crate::runner_compatibility::package_config(root);
     fs::metadata(&config)?;
     let resolution = package_resolution(&config, root);
     Ok(format!(
@@ -242,7 +242,7 @@ fn prepare<F: FnOnce()>(
         let status = Command::new(dart)
             .arg(format!(
                 "--packages={}",
-                root.join(".dart_tool/package_config.json").display()
+                crate::runner_compatibility::package_config(root).display()
             ))
             .arg("--snapshot-kind=kernel")
             .arg(format!("--snapshot={}", temporary_kernel.display()))
@@ -259,7 +259,7 @@ fn prepare<F: FnOnce()>(
         let dependencies = parse_depfile_dependencies(&fs::read_to_string(&depfile)?)
             .ok_or_else(|| io::Error::other("generator depfile has no dependencies"))?;
         let mut digests = BTreeMap::new();
-        let package_config = canonicalize(root.join(".dart_tool/package_config.json"))?;
+        let package_config = canonicalize(crate::runner_compatibility::package_config(root))?;
         for dependency in dependencies {
             let path = if dependency.is_absolute() {
                 dependency

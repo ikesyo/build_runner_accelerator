@@ -711,9 +711,16 @@ Future<PackageConfig> _loadPackageConfig() async {
   // A compiled executable can omit the isolate's package-config URI (notably
   // on Windows). Workers always run in the workspace root, which is checked
   // against the initialize request before any build action is accepted.
-  var packageConfigUri = await Isolate.packageConfig;
-  if (packageConfigUri == null) {
-    packageConfigUri = File('.dart_tool/package_config.json').absolute.uri;
+  final hasCompatibilityConfig = File(
+    '.dart_tool/build_runner_accelerator/runner-package_config.json',
+  ).existsSync();
+  var packageConfigUri = hasCompatibilityConfig
+      ? File('.dart_tool/package_config.json').absolute.uri
+      : await Isolate.packageConfig;
+  if (packageConfigUri == null || hasCompatibilityConfig) {
+    // Compile with the backport, but keep original package roots for builder
+    // reads, resolver assets, and SDK summary identity.
+    packageConfigUri ??= File('.dart_tool/package_config.json').absolute.uri;
     // build_runner's SDK summary generator uses its process state rather than
     // the PackageConfig passed to our resolver. Seed it through the same API
     // that build_runner uses when starting an AOT build isolate.
