@@ -124,14 +124,14 @@ jobs:
             second: resolver
             nested-second: ''
             third: state
-            nested-third: 'recovery-actions'
+            nested-third: ''
           - id: unsupported
             first: unsupported-optional-post
             nested-first: 'explicit-cache,boundary'
             second: unsupported-zero-trigger
             nested-second: 'source,glob'
             third: routing
-            nested-third: ''
+            nested-third: 'recovery-actions'
           - id: watch
             first: watch-source
             nested-first: ''
@@ -433,7 +433,7 @@ jobs:
             run: bash scripts/correctness_arbitrary_builder.sh
 
   integration-fixtures:
-    name: 'Integration: built_value and package smoke'
+    name: 'Integration: built_value, recovery, and package smoke'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     env:
@@ -448,17 +448,28 @@ jobs:
             fixtures/**/pubspec.lock
             rust/Cargo.lock
             scripts/correctness_built_value.sh
+            scripts/correctness_commit_recovery.*
+            scripts/correctness_drift.sh
             scripts/package_smoke.sh
             scripts/worker.sh
           setup-rust: 'true'
           build-frontend: 'true'
+      - name: Prime recovery fixture dependencies
+        shell: bash
+        run: (cd fixtures/post_process_builder_app && dart --suppress-analytics pub get)
+      # Run 836: existing lanes took 68/64s. Pair recovery with built_value
+      # and move Drift off mapping's 425s lane without adding parallel workers.
       - parallel:
-          - name: built_value compatibility fixture
+          - name: built_value and interrupted commit recovery
             shell: bash
-            run: bash scripts/correctness_built_value.sh
-          - name: Published package smoke
+            run: |
+              bash scripts/correctness_built_value.sh
+              bash scripts/correctness_commit_recovery.sh
+          - name: Published package smoke and Drift
             shell: bash
-            run: bash scripts/package_smoke.sh
+            run: |
+              bash scripts/package_smoke.sh
+              bash scripts/correctness_drift.sh
 
   integration-json-serializable:
     name: 'Integration: JSON Serializable correctness'
@@ -771,33 +782,32 @@ jobs:
         run: |
           (cd fixtures/empty_input_mapping_app && dart --suppress-analytics pub get)
       # One compiler probe per lane, retaining the existing concurrency bound.
-      # Run 810 measured lanes at 386/322/380/386s. Move the 47s multiple-
-      # mapping probe from lane 3 to lane 2 to reduce the measured imbalance.
+      # Run 836 measured lanes at 408/414/358/425s. Move multiple mappings
+      # to lane 3; Drift now shares the shorter integration-fixtures job.
       - parallel:
           - name: "Compatibility: dart2js correctness and empty-input correctness"
             shell: bash
             run: |
               bash scripts/correctness_web_compilers.sh
               PUB_GET_OFFLINE=1 bash scripts/correctness_empty_input_mapping.sh
-          - name: "Compatibility: dart2js watch, multiple mappings, and registry contracts"
+          - name: "Compatibility: dart2js watch and registry contracts"
             shell: bash
             run: |
               bash scripts/watch_smoke_web_compilers.sh
-              bash scripts/correctness_multi_mapping_builder.sh
               bash scripts/correctness_registry_override.sh
               bash scripts/correctness_registry_builder.sh
-          - name: "Compatibility: DDC correctness, capture, and empty-input watch"
+          - name: "Compatibility: DDC correctness, multiple mappings, capture, and empty-input watch"
             shell: bash
             run: |
               bash scripts/correctness_web_compilers_ddc.sh
+              bash scripts/correctness_multi_mapping_builder.sh
               bash scripts/correctness_capture_builder.sh
               PUB_GET_OFFLINE=1 bash scripts/watch_smoke_empty_input_mapping.sh
-          - name: "Compatibility: DDC watch, registry watch, and Drift"
+          - name: "Compatibility: DDC watch and registry watch"
             shell: bash
             run: |
               bash scripts/watch_smoke_web_compilers_ddc.sh
               bash scripts/watch_smoke_registry_override.sh
-              bash scripts/correctness_drift.sh
 
   compatibility-drift-analyzer:
     name: Compatibility suite (Drift analyzer)
