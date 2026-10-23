@@ -83,17 +83,50 @@ BuildStepPlan _emptyBuildStepPlan(int phaseCount) {
   });
 }
 
-/// A BuildState which treats the package-config namespace as a lazy remote
-/// source set. Asset existence remains an RPC decision, so the worker does not
-/// need to scan every dependency package before the first resolver request.
-class RemoteBuildState implements BuildState {
+typedef _CurrentStateConstructor =
+    BuildState Function({
+      required BuildStepPlan buildStepPlan,
+      required Map<AssetId, AssetContent?> sources,
+    });
+typedef _LegacyStateConstructor =
+    BuildState Function([Map<AssetId, AssetContent?> sources]);
+typedef _SeedStateFactory =
+    BuildState Function(
+      BuildStepPlan plan,
+      Map<AssetId, AssetContent?> contents,
+    );
+
+// Select the constructor once per isolate. Per-asset calls then use the
+// resolved runner's concrete BuildState, with no Invocation allocation or
+// dynamic dispatch through a compatibility bridge.
+final _SeedStateFactory _newSeedState = _selectSeedStateFactory();
+
+_SeedStateFactory _selectSeedStateFactory() {
+  final Function constructor = BuildState.new;
+  if (constructor is _CurrentStateConstructor) {
+    return (plan, contents) =>
+        constructor(buildStepPlan: plan, sources: contents);
+  }
+  if (constructor is _LegacyStateConstructor) {
+    return (plan, contents) => constructor(contents);
+  }
+  throw UnsupportedError('Unsupported build_runner BuildState constructor');
+}
+
+/// Remote source ownership and the committed snapshot for a worker build.
+///
+/// Only committed outputs seed the upstream Analyzer state. Remote source
+/// existence remains an RPC decision over the original package namespace.
+class RemoteBuildState {
   RemoteBuildState(
     this._packages, {
     required int phaseCount,
     Map<AssetId, AssetContent> committedContents = const {},
   }) : buildStepPlan = _emptyBuildStepPlan(phaseCount),
        _committedContents = Map.unmodifiable(committedContents),
-       _sourceContents = Map.of(committedContents);
+       _sourceContents = Map.of(committedContents) {
+    analyzerState = _newSeedState(buildStepPlan, _committedContents);
+  }
 
   final Set<String> _packages;
   // The Rust planner owns declared outputs and visibility. This plan supplies
@@ -102,53 +135,25 @@ class RemoteBuildState implements BuildState {
   final Map<AssetId, AssetContent> _committedContents;
   final Map<AssetId, AssetContent?> _sourceContents;
 
+  /// Native runner state used only for Analyzer bootstrap/update lookups.
+  /// It is separate from the remote ownership and source-read bookkeeping.
+  late final BuildState analyzerState;
+
   AssetContent? committedContentOf(AssetId id) => _committedContents[id];
 
-  @override
-  Iterable<AssetId> get sources => _committedContents.keys;
-
-  @override
   bool isSource(AssetId id) => _packages.contains(id.package);
 
-  @override
   bool isMissingSource(AssetId id) => false;
 
-  @override
   void addMissingSource(AssetId id) {}
 
   AssetContent? contentOfSource(AssetId id) => _sourceContents[id];
 
-  @override
   void updateSourceContent(AssetId id, AssetContent? content) {
     if (!isSource(id)) {
       throw StateError('Tried to update content of non-source $id.');
     }
     _sourceContents[id] = content;
-  }
-
-  // build_runner 2.16.0 takes contentOf(id: id, buildStepPlan: plan);
-  // 2.16.1 takes contentOf(id). Interface forwarders preserve each upstream
-  // signature while this single bridge handles only that known API change.
-  @override
-  dynamic noSuchMethod(Invocation invocation) {
-    final positional = invocation.positionalArguments;
-    final named = invocation.namedArguments;
-    final current = positional.length == 1 && named.isEmpty;
-    final legacy =
-        positional.isEmpty &&
-        named.containsKey(#id) &&
-        named.keys.every((key) => key == #id || key == #buildStepPlan);
-    if (invocation.isMethod &&
-        invocation.memberName == #contentOf &&
-        (current || legacy)) {
-      final id = invocation.positionalArguments.isNotEmpty
-          ? invocation.positionalArguments.single as AssetId
-          : invocation.namedArguments[#id] as AssetId;
-      return committedContentOf(id);
-    }
-    throw UnsupportedError(
-      'Unsupported build_runner state API: ${invocation.memberName}',
-    );
   }
 }
 
@@ -160,18 +165,21 @@ class RemoteBuildState implements BuildState {
 class RemoteBuilderFilesystem implements BuilderFilesystem {
   RemoteBuilderFilesystem({
     required this.buildPackages,
-    required this.buildState,
+    required RemoteBuildState buildState,
     required RemoteAssetReaderWriter readerWriter,
     required Map<String, List<Glob>> inputRestrictions,
-  }) : _remoteReaderWriter = readerWriter,
+  }) : _remoteState = buildState,
+       buildState = buildState.analyzerState,
+       _remoteReaderWriter = readerWriter,
        _inputRestrictions = inputRestrictions;
 
   @override
   final BuildPackages buildPackages;
   @override
-  final RemoteBuildState buildState;
+  final BuildState buildState;
+  final RemoteBuildState _remoteState;
   @override
-  BuildStepPlan get buildStepPlan => buildState.buildStepPlan;
+  BuildStepPlan get buildStepPlan => _remoteState.buildStepPlan;
   @override
   RemoteAssetReaderWriter get readerWriter => _remoteReaderWriter;
   @override
@@ -199,9 +207,9 @@ class RemoteBuilderFilesystem implements BuilderFilesystem {
 
   @override
   Future<AssetContent> contentOf(AssetId id) async {
-    final committed = buildState.committedContentOf(id);
+    final committed = _remoteState.committedContentOf(id);
     if (committed != null) return committed;
-    if (!buildState.isSource(id)) {
+    if (!_remoteState.isSource(id)) {
       throw StateError(
         'Cannot read $id, it is not a known source or generated output.',
       );
@@ -213,7 +221,7 @@ class RemoteBuilderFilesystem implements BuilderFilesystem {
       await ChildProcess.exitDueToAssetDeleted(id);
     }
     final content = AssetContent.bytes(bytes);
-    buildState.updateSourceContent(id, content);
+    _remoteState.updateSourceContent(id, content);
     _contentListener?.call(id, content);
     return content;
   }
@@ -226,9 +234,9 @@ class RemoteBuilderFilesystem implements BuilderFilesystem {
   /// Dep loads avoid the builder-facing byte copy. Public contentOf/readAsBytes
   /// keep the mutable-copy behavior of stock reads.
   Future<AssetContent> _contentOfForDeps(AssetId id) async {
-    final committed = buildState.committedContentOf(id);
+    final committed = _remoteState.committedContentOf(id);
     if (committed != null) return committed;
-    if (!buildState.isSource(id)) {
+    if (!_remoteState.isSource(id)) {
       throw StateError(
         'Cannot read $id, it is not a known source or generated output.',
       );
@@ -266,7 +274,7 @@ class RemoteBuilderFilesystem implements BuilderFilesystem {
     }
     // Replaying both updates is required, especially after a clean resolver
     // reset with a warm read cache but an empty Analyzer filesystem.
-    buildState.updateSourceContent(id, content);
+    _remoteState.updateSourceContent(id, content);
     _contentListener?.call(id, content);
     if (timer != null) {
       resolverActionMetrics.depContentUpdateUs += timer.elapsedMicroseconds;
@@ -282,7 +290,7 @@ class RemoteBuilderFilesystem implements BuilderFilesystem {
   /// to the sequential path.
   Future<void> prefetchDepReads(Iterable<AssetId> ids) =>
       _remoteReaderWriter.prefetchAssets(
-        ids.where((id) => buildState.committedContentOf(id) == null),
+        ids.where((id) => _remoteState.committedContentOf(id) == null),
       );
 
   @override
@@ -310,8 +318,8 @@ class RemoteBuilderFilesystem implements BuilderFilesystem {
     // decide current visibility; unknown/missing/blocked/empty contents expire
     // at this phase and must be tried again at a later phase, as before.
     final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
-    final known = buildState.isSource(id);
-    if (!known) buildState.addMissingSource(id);
+    final known = _remoteState.isSource(id);
+    if (!known) _remoteState.addMissingSource(id);
     final readable = known && await _remoteReaderWriter.canRead(id);
     if (timer != null) {
       resolverActionMetrics.depVisibilityUs += timer.elapsedMicroseconds;

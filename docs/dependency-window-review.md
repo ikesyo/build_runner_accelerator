@@ -100,14 +100,39 @@ and current solutions; no release jobs or platform matrix entries are added.
 
 ## Runtime adapter and earlier versions
 
-The worker owns its minimal BuildState and BuilderFilesystem implementations
-instead of inheriting their changing constructors and storage. It retains the
-same empty phase plan, original package namespace, committed-content snapshots,
-mutable public read copies and single content listener. One explicit interface
-bridge accepts the named `contentOf(id: ..., buildStepPlan: ...)` call in 2.16.0
-and the positional call in 2.16.1+. Other unknown state/filesystem APIs fail
-explicitly. ReaderWriter accepts both `hidden`/`hide` and `inArtifactTree` names;
-logical visibility and physical location remain Rust's decision.
+The worker owns its remote source namespace, committed snapshot and minimal
+BuilderFilesystem adapter. It keeps the same empty phase plan, public read
+copies and single content listener. For Analyzer initialization/update, it
+seeds the resolved runner's concrete BuildState with committed contents only.
+A typed constructor tear-off selects the old positional or newer named
+constructor once per isolate; each asset lookup then uses the runner's ordinary
+contentOf implementation, avoiding Invocation allocation and noSuchMethod.
+The original remote package namespace and source-read bookkeeping remain
+separate from that seeded Analyzer state. Unsupported constructor shapes and
+unknown filesystem APIs fail explicitly. ReaderWriter accepts both
+`hidden`/`hide` and `inArtifactTree` names; logical visibility and physical
+location remain Rust's decision.
+
+The typed seed-state change also removes the measured lookup overhead. On
+Linux x64 / Dart 3.13.3 AOT, repeated one-million-lookup microbenchmarks changed
+from roughly 130–145ms through the invocation bridge to 19–25ms through the
+concrete state, versus 19–22ms for direct snapshot-map access. These measure
+lookup dispatch, not total build speed.
+
+The same checkout, SDK/cache and `JOBS=1 bash scripts/benchmark_freezed.sh`
+(default worker mode) compared generation before/after the change. Every case
+kept byte-identical output and no-op detection:
+
+| Native case | Invocation bridge (seconds) | Concrete seed state (seconds) |
+| --- | --- | --- |
+| Clean, including compilation | 37.462 | 37.755 |
+| No-op | 0.215 | 0.213 |
+| One-file incremental | 0.418 | 0.416 |
+| Broad incremental | 0.416 | 0.423 |
+
+This single-run build comparison does not establish an overall speedup; the
+lookup improvement removes dispatch work without a measured material change
+in these small fixture timings.
 
 Runner 2.15.3 keeps manually modified outputs by default. Native build/watch
 select that policy internally from the resolved runner version; raw arguments

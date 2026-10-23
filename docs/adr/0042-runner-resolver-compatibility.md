@@ -40,10 +40,15 @@ their existing SDKs and downgrade/upgrade strategy.
 
 Analyzer 13.3 becomes usable again. Known-broken stock 2.16.1/14.5 can run through
 the accelerator; comparisons use fixed stock 2.16.2 with the same Analyzer.
-The worker owns a minimal state/filesystem adapter across the 2.16.0/2.16.1
-constructor and contentOf changes, with one explicit bridge for the two call
-signatures. Unknown private APIs fail. ReaderWriter supports both location
-parameter spellings while Rust owns visibility.
+Keep remote source ownership and committed snapshots in the worker's minimal
+filesystem adapter. Seed a concrete upstream BuildState for Analyzer bootstrap
+and updates, selecting its positional/named constructor once per isolate with
+typed constructor tear-offs. Its ordinary contentOf implementation handles
+per-asset lookups directly; do not put an Invocation/noSuchMethod bridge on
+that path. The seed state contains committed outputs, while the remote package
+namespace and source-read bookkeeping remain separate. Unsupported constructor
+shapes and unknown filesystem APIs fail explicitly. ReaderWriter supports both
+location parameter spellings while Rust owns visibility.
 
 Select 2.15.3's default keep-modified policy through an internal version-derived
 flag in build/watch. Do not turn it into the explicit demand-mode CLI flag:
