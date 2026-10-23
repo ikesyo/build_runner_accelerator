@@ -75,6 +75,8 @@ def main():
                 continue
             if args.analyzer and analyzer != args.analyzer:
                 continue
+            case_started = time.monotonic()
+            print(f'dependency-window: START runner={runner} analyzer={analyzer}', flush=True)
             stock = results / f'stock-{runner}-{analyzer}'
             native = results / f'native-{runner}-{analyzer}'
             configure(stock, stock_runner, analyzer)
@@ -214,7 +216,8 @@ def main():
                 build('modern-policy-upgrade')
                 assert b'// old-policy edit' not in outputs(native)['model.g.dart']
                 assert not (native / '.dart_tool/build_runner_accelerator/runner-package_config.json').exists()
-            print(f'dependency-window: PASS runner={runner} analyzer={analyzer}', flush=True)
+            print(f'dependency-window: PASS runner={runner} analyzer={analyzer} '
+                  f'elapsed={time.monotonic() - case_started:.1f}s', flush=True)
     except BaseException:
         print(f'dependency-window: retained evidence at {results}', flush=True)
         raise

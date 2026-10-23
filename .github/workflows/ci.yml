@@ -230,6 +230,7 @@ jobs:
             scripts/correctness_output_policies.*
             scripts/correctness_build_filter.py
             scripts/correctness_cli.py
+            scripts/correctness_dependency_window.py
           setup-rust: 'true'
           build-frontend: 'true'
       - name: Prime output-policy fixture dependencies
@@ -247,6 +248,12 @@ jobs:
             env:
               OUTPUT_POLICY_CASE_GROUP: ${{ matrix.third }}
             run: bash scripts/correctness_output_policies.sh
+      # Run 849: baseline took 609s; this job took 139s, trigger 117s,
+      # arbitrary 121s. Distribute all five dependency cases across these
+      # existing jobs without adding parallel lanes or matrix entries.
+      - name: Runner 2.16.1 with Analyzer 14.5
+        if: matrix.id == 'frontend'
+        run: python3 scripts/correctness_dependency_window.py --runner 2.16.1 --analyzer 14.5.0
 
   integration-baseline:
     name: 'Integration: baseline smoke'
@@ -264,7 +271,6 @@ jobs:
             scripts/smoke.sh
             scripts/watch_smoke.sh
             scripts/correctness_upgrade.sh
-            scripts/correctness_dependency_window.py
             scripts/correctness_cli.*
             scripts/sync_release_metadata.py
           setup-rust: 'true'
@@ -275,23 +281,17 @@ jobs:
           (cd fixtures/json_serializable_app && dart --suppress-analytics pub get)
           (cd fixtures/current_json_app && dart --suppress-analytics pub get)
       - parallel:
-          - name: Run baseline smoke and runner 2.16.1 correctness
+          - name: Run baseline smoke
             env:
               PUB_CACHE: ${{ github.workspace }}/.pub-cache
               SMOKE_SKIP_RUST_TESTS: '1'
-            run: |
-              bash scripts/smoke.sh
-              python3 scripts/correctness_dependency_window.py --runner 2.16.1
-          - name: Run generic watch smoke and runner 2.16.0 correctness
-            run: |
-              bash scripts/watch_smoke.sh
-              python3 scripts/correctness_dependency_window.py --runner 2.16.0
-          - name: Upgrade obsolete state and check runner 2.15.3
+            run: bash scripts/smoke.sh
+          - name: Run generic watch smoke
+            run: bash scripts/watch_smoke.sh
+          - name: Upgrade obsolete accelerator state
             env:
               PUB_CACHE: ${{ github.workspace }}/.pub-cache
-            run: |
-              bash scripts/correctness_upgrade.sh
-              python3 scripts/correctness_dependency_window.py --runner 2.15.3
+            run: bash scripts/correctness_upgrade.sh
           - name: Run setup-time prewarm correctness
             run: bash scripts/correctness_prewarm.sh
       - name: Run CLI correctness
@@ -377,6 +377,7 @@ jobs:
             fixtures/**/pubspec.lock
             rust/Cargo.lock
             scripts/correctness_trigger_builder.sh
+            scripts/correctness_dependency_window.py
             scripts/worker.sh
           setup-rust: 'true'
           build-frontend: 'true'
@@ -385,18 +386,22 @@ jobs:
         run: |
           (cd fixtures/trigger_builder_app && dart --suppress-analytics pub get)
       - parallel:
-          - name: Trigger correctness (detection and generated chain)
+          - name: Trigger detection/chain and runner 2.15.3 with Analyzer 13.3
             shell: bash
             env:
               PUB_GET_OFFLINE: '1'
               TRIGGER_CASE_GROUP: core
-            run: bash scripts/correctness_trigger_builder.sh
-          - name: Trigger correctness (optional, deletion, rename)
+            run: |
+              bash scripts/correctness_trigger_builder.sh
+              python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 13.3.0
+          - name: Trigger lifecycle and runner 2.15.3 with Analyzer 14.5
             shell: bash
             env:
               PUB_GET_OFFLINE: '1'
               TRIGGER_CASE_GROUP: lifecycle
-            run: bash scripts/correctness_trigger_builder.sh
+            run: |
+              bash scripts/correctness_trigger_builder.sh
+              python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 14.5.0
           - name: Trigger correctness (config and failure recovery)
             shell: bash
             env:
@@ -420,6 +425,7 @@ jobs:
             fixtures/**/pubspec.lock
             rust/Cargo.lock
             scripts/correctness_arbitrary_builder.sh
+            scripts/correctness_dependency_window.py
             scripts/worker.sh
           setup-rust: 'true'
           build-frontend: 'true'
@@ -428,18 +434,22 @@ jobs:
         run: |
           (cd fixtures/arbitrary_builder_app && dart --suppress-analytics pub get)
       - parallel:
-          - name: Arbitrary correctness (output lifecycle)
+          - name: Arbitrary output lifecycle and runner 2.16.0 with Analyzer 13.3
             shell: bash
             env:
               PUB_GET_OFFLINE: '1'
               CASE_FILTER: generated-output-delete,input-delete,rename
-            run: bash scripts/correctness_arbitrary_builder.sh
-          - name: Arbitrary correctness (failure and affected actions)
+            run: |
+              bash scripts/correctness_arbitrary_builder.sh
+              python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 13.3.0
+          - name: Arbitrary failure/dependencies and runner 2.16.0 with Analyzer 14.5
             shell: bash
             env:
               PUB_GET_OFFLINE: '1'
               CASE_FILTER: failure-recovery,affected-actions,output-conflict
-            run: bash scripts/correctness_arbitrary_builder.sh
+            run: |
+              bash scripts/correctness_arbitrary_builder.sh
+              python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 14.5.0
           - name: Arbitrary correctness (source filters)
             shell: bash
             env:

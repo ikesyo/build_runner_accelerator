@@ -92,7 +92,9 @@ following primary-source edits, transactional rejection of retained-output API
 access and upgrading to the
 modern repair default without deleting accelerator state.
 
-The cases run across existing parallel correctness CI steps. Existing Dart 3.11
+The cases run across the existing trigger, arbitrary-builder and output-policy
+frontend jobs, retaining their parallel lane counts. Each case logs its elapsed
+time so later balancing can use observed cost. Existing Dart 3.11
 `pub downgrade` and Dart 3.13 `pub upgrade` jobs continue to check the minimum
 and current solutions; no release jobs or platform matrix entries are added.
 
