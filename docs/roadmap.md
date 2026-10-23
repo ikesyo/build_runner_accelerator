@@ -102,8 +102,8 @@ optional/post-process and Drift builder chains:
   ordered enumeration, source/cache lifecycle, builder-failure recovery, and paired watch.
 - [ ] Resolve Conduit's published dependency constraints with a dependency
   solution compatible with the native baseline. Published
-  `conduit_build_runner` 6.0.0/7.0.0 require Analyzer 12, while stock
-  build_runner 2.16.2 requires Analyzer 14.3 or newer. The
+  `conduit_build_runner` 6.0.0/7.0.0 require Analyzer 12, while the
+  native compatibility window requires Analyzer 13.3 or newer. The
   [stock-only fixture](../fixtures/registry_builder_app/README.md) records the
   7.0.0 contract on stock 2.14.1 and checks both dependency conflicts in CI.
   Keep the fixture-only override distinct from an ordinary supported package

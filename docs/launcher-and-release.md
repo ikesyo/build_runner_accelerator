@@ -83,7 +83,7 @@ The launcher recognizes these options:
 | `--only-check`, `--keep-modified-outputs` | Build-only output policies for the normal-builder demand subset; see [output policies](#output-policies). |
 | `--build-filter PATTERN` | Select build/watch outputs; syntax and manifest limits are in [ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md). |
 | `--define`, `--release`, `--no-release`, `--config` | Resolve `build_runner` settings; see [configuration](configuration.md). |
-| `--delete-conflicting-outputs`, `-d` | Accepted retired flags in `build_runner` 2.16.2; they have no effect and are never added automatically. |
+| `--delete-conflicting-outputs`, `-d` | Accepted retired flags throughout the supported runner window; they have no effect and are never added automatically. |
 | `prewarm [--background]` | Prepare caches without running builders. |
 | `aot-cache-key` | Print a native worker cache key; no stock equivalent. |
 
@@ -109,6 +109,13 @@ build-only arguments. Package-path output conflicts in dependencies also require
 a direct stock invocation, including ordinary builds and watches; native fails before actions.
 
 ## Output policies
+
+Ordinary build/watch follows the resolved runner's default: 2.15.3 retains
+modified outputs, while 2.16+ repairs them. This is selected internally without
+adding CLI flags or the explicit demand-mode restrictions below. The retained
+output API safety boundary still applies when unrelated edits must survive a
+build; see the [dependency window review](dependency-window-review.md).
+Upgrading the runner restores its new default without clearing native state.
 
 `build --only-check` verifies expected package-path outputs without writing or
 removing generated files. It reports incorrect (`I`), missing (`M`), and

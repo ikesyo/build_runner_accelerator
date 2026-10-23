@@ -95,3 +95,6 @@ no-op, incremental and watch; it also checks early/manifest fallback, unknown
 options, stock help/errors, exit codes, Ctrl-C and SIGHUP subtree cleanup.
 Existing full compatibility fixtures cover deletion, rename, failure, optional
 builders and watch.
+
+ADR 0042 expands the runner window to `>=2.15.3 <2.17.0` through an isolated
+resolver backport; the behavior decisions in this ADR are unchanged.

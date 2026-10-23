@@ -264,6 +264,7 @@ jobs:
             scripts/smoke.sh
             scripts/watch_smoke.sh
             scripts/correctness_upgrade.sh
+            scripts/correctness_dependency_window.py
             scripts/correctness_cli.*
             scripts/sync_release_metadata.py
           setup-rust: 'true'
@@ -274,17 +275,23 @@ jobs:
           (cd fixtures/json_serializable_app && dart --suppress-analytics pub get)
           (cd fixtures/current_json_app && dart --suppress-analytics pub get)
       - parallel:
-          - name: Run baseline smoke
+          - name: Run baseline smoke and runner 2.16.1 correctness
             env:
               PUB_CACHE: ${{ github.workspace }}/.pub-cache
               SMOKE_SKIP_RUST_TESTS: '1'
-            run: bash scripts/smoke.sh
-          - name: Run generic watch smoke
-            run: bash scripts/watch_smoke.sh
-          - name: Upgrade obsolete accelerator state
+            run: |
+              bash scripts/smoke.sh
+              python3 scripts/correctness_dependency_window.py --runner 2.16.1
+          - name: Run generic watch smoke and runner 2.16.0 correctness
+            run: |
+              bash scripts/watch_smoke.sh
+              python3 scripts/correctness_dependency_window.py --runner 2.16.0
+          - name: Upgrade obsolete state and check runner 2.15.3
             env:
               PUB_CACHE: ${{ github.workspace }}/.pub-cache
-            run: bash scripts/correctness_upgrade.sh
+            run: |
+              bash scripts/correctness_upgrade.sh
+              python3 scripts/correctness_dependency_window.py --runner 2.15.3
           - name: Run setup-time prewarm correctness
             run: bash scripts/correctness_prewarm.sh
       - name: Run CLI correctness

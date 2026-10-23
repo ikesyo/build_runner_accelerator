@@ -60,6 +60,12 @@ Supporting an older Dart/build_runner line later should be introduced as a
 separately tested compatibility line, not by widening the current constraints
 without adapting the private API boundary.
 
+[ADR 0042](0042-runner-resolver-compatibility.md) supersedes the runner floor
+and separate-line recommendation above: the window now permits
+`build_runner >=2.15.3 <2.17.0`, making Analyzer 13.3 usable. Its isolated #5197
+backport handles old-runner/new-Analyzer compilation without extra releases.
+See the [review](../dependency-window-review.md) for evidence and limitations.
+
 ## Alternatives considered
 
 - Keep Dart at `>=3.13.0`: rejected because the current build stack is

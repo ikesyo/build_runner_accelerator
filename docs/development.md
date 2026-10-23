@@ -15,14 +15,17 @@ window is:
 | analyzer | >=13.3.0 <15.0.0 |
 | build | >=4.0.9 <5.0.0 |
 | build_config | >=1.3.2 <1.4.0 |
-| build_runner | >=2.16.2 <2.17.0 |
+| build_runner | >=2.15.3 <2.17.0 |
 | package_config | >=2.2.0 <4.0.0 |
 
-The build_runner upper bound protects private worker interfaces. Its 2.16.2
-release supports analyzer 14.5; the combined dependency constraints make
-analyzer 14.3 the effective minimum. See
-[configuration compatibility](configuration.md) for upstream behavior and
-[ADR 0007](adr/0007-sdk-and-dependency-compatibility-window.md) for the policy.
+The runner upper bound protects private worker interfaces. Runners 2.15.3, 2.16.0 and 2.16.1
+allow Analyzer 13.3; the accelerator backports #5197 in an isolated compilation
+resolution so those runners also work with Analyzer 14.5 and newer. Runner
+2.16.2 retains its upstream Analyzer 14.3 floor. See the
+[dependency window review](dependency-window-review.md) and
+[ADR 0042](adr/0042-runner-resolver-compatibility.md). One package and the existing
+release pipeline cover these resolutions. Runner 2.15.3's default output retention
+is selected internally, with the existing retained-output API safety limits.
 
 The worker imports private build_runner bootstrap, build-state and resolver
 interfaces, and analyzer resolver, scanner and byte-store interfaces. Dependency

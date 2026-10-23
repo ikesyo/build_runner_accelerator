@@ -10,8 +10,8 @@ The published package API lists versions 6.0.0 and 7.0.0. Both require
 `analyzer ^12.0.0`, `build ^4.0.5`, and `source_gen ^4.2.2`. Version 7.0.0
 requires Dart `>=3.12.0 <4.0.0` (6.0.0 uses `>=3.12.0-0 <4.0.0`).
 
-The accelerator requires `build_runner >=2.16.2 <2.17.0`, whose Analyzer
-constraint is `^14.3.0`. Its own Analyzer constraint is `>=13.3.0 <15.0.0`.
+The accelerator requires `build_runner >=2.15.3 <2.17.0`, whose minimum release allows Analyzer
+`>=13.3.0 <15.0.0`. Its own Analyzer constraint is `>=13.3.0 <15.0.0`.
 Neither intersects the published Conduit constraint. `dart pub get` rejects
 both published versions before a native manifest/action can be created.
 The script checks this diagnostic, so a network error cannot count as a pass.
@@ -23,8 +23,8 @@ older stock runner is outside the native compatibility window; it must not be
 used as evidence of stock/native equality.
 
 Upstream master at `03f181d53c9323671ded6204f40ad2fa83de3461` has version 7.0.0
-with Analyzer `^13.0.0` and Dart `>=3.13.0`, which still does not intersect
-build_runner 2.16.2's Analyzer constraint. No upstream fork, dependency override,
+with Analyzer `^13.0.0` and Dart `>=3.13.0`, which intersects the expanded native Analyzer window. This unpublished
+revision has not been validated here. No upstream fork, dependency override,
 or production compatibility-window change is part of this probe.
 
 Sources:
