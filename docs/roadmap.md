@@ -66,8 +66,17 @@ The following are implemented and covered by the current fixture suite:
   distribution lanes; replay with `scripts/distribution_e2e.py` as documented
   [here](distribution-validation.md#local-replay). This does not claim that a
   public tagged release has been exercised.
-- [ ] Re-run the release matrix against the supported Dart SDK range and
-  record the exact compatibility window.
+- [x] Compare real Resolver-based generation, incremental changes, deletion,
+  rename, builder failure/recovery and paired watch at Dart 3.11.0/minimum and
+  3.13.3/current dependency resolutions. Reuse the existing two SDK jobs;
+  [local replay and scope](development.md#sdk-lifecycle-comparison).
+- [x] Fix the [public 1.x compatibility contract](launcher-and-release.md#1x-compatibility-contract),
+  with the existing configuration, distribution and recovery limits.
+
+SDK/dependency lifecycle checks and five-target packaged-distribution E2E are
+separate release gates. A full platform × SDK × dependency cross-product is not
+required for 1.0; add focused combinations when a platform-specific SDK issue
+needs regression coverage. Neither gate establishes exhaustive combination coverage.
 
 ## Post-release research
 

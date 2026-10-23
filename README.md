@@ -91,6 +91,9 @@ compatibility limits and state recovery.
 
 ## Compatibility and recovery
 
+Before adopting the tool, read the [1.x compatibility contract](docs/launcher-and-release.md#1x-compatibility-contract)
+for supported SDKs, tested workloads, public interfaces, and limits.
+
 The native frontend supports build_runner `>=2.16.2 <2.17.0`; correctness
 comparisons use stock build_runner 2.16.2. Its supported manifest subset is
 checked for byte-identical outputs and incremental, failure, deletion, rename,

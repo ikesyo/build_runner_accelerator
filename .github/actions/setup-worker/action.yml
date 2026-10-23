@@ -17,6 +17,10 @@ inputs:
     description: Optional override for the worker Dart SDK.
     required: false
     default: ''
+  dependency-resolution:
+    description: Root package resolution (get, downgrade, or upgrade).
+    required: false
+    default: get
   setup-rust:
     description: Install the repository Rust toolchain.
     required: false
@@ -92,7 +96,6 @@ runs:
         key: worker-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ steps.versions.outputs.rust }}-${{ steps.versions.outputs.digest }}
         restore-keys: |
           worker-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ steps.versions.outputs.rust }}-
-          worker-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-
 
     - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
       with:
@@ -103,7 +106,14 @@ runs:
 
     - name: Resolve Dart worker dependencies
       shell: bash
-      run: bash scripts/worker.sh pub-get
+      env:
+        DEPENDENCY_RESOLUTION: ${{ inputs.dependency-resolution }}
+      run: |
+        case "$DEPENDENCY_RESOLUTION" in
+          get) bash scripts/worker.sh pub-get ;;
+          downgrade|upgrade) dart --suppress-analytics pub "$DEPENDENCY_RESOLUTION" ;;
+          *) echo 'Invalid dependency-resolution' >&2; exit 2 ;;
+        esac
 
     - if: inputs.setup-rust == 'true'
       uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1

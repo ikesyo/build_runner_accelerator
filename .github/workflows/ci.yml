@@ -38,7 +38,7 @@ jobs:
   dart-package:
     name: Dart ${{ matrix.sdk }} (${{ matrix.resolution }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -49,22 +49,19 @@ jobs:
             resolution: upgrade
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/setup-worker
         with:
-          path: ~/.pub-cache
-          key: pub-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk }}-${{ matrix.resolution }}-${{ hashFiles('pubspec.yaml', 'pubspec.lock') }}
-          restore-keys: |
-            pub-${{ runner.os }}-${{ runner.arch }}-${{ matrix.sdk }}-
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
-        with:
-          sdk: ${{ matrix.sdk }}
+          cache-scope: dart-package-${{ matrix.resolution }}
+          dart-version: ${{ matrix.sdk }}
+          dependency-resolution: ${{ matrix.resolution }}
+          setup-rust: 'true'
+          build-frontend: 'true'
       - name: Check fixture lockfiles
         if: matrix.resolution == 'upgrade'
         run: python3 scripts/sync_release_metadata.py --check
       - name: Dart package checks
         shell: bash
         run: |
-          dart pub ${{ matrix.resolution }}
           # Use the development SDK's formatter; older SDKs can format differently.
           if [[ '${{ matrix.resolution }}' == 'upgrade' ]]; then
             dart format --output=none --set-exit-if-changed lib bin test tool
@@ -76,6 +73,17 @@ jobs:
       - name: Validate publish package
         if: matrix.resolution == 'upgrade'
         run: dart pub publish --dry-run
+      - name: SDK stock/native lifecycle comparison
+        timeout-minutes: 12
+        run: bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --results 'sdk-results/${{ matrix.sdk }}'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: sdk-compatibility-${{ matrix.sdk }}
+          path: |
+            sdk-results/${{ matrix.sdk }}/*.log
+            sdk-results/${{ matrix.sdk }}/*/pubspec.lock
+          if-no-files-found: ignore
 
   rust:
     name: Rust format, lint, and unit tests
