@@ -404,6 +404,7 @@ pub(crate) fn run_with_config_session(
         commit::CommitInputs {
             only_check: false,
             keep_modified_outputs: settings.legacy_keep_modified_outputs,
+            explicit_keep_modified_outputs: settings.keep_modified_outputs,
             workspace: &workspace,
             state_path: &state_path,
             build_config: &build_config,

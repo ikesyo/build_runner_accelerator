@@ -367,6 +367,7 @@ pub(super) fn run(
         commit::CommitInputs {
             only_check: settings.only_check,
             keep_modified_outputs: settings.keeps_modified_outputs(),
+            explicit_keep_modified_outputs: settings.keep_modified_outputs,
             workspace,
             state_path,
             build_config: config,

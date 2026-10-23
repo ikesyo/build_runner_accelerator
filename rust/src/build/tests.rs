@@ -491,6 +491,7 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
         CommitInputs {
             only_check: false,
             keep_modified_outputs: false,
+            explicit_keep_modified_outputs: false,
             workspace: &workspace,
             state_path: &state_path,
             build_config: &build_config,
@@ -1454,6 +1455,7 @@ fn recovery_commit_fixture(root: &std::path::Path) -> io::Result<()> {
         CommitInputs {
             only_check: false,
             keep_modified_outputs: false,
+            explicit_keep_modified_outputs: false,
             workspace: &workspace,
             state_path: &path,
             build_config: &config,
@@ -1807,4 +1809,77 @@ fn deletion_io_error_does_not_silently_publish_a_graph() -> io::Result<()> {
     assert!(temporary.0.join("lib/obsolete.out").is_dir());
     fs::remove_dir(temporary.0.join("lib/obsolete.out"))?;
     assert_recovered_fixture(&temporary.0)
+}
+
+#[test]
+fn filtered_retention_preserves_bytes_without_recording_implicit_history() -> io::Result<()> {
+    use super::commit::{CommitInputs, commit};
+    use super::transaction::PendingTransaction;
+    use crate::snapshot::AssetSnapshot;
+
+    for (explicit_keep, prior_history) in [(false, false), (true, false), (false, true)] {
+        let temporary = TemporaryWorkspace::new()?;
+        let workspace = Workspace::load(temporary.0.clone())?;
+        let builder = configured_builder("seed", "app:default", 0, 0);
+        let config = dirty_test_config(std::slice::from_ref(&builder));
+        let output = "app|lib/retained.out".to_owned();
+        let spec = build_spec(&builder, "app|lib/input.txt", &[&output]);
+        let digest = crate::digest::digest_bytes(b"generated");
+        fs::write(temporary.0.join("lib/input.txt"), b"input")?;
+        fs::write(temporary.0.join("lib/retained.out"), b"manual edit")?;
+        let initial = BTreeMap::from([(
+            output.clone(),
+            AssetSnapshot {
+                exists: true,
+                digest: digest.clone(),
+                size: 9,
+            },
+        )]);
+        let generated = BTreeSet::from([output.clone()]);
+        let observed = BTreeMap::new();
+        let mut state = GraphState {
+            assets: initial.clone(),
+            was_filtered: true,
+            retained_output_state: prior_history,
+            actions: BTreeMap::from([(
+                spec.action_key(),
+                ActionState {
+                    builder: builder.definition.id.clone(),
+                    input: spec.input.clone(),
+                    outputs: vec![output.clone()],
+                    output_digests: BTreeMap::from([(output.clone(), digest.clone())]),
+                    status: "success".into(),
+                    ..ActionState::default()
+                },
+            )]),
+            ..GraphState::default()
+        };
+        let transaction = PendingTransaction::new(&[], &state, vec![]);
+        let path = temporary.0.join(".dart_tool/graph-v3.bin");
+        commit(
+            &mut state,
+            CommitInputs {
+                only_check: false,
+                keep_modified_outputs: true,
+                explicit_keep_modified_outputs: explicit_keep,
+                workspace: &workspace,
+                state_path: &path,
+                build_config: &config,
+                config_digest: "config".into(),
+                scanned_packages: &BTreeSet::from(["app".to_owned()]),
+                expected_outputs: generated.clone(),
+                source_snapshot_evidence: None,
+                filtered_snapshot_evidence: Some((&initial, &generated, &observed)),
+                transaction,
+            },
+        )?;
+        assert_eq!(
+            fs::read(temporary.0.join("lib/retained.out"))?,
+            b"manual edit"
+        );
+        assert_eq!(state.assets[&output].digest, digest);
+        assert_eq!(state.retained_output_state, explicit_keep || prior_history);
+        assert_eq!(GraphState::load(&path)?, state);
+    }
+    Ok(())
 }

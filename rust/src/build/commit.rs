@@ -25,6 +25,8 @@ pub(super) struct GraphSaveMetrics {
 pub(super) struct CommitInputs<'a> {
     pub(super) only_check: bool,
     pub(super) keep_modified_outputs: bool,
+    /// Only the explicit CLI policy creates persistent demand-reuse history.
+    pub(super) explicit_keep_modified_outputs: bool,
     pub(super) workspace: &'a Workspace,
     pub(super) state_path: &'a Path,
     pub(super) build_config: &'a RustBuildConfig,
@@ -111,6 +113,7 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
     let CommitInputs {
         only_check: _,
         keep_modified_outputs,
+        explicit_keep_modified_outputs,
         workspace,
         state_path,
         build_config,
@@ -262,10 +265,10 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
     let metadata = crate::wall::Span::new("commit_metadata");
     workspace.clear_asset_caches()?;
     // Retain demand reuse even after ordinary builds repair upstream bytes.
-    // Explicit demand policies keep their existing sticky guard. The legacy
-    // default uses the normal scheduler and re-selects retention from the
-    // resolved runner on every invocation, including after a version upgrade.
-    state.retained_output_state |= keep_modified_outputs && source_snapshot_evidence.is_none();
+    // Only explicit demand policy creates sticky history. Both ordinary and
+    // filtered builds re-select implicit legacy retention from the resolved
+    // runner on every invocation, including after a version upgrade.
+    state.retained_output_state |= explicit_keep_modified_outputs;
     state.schema_version = GRAPH_SCHEMA_VERSION;
     state.config_digest = config_digest;
     drop(metadata);
