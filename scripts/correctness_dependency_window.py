@@ -23,6 +23,19 @@ def main():
     parser.add_argument('--runner', action='append', choices=['2.15.3', '2.16.0', '2.16.1'])
     parser.add_argument('--analyzer', choices=['13.3.0', '14.5.0'])
     args = parser.parse_args()
+    cases = [
+        ('2.15.3', '13.3.0', '2.15.3'),
+        ('2.15.3', '14.5.0', '2.16.2'),
+        ('2.16.0', '13.3.0', '2.16.0'),
+        ('2.16.0', '14.5.0', '2.16.2'),
+        ('2.16.1', '14.5.0', '2.16.2'),
+    ]
+    cases = [(runner, analyzer, stock_runner)
+             for runner, analyzer, stock_runner in cases
+             if (not args.runner or runner in args.runner)
+             and (not args.analyzer or analyzer == args.analyzer)]
+    if not cases:
+        parser.error('no dependency-window cases match the requested runner/analyzer filters')
     # Retain evidence on failure. This also keeps watcher bookkeeping outside
     # the workspaces and avoids changing files under the checkout or Pub cache.
     results = Path(tempfile.mkdtemp(prefix='dependency-window-'))
@@ -65,16 +78,7 @@ def main():
         return {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
 
     try:
-        for runner, analyzer, stock_runner in [
-                ('2.15.3', '13.3.0', '2.15.3'),
-                ('2.15.3', '14.5.0', '2.16.2'),
-                ('2.16.0', '13.3.0', '2.16.0'),
-                ('2.16.0', '14.5.0', '2.16.2'),
-                ('2.16.1', '14.5.0', '2.16.2')]:
-            if args.runner and runner not in args.runner:
-                continue
-            if args.analyzer and analyzer != args.analyzer:
-                continue
+        for runner, analyzer, stock_runner in cases:
             case_started = time.monotonic()
             print(f'dependency-window: START runner={runner} analyzer={analyzer}', flush=True)
             stock = results / f'stock-{runner}-{analyzer}'
