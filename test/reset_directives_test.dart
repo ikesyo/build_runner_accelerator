@@ -67,7 +67,7 @@ void main() {
       final digest = first.digest;
       final version = ResetDirectiveContent(first.stringValue());
       bytes[8] = 'b'.codeUnitAt(0);
-      final changed = AssetContent.bytes(bytes, digest: digest);
+      final changed = first.withBytes(Uint8List.fromList(bytes));
       expect(changed.digest, digest);
       expect(version.reuse(changed.stringValue()), isNull);
       expect(ResetDirectiveContent(changed.stringValue()).directives, {

@@ -66,6 +66,30 @@ void main() {
     analyzer = AnalysisDriverFilesystem();
   });
 
+  test('state bridge accepts both upstream contentOf signatures', () {
+    final content = AssetContent.string('class Committed {}');
+    final state = RemoteBuildState(
+      {'app'},
+      phaseCount: 2,
+      committedContents: {id: content},
+    );
+    final dynamic bridge = state;
+    expect(bridge.contentOf(id), same(content));
+    expect(
+      bridge.contentOf(id: id, buildStepPlan: state.buildStepPlan),
+      same(content),
+    );
+    expect(state.isMissingSource(other), isFalse);
+    state.updateSourceContent(other, AssetContent.string('class Other {}'));
+    expect(state.contentOfSource(other)!.stringValue(), 'class Other {}');
+    expect(state.committedContentOf(other), isNull);
+    expect(() => bridge.unknownStateApi(), throwsUnsupportedError);
+    expect(
+      () => bridge.contentOf(id: id, unknown: true),
+      throwsUnsupportedError,
+    );
+  });
+
   test(
     'builder public restrictions precede phase and content caches',
     () async {
