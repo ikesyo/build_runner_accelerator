@@ -14,8 +14,9 @@ native-only, output-policy, configuration and recovery boundaries from ADRs
 0031–0040; this decision does not add builder support or promise all allowed
 dependency combinations have been tested.
 
-Internal IPC, persistence and compiled/cache artifacts remain disposable package
-implementation details, with version checks and safe recovery preserved.
+Internal IPC and persistence formats remain package implementation details;
+compiled workers and caches may regenerate. Preserve pending undo evidence and
+refuse unsafe recovery, even when an internal format changes.
 Diagnostics and `lib/src` are not extension interfaces. Existing configuration,
 probe, distribution and recovery documents own their details rather than a
 second specification here.
