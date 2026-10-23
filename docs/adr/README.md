@@ -51,6 +51,7 @@ Benchmarks and mechanical refactors do not need one.
 | [0037](0037-resident-watch-graph.md) | Resident committed graph ownership and disk recovery in native watch |
 | [0038](0038-optional-post-process-demand.md) | Optional primary-input materialization and post-process actions without demand |
 | [0039](0039-virtual-primary-inputs.md) | Virtual primary identities, suffix mappings, unreadable asset visibility, and graph invalidation |
+| [0040](0040-interrupted-commit-recovery.md) | Undo journal and repeatable recovery of interrupted output publication |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
 artifacts and launcher behavior are in

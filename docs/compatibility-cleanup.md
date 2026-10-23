@@ -67,6 +67,46 @@ succeed. This removes extra parent-package cache outputs from older builds
 without trusting obsolete graph records to delete files in nested packages.
 Failure or cancellation before commit leaves both the old cache and graph intact.
 
+## Interrupted publication
+
+After a process stop or publication I/O error, retry the same native build/watch
+command. Before graph reuse, it validates the undo journal and restores the
+previous output bytes/existence and raw graph, then plans against current inputs
+and settings. This includes source/cache outputs and obsolete-output ownership.
+A rollback interrupted by another stop/error can be repeated. A graph saved just
+before termination is also rolled back if the journal was not yet removed.
+`--only-check` preserves its read-only contract: pending recovery fails with
+instructions to run a native build without `--only-check` first.
+Ordinary builder failures still publish no output changes. Older versions that
+interrupted publication without a journal have no undo evidence; their partial
+state requires manual reconciliation before reuse or reset.
+
+If automatic recovery refuses an externally changed output, missing/damaged
+backup, unreadable/obsolete undo graph, symlink, moved workspace, or I/O error, it reports the reason and preserves
+`graph-v3.commit-undo` under `.dart_tool/build_runner_accelerator`. It does not
+report a successful build. Stop native and stock processes; copy this directory
+and affected files to a safe backup. Fix disk space/permissions and retry. For an
+external edit, move the edited file aside before retrying; absent destinations
+can be restored from undo copies. For symlinks, preserve the linked file and
+remove the link before retrying. Restore a moved workspace to its original path.
+If evidence was lost or corrupted, restore intact state/output backups or
+manually reconcile the listed outputs before any cold reset. Do not delete just
+the graph, discard the undo journal, or run stock over partial publication.
+Use a frontend that understands the journal format; older binaries cannot
+detect it. Resolve pending recovery before downgrading or switching frontends.
+The general reset procedure below applies only after pending recovery is resolved.
+
+This guarantee covers process termination, including forced kill, and recoverable
+I/O failures reported by filesystem calls. Files/directories are not fsynced:
+power loss, delayed writeback failures after successful calls, and storage
+corruption are outside the durability guarantee. External readers can observe intermediate
+publication. Native locking excludes competing native writers; serialize direct
+stock commands and other output editors yourself. Recovery preserves contents
+and existence, not mtimes, modes or empty directories. Journal-owned partial
+output/rollback temporary files are removed during recovery. Pre-existing files at reserved temporary paths block publication;
+move them aside after backing them up. Recovery does not sweep unknown files. See [ADR 0040](adr/0040-interrupted-commit-recovery.md) for the
+publication sequence and I/O costs.
+
 ## Safe recovery
 
 1. Stop build/watch/prewarm processes for the workspace and shared cache.

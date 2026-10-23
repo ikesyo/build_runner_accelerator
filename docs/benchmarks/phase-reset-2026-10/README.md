@@ -65,7 +65,7 @@ optimization is adopted from these observations.
 
 | Boundary | Existing responsibility | Diagnostic meaning |
 | --- | --- | --- |
-| `build/results.rs`, `build/transaction.rs` | Register overlay updates/deletions and cancel the opposing delta entry for the same asset. Keep pending output/graph commit atomic. | Result recording is outside reset. The final mutation since the last barrier determines each delta; no new queue or coalescing rule is added. |
+| `build/results.rs`, `build/transaction.rs` | Register overlay updates/deletions and cancel the opposing delta entry for the same asset. Publish pending outputs/graph only after all actions succeed. | Result recording is outside reset. The final mutation since the last barrier determines each delta; no new queue or coalescing rule is added. |
 | `build/execution.rs` | At the next runnable configured phase, take accumulated source/cache deltas and retain the phase barrier. | `phase_reset` includes package initialization when needed; an empty span is not a worker RPC. |
 | `worker/pool.rs` | Spool current overlay bytes for all workers, remove stale/deleted spool files, serialize the four delta sets, reset initialized workers concurrently and join. | New `reset_overlay_spool` and `reset_delta_encode` are frontend intervals. The worker union, not the sum of their round trips, contributes to wall. |
 | `worker/client.rs` | Encode/send the reset and receive/validate its reply. | New `reset_encode_send` and `reset_receive`; send can include pipe blocking, receive includes wait/read/JSON decode, not pure worker CPU. |

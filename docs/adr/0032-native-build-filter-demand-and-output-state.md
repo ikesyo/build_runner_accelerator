@@ -51,7 +51,7 @@ flowchart TD
 
 - A demanded producer failure fails the invocation even if a consumer catches its read or `canRead` error.
 - If an action fails, native applies no pending outputs or graph changes and retains the previous successful state; stock may already have changed files.
-- This is all-success commit behavior, not crash atomicity: interruption or I/O failure during writes/deletions can leave partial files with the old graph; no rollback journal exists.
+- This is all-success publication, not simultaneous filesystem atomicity. [ADR 0040](0040-interrupted-commit-recovery.md) adds an undo journal: interrupted writes/deletions are rolled back before graph reuse, preserving prior output locations and ownership.
 
 ## Supported boundary
 

@@ -101,13 +101,16 @@ native invocation fails. Direct stock runs bypass that lock. Do not run stock
 concurrently with a native command in the same workspace.
 
 A builder failure leaves native outputs and graph at their last successful
-state. The commit is not crash-atomic: interruption or I/O failure during commit
-can leave some files changed while the previous graph remains. See the
-[recovery guide](docs/compatibility-cleanup.md#safe-recovery) before clearing
-state or switching frontends. Successful native builds retain build-start
-evidence for existing sources, keeping edits or deletions during actions
-visible to the next build or watch cycle. Filtered builds also retain first
-worker observations of eligible external sources absent at build start; see
+state. An undo journal detects interrupted publication and restores the previous
+outputs and graph before the next native build/watch reuses them. Unexpected
+external edits or damaged recovery evidence stop recovery with instructions.
+Publication is not a simultaneous atomic snapshot and has no power-loss
+durability guarantee. See the [recovery guide](docs/compatibility-cleanup.md#interrupted-publication).
+
+Successful native builds retain build-start evidence for existing sources,
+keeping edits or deletions during actions visible to the next build or watch
+cycle. Filtered builds also retain first worker observations of eligible
+external sources absent at build start; see
 [ADR 0032](docs/adr/0032-native-build-filter-demand-and-output-state.md).
 
 ## Project guides

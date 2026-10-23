@@ -32,11 +32,11 @@ The overlay is visible to later phases according to the build contract, while
 same-phase outputs remain hidden from the action that owns them. Rust commits
 outputs, deletions, and the graph only after every dirty action succeeds. A
 builder/worker failure before commit leaves the last committed output and graph
-state intact. This is an all-success execution boundary, not a crash-atomic
-filesystem transaction: output deletions and individual atomic output writes
-precede the graph rename. An I/O error or process interruption during that
-sequence can leave partially committed files with the previous graph. There is
-no commit journal, rollback or durability guarantee for this sequence.
+state intact. [ADR 0040](0040-interrupted-commit-recovery.md) adds an undo journal
+for I/O errors and process interruption during publication. Output deletions and
+individual atomic writes still precede graph publication; recovery restores the
+previous outputs and graph before reuse. This is recoverable publication, not a
+simultaneously atomic filesystem snapshot or a power-loss durability guarantee.
 
 Native build and watch commands acquire a nonblocking OS file lock under
 `.dart_tool/build_runner_accelerator/.workspace.lock` before manifest generation

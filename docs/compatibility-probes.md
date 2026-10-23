@@ -57,7 +57,7 @@ sources filter the primary input (including generated-input chains), and
 package visibility is not widened by the mapping. `build_to: source` and
 `build_to: cache` retain their existing output visibility and later-phase
 overlay behavior. Output collisions, stale outputs, action identity, and
-atomic commit use the same generic graph rules as other mappings.
+all-success publication use the same generic graph rules as other mappings.
 
 This change supports ordinary Builders with simple output suffixes, including
 regular and empty-key mappings together, static/runtime mappings, source/cache
@@ -111,12 +111,16 @@ The validated subset is:
   `resolver.findLibraryByName`, `assetIdForElement`, `inputLibrary`, and
   package language-version access through `packageConfig`.
 - Stale cache/source output removal, missing declared output handling, and
-  native atomic commit behavior after modular writes and then fails.
+  native builder-failure output protection when the modular builder stages
+  outputs and then throws.
 
 Stock and native output relative paths and bytes match in this fixture. Their
 persistent cache roots and diagnostics differ, and the failure probe checks the
-native atomic guarantee without asserting identical transient failure
-inventories. No performance measurement was made; this probe makes no speed
+native all-success publication boundary without asserting identical transient
+failure inventories. Interrupted-publication undo recovery is covered separately
+by the [recovery probe](../scripts/correctness_commit_recovery.sh) and described
+in [ADR 0040](adr/0040-interrupted-commit-recovery.md).
+No performance measurement was made; this probe makes no speed
 claim, and small targets may be dominated by frontend/worker startup and IPC
 fixed costs.
 

@@ -1,4 +1,3 @@
-use crate::assets::write_atomic;
 use crate::builder::RustBuildConfig;
 use crate::graph::{GRAPH_SCHEMA_VERSION, GraphState};
 use crate::metrics::graph_file_size;
@@ -81,14 +80,23 @@ pub(super) fn save_no_work(
 }
 
 /// Publishes staged outputs, deletions, and graph state after all actions pass.
-/// This is an all-success boundary, not a crash-atomic filesystem transaction:
-/// deletions and per-file atomic writes happen before the graph rename, with no
-/// journal or rollback. An I/O error or interruption can therefore leave some
-/// files changed while the previous graph remains on disk.
+/// Publication is protected by an undo journal, recovered before graph reuse.
+/// Individual files are atomic; the output tree is not simultaneously atomic.
 pub(super) fn commit(
     state: &mut GraphState,
     inputs: CommitInputs<'_>,
 ) -> io::Result<GraphSaveMetrics> {
+    let path = inputs.state_path.to_owned();
+    commit_inner(state, inputs).map_err(|error| {
+        if super::recovery::pending(&path) {
+            io::Error::other(format!("commit publication failed: {error}. Undo journal preserved; retry the same native command to restore the previous outputs and graph before rebuilding. Do not clear native state."))
+        } else {
+            error
+        }
+    })
+}
+
+fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<GraphSaveMetrics> {
     // Stock verify publishes neither artifacts nor graph, even on success.
     if inputs.only_check {
         verify_outputs(state, &inputs)?;
@@ -114,6 +122,48 @@ pub(super) fn commit(
         transaction,
     } = inputs;
 
+    let undo = crate::wall::Span::new("commit_undo_prepare");
+    let mut changes = BTreeMap::new();
+    if transaction.clean_artifact_tree {
+        collect_cache_deletions(
+            &workspace
+                .root
+                .join(".dart_tool/build_runner_accelerator/cache"),
+            &mut changes,
+        )?;
+    }
+    for (location, asset) in &transaction.pending_location_deletions {
+        let path = match location {
+            crate::builder::BuildTo::Source => workspace.path_for_asset(asset)?,
+            crate::builder::BuildTo::Cache => workspace.cache_path_for_asset(asset)?,
+        };
+        changes.insert(path, None);
+    }
+    for (builder, asset) in &transaction.pending_deletions {
+        changes.insert(output_path(workspace, builder, asset)?, None);
+    }
+    for (_, action) in &transaction.deleted_actions {
+        let builder = build_config
+            .definition(&action.builder)
+            .ok_or_else(|| io::Error::other("previous builder unavailable"))?;
+        for asset in &action.outputs {
+            if !expected_outputs.contains(asset) {
+                changes.insert(output_path(workspace, builder, asset)?, None);
+            }
+        }
+    }
+    for (builder, asset, bytes) in &transaction.pending_outputs {
+        changes.insert(
+            output_path(workspace, builder, asset)?,
+            Some(crate::digest::digest_bytes(bytes)),
+        );
+    }
+    let journaled = !changes.is_empty();
+    if journaled {
+        super::recovery::prepare(state_path, changes)?;
+    }
+    drop(undo);
+
     // No phase or asset RPC can read the overlay once all actions have succeeded.
     // Release its references so committing each output can free its buffer.
     let written_outputs: BTreeSet<_> = if keep_modified_outputs {
@@ -127,6 +177,7 @@ pub(super) fn commit(
     };
     drop(transaction.overlay);
     let outputs = crate::wall::Span::new("output_commit");
+    boundary("before_deletions")?;
     // Commit only after every dirty action succeeded. Cache-built part files
     // are kept below .dart_tool and are visible to later phases through the
     // overlay and the cache-aware reader.
@@ -134,8 +185,10 @@ pub(super) fn commit(
         let path = workspace
             .root
             .join(".dart_tool/build_runner_accelerator/cache");
-        if path.exists() {
-            fs::remove_dir_all(path)?;
+        match fs::remove_dir_all(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
         }
     }
     for (location, asset) in transaction.pending_location_deletions {
@@ -143,15 +196,11 @@ pub(super) fn commit(
             crate::builder::BuildTo::Source => workspace.path_for_asset(&asset)?,
             crate::builder::BuildTo::Cache => workspace.cache_path_for_asset(&asset)?,
         };
-        if path.is_file() {
-            fs::remove_file(path)?;
-        }
+        remove_output(&path)?;
     }
     for (builder, asset) in transaction.pending_deletions {
         let path = output_path(workspace, builder.as_ref(), &asset)?;
-        if path.is_file() {
-            fs::remove_file(path)?;
-        }
+        remove_output(&path)?;
     }
     // Remove obsolete action outputs before publishing new results: a new
     // post-process action may reuse a dynamic output from a deleted action.
@@ -164,14 +213,14 @@ pub(super) fn commit(
                 continue;
             }
             let path = output_path(workspace, builder, output)?;
-            if path.is_file() {
-                fs::remove_file(path)?;
-            }
+            remove_output(&path)?;
         }
         state.actions.remove(&action_key);
     }
+    boundary("after_deletions")?;
     for (builder, asset, bytes) in transaction.pending_outputs {
-        write_atomic(&output_path(workspace, builder.as_ref(), &asset)?, &bytes)?;
+        super::recovery::write_output(&output_path(workspace, builder.as_ref(), &asset)?, &bytes)?;
+        boundary("after_output")?;
     }
     for (key, action) in transaction.pending_actions {
         state.actions.insert(key, action);
@@ -281,7 +330,12 @@ pub(super) fn commit(
     drop(update);
     let graph_save_started = Instant::now();
     let save = crate::wall::Span::new("graph_save");
+    boundary("before_graph")?;
     state.save(state_path)?;
+    boundary("after_graph")?;
+    if journaled {
+        super::recovery::finish(state_path)?;
+    }
     drop(save);
     Ok(GraphSaveMetrics {
         graph_save_us: graph_save_started.elapsed().as_micros(),
@@ -363,5 +417,58 @@ fn verify_outputs(state: &GraphState, inputs: &CommitInputs<'_>) -> io::Result<(
         );
         return Err(io::Error::other("output verification failed"));
     }
+    Ok(())
+}
+
+// `is_file`/`exists` turn metadata I/O errors into false. Only an absent
+// destination is a successful no-op; all other deletion errors must journal.
+fn remove_output(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+// The private cache tree is disposable, but rollback must preserve it too.
+fn collect_cache_deletions(
+    path: &Path,
+    changes: &mut BTreeMap<std::path::PathBuf, Option<String>>,
+) -> io::Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(io::Error::other("refusing symlink in artifact tree"));
+    }
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path)? {
+            collect_cache_deletions(&entry?.path(), changes)?;
+        }
+    } else {
+        changes.insert(path.to_owned(), None);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+type BoundaryHook = fn(&str) -> io::Result<()>;
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static COMMIT_BOUNDARY: std::cell::RefCell<Option<BoundaryHook>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(super) fn boundary(_name: &str) -> io::Result<()> {
+    #[cfg(test)]
+    COMMIT_BOUNDARY.with(|hook| {
+        if let Some(hook) = *hook.borrow() {
+            hook(_name)
+        } else {
+            Ok(())
+        }
+    })?;
     Ok(())
 }

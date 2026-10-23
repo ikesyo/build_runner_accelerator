@@ -80,6 +80,7 @@ Run the closest comparison script when changing a boundary:
 | Output verification, retention, or policy routing | `bash scripts/correctness_output_policies.sh` |
 | CLI rejection, migration, or process signals | `bash scripts/correctness_cli.sh` |
 | Optional producer and post-process demand | `scripts/correctness_optional_cleanup.sh`, `scripts/watch_smoke_optional_cleanup.sh`; see the [fixture guide](../fixtures/optional_cleanup_app/README.md) |
+| Interrupted publication and recovery | `bash scripts/correctness_commit_recovery.sh` (test-only native adapter, forced process kill, stock equality and no-op) |
 | Watch lifecycle | `bash scripts/watch_smoke.sh` |
 | Freezed/Riverpod compatibility | `scripts/correctness_freezed.sh`, `scripts/watch_smoke_freezed.sh`, `scripts/correctness_riverpod.sh`, `scripts/watch_smoke_riverpod.sh` |
 | Drift analyzer, modular, not_shared, and cleanup | `scripts/correctness_drift_analyzer.sh`, `scripts/watch_smoke_drift_analyzer.sh`, `scripts/correctness_drift_not_shared.sh`, `scripts/watch_smoke_drift_not_shared.sh` |

@@ -37,8 +37,8 @@ rather than publishing partial phase state. No scheduler, resolver cap,
 single-flight default, cache compaction or AOT policy is changed.
 
 Keep phase barriers, same-phase visibility, immutable Analyzer phase state,
-read dependency recording, driver reuse and all-success atomic graph/output
-commit. No generation-owner omissions or overlap/deferred spool are added.
+read dependency recording, driver reuse and all-success graph/output
+publication. No generation-owner omissions or overlap/deferred spool are added.
 
 ## Compatibility and validation
 

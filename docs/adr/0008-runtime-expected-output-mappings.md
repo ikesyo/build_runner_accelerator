@@ -63,7 +63,7 @@ Probing is bounded and failure-tolerant at the frontend boundary. A missing
 or invalid probe result makes the manifest unsupported: --mode auto falls
 back to stock Dart build_runner, while --mode rust reports an explicit
 unsupported-manifest error. Builder/resource residency, optional demand
-execution, overlay visibility, stale-output deletion, and atomic commit remain
+execution, overlay visibility, stale-output deletion, and all-success publication remain
 unchanged.
 
 ## Deliberate non-goals

@@ -16,9 +16,9 @@ Borrow resident state for event classification, then move it into the next
 build as tentative working state. Do not clone a rollback graph. On success,
 move the resulting committed graph back into the session. On any preparation,
 worker, builder or publication failure, discard the working graph and reload
-the persisted state on the next attempt. A partial output commit retains the
-existing disk-based recovery contract; resident tentative state cannot mask a
-failed graph save.
+the persisted state on the next attempt. A partial output commit uses the undo
+journal in [ADR 0040](0040-interrupted-commit-recovery.md); resident tentative
+state cannot mask a failed graph save.
 
 Keep the existing event-filter gate: no previous graph is supplied until the
 session's first successful build. After a later failure, classification still
@@ -49,8 +49,9 @@ allocations remain unchanged and must still be measured.
 Failure recovery deliberately pays a disk reload instead of retaining another
 full graph solely for rollback. A cold failure never seeds resident state;
 ordinary builder failure remains recoverable and unsupported transitions remain
-terminal. Disk publication stays authoritative across restarts. The session
-neither writes new persistence metadata nor changes the graph schema.
+terminal. Disk publication stays authoritative across restarts. The resident
+ownership optimization does not change the graph schema. ADR 0040 adds
+independent publication recovery metadata.
 
 Use opt-in graph/cycle metrics and wall traces to distinguish disk loading from
 resident ownership reuse. Measure latency without those diagnostics, and compare
