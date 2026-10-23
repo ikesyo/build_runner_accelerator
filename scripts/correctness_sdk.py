@@ -40,10 +40,15 @@ def main():
                                        stderr=subprocess.STDOUT, start_new_session=True)
             try:
                 code = process.wait(timeout=240)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-                raise AssertionError(f'timeout: {log}')
+            except subprocess.TimeoutExpired as error:
+                raise AssertionError(f'timeout: {log}') from error
+            finally:
+                if process.poll() is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass  # The child exited between poll and killpg.
+                    process.wait()
         assert (code == 0) if expected == 0 else (code != 0), (command, code, log.read_text())
         return log.read_text().split('\n', 1)[1]
 
