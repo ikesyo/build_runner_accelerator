@@ -735,10 +735,7 @@ fn prepare_worker_aot(
     if let Some(parent) = temp_aot.parent() {
         fs::create_dir_all(parent)?;
     }
-    let package_config = context
-        .workspace
-        .root
-        .join(".dart_tool/package_config.json");
+    let package_config = crate::runner_compatibility::package_config(&context.workspace.root);
     let compile_start = Instant::now();
     let status = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "exe"])
@@ -977,7 +974,8 @@ fn build_aot_metadata(
 ) -> io::Result<AotMetadata> {
     let dependencies = parse_depfile_dependencies(&fs::read_to_string(depfile)?)
         .ok_or_else(|| io::Error::other("AOT compiler depfile has no dependencies"))?;
-    let package_config_path = canonicalize(workspace.root.join(".dart_tool/package_config.json"))?;
+    let package_config_path =
+        canonicalize(crate::runner_compatibility::package_config(&workspace.root))?;
     let canonical_sdk_root = canonicalize(sdk_root)?;
     let mut dependency_digests = BTreeMap::new();
     for dependency in dependencies {
@@ -1359,7 +1357,7 @@ fn prepare_worker_kernel(
     let process_id = std::process::id();
     let temp_kernel = temporary_sibling(&kernel_path, process_id, "dill");
     let temp_depfile = temporary_sibling(&depfile_path, process_id, "d");
-    let package_config = root.join(".dart_tool/package_config.json");
+    let package_config = crate::runner_compatibility::package_config(root);
     let status = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "kernel"])
         .arg("--no-embed-sources")
@@ -1643,7 +1641,7 @@ fn prewarm_jobs() -> usize {
 }
 
 fn prewarm_script_path(root: &Path) -> Option<PathBuf> {
-    let config_path = root.join(".dart_tool/package_config.json");
+    let config_path = crate::runner_compatibility::package_config(root);
     let text = fs::read_to_string(&config_path).ok()?;
     let config: serde_json::Value = serde_json::from_str(&text).ok()?;
     let package = config.get("packages")?.as_array()?.iter().find(|package| {
@@ -1743,7 +1741,7 @@ fn spawn_analysis_prewarm_options(
         ANALYSIS_PREWARM_ACTIVE.store(false, Ordering::Release);
         return None;
     }
-    let package_config = root.join(".dart_tool/package_config.json");
+    let package_config = crate::runner_compatibility::package_config(root);
     let dirs = dirs.map(str::to_owned).or_else(|| {
         env::var("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS")
             .ok()

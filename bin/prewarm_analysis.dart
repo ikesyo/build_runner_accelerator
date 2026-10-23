@@ -20,6 +20,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:analyzer/dart/analysis/features.dart';
@@ -111,6 +112,17 @@ Future<void> main(List<String> args) async {
   final watchdog = Timer(const Duration(minutes: 5), () => exit(0));
   // `packageConfigUri` initializes itself from `Isolate.packageConfigSync`;
   // the launcher passes the workspace config via `--packages`.
+  if (File(
+    '.dart_tool/build_runner_accelerator/runner-package_config.json',
+  ).existsSync()) {
+    buildProcessState.deserializeAndSet(
+      jsonEncode({
+        'packageConfigUri': File(
+          '.dart_tool/package_config.json',
+        ).absolute.uri.toString(),
+      }),
+    );
+  }
   final packageConfig = await package_config.loadPackageConfigUri(
     Uri.parse(buildProcessState.packageConfigUri),
   );

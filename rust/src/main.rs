@@ -13,6 +13,7 @@ mod placeholders;
 mod plan;
 mod process;
 mod protocol;
+mod runner_compatibility;
 mod snapshot;
 mod visibility;
 mod wall;

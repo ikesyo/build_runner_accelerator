@@ -84,6 +84,7 @@ pub struct Workspace {
     pub root: PathBuf,
     pub root_package: String,
     packages: BTreeMap<String, PathBuf>,
+    compiler_packages: BTreeMap<String, PathBuf>,
     sources: Arc<OnceLock<Arc<AssetSources>>>,
     package_config_identity: String,
     asset_index: Arc<Mutex<BTreeMap<String, Arc<Vec<String>>>>>,
@@ -115,7 +116,7 @@ impl Workspace {
     pub fn load(root: PathBuf) -> io::Result<Self> {
         let root = canonicalize(root)?;
         let root_package = package_name(&root.join("pubspec.yaml"))?;
-        let package_config_path = root.join(".dart_tool/package_config.json");
+        let package_config_path = crate::runner_compatibility::prepare(&root)?;
         let package_config = fs::read_to_string(&package_config_path)?;
         let parsed: PackageConfigFile =
             serde_json::from_str(&package_config).map_err(io::Error::other)?;
@@ -124,10 +125,21 @@ impl Workspace {
             .parent()
             .ok_or_else(|| io::Error::other("package_config.json has no parent"))?;
 
-        let mut packages = BTreeMap::new();
+        let mut compiler_packages = BTreeMap::new();
         for entry in parsed.packages {
-            let package_root = resolve_uri(config_dir, &entry.root_uri);
-            packages.insert(entry.name, package_root);
+            compiler_packages.insert(entry.name, resolve_uri(config_dir, &entry.root_uri));
+        }
+        compiler_packages.insert(root_package.clone(), root.clone());
+        // A compile-only backport must not change builder-visible dependency
+        // bytes, source enumeration, or package paths.
+        let original_path = root.join(".dart_tool/package_config.json");
+        let original: PackageConfigFile = serde_json::from_slice(&fs::read(&original_path)?)?;
+        let mut packages = BTreeMap::new();
+        for entry in original.packages {
+            packages.insert(
+                entry.name,
+                resolve_uri(original_path.parent().unwrap(), &entry.root_uri),
+            );
         }
         packages.insert(root_package.clone(), root.clone());
 
@@ -135,6 +147,7 @@ impl Workspace {
             root,
             root_package,
             packages,
+            compiler_packages,
             sources: Arc::new(OnceLock::new()),
             package_config_identity,
             asset_index: Arc::new(Mutex::new(BTreeMap::new())),
@@ -179,11 +192,15 @@ impl Workspace {
     pub(crate) fn logical_dependency_key(&self, path: &Path) -> Option<String> {
         let path = canonicalize(path).ok()?;
         if let Ok(relative) = path.strip_prefix(&self.root) {
-            return Some(format!("workspace:{}", normalized_relative_path(relative)));
+            // Compatibility package roots are workspace-local setup state, but
+            // their compiler identity must survive a workspace relocation.
+            if !relative.starts_with(".dart_tool/build_runner_accelerator/runner-compat") {
+                return Some(format!("workspace:{}", normalized_relative_path(relative)));
+            }
         }
 
         let mut best = None;
-        for (package, package_root) in &self.packages {
+        for (package, package_root) in &self.compiler_packages {
             let Ok(package_root) = canonicalize(package_root) else {
                 continue;
             };
@@ -210,7 +227,7 @@ impl Workspace {
         }
         let rest = key.strip_prefix("package:")?;
         let (package, relative) = rest.split_once(':')?;
-        let root = self.packages.get(package)?;
+        let root = self.compiler_packages.get(package)?;
         safe_relative_path(root, relative)
     }
 
@@ -637,7 +654,7 @@ fn dart_windows_path(path: PathBuf) -> PathBuf {
     PathBuf::from(ordinary)
 }
 
-fn resolve_uri(base: &Path, uri: &str) -> PathBuf {
+pub(crate) fn resolve_uri(base: &Path, uri: &str) -> PathBuf {
     let decoded = percent_decode(uri);
     let path = match decoded.strip_prefix("file://") {
         // A file URI's /C:/ path is not a Windows filesystem path. Leaving the
@@ -664,22 +681,23 @@ fn windows_file_uri_path(path: &str) -> &str {
 }
 
 fn percent_decode(value: &str) -> String {
-    let mut result = String::with_capacity(value.len());
+    let mut result = Vec::with_capacity(value.len());
     let bytes = value.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            let hex = &value[index + 1..index + 3];
-            if let Ok(decoded) = u8::from_str_radix(hex, 16) {
-                result.push(decoded as char);
-                index += 3;
-                continue;
-            }
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let Ok(hex) = std::str::from_utf8(&bytes[index + 1..index + 3])
+            && let Ok(decoded) = u8::from_str_radix(hex, 16)
+        {
+            result.push(decoded);
+            index += 3;
+            continue;
         }
-        result.push(bytes[index] as char);
+        result.push(bytes[index]);
         index += 1;
     }
-    result
+    String::from_utf8_lossy(&result).into_owned()
 }
 
 fn lower_bound(values: &[String], target: &str) -> usize {
