@@ -149,12 +149,15 @@ def main():
 
         wait(lambda: 'native filesystem events' in (results / 'native-watch.log').read_text()
              and 'Built with build_runner' in (results / 'stock-watch.log').read_text())
-        write('class Watched {}\n')
-        wait(lambda: all((r / 'lib/model.summary').read_bytes() == b'Watched\n'
-                         for r in (stock_root, native_root)
-                         if (r / 'lib/model.summary').exists())
-             and all((r / 'lib/model.summary').exists() for r in (stock_root, native_root)))
-        compare('watch regeneration')
+        # The second edit exercises the resident worker's resolver reset too.
+        for name in ('Watched', 'WatchedAgain'):
+            expected = f'{name}\n'.encode()
+            write(f'class {name} {{}}\n')
+            wait(lambda expected=expected: all((r / 'lib/model.summary').read_bytes() == expected
+                             for r in (stock_root, native_root)
+                             if (r / 'lib/model.summary').exists())
+                 and all((r / 'lib/model.summary').exists() for r in (stock_root, native_root)))
+            compare(f'watch regeneration ({name})')
     finally:
         for process, log in processes:
             if process.poll() is None:

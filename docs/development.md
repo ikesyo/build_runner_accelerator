@@ -147,10 +147,11 @@ The minimal `fixtures/sdk_compat_app` uses an ordinary source builder and
 `resolver.libraryFor`; it stages output before a deliberate builder failure.
 It resolves dependencies once per SDK, then copies the resulting lockfile to
 native and enforces it with Pub. Initial generation, no-op, input change,
-deletion, rename, builder failure/recovery and paired watch regeneration compare
+deletion, rename, builder failure/recovery and two paired watch regenerations compare
 complete generated file inventories and bytes. Failure asserts that native
 outputs and the persisted graph remain unchanged. Stock is a separate process
 in a separate workspace. Current-SDK fixtures keep their existing constraints.
+The second watch edit exercises resolver invalidation in the resident worker.
 
 The check prints the SDK, worker mode and resolved build_runner/analyzer/build
 versions. Per-command logs, both ordinary `pubspec.lock` files and watch logs
