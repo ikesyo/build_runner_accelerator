@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.16.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.15.0...v0.16.0) - 2026-10-23
+
+- fix: recover interrupted output commits with an undo journal by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/132
+- test: verify SDK-floor builds and define 1.x compatibility by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/134
+- Support build_runner 2.15.3+ with an isolated resolver backport by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/135
+
 ## [v0.15.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.14.1...v0.15.0) - 2026-10-23
 
 - test: validate Drift not_shared cleanup compatibility by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/124
