@@ -90,11 +90,11 @@ void main() {
       final cli = (await BuildRunnerCommandLine.parse(['build', ...flags]))!;
       expect(
         settings.onlyCheck,
-        (cli as dynamic).outputStrategy.name == 'verify',
+        ((cli as dynamic).outputStrategy as Enum).name == 'verify',
       );
       expect(
         settings.keepModifiedOutputs,
-        (cli as dynamic).outputStrategy.name == 'keep',
+        ((cli as dynamic).outputStrategy as Enum).name == 'keep',
       );
       expect(
         LauncherOptions.parse(['build', ...flags]).rustArguments.skip(5),
