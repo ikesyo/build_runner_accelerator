@@ -2,6 +2,9 @@
 
 An experimental Rust frontend for [build_runner](https://pub.dev/packages/build_runner). Rust plans actions and manages incremental state; a Dart worker runs builders through build_runner APIs.
 
+Before adopting the tool, read the [1.x compatibility contract](docs/launcher-and-release.md#1x-compatibility-contract)
+for supported SDKs, tested workloads, public interfaces, and limits.
+
 ## Installation
 
 The current package version is `0.15.0`.
@@ -90,9 +93,6 @@ and are mutually exclusive and build-only in native mode. See the
 compatibility limits and state recovery.
 
 ## Compatibility and recovery
-
-Before adopting the tool, read the [1.x compatibility contract](docs/launcher-and-release.md#1x-compatibility-contract)
-for supported SDKs, tested workloads, public interfaces, and limits.
 
 The native frontend supports build_runner `>=2.16.2 <2.17.0`; correctness
 comparisons use stock build_runner 2.16.2. Its supported manifest subset is

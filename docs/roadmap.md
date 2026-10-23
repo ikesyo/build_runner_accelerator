@@ -59,8 +59,10 @@ The following are implemented and covered by the current fixture suite:
   prewarm, initial build, no-op, incremental and watch with stock byte comparisons.
   [Local replay and evidence](distribution-validation.md#local-replay) distinguish
   implemented checks from platform runs that still need execution.
-- [ ] Record a successful five-target workflow dry-run on the candidate commit
-  and retain its distribution evidence; local Linux evidence alone is insufficient.
+- [ ] Retain successful five-target packaged-distribution evidence for the
+  candidate commit from CI, a release run, or a workflow dry-run. A separate
+  manual dry-run is not required when CI supplies this evidence; local Linux
+  evidence alone is insufficient.
 - [ ] Add macOS code signing/notarization and Windows Authenticode gates.
 - [x] Exercise packaged frontends through launcher prewarm/cache in the
   distribution lanes; replay with `scripts/distribution_e2e.py` as documented
