@@ -52,6 +52,7 @@ Benchmarks and mechanical refactors do not need one.
 | [0038](0038-optional-post-process-demand.md) | Optional primary-input materialization and post-process actions without demand |
 | [0039](0039-virtual-primary-inputs.md) | Virtual primary identities, suffix mappings, unreadable asset visibility, and graph invalidation |
 | [0040](0040-interrupted-commit-recovery.md) | Undo journal and repeatable recovery of interrupted output publication |
+| [0041](0041-public-1x-compatibility.md) | Public 1.x interfaces, guarantees and internal implementation boundary |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
 artifacts and launcher behavior are in

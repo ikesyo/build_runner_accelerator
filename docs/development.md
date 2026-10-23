@@ -24,6 +24,11 @@ analyzer 14.3 the effective minimum. See
 [configuration compatibility](configuration.md) for upstream behavior and
 [ADR 0007](adr/0007-sdk-and-dependency-compatibility-window.md) for the policy.
 
+The worker imports private build_runner bootstrap, build-state and resolver
+interfaces, and analyzer resolver, scanner and byte-store interfaces. Dependency
+resolution and launcher compilation alone do not validate this boundary; the
+SDK lifecycle check below compiles and executes the generated worker too.
+
 ## Try an unreleased checkout
 
 Add this repository as a path dependency in the application. Build the
@@ -124,6 +129,45 @@ bookkeeping cannot trigger or mask a rebuild.
 CI shares runner setup through parallel steps within a small number of jobs.
 Local full verification keeps each selected suite's state transitions ordered
 in isolated workspaces.
+
+## SDK lifecycle comparison
+
+The existing SDK/dependency jobs run both package analysis/tests and a real
+worker comparison. These cover different boundaries: `build_runner --help`
+does not initialize the native worker or resolve a Dart input library.
+
+Run the same comparison locally with an installed SDK:
+
+```bash
+DART_BIN=/path/to/dart-3.11.0/bin/dart bash scripts/correctness_sdk.sh --resolution downgrade
+DART_BIN=/path/to/dart-3.13.3/bin/dart bash scripts/correctness_sdk.sh --resolution upgrade
+```
+
+The minimal `fixtures/sdk_compat_app` uses an ordinary source builder and
+`resolver.libraryFor`; it stages output before a deliberate builder failure.
+It resolves dependencies once per SDK, then copies the resulting lockfile to
+native and enforces it with Pub. Initial generation, no-op, input change,
+deletion, rename, builder failure/recovery and two paired watch regenerations compare
+complete generated file inventories and bytes. Failure asserts that native
+outputs and the persisted graph remain unchanged. Stock is a separate process
+in a separate workspace. Current-SDK fixtures keep their existing constraints.
+The second watch edit exercises resolver invalidation in the resident worker.
+
+The check prints the SDK, worker mode and resolved build_runner/analyzer/build
+versions. Per-command logs, both ordinary `pubspec.lock` files and watch logs
+are retained in the printed results directory (`--results PATH` selects a new
+directory). Commands and watch waits have timeouts; CI uploads results on failure.
+No dependency-version inventory is maintained separately from Pub's lockfiles.
+
+On 2026-10-23, Linux x64 replays of both commands above passed every listed
+case, including watch and native failure protection. The resolved versions are
+available in the command logs/lockfiles; future upgrades are checked again in CI.
+
+The SDK probe uses one non-AOT worker (`--force-jit`, SDK-specific kernel/script).
+It does not test all compilation modes on every SDK. Packaged AOT/prewarm and
+platform installation remain covered by [distribution E2E](distribution-validation.md);
+forced kills and publication I/O faults remain in
+`correctness_commit_recovery.sh`. Neither suite is duplicated in the SDK probe.
 
 ## Benchmarks
 

@@ -1,0 +1,9 @@
+builders:
+  summary:
+    import: 'package:sdk_compat_app/builder.dart'
+    builder_factories: [summary]
+    build_extensions: {'.dart': ['.summary']}
+    auto_apply: root_package
+    build_to: source
+    defaults:
+      generate_for: ['lib/model*.dart']

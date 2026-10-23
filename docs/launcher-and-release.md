@@ -4,6 +4,57 @@ The Dart package contains the launcher, manifest generator, and worker. The
 launcher requires a matching Rust frontend. Unsupported or unavailable native
 execution fails explicitly; stock build_runner is never launched.
 
+## 1.x compatibility contract
+
+This is the compatibility baseline for 1.0 and subsequent 1.x releases.
+The package is currently 0.x; this document does not announce a 1.0 release.
+
+- The supported SDK and core dependency constraints are listed in
+  [development](development.md#supported-toolchain) and declared in `pubspec.yaml`.
+  Their intersection must resolve in Pub. CI checks two points, Dart 3.11.0
+  with minimum dependencies and Dart 3.13.3 with current dependencies; it does
+  not test every SDK or every combination allowed by the constraints.
+- Within the supported manifest/configuration subset, successful generated
+  file sets and contents follow stock build_runner. Builder support is scoped
+  to the configurations in the [probe inventory](compatibility-probes.md),
+  fixture lockfiles, and [configuration guide](configuration.md), rather than
+  every feature of a named builder. New dependency releases within constraints
+  still need validation, especially private build_runner and analyzer APIs.
+- The commands/options below, their documented combination restrictions, and
+  the Public environment row are the supported user interface. Existing
+  supported invocations and output/failure guarantees are maintained in 1.x;
+  removing them or narrowing the declared support window requires a major
+  release. Additive options and support may be introduced in minor releases.
+- Success exits 0. Invalid/unsupported requests, setup errors and failed builds
+  exit nonzero (normally 1); `--only-check` exits 1 for output differences.
+  Unix interruption statuses are documented under [signals](#worker-lifecycle-and-signals).
+  Watch can report a builder failure and remain alive for the next edit.
+  Exact diagnostic text, progress logs, timing and diagnostic schemas are not API.
+- Builder failures publish no staged outputs or graph. Interrupted publication
+  uses undo recovery before reuse, with the filesystem and external-edit limits
+  in [the recovery guide](compatibility-cleanup.md#interrupted-publication).
+  These guarantees do not imply a simultaneously atomic file tree or power-loss
+  durability. Filter selection and output retention have the restrictions below;
+  watch accepts value-only configuration reloads and rejects topology changes
+  as described in [configuration](configuration.md#watch-and-cache-behavior).
+- Stop native processes before running stock directly. Follow the
+  [upgrade and recovery steps](compatibility-cleanup.md#safe-recovery) before
+  returning to native or resetting state; preserve pending undo evidence.
+  There is no automatic stock fallback.
+- Internal IPC, graph/manifest/journal formats and paths, generated workers,
+  compiled AOT/kernel artifacts, analysis caches and `lib/src` are not public
+  extension or persistence APIs. They can change in 1.x and caches may regenerate.
+  Package and frontend versions must match; cross-version worker reuse is not
+  promised. Internal state changes must preserve user sources and the documented
+  failure/recovery boundary, including refusal when undo recovery is unsafe.
+  No stable Dart library API, performance threshold, or extra platform minimum
+  beyond the documented distribution evidence is promised.
+
+The [SDK lifecycle comparison](development.md#sdk-lifecycle-comparison) checks
+real Resolver-based generation and incremental/watch behavior in addition to
+package analysis/tests. Distribution and interrupted-publication tests remain
+separate gates, so SDK coverage does not imply all platform/SDK combinations.
+
 ## Install and invoke
 
 ```bash
