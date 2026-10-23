@@ -113,7 +113,7 @@ struct PackageConfigEntry {
 
 impl Workspace {
     pub fn load(root: PathBuf) -> io::Result<Self> {
-        let root = fs::canonicalize(root)?;
+        let root = canonicalize(root)?;
         let root_package = package_name(&root.join("pubspec.yaml"))?;
         let package_config_path = root.join(".dart_tool/package_config.json");
         let package_config = fs::read_to_string(&package_config_path)?;
@@ -177,14 +177,14 @@ impl Workspace {
     /// Convert an absolute compiler dependency path into a machine-independent
     /// identity so AOT metadata can be restored on another CI runner.
     pub(crate) fn logical_dependency_key(&self, path: &Path) -> Option<String> {
-        let path = fs::canonicalize(path).ok()?;
+        let path = canonicalize(path).ok()?;
         if let Ok(relative) = path.strip_prefix(&self.root) {
             return Some(format!("workspace:{}", normalized_relative_path(relative)));
         }
 
         let mut best = None;
         for (package, package_root) in &self.packages {
-            let Ok(package_root) = fs::canonicalize(package_root) else {
+            let Ok(package_root) = canonicalize(package_root) else {
                 continue;
             };
             let Ok(relative) = path.strip_prefix(&package_root) else {
@@ -268,7 +268,7 @@ impl Workspace {
         };
         let roots = sources
             .keys()
-            .map(|package| Ok((package, fs::canonicalize(self.package_root(package)?)?)))
+            .map(|package| Ok((package, canonicalize(self.package_root(package)?)?)))
             .collect::<io::Result<Vec<_>>>()?;
         for (parent, root) in &roots {
             for (child, nested) in &roots {
@@ -605,15 +605,62 @@ fn package_name(path: &Path) -> io::Result<String> {
     ))
 }
 
+/// Canonical paths cross the Rust/Dart boundary. Dart rejects Windows verbatim
+/// prefixes, so preserve symlink resolution with ordinary DOS/UNC spellings.
+pub(crate) fn canonicalize(path: impl AsRef<Path>) -> io::Result<PathBuf> {
+    let path = fs::canonicalize(path)?;
+    #[cfg(windows)]
+    let path = dart_windows_path(path);
+    Ok(path)
+}
+
+#[cfg(windows)]
+fn dart_windows_path(path: PathBuf) -> PathBuf {
+    use std::ffi::OsString;
+    use std::path::{Component, Prefix};
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path;
+    };
+    let mut ordinary = match prefix.kind() {
+        Prefix::VerbatimDisk(drive) => OsString::from(format!("{}:", char::from(drive))),
+        Prefix::VerbatimUNC(server, share) => {
+            let mut value = OsString::from(r"\\");
+            value.push(server);
+            value.push(r"\");
+            value.push(share);
+            value
+        }
+        _ => return path,
+    };
+    ordinary.push(components.as_path().as_os_str());
+    PathBuf::from(ordinary)
+}
+
 fn resolve_uri(base: &Path, uri: &str) -> PathBuf {
     let decoded = percent_decode(uri);
-    let path = decoded.strip_prefix("file://").unwrap_or(&decoded);
+    let path = match decoded.strip_prefix("file://") {
+        // A file URI's /C:/ path is not a Windows filesystem path. Leaving the
+        // slash in place makes dependency configuration reads fail with OS 123.
+        Some(path) if cfg!(windows) => windows_file_uri_path(path),
+        Some(path) => path,
+        None => &decoded,
+    };
     let path = PathBuf::from(path);
     if path.is_absolute() {
         path
     } else {
         base.join(path)
     }
+}
+
+fn windows_file_uri_path(path: &str) -> &str {
+    path.strip_prefix('/')
+        .filter(|rest| {
+            let bytes = rest.as_bytes();
+            bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+        })
+        .unwrap_or(path)
 }
 
 fn percent_decode(value: &str) -> String {
@@ -940,6 +987,68 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn canonical_package_paths_are_usable_by_both_runtimes() {
+        let temp = TempDir::new();
+        let path = super::canonicalize(temp.path()).unwrap();
+        assert!(path.is_absolute());
+        assert!(path.is_dir());
+        #[cfg(windows)]
+        assert!(!path.as_os_str().to_string_lossy().starts_with(r"\\?\"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dart_paths_remove_only_dos_and_unc_verbatim_prefixes() {
+        for (native, dart) in [
+            (
+                r"\\?\C:\package space\worker.dart",
+                r"C:\package space\worker.dart",
+            ),
+            (
+                r"\\?\UNC\server\share\worker.dart",
+                r"\\server\share\worker.dart",
+            ),
+            (r"C:\package\worker.dart", r"C:\package\worker.dart"),
+        ] {
+            assert_eq!(
+                super::dart_windows_path(PathBuf::from(native)),
+                PathBuf::from(dart)
+            );
+        }
+    }
+
+    #[test]
+    fn file_uri_windows_drive_prefix_is_not_part_of_the_path() {
+        assert_eq!(
+            super::windows_file_uri_path("/C:/pub-cache/pkg/"),
+            "C:/pub-cache/pkg/"
+        );
+        assert_eq!(
+            super::windows_file_uri_path("/d:/package space/"),
+            "d:/package space/"
+        );
+        for path in ["/tmp/pkg/", "/", "/C", "C:/pkg/"] {
+            assert_eq!(super::windows_file_uri_path(path), path);
+        }
+    }
+
+    #[test]
+    fn package_file_uris_resolve_to_native_absolute_paths() {
+        let temp = TempDir::new();
+        let expected = temp.path().join("package space");
+        let uri_path = expected
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace(' ', "%20");
+        let uri = format!("file://{}{uri_path}", if cfg!(windows) { "/" } else { "" });
+        assert_eq!(super::resolve_uri(temp.path(), &uri), expected);
+        assert_eq!(
+            super::resolve_uri(temp.path(), "relative%20package/"),
+            temp.path().join("relative package")
+        );
     }
 
     #[test]

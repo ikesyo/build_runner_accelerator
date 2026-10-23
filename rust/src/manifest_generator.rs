@@ -4,6 +4,7 @@ use crate::digest::digest_bytes;
 use crate::worker_kernel::{
     aot_sdk_identity, dart_sdk_root_for_binary, parse_depfile_dependencies, shared_cache_root,
 };
+use crate::workspace::canonicalize;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -87,7 +88,7 @@ fn cache_key_for_sdk(root: &Path, sdk: &Path, generator: &Path) -> io::Result<St
         platform,
         resolution.content_digest,
         resolution.locations_digest,
-        fs::canonicalize(generator)?.display(),
+        canonicalize(generator)?.display(),
         digest_file(generator)?,
     ))
 }
@@ -106,13 +107,13 @@ fn package_resolution(config: &Path, root: &Path) -> PackageResolution {
     (|| -> Option<PackageResolution> {
         let mut parsed: serde_json::Value = serde_json::from_slice(&fs::read(config).ok()?).ok()?;
         let config_dir = config.parent()?;
-        let canonical_root = fs::canonicalize(root).ok()?;
+        let canonical_root = canonicalize(root).ok()?;
         let packages = parsed.get_mut("packages")?.as_array_mut()?;
         let mut locations = BTreeMap::new();
         for entry in packages {
             let name = entry.get("name")?.as_str()?.to_owned();
             let root_uri = entry.get("rootUri")?.as_str()?;
-            let path = fs::canonicalize(resolve_root_uri(config_dir, root_uri)?).ok()?;
+            let path = canonicalize(resolve_root_uri(config_dir, root_uri)?).ok()?;
             if path == canonical_root && name != "build_runner_accelerator" {
                 // Keep languageVersion/packageUri: they can affect compiled code.
                 entry["rootUri"] = serde_json::Value::String("<workspace>".into());
@@ -208,7 +209,7 @@ fn prepare<F: FnOnce()>(
     generator: &Path,
     before_compile: &mut Option<F>,
 ) -> io::Result<(PathBuf, bool)> {
-    let generator = fs::canonicalize(generator)?;
+    let generator = canonicalize(generator)?;
     let key = cache_key(root, dart, &generator)?;
     let directory = shared_cache_root(root)
         .ok_or_else(|| io::Error::other("no shared cache directory"))?
@@ -258,14 +259,14 @@ fn prepare<F: FnOnce()>(
         let dependencies = parse_depfile_dependencies(&fs::read_to_string(&depfile)?)
             .ok_or_else(|| io::Error::other("generator depfile has no dependencies"))?;
         let mut digests = BTreeMap::new();
-        let package_config = fs::canonicalize(root.join(".dart_tool/package_config.json"))?;
+        let package_config = canonicalize(root.join(".dart_tool/package_config.json"))?;
         for dependency in dependencies {
             let path = if dependency.is_absolute() {
                 dependency
             } else {
                 root.join(dependency)
             };
-            let path = fs::canonicalize(path)?;
+            let path = canonicalize(path)?;
             // Resolution and compilation-relevant config content are already
             // in the key. Retaining the old workspace's config in the depfile
             // metadata would reject reuse after that checkout is removed.

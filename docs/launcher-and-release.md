@@ -155,7 +155,16 @@ mirror.
 macOS Intel has no published native artifact; use a compatible preinstalled
 binary or run stock directly. The signed release workflow requires
 `BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY` in repository Actions secrets;
-the corresponding public key is pinned in the package.
+the corresponding public key is pinned in the package. Publication requires
+same-commit correctness CI and packaged distribution E2E. Manual workflow runs
+default to a non-publishing dry-run. See [distribution validation](distribution-validation.md)
+for the source/tag checks, signed evidence, replay commands and measured timing.
+
+Linux builds currently use Ubuntu 24.04 (glibc 2.39). They are GNU/glibc binaries;
+older glibc distributions and musl/Alpine are unverified. macOS/Windows minimum
+OS versions are also unverified beyond the named CI images. Producer artifacts
+record imported GLIBC symbols or macOS deployment metadata; see the
+[platform facts](distribution-validation.md#platform-facts-and-unverified-minimums).
 
 The release cache is separate from workspace state. It uses the platform
 cache directory or `BUILD_RUNNER_ACCELERATOR_CACHE` override:
