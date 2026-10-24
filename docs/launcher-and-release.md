@@ -237,6 +237,21 @@ Manifests, graphs, generated workers, and workspace AOT artifacts live under
 `.dart_tool/build_runner_accelerator/`. `dart compile exe` for the launcher is
 a compatibility path for cache misses; `dart run` is the normal invocation.
 
+## Verify downloaded release provenance
+
+The launcher retains its pinned Ed25519 manifest signature and archive/cache
+integrity checks. GitHub Artifact Attestation separately lets users verify which
+repository, source commit and release workflow produced a downloaded archive
+or manifest. Attestation verification is performed by release CI and explicitly
+by users; the launcher does not invoke GitHub CLI or verify attestations.
+
+See [download and verification commands](distribution-validation.md#artifact-attestation)
+for GitHub CLI >=2.80.0, authentication, exact commit/workflow/tag checks and
+failure handling. Current archives have no configured macOS Developer ID
+signing/notarization or Windows Authenticode. These are post-1.0 work;
+attestation does not establish Gatekeeper/SmartScreen approval. See the
+[platform conditions](distribution-validation.md#platform-facts-and-unverified-minimums).
+
 ## Worker lifecycle and signals
 
 Native build/watch supervises its worker, generator, and compiler processes.

@@ -88,6 +88,10 @@ jobs:
         run: cargo test --locked --manifest-path rust/Cargo.toml
 
   build-frontend:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     name: Build ${{ matrix.target_id }}
     needs: [dart-compatibility, rust-tests]
     strategy:
@@ -171,6 +175,13 @@ jobs:
           name: distribution-release-${{ matrix.target_id }}
           path: distribution-results/${{ matrix.target_id }}
           if-no-files-found: error
+      # Attest the final archive in its producer job, before lossless job transfer.
+      # No step after this may rewrite/repack the archive.
+      - name: Attest native archive
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: build_runner_accelerator-${{ matrix.target_id }}.${{ matrix.archive }}
+          create-storage-record: false
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-${{ matrix.target_id }}
@@ -184,6 +195,8 @@ jobs:
     permissions:
       contents: write
       actions: read
+      id-token: write
+      attestations: write
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -277,6 +290,21 @@ jobs:
           name: dry-run-signed-distribution
           path: dist
           if-no-files-found: error
+      # Signing and final consumer checks above leave these subject bytes unchanged.
+      - name: Attest release manifest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/release-manifest.json
+          create-storage-record: false
+      - name: Verify all attestations before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SOURCE: ${{ needs.rust-tests.outputs.source_sha }}
+        run: |
+          python3 .github/scripts/verify_release_attestations.py \
+            --dist dist --repo "$GITHUB_REPOSITORY" \
+            --source-commit "$EXPECTED_SOURCE" --source-ref "$GITHUB_REF" \
+            --results attestation-results/before-publication
       - name: Recheck tag and correctness before publication
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
@@ -295,6 +323,28 @@ jobs:
             release_args+=(--prerelease)
           fi
           gh release create "$RELEASE_TAG" --verify-tag dist/* "${release_args[@]}"
+
+      - name: Download and verify published Release subjects before pub.dev
+        if: env.RELEASE_DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SOURCE: ${{ needs.rust-tests.outputs.source_sha }}
+        run: |
+          mkdir release-download
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release-download \
+            --pattern 'build_runner_accelerator-*.tar.gz' \
+            --pattern 'build_runner_accelerator-*.zip' --pattern release-manifest.json
+          python3 .github/scripts/verify_release_attestations.py \
+            --dist release-download --expected-dist dist --repo "$GITHUB_REPOSITORY" \
+            --source-commit "$EXPECTED_SOURCE" --source-ref "$GITHUB_REF" \
+            --results attestation-results/after-publication
+      - name: Retain attestation verification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-attestation-verification
+          path: attestation-results
+          if-no-files-found: warn
 
   publish-pub-dev:
     name: Publish package to pub.dev

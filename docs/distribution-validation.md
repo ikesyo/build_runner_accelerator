@@ -17,7 +17,10 @@ publication order: signed GitHub Release first, pub.dev second.
 3. Build with `cargo build --locked --release` in the existing five lanes.
    Package using `scripts/package_frontend.py`, including VERSION and
    SOURCE_COMMIT. Each lane runs `scripts/distribution_e2e.py` on its actual
-   archive before uploading it for signing. A failure blocks publication.
+   archive, then attests its final bytes with the SHA-pinned official
+   `actions/attest` (SLSA provenance mode) in that producer job, before uploading
+   it for signing. No subsequent step repacks or rewrites the archive. A failure
+   blocks publication.
 4. Require successful **push or workflow_dispatch** `ci.yml` for the exact
    source SHA, including its correctness and native-distribution lanes. A PR
    merge commit or another commit's success is insufficient. Builds may overlap
@@ -32,18 +35,28 @@ publication order: signed GitHub Release first, pub.dev second.
 6. Use the actual Dart downloader to verify/install all five unchanged archives
    against the final signed manifest and the package's production public key.
    Verify the checksum signature and every listed digest, then smoke-test the
-   installed Linux x64 binary. Recheck source and correctness before
-   `gh release create --verify-tag`.
-7. Publish pub.dev through the existing reusable publisher. Its checkout has no
+   installed Linux x64 binary. These existing checks remain prerequisites for
+   attestation verification and `gh release create --verify-tag`.
+7. Attest the final `release-manifest.json` in the aggregate job. Verify the
+   five archives and manifest with `gh attestation verify` before publication,
+   using the exact source/signer SHA, workflow identity and ref policy below.
+   This also checks that the lossless Actions artifact transfer preserved the
+   bytes attested in each producer job. The manifest and archives are not
+   modified after attestation. Recheck source/correctness and publish Release.
+8. Download the six subjects from the published GitHub Release into a fresh
+   directory. Compare every SHA-256 with its pre-publication file and verify
+   every attestation again. This runs inside `publish-release`; its successful
+   completion is required by `publish-pub-dev`.
+9. Publish pub.dev through the existing reusable publisher. Its checkout has no
    source_ref input and uses the caller's ref/SHA; this is why a publishing
    dispatch from main with a different `source_ref` is rejected. Native artifacts
    and the Dart package therefore use the same source commit.
 
 The implementation adds steps to existing jobs, not new jobs or target matrices.
-Dart/Rust checks and the target lanes preserve parallel execution. The added
-critical path is approximately the slowest target's E2E plus final signed
-installation checks, setup/signing overhead and any outstanding correctness-CI
-wait, rather than the sum of five E2Es. Each evidence.json records
+Dart/Rust checks and the target lanes preserve parallel execution. The critical path includes the slowest target's E2E/attestation, final signed
+installation checks, setup/signing, manifest attestation, before/after
+attestation lookups and the Release download, plus any outstanding
+correctness-CI wait. Distribution evidence.json records
 per-command and total seconds. Stock cold compilation overlaps native prewarm
 inside each E2E, using independent workspaces. Runner queueing, cold package
 downloads, SDK setup and signing latency must be measured separately in Actions; a local
@@ -67,7 +80,12 @@ A dry-run validates version identity but does not require the named tag to
 exist. Manual runs default to dry-run. It runs the five target lanes, aggregate
 manifest/checksum creation, temporary-key signing, and final signed-artifact
 installation checks.
-It skips both GitHub Release and pub.dev publication. The private test key is
+It creates real GitHub attestations for the candidate commit/ref and verifies
+all six subjects before publication; this requires Actions OIDC and attestation
+write access even in dry-run mode. These attestations are persisted in GitHub
+(and public Sigstore transparency records), so dry-run means no Release/pub.dev
+publication, not no external writes.
+It skips GitHub Release download verification and both GitHub Release and pub.dev publication. The private test key is
 removed; `dry-run-signed-distribution` retains archives, signatures and the test
 public key for inspection. No production signing secret is passed to this mode.
 
@@ -75,6 +93,154 @@ Publishing dispatches require `--ref RELEASE_TAG`, matching `tag`, and
 `dry_run=false`. tagpr's existing dispatch already uses the release tag; it
 explicitly selects publication mode. Tag push events also select publication.
 Do not create or move tags to make a failed source-identity check pass.
+
+## Artifact attestation
+
+The subjects are `release-manifest.json` and these five archives:
+
+- `build_runner_accelerator-macos-arm64.tar.gz`
+- `build_runner_accelerator-linux-x64.tar.gz`
+- `build_runner_accelerator-linux-arm64.tar.gz`
+- `build_runner_accelerator-windows-x64.zip`
+- `build_runner_accelerator-windows-arm64.zip`
+
+Ed25519 signatures let the launcher authenticate its manifest against the key
+pinned in the Dart package, then check archive length/digest and cache integrity.
+GitHub Artifact Attestation adds signed build provenance, independently verified
+with GitHub CLI. It is not reproducible-build proof, OS code signing,
+notarization, a malware scan, or launcher-side attestation verification.
+The detached signatures, SHA256SUMS and release-source.json keep their existing
+roles; they are not additional attestation subjects.
+
+### Download and verify as a user
+
+Use **GitHub CLI >=2.80.0** (the supported baseline with all policy flags used
+here), Python 3 for the optional all-subject helper, and network access to GitHub
+and Sigstore trust services. Authenticate against github.com with `gh auth login`
+or `GH_TOKEN`. In Actions the existing `github.token` is used. Public repository
+verification needs read access, not attestation write or OIDC permissions;
+private repositories additionally require repository access (`repo` scope for a
+classic PAT). See the [CLI documentation](https://cli.github.com/manual/gh_attestation_verify).
+
+Select the tag and obtain its **expected full commit SHA from a trusted source**
+(for example the reviewed release commit in your checkout). Do not take the
+expected SHA solely from the downloaded manifest you are about to verify.
+After fetching/reviewing the intended tag in a trusted local checkout:
+
+```bash
+gh --version
+repo=ikesyo/build_runner_accelerator
+tag=v1.0.0 # Replace with the actual attested release tag.
+expected_commit=$(git rev-parse "refs/tags/$tag^{commit}")
+release_dir=$(mktemp -d)
+gh release download "$tag" --repo "$repo" --dir "$release_dir" \
+  --pattern 'build_runner_accelerator-*.tar.gz' \
+  --pattern 'build_runner_accelerator-*.zip' --pattern release-manifest.json
+
+# Verify a selected archive; repeat for the manifest (and other archives used).
+gh attestation verify "$release_dir/build_runner_accelerator-linux-x64.tar.gz" \
+  --repo "$repo" \
+  --cert-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$tag" \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --source-digest "$expected_commit" --signer-digest "$expected_commit" \
+  --source-ref "refs/tags/$tag" --deny-self-hosted-runners \
+  --predicate-type https://slsa.dev/provenance/v1
+gh attestation verify "$release_dir/release-manifest.json" \
+  --repo "$repo" \
+  --cert-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$tag" \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --source-digest "$expected_commit" --signer-digest "$expected_commit" \
+  --source-ref "refs/tags/$tag" --deny-self-hosted-runners \
+  --predicate-type https://slsa.dev/provenance/v1
+```
+
+To verify all six with the same policy from this checkout:
+
+```bash
+python3 .github/scripts/verify_release_attestations.py \
+  --dist "$release_dir" --repo "$repo" \
+  --source-commit "$expected_commit" --source-ref "refs/tags/$tag" \
+  --results "$release_dir/verification"
+```
+
+`--repo` constrains the source repository. `--cert-identity` requires the exact
+`release.yml` certificate identity including the tag ref (stronger than just
+matching a workflow path prefix). `--source-digest` and `--signer-digest` require
+the expected source and workflow commits; `--source-ref` requires the intended
+tag. The issuer and hosted-runner constraints bind it to GitHub Actions.
+`gh` verifies the attestation signature and subject digest against the file's
+actual bytes and requires SLSA v1 provenance. This workflow is not reusable;
+the source and signer workflow are both in this repository at the release SHA.
+The archives retain provenance from their five native producer jobs; the
+manifest's provenance identifies its aggregate generation run. JSON results
+include the provenance predicate and workflow invocation for inspection. The
+invocation URL identifies a run/attempt; match the subject filename/digest with
+the producer job's attestation log to identify its target lane. Individual job
+identity is not a separate certificate constraint.
+
+Older releases have no retroactively created attestation. An absent attestation,
+policy mismatch, unsupported CLI, authorization/network error or timeout is a
+verification failure; do not proceed as though the artifact was verified.
+
+### Permissions and publication failures
+
+This repository is public, so GitHub Artifact Attestation is available on current
+GitHub plans. Private/internal repositories require Enterprise Cloud; Enterprise
+Server does not support this service. The official
+[actions/attest](https://github.com/actions/attest) now supersedes new uses of
+attest-build-provenance. The action is pinned to the v4.2.2 commit, following the
+repository's SHA-pinning policy, with explicit file subjects and default SLSA
+provenance mode. It needs a Node 24 compatible Actions runner.
+
+Only `build-frontend` and `publish-release` gain `id-token: write` and
+`attestations: write`, alongside their existing access. No registry push or
+artifact storage record is used (`create-storage-record: false`), so
+`packages: write` and `artifact-metadata: write` are unnecessary. The other
+jobs keep their existing permissions, including the reusable pub.dev publisher.
+
+Attestation creation and pre-publication verification failures block Release
+creation. Release-download, byte-comparison or post-publication attestation
+failures fail `publish-release`, preventing the dependent pub.dev publisher.
+The published Release and tag remain intact for diagnosis; nothing automatically
+deletes or rolls them back. Do not bypass the failed gate or treat a partial
+verification as success. Investigate before retrying; a pre-existing Release
+also makes the existing `gh release create` fail rather than silently overwrite it.
+
+The `release-attestation-verification` Actions artifact retains before/after
+`evidence.json`, each executed command, SHA-256, JSON verification output and
+stderr logs. Only completion of all six verifications sets `result: passed`.
+Downloads fail directly in the Actions log if the helper cannot start. Producer
+and manifest attestation Actions also expose their own summary/attestation URLs.
+No verification result or bundle is added to `dist/*` for publication.
+
+### Next-release checks requiring GitHub
+
+Local helper tests cover success, changed downloaded bytes, missing subjects,
+old CLI, command errors and timeouts. Existing source/Ed25519/distribution tests
+remain in place. Local mocks cannot establish OIDC issuance, Sigstore signing,
+attestation persistence or actual post-publication verification.
+
+1. At the candidate SHA, obtain successful existing correctness/five-target CI
+   evidence. If using the workflow dry-run above, confirm all five producer
+   attestations, aggregate manifest attestation and six pre-publication
+   verifications pass. Its expected certificate/source ref is the actual
+   candidate branch ref, not the synthetic tag input. Confirm Release/pub.dev
+   and Release-download steps are skipped. Dry-run writes real attestations.
+2. On the next authorized normal tagged release, check all six attestation
+   summaries identify this repository, the expected SHA and `release.yml`.
+   Follow provenance invocation URLs to the workflow run/attempt; match subject
+   names/digests against native producer job logs and the manifest against
+   `publish-release`.
+3. Check `release-attestation-verification` has before/after `result: passed`,
+   all six matching downloaded digests, and exact tag/SHA/workflow policy.
+   Confirm pub.dev starts only after these steps succeed. Re-run the user
+   commands above against that published Release from a clean download directory.
+4. Using local copies/read-only verification, flip one archive byte and expect
+   `gh attestation verify` to fail; test a wrong source SHA, signer SHA and
+   workflow identity independently and expect nonzero status. A CLI/API error
+   must also fail. Preserve the logs; do not alter real Release files or tags
+   to test failure paths. If a real post-publication check fails, confirm pub.dev
+   was skipped and diagnose from logs with the Release/tag left intact.
 
 ## Local replay
 
@@ -145,6 +311,13 @@ oldest distribution. Older Linux/glibc images, musl, minimum macOS and Windows
 versions, and minimum Dart execution on every OS remain unverified. The Dart
 SDK package checks at 3.11.0/3.13.3 are separate from distribution E2E at 3.13.3.
 
-OS code signing, notarization and Authenticode remain separate release gates.
+The current archives have no configured Apple Developer ID code signing or
+notarization, and no Windows Authenticode signing. Any toolchain-generated
+ad-hoc signature is not a Developer ID signature. These are post-1.0 tasks,
+not 1.0 gates. The checks above establish CLI download, extraction and execution
+on the listed runner images after a successful lane; they do not establish
+Gatekeeper approval for a quarantined browser download, SmartScreen reputation,
+or execution on older OS releases. Artifact attestation does not replace any of
+these OS trust mechanisms.
 Locked dependencies and immutable source identity do not claim byte-for-byte
 reproducibility across compilers, runner image updates, or archive timestamps.

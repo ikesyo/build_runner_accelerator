@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Test source gates, manifests, and Ed25519 normalization
+      - name: Test source gates, manifests, attestations, and Ed25519 normalization
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
 
   byte-store-benchmark-helpers:
