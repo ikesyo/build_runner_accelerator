@@ -50,6 +50,9 @@ The following are implemented and covered by the current fixture suite:
 
 ## First-release gates
 
+- [x] Retain the mixed application launcher-inclusive fixture benchmark
+  with default workers and three repeats;
+  [results and replay](benchmarks.md).
 - [x] Add the repository license and make `dart pub publish --dry-run` pass.
 - [ ] Configure the release signing secret and publish a tagged test release.
 - [x] Implement locked release builds/tests, same-commit correctness/source/tag
