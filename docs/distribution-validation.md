@@ -217,6 +217,22 @@ Downloads fail directly in the Actions log if the helper cannot start. Producer
 and manifest attestation Actions also expose their own summary/attestation URLs.
 No verification result or bundle is added to `dist/*` for publication.
 
+### Observed release evidence (2026-10-24)
+
+- [v0.16.0 release workflow](https://github.com/ikesyo/build_runner_accelerator/actions/runs/40005469094)
+  passed all five packaged-consumer lanes, production manifest signing, final
+  signed-artifact verification and GitHub Release/pub.dev publication. Signing
+  setup and tagged publication are complete; another test release is not an
+  outstanding setup task.
+- [Main CI at d6e77de](https://github.com/ikesyo/build_runner_accelerator/actions/runs/40108128620)
+  passed all five packaged-distribution E2E lanes and both SDK lifecycle jobs.
+  The five `distribution-ci-*` artifacts were uploaded successfully.
+- Artifact Attestation was added after v0.16.0 in PR #136. The successful
+  v0.16.0 workflow predates those steps and does not establish their execution.
+  The first real OIDC/attestation and post-publication verification remain
+  subject to the next-release checks below. Every future candidate still needs
+  its own exact-commit CI and release evidence.
+
 ### Next-release checks requiring GitHub
 
 Local helper tests cover success, changed downloaded bytes, missing subjects,

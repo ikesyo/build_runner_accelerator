@@ -9,22 +9,27 @@ complete; see [results and replay](benchmarks.md).
 
 ## First-release gates
 
-The workflow implements same-commit correctness gates, locked builds/tests,
-five-target signed-artifact E2E, and GitHub Artifact Attestation verification
-before Release publication and again before pub.dev. SDK minimum/current
-Resolver lifecycle checks are also implemented. Remaining operational gates:
+Signing setup and tagged publication are operational: the
+[v0.16.0 release run](https://github.com/ikesyo/build_runner_accelerator/actions/runs/40005469094)
+passed production signing, five-target packaged E2E, final signed-artifact
+verification and GitHub Release/pub.dev publication.
+The [main CI run at d6e77de](https://github.com/ikesyo/build_runner_accelerator/actions/runs/40108128620)
+also passed all five packaged-distribution lanes and both minimum/current
+SDK Resolver lifecycle checks, retaining the distribution artifacts.
 
-- [ ] Configure the production release signing secret and publish a tagged test release.
-- [ ] Retain successful five-target packaged-distribution evidence for the
-  candidate commit from CI, a release run or a workflow dry-run.
-- [ ] Retain successful Actions OIDC/attestation evidence and published-asset
-  verification from the candidate release.
+Remaining initial validation:
 
-Use [distribution validation](distribution-validation.md) for workflow replay,
-signing requirements and evidence. Local Linux success cannot establish the
-other platforms or GitHub OIDC/publication behavior. SDK/dependency checks and
-packaged-distribution E2E are separate gates; a complete platform × SDK ×
-dependency matrix is not required for 1.0.
+- [ ] Exercise the Artifact Attestation steps added after v0.16.0 in a real
+  release workflow: producer/manifest OIDC attestations, pre-publication
+  verification, and downloaded published-asset verification before pub.dev.
+  See [the remaining checks](distribution-validation.md#next-release-checks-requiring-github).
+
+For each release candidate, require successful correctness and five-target
+packaged-distribution evidence for that exact commit. Earlier successful runs
+establish that the pipeline works; they do not certify a later candidate.
+Use [distribution validation](distribution-validation.md) for replay and evidence.
+SDK/dependency checks and packaged-distribution E2E are separate gates; a
+complete platform × SDK × dependency matrix is not required for 1.0.
 
 ## Distribution after 1.0
 
