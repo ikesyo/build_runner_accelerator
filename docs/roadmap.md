@@ -63,7 +63,11 @@ The following are implemented and covered by the current fixture suite:
   candidate commit from CI, a release run, or a workflow dry-run. A separate
   manual dry-run is not required when CI supplies this evidence; local Linux
   evidence alone is insufficient.
-- [ ] Add macOS code signing/notarization and Windows Authenticode gates.
+- [x] Add GitHub Artifact Attestation for the five archives and release manifest,
+  with exact commit/workflow/ref verification before Release and again from
+  downloaded Release assets before pub.dev. See [verification and rollout](distribution-validation.md#artifact-attestation).
+- [ ] Retain successful Actions OIDC/attestation evidence and published-asset
+  verification from the next candidate release; local tests cannot establish this.
 - [x] Exercise packaged frontends through launcher prewarm/cache in the
   distribution lanes; replay with `scripts/distribution_e2e.py` as documented
   [here](distribution-validation.md#local-replay). This does not claim that a
@@ -79,6 +83,16 @@ SDK/dependency lifecycle checks and five-target packaged-distribution E2E are
 separate release gates. A full platform × SDK × dependency cross-product is not
 required for 1.0; add focused combinations when a platform-specific SDK issue
 needs regression coverage. Neither gate establishes exhaustive combination coverage.
+
+## Post-1.0 distribution work
+
+- [ ] Add macOS Developer ID code signing and notarization.
+- [ ] Add Windows Authenticode signing.
+
+Neither is configured in the current release workflow. The current distribution
+conditions and unverified Gatekeeper/SmartScreen behavior are recorded in the
+[platform facts](distribution-validation.md#platform-facts-and-unverified-minimums).
+Attestation verifies build provenance and is not OS code signing or notarization.
 
 ## Post-release research
 

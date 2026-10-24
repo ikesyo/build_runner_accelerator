@@ -66,8 +66,11 @@ dependency graph or add a second worker protocol; it only performs lightweight
 metadata and executable-digest validation before the native launch.
 
 Trust depends on the release signing key pinned in the package and the CI
-secret that signs release inputs. Platform code-signing/notarization remains a
-release gate to add before broad distribution. Publishing also requires a
+secret that signs release inputs. GitHub Artifact Attestation additionally binds
+final archives and the manifest to their producing release workflow and source
+commit. macOS Developer ID
+signing/notarization and Windows Authenticode are deferred until after 1.0;
+attestation is not a substitute for OS code signing. Publishing also requires a
 valid repository license and a successful Dart package dry run.
 
 ## Alternatives considered
@@ -97,3 +100,19 @@ Consumer processes have no Cargo/Rust in PATH, workspace binaries or existing
 caches. Stock remains an independent reference under ADR 0036.
 See [distribution validation](../distribution-validation.md) for ordered gates,
 replay commands, evidence, timing and unverified OS minimums.
+
+## Build provenance attestation (1.0 preparation)
+
+Use the official SHA-pinned `actions/attest` in SLSA provenance mode: each native
+job attests its completed archive; the aggregate job attests the completed
+manifest. Retain Ed25519 signatures and all source/tag, correctness and consumer
+checks. Restrict OIDC/attestation write permissions to these two producing jobs.
+
+Verify the six subjects before Release, then download the published subjects,
+compare their bytes and verify them again before allowing pub.dev publication.
+The policy requires the source repository and commit, signer workflow and commit,
+exact caller ref, GitHub OIDC issuer and hosted runners. Attestation is an
+explicit user/CI check, not a launcher dependency. Failures block later
+publication without deleting the already-published Release or tag. See
+[distribution validation](../distribution-validation.md#artifact-attestation)
+for commands, permissions, failure evidence and next-release checks.
