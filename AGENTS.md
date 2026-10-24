@@ -2,7 +2,7 @@
 
 ## Project overview
 
-build_runner_accelerator is a pre-release Rust-accelerated frontend for
+build_runner_accelerator is a Rust-accelerated frontend for
 build_runner. Rust owns the filesystem snapshot, incremental action graph,
 phase orchestration, overlay, and recoverable all-success publication. A Dart worker continues to
 execute Dart builders, BuildStep, AssetReader, and Analyzer-backed resolver

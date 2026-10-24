@@ -21,7 +21,7 @@ they do not enable disabled builders.
 
 ## Option precedence and files
 
-Options merge by top-level key. Higher rows replace lower rows; nested maps are
+Options merge by top-level key. Later rows override earlier rows; nested maps are
 not recursively merged.
 
 | Order | Source |
@@ -91,6 +91,27 @@ Options are supplied at runtime, and settings-dependent output graphs are not
 shared through those caches. See [ADR 0031](adr/0031-native-build-settings.md)
 for the cache boundary and [ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md)
 for filtered-build configuration transitions.
+
+## Input extension mappings
+
+An ordinary Builder's empty input key (`buildExtensions['']`) matches every
+eligible input asset, including extensionless files. It appends the declared
+output suffix: `lib/model.dart` with `.out` becomes `lib/model.dart.out`.
+Regular and empty-key mappings on one Builder produce the union of outputs;
+duplicate output AssetIds remain errors.
+
+Target sources, `generate_for`, package visibility, source/cache placement and
+later-phase visibility still apply. This supports the existing simple output
+suffix subset for static and runtime-probed ordinary Builders; it does not
+extend post-process or workspace support. Dart emits `input_match: "all"`
+with an empty `input_suffix`; Rust consumes that normalized shape.
+
+The [build 4.0.11 contract](https://github.com/dart-lang/build/blob/build-v4.0.11/build/lib/src/builder.dart)
+and its [expected-output implementation](https://github.com/dart-lang/build/blob/build-v4.0.11/build/lib/src/expected_outputs.dart)
+are the upstream reference. `fixtures/empty_input_mapping_app` currently pins
+build_runner 2.16.2; `scripts/correctness_empty_input_mapping.sh` and
+`scripts/watch_smoke_empty_input_mapping.sh` cover lifecycle, filtering,
+collisions, jobs 1/2, failure recovery and watch. Performance is unmeasured.
 
 ## Checks
 

@@ -17,9 +17,9 @@ dart run build_runner_accelerator build
 dart run build_runner_accelerator watch
 ```
 
-Execution is native-only in 0.14.0. An unavailable native binary or unsupported
+Execution is native-only. An unavailable native binary or unsupported
 request fails explicitly. The `--mode` option is removed. To use stock directly,
 run `dart run build_runner build` or `dart run build_runner watch`.
 
-See the [upgrade guide](../docs/compatibility-cleanup.md) before switching back
+See the [upgrade guide](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-cleanup.md) before switching back
 to native after stock execution or when legacy output-policy history exists.

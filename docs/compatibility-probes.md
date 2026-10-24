@@ -1,146 +1,48 @@
-# Compatibility probes
+# Compatibility inventory
 
-This is the current inventory of external build_runner workloads that have
-been probed against the native frontend. Runtime expected-output mappings are
-captured by the Dart manifest boundary; Rust consumes only their normalized
-shape. A successful probe means that the
-selected target completed and its generated outputs matched stock
-`build_runner`; it is not a claim that every builder in the repository is
-supported.
+Support is scoped to the tested configuration and dependency solution, not an
+entire builder package or upstream repository. Tracked fixture lockfiles and
+comparison scripts define reproducible coverage. The
+[public contract](launcher-and-release.md#1x-compatibility-contract) defines the
+guarantees; this inventory points to evidence rather than repeating them.
 
-## Current inventory
+## Tracked workloads
 
-| Workload | Result | Classification | Notes |
-| --- | --- | --- | --- |
-| `dart-lang/build` `built_types/built_value_example` at `e5772728` | Regression fixture | Supported target shape | `built_value_generator:built_value` is a normal Builder: the static build.yaml mapping is `.dart` to `.built_value.g.part`, `build_to: cache`, and `source_gen\|combining_builder` consumes `.g.part` via `required_inputs`; `part_cleanup` is a separate post-process builder. The manifest uses the validated static mapping for this single-factory, no-option case; option-dependent and multi-factory applications use the instantiated mapping probe. Its official import and `SerializersFor` triggers are normalized from Dart and evaluated by the resident worker. Source/cache output visibility and empty-result stale cleanup remain preserved. |
-| `google/json_serializable.dart` example | Passed | Supported target shape | Clean, AOT-warm, incremental, and output-byte comparisons passed in the earlier probe. |
-| `fixtures/freezed_app` (`freezed 4.0.1`, `json_serializable 6.14.1`) | Passed | Current stack fixture | The lockfile resolves `build_runner 2.16.2` with Analyzer 14.5.0. Clean, incremental, failure, deletion, rename, watch, and byte-identical stock/native comparisons are covered. |
-| `fixtures/riverpod_app` (`riverpod_generator 4.0.9`, `freezed 4.0.1`, `json_serializable 6.14.1`) | Passed | Current stack fixture | The lockfile resolves `build_runner 2.16.2` with Analyzer 14.5.0. Provider, Freezed, and JSON outputs are compared across clean, incremental, failure, deletion, watch, and byte-identical stock/native cases. |
-| `fixtures/multi_mapping_builder_app` | Regression fixture | Supported target shape | The static build.yaml suffix is intentionally overridden by a resolved option at runtime (`.runtime` vs `.multi`), while the anchored special-path output remains literal. Clean, no-op, change, rename, and deletion compare the resulting output union; the native side runs with two jobs to exercise concurrent action planning. |
-| `fixtures/build_filter_app` | Regression fixture | Filtered demand and explicit rejection | Pinned stock 2.16.2 comparisons check output bytes, source/cache existence and deletion, exit status, and real builder history. Covers primary chains, multiple outputs, shared secondary reads, glob membership/order, resolver imports, filter transitions and watch restarts. Optional/post-process/zero-output/trigger-only combinations and incremental cyclic resolver reuse verify explicit rejection without publication. See ADR 0032. |
-| `fixtures/empty_input_mapping_app` | New compatibility probe | Supported generic mapping shape | With pinned `build_runner 2.16.2` / `build 4.0.11`, an empty input extension key matches every asset in the selected target scope. The fixture covers extensionless, `.dart`, and `.drift` inputs, regular-plus-empty mapping union, downstream generated-input visibility, target/`generate_for` filtering, source/cache placement, clean/no-op, changes, rename, deletion, stale cleanup, collision, failure recovery, jobs 1/2, and paired stock/native watch output changes. Performance is unmeasured. |
-| `fixtures/lifetime_builder_app` | Passed | Supported target shape | With `--jobs 1`, two source builders run in separate phases with one resident worker. Builder instance state and a shared `Resource` remain stable across four inputs, and the second phase reads the first phase's generated assets. |
-| `fixtures/applies_builder_app` | Passed | Supported target shape | An `applies_builders` consumer is scheduled after its producer phase; stock/native generated outputs match across clean, no-op, change, rename, and deletion cases. |
-| `fixtures/optional_builder_app` | Regression fixture | Supported target shape | A normal `is_optional` builder is skipped when undemanded and is run on demand for both secondary reads and primary-input consumers; clean, incremental, failure recovery, deletion, rename, and watch cases compare stock/native outputs. |
-| `fixtures/trigger_builder_app` | Regression fixture | Supported trigger shape | Compares stock/native import, annotation, combined, part-annotation, generated-primary, and `is_optional` + `run_only_if_triggered` cases. It covers trigger transitions, stale-output cleanup, generated-input changes, deletion, rename, failure recovery, and two-job execution; the paired watch probe covers trigger changes and resident worker lifetime. |
-| `fixtures/drift_app` (`drift 2.34.4`, `drift_dev 2.34.6`) | Passed | Supported target shape | `drift_dev`'s multiple factories are expanded using their runtime `buildExtensions`, including generated schema metadata, Dart parts, and cleanup of temporary artifacts. Clean, no-op, incremental, deletion, and byte-identical stock/native comparisons pass. |
-| `fixtures/drift_analyzer_app` (`drift 2.34.4`, `drift_dev 2.34.6`, `build_runner 2.16.2`, Dart 3.13.3) | Passed | Supported analyzer → modular subset | Official `preparing_builder` → `analyzer` → `modular` chain with `discover`/`analyzer` factory expansion, `.dart`/`.drift` mappings, analyzer cache artifacts, modular `.drift.dart` source outputs, and a generic downstream Builder that exercises cache reads, Resolver APIs, `assetIdForElement`, `inputLibrary`, and `packageConfig`. Clean, no-op, Dart/Drift changes, rename, valid deletion, stale source cleanup, failure/recovery, jobs=1/2, and native watch probes compare the supported output inventory with stock. |
-| Conduit Flutter target | Passed | Supported subset | Isolated Freezed/JSON target completed with byte-identical outputs. |
-| API Dash `har` target | Passed after narrowing | Supported subset | The initial probe expected a Freezed output for an input outside that builder's effective `generate_for`; the narrowed target completed with matching outputs. |
-| Invoice Ninja model target | Passed | Supported subset | Isolated Freezed/JSON target completed with byte-identical outputs. |
-| Official Conduit stamp-only target | Passed | Supported subset | `conduit_build_runner`'s `stamp_builder` completed. |
-| `fixtures/registry_builder_app` / Official Conduit registry | Stock-only reference; ordinary native resolution blocked | Published dependency conflict | Published `conduit_build_runner` 6.0.0/7.0.0 require Analyzer 12, incompatible with the native Analyzer 13.3+ window. The 7.0.0 reference pins older stock 2.14.1 and exercises the real registry factory, five manifest kinds, source/cache generated inputs, lifecycle, and failure/recovery. No stock/native equality is claimed for this override-free reference; see the [fixture guide](../fixtures/registry_builder_app/README.md). |
-| `fixtures/registry_builder_override_app` | Regression fixture with explicit override | Isolated stock/native registry configuration | Published Conduit 7.0.0 with a fixture-only Analyzer 14.5.0 override, build 4.0.11, and stock/native build_runner 2.16.2. Compares fixed registry output, source/cache generated manifests, all four virtual primaries, ordered enumeration, clean/no-op, changes, add/delete/rename, scope changes, empty aggregation, atomic failure recovery, and paired watch. This does not establish an override-free package solution or other Conduit generator support; see the [fixture guide](../fixtures/registry_builder_override_app/README.md). |
-| Drift `examples/app` / `examples/with_built_value` | Not supported | Explicit rejection | The full examples still include `build_web_compilers`, full Drift workspace configuration, and other builders outside this focused subset. The focused `fixtures/drift_app` probe covers the compatible `drift_dev` factory/output path. |
+Unless noted otherwise, scripts compare stock/native output sets and bytes.
+See [development](development.md#correctness-and-ci) for focused commands.
 
-Some full repository roots also could not be resolved under the probe's
-pub.dev dependency constraints. Those are dependency-resolution limitations,
-not native builder failures, and should be re-probed independently after the
-workload has a reproducible lockfile.
+| Workload | Validated scope and evidence |
+| --- | --- |
+| Freezed + JSON | `fixtures/freezed_app`: Freezed 4.0.1, JSON Serializable 6.14.1; lifecycle, failure, deletion, rename and watch comparisons |
+| Riverpod + Freezed + JSON | `fixtures/riverpod_app`: Riverpod Generator 4.0.9; mixed generation and watch comparisons |
+| Built Value | `fixtures/built_value_app`: cache parts, combining builder, triggers and stale-output cleanup |
+| Generic mappings | `fixtures/multi_mapping_builder_app`, `fixtures/arbitrary_builder_app` (capture probe), `fixtures/empty_input_mapping_app`: runtime mappings, literal suffixes, capture and all-asset empty-key mapping; see [mapping semantics](configuration.md#input-extension-mappings) |
+| Builder lifetime and phase ordering | `fixtures/lifetime_builder_app`, `fixtures/applies_builder_app`: resident Builder/Resource lifetime and generated-input visibility |
+| Filtered demand | `fixtures/build_filter_app`: selection, dependencies, globs, transitions and explicit rejection; [ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md) |
+| Optional builders and triggers | `fixtures/optional_builder_app`, `fixtures/trigger_builder_app`: lazy demand and trigger transitions; [trigger rules](#trigger-semantics-boundary) |
+| Optional + post-process cleanup | [Fixture guide](../fixtures/optional_cleanup_app/README.md): source/cache lifecycle and watch; [ADR 0038](adr/0038-optional-post-process-demand.md) |
+| Drift monolithic | `fixtures/drift_app`: Drift 2.34.4 / drift_dev 2.34.6, runtime factory/output mappings |
+| Drift analyzer/modular/not_shared | [Fixture guide](../fixtures/drift_analyzer_app/README.md): isolated official chains, resolver APIs, complete cleanup set, failures and watch |
+| Conduit registry, published constraints | [Stock-only fixture](../fixtures/registry_builder_app/README.md): Conduit 6.0.0/7.0.0 require Analyzer 12 and cannot resolve in the native window; no native equality claim |
+| Conduit registry, override | [Override fixture](../fixtures/registry_builder_override_app/README.md): Conduit 7.0.0 with fixture-only Analyzer 14.5.0 override; virtual inputs, ordered enumeration, lifecycle, failure and watch. Does not establish an override-free solution or other generator support |
+| Web compiler dart2js | [Fixture guide](../fixtures/build_web_compilers_app/README.md): published 4.8.12, single package, dev, `-O1`, filtered outputs and AOT watch |
+| Web compiler DDC | [Fixture guide](../fixtures/build_web_compilers_ddc_app/README.md): same compiler version, single root, dev/AMD, hot reload disabled; public artifacts and AOT watch |
+| FVM root CLI | [Pinned replay](probes/fvm/README.md): introduced dependency solution with dart_mappable_builder 4.10.0 / build_version 2.2.1, initial/no-op/edit/watch bytes. Excludes the old upstream lock, other commits, nested projects and Flutter runtime tests |
+| SDK/dependency boundaries | [SDK lifecycle](development.md#sdk-lifecycle-comparison) and [dependency review](dependency-window-review.md): Resolver-based generation at minimum/current resolutions and older-runner adapter coverage |
 
-The SDK-floor fixture is described in the
-[SDK lifecycle comparison](development.md#sdk-lifecycle-comparison). It validates
-the resolver/runtime at two SDK/resolution points; it does not establish that
-all published builders above can resolve or run on the minimum SDK. The web
-compiler and registry fixtures have their own configuration limits and replay
-instructions in their fixture READMEs; full upstream workspaces remain unverified.
+Full Drift examples, other Conduit generators, broader web compiler modes and
+multi-package upstream workspaces remain unvalidated. A dependency-resolution
+failure is separate from a native execution failure. Minimum-SDK coverage does
+not establish that every listed published builder resolves on that SDK.
+Compatibility work on Drift and empty-key mappings has no measured speed claim.
 
-## Empty input extension mapping boundary
+## Historical external probes
 
-The pinned `build` 4.0.11 implementation documents `buildExtensions['']` as
-matching all input assets. It is not an extensionless-file selector and is not
-converted to `.dart` or a wildcard. The expected-output implementation applies
-normal suffix replacement with a zero-length input suffix, so
-`lib/model.dart` maps to `lib/model.dart.empty_mapping.out` and an extensionless
-`lib/README` maps to `lib/README.empty_mapping.out`. Multiple mapping entries
-are evaluated independently; a regular mapping and an empty-key mapping on one
-Builder produce the union of their outputs.
-
-The Dart manifest boundary emits this as `input_match: "all"` with an empty
-`input_suffix`. Rust consumes that normalized kind and appends the output suffix
-to the complete AssetId path. Candidate scope still comes from the official
-package graph/build config: `generate_for` filters the current asset, target
-sources filter the primary input (including generated-input chains), and
-package visibility is not widened by the mapping. `build_to: source` and
-`build_to: cache` retain their existing output visibility and later-phase
-overlay behavior. Output collisions, stale outputs, action identity, and
-all-success publication use the same generic graph rules as other mappings.
-
-This change supports ordinary Builders with simple output suffixes, including
-regular and empty-key mappings together, static/runtime mappings, source/cache
-outputs, and the existing filtering/dependency semantics. Post-process and
-Drift-specific behavior, workspace semantics, and unsupported manifest shapes
-remain excluded. Unsupported mapping shapes fail explicitly at the manifest
-boundary before native actions. The
-compatibility probe does not make a performance claim.
-
-## Follow-up order
-
-1. Keep the `built_value` fixture in the normal full correctness suite.
-2. Extend the isolated Drift probe to additional official builders only
-   after their manifest shape and API requirements are known; do not encode
-   them as builder-name special cases in the Rust planner.
-3. Unblock Conduit's published dependency solution independently of the validated
-   registry override fixture; keep web compiler checks scoped to their documented fixtures.
-   Other Conduit generators and full workspaces need separate probes.
-   Drift `not_shared` and full `driftCleanup`
-   are now covered by the [Drift fixture](../fixtures/drift_analyzer_app/README.md).
-
-## Drift analyzer boundary
-
-The probe targets the pinned `drift 2.34.4` / `drift_dev 2.34.6` solution
-from the fixture lockfile (`build_runner 2.16.2`, Dart 3.13.3). It enables the
-official `preparing_builder`, `drift_dev:analyzer`, and `drift_dev:modular`
-targets while disabling the auto-applied monolithic `drift_dev:drift_dev`
-target; the latter would intentionally produce an output collision with the
-isolated analyzer artifacts. The probe therefore demonstrates a supported
-analyzer-to-modular subset, not a complete Drift workspace.
-
-The validated subset is:
-
-- `discover` and `analyzer` factory expansion from the official runtime
-  `buildExtensions` for both `.dart` and `.drift` inputs.
-- `preparing_builder` → `analyzer` → `modular` phase ordering from the
-  normalized manifest. `required_inputs` establishes the analyzer cache
-  dependency; `applies_builders` selects the related builder and is not used
-  as a synthetic ordering edge; `runs_before` remains an explicit ordering
-  edge.
-- `.dart` inputs publish `.dart.drift_elements.json`,
-  `.dart.drift_module.json`, and optional `.dart.types.temp.dart` cache
-  artifacts; `.drift` inputs publish the corresponding `.drift.*` artifacts.
-  `modular` consumes `.drift.drift_module.json` and publishes `.drift.dart` to
-  source for both input extensions.
-- Generated cache inputs become visible to later phases, and generated source
-  outputs are visible through the later-phase overlay. Same-phase outputs stay
-  hidden. A failed dirty batch leaves neither the source outputs nor the cache
-  artifacts committed.
-- `BuildStep.readAsString`/`canRead`, `resolver.libraryFor`,
-  `resolver.findLibraryByName`, `assetIdForElement`, `inputLibrary`, and
-  package language-version access through `packageConfig`.
-- Stale cache/source output removal, missing declared output handling, and
-  native builder-failure output protection when the modular builder stages
-  outputs and then throws.
-
-Stock and native output relative paths and bytes match in this fixture. Their
-persistent cache roots and diagnostics differ, and the failure probe checks the
-native all-success publication boundary without asserting identical transient
-failure inventories. Interrupted-publication undo recovery is covered separately
-by the [recovery probe](../scripts/correctness_commit_recovery.sh) and described
-in [ADR 0040](adr/0040-interrupted-commit-recovery.md).
-No performance measurement was made; this probe makes no speed
-claim, and small targets may be dominated by frontend/worker startup and IPC
-fixed costs.
-
-`not_shared` and full `driftCleanup` are covered by the later
-[not_shared fixture configuration](../fixtures/drift_analyzer_app/README.md).
-The override-free Conduit package solution and full Drift examples/workspaces
-remain outside this native scope. Web compiler support is limited to the
-separate [dart2js](../fixtures/build_web_compilers_app/README.md) and
-[DDC](../fixtures/build_web_compilers_ddc_app/README.md) configurations. Conduit's registry has a
-separate isolated override fixture as listed above. This
-modular support requires the monolithic `drift_dev:drift_dev` builder to remain
-disabled in the focused fixture. Unsupported manifest shapes or API requirements
-fail explicitly before output publication.
+Earlier selected targets passed for the JSON Serializable example, Conduit
+Flutter Freezed/JSON, API Dash `har` (after narrowing `generate_for`), Invoice
+Ninja models and Conduit's stamp builder. These spot checks are not maintained
+whole-project regression guarantees; use the tracked workloads above when
+assessing current adoption. Additional coverage is tracked in the [roadmap](roadmap.md).
 
 ## Trigger semantics boundary
 

@@ -18,8 +18,8 @@ Development continues through 0.x releases. This cleanup prepares for an eventua
 1.0 by removing obsolete accelerator compatibility paths. It does not select the
 next release version, set a 1.0 schedule, or finalize the 1.0 API.
 
-The [implementation audit](../compatibility-audit.md) identifies current
-producers/consumers and separates accelerator history from stock behavior.
+Current interfaces are documented in the [launcher reference](../launcher-and-release.md);
+retired interfaces and recovery are in the [migration guide](../compatibility-cleanup.md).
 
 ## Decision
 

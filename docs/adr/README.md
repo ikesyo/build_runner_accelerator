@@ -40,12 +40,12 @@ Benchmarks and mechanical refactors do not need one.
 | [0026](0026-byte-store-publication-index.md) | Byte-store publication index |
 | [0027](0027-reset-overlay-blob-transport.md) | Overlay blob transport |
 | [0028](0028-setup-time-prewarm-command.md) | Setup-time prewarm and single-flight AOT compiles |
-| [0029](0029-cli-routing-and-fallback.md) | CLI routing, stock fallback, and process lifecycle |
+| [0029](0029-cli-routing-and-fallback.md) | Historical CLI routing and fallback; superseded by 0036 |
 | [0030](0030-compatibility-cleanup-and-disposable-state.md) | Compatibility cleanup and disposable state |
 | [0031](0031-native-build-settings.md) | Native configuration and settings invalidation |
-| [0032](0032-native-build-filter-demand-and-output-state.md) | Filter demand, output state, and conservative fallback |
+| [0032](0032-native-build-filter-demand-and-output-state.md) | Filter demand and output state; fallback superseded by 0036 |
 | [0033](0033-filtered-demand-scheduler.md) | Parallel filtered demand coordination and lazy worker startup |
-| [0034](0034-native-output-policies.md) | Output verification, retained generated digests, and policy fallback |
+| [0034](0034-native-output-policies.md) | Output verification and retained digests; fallback superseded by 0036 |
 | [0035](0035-package-source-identity.md) | Package source sets, nested asset identities and watch boundary |
 | [0036](0036-native-only-execution.md) | Native-only execution and removal of stock fallback |
 | [0037](0037-resident-watch-graph.md) | Resident committed graph ownership and disk recovery in native watch |
