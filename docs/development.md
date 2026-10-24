@@ -183,7 +183,7 @@ output bytes. Keep metrics and traces out of timed runs.
 | Current launcher-inclusive summary | [benchmarks.md](benchmarks.md) |
 | Build-filter and supported-builder comparisons | `scripts/benchmark_matrix.sh`; `BUILDERS=optional bash scripts/benchmark_matrix.sh` |
 | Freezed/Riverpod fixture benchmarks | `scripts/benchmark_freezed.sh`, `scripts/benchmark_riverpod.sh` |
-| Cold start or cache investigation | The harness and experiment links in [benchmarks.md](benchmarks.md) |
+| Cold start or cache investigation | Historical implementation measurements in `docs/benchmarks/`; design decisions in [ADRs](adr/README.md) |
 | Per-worker diagnostic trace | `BUILD_RUNNER_ACCELERATOR_METRICS=1` and, where needed, `BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=1` |
 
 With `BUILD_RUNNER_ACCELERATOR_METRICS=1`, watch reports disk graph reloads

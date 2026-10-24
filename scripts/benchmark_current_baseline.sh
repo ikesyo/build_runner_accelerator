@@ -10,7 +10,12 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 
 source "$script_dir/toolchain.sh"
 source "$script_dir/worker.sh"
-fixture_dir="$repo_root/fixtures/current_json_app"
+workload=${WORKLOAD:-application}
+case "$workload" in
+  application) fixture_dir="$repo_root/fixtures/riverpod_app"; default_count=500 ;;
+  json) fixture_dir="$repo_root/fixtures/current_json_app"; default_count=1000 ;;
+  *) printf 'unsupported WORKLOAD: %s\n' "$workload" >&2; exit 1 ;;
+esac
 measure_script="$script_dir/measure_process.py"
 dart_bin=$(resolve_toolchain_dart)
 python_bin=${PYTHON_BIN:-python3}
@@ -19,14 +24,25 @@ build_runner_version=${BUILD_RUNNER_VERSION:-2.16.2}
 json_serializable_version=${JSON_SERIALIZABLE_VERSION:-6.14.1}
 json_annotation_version=${JSON_ANNOTATION_VERSION:-4.12.0}
 pub_get_offline=${PUB_GET_OFFLINE:-1}
-repeat_count=${REPEATS:-1}
+repeat_count=${REPEATS:-3}
+model_count=${COUNT:-$default_count}
+input_count=$model_count
+expected_output_count=$model_count
+if [[ "$workload" == application && "$model_count" =~ ^[1-9][0-9]*$ ]]; then
+  input_count=$((2 * model_count + 1))
+  expected_output_count=$input_count
+fi
 case_list=${CASES:-"clean no-op one-file broad"}
 mode_list=${STOCK_MODES:-default}
 trace_mode=${TRACE_MODE:-0}
 lane=${LANE:-stock}
-accelerator_jobs=${ACCELERATOR_JOBS:-1}
+accelerator_jobs=${ACCELERATOR_JOBS:-default}
+# Timed baselines must not inherit diagnostic instrumentation.
+export BUILD_RUNNER_ACCELERATOR_METRICS=0
+export BUILD_RUNNER_ACCELERATOR_WALL_TRACE=0
+export BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=0
 accelerator_bin=${BUILD_RUNNER_ACCELERATOR_BIN:-}
-accelerator_launcher=${ACCELERATOR_LAUNCHER:-0}
+accelerator_launcher=${ACCELERATOR_LAUNCHER:-1}
 
 fail() {
   printf 'current-baseline: FAIL: %s\n' "$*" >&2
@@ -42,6 +58,10 @@ if [[ ! "$repeat_count" =~ ^[1-9][0-9]*$ ]]; then
   fail "REPEATS must be a positive integer: $repeat_count"
 fi
 
+if [[ ! "$model_count" =~ ^[1-9][0-9]*$ ]]; then
+  fail "COUNT must be a positive integer: $model_count"
+fi
+
 results_dir=${RESULTS_DIR:-}
 if [[ -z "$results_dir" ]]; then
   results_dir=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-current-baseline.XXXXXX")
@@ -49,10 +69,10 @@ else
   mkdir -p "$results_dir"
   results_dir=$(cd -- "$results_dir" && pwd)
 fi
+[[ ! -e "$results_dir/results.jsonl" ]] || fail "results directory already contains measurements: $results_dir"
 work_root=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-accelerator-current-baseline-work.XXXXXX")
-# A warm machine-wide accelerator cache would mask the cold rows this
-# benchmark measures; isolate it under the work root.
-export BUILD_RUNNER_ACCELERATOR_CACHE="$work_root/shared-cache"
+# Each case/repeat selects its own shared cache below so preceding warm
+# cases cannot contaminate a later clean repeat.
 results_jsonl="$results_dir/results.jsonl"
 metadata_file="$results_dir/metadata.txt"
 
@@ -69,6 +89,11 @@ remove_tree() {
 }
 
 cleanup() {
+  local status=$?
+  if ((status != 0)); then
+    printf 'current-baseline: retained failed workspace: %s\n' "$work_root" >&2
+    return 0
+  fi
   remove_tree "$work_root"
 }
 trap cleanup EXIT
@@ -89,8 +114,8 @@ case "$lane" in
   stock|accelerator) ;;
   *) fail "unsupported LANE value: $lane (use stock or accelerator)" ;;
 esac
-if [[ "$lane" == accelerator && ! "$accelerator_jobs" =~ ^[1-9][0-9]*$ ]]; then
-  fail "ACCELERATOR_JOBS must be a positive integer: $accelerator_jobs"
+if [[ "$lane" == accelerator && "$accelerator_jobs" != default && ! "$accelerator_jobs" =~ ^[1-9][0-9]*$ ]]; then
+  fail "ACCELERATOR_JOBS must be default or a positive integer: $accelerator_jobs"
 fi
 if [[ "$accelerator_launcher" != 0 && "$accelerator_launcher" != 1 ]]; then
   fail "ACCELERATOR_LAUNCHER must be 0 or 1: $accelerator_launcher"
@@ -121,6 +146,9 @@ if [[ "$lane" == accelerator ]]; then
   export BUILD_RUNNER_ACCELERATOR_BIN="$accelerator_bin"
 fi
 
+git -C "$repo_root" rev-parse HEAD >"$results_dir/source-commit.txt"
+git -C "$repo_root" diff HEAD --binary >"$results_dir/harness.patch"
+cp "$fixture_dir/pubspec.lock" "$results_dir/fixture.pubspec.lock"
 printf 'dart_bin=%s\n' "$dart_bin" >"$metadata_file"
 printf 'dart_version=%s\n' "$dart_version" >>"$metadata_file"
 printf 'pub_cache=%s\n' "$pub_cache" >>"$metadata_file"
@@ -130,6 +158,9 @@ printf 'json_annotation_version=%s\n' "$json_annotation_version" >>"$metadata_fi
 printf 'fixture=%s\n' "$fixture_dir" >>"$metadata_file"
 printf 'cases=%s\n' "$case_list" >>"$metadata_file"
 printf 'stock_modes=%s\n' "$mode_list" >>"$metadata_file"
+printf 'workload=%s\ncount=%s\nexpected_output_count=%s\n' "$workload" "$model_count" "$expected_output_count" >>"$metadata_file"
+printf 'input_count=%s\n' "$input_count" >>"$metadata_file"
+printf 'warm_preparation=reuse-last-clean-or-one-warm-workspace;baseline-restored-before-each-edit\n' >>"$metadata_file"
 printf 'repeats=%s\n' "$repeat_count" >>"$metadata_file"
 printf 'pub_get_offline=%s\n' "$pub_get_offline" >>"$metadata_file"
 printf 'trace_mode=%s\n' "$trace_mode" >>"$metadata_file"
@@ -137,25 +168,51 @@ printf 'lane=%s\n' "$lane" >>"$metadata_file"
 printf 'accelerator_jobs=%s\n' "$accelerator_jobs" >>"$metadata_file"
 printf 'accelerator_launcher=%s\n' "$accelerator_launcher" >>"$metadata_file"
 
-hash_outputs() {
-  local package_dir=$1
-  (
-    cd "$package_dir/lib"
-    find . -type f -name '*.g.dart' -print0 |
-      sort -z |
-      while IFS= read -r -d '' file; do
-        sha256sum "$file"
-      done
-  ) | sha256sum | awk '{print $1}'
+snapshot_outputs() {
+  "$python_bin" - "$1" "$2" <<'OUTPUTS'
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+root, destination = Path(sys.argv[1]), Path(sys.argv[2])
+lib = root / 'lib'
+paths = sorted(p for p in lib.rglob('*.dart')
+               if p.name.endswith(('.g.dart', '.freezed.dart')))
+expected = set()
+generated = set(paths)
+for path in lib.rglob('*.dart'):
+    if path in generated:
+        continue
+    for part in re.findall(r"^part '([^']+)';", path.read_text(), re.M):
+        expected.add((path.parent / part).relative_to(lib).as_posix())
+files = {p.relative_to(lib).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+         for p in paths}
+if set(files) != expected:
+    raise SystemExit(f'generated file set differs: missing={expected-set(files)}, extra={set(files)-expected}')
+hash = hashlib.sha256()
+for name, digest in files.items():
+    hash.update(f'{digest}  ./{name}\n'.encode())
+destination.write_text(json.dumps({'files': files, 'sha256': hash.hexdigest(),
+                                  'bytes': sum(p.stat().st_size for p in paths)}, sort_keys=True) + '\n')
+OUTPUTS
 }
 
 hash_fixture() {
-  find "$fixture_dir" -type f \( -name '*.dart' -o -name '*.yaml' \) -print0 |
-    sort -z |
-    while IFS= read -r -d '' file; do
-      sha256sum "$file"
-    done |
-    sha256sum | awk '{print $1}'
+  "$python_bin" - "$1" <<'HASH'
+import hashlib
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+hash = hashlib.sha256()
+for path in sorted(root.glob('lib/**/*.dart')):
+    if path.name.endswith(('.g.dart', '.freezed.dart')):
+        continue
+    hash.update(path.relative_to(root).as_posix().encode() + b'\0')
+    hash.update(path.read_bytes())
+hash.update((root / 'build.yaml').read_bytes())
+print(hash.hexdigest())
+HASH
 }
 
 prepare_package() {
@@ -163,7 +220,15 @@ prepare_package() {
   local package_name=$2
   mkdir -p "$package_dir"
   cp "$fixture_dir/build.yaml" "$package_dir/build.yaml"
-  cp -R "$fixture_dir/lib" "$package_dir/lib"
+  if [[ "$workload" == application ]]; then
+    "$python_bin" "$script_dir/generate_application_fixture.py" \
+      "$model_count" "$package_dir" >"$results_dir/generate.log"
+  elif [[ "$model_count" == 10 ]]; then
+    cp -R "$fixture_dir/lib" "$package_dir/lib"
+  else
+    bash "$script_dir/generate_json_serializable_fixture.sh" \
+      "$model_count" "$package_dir" "$fixture_dir" >"$results_dir/generate.log"
+  fi
   # Keep the fixture's tested transitive versions in every isolated package.
   # Resolving from scratch can select incompatible builder dependencies.
   cp "$fixture_dir/pubspec.lock" "$package_dir/pubspec.lock"
@@ -174,7 +239,7 @@ prepare_package() {
     -e "s/^  json_annotation: .*/  json_annotation: $json_annotation_version/" \
     "$fixture_dir/pubspec.yaml" >"$package_dir/pubspec.yaml"
 
-  local pub_args=(--suppress-analytics pub get)
+  local pub_args=(--suppress-analytics pub get --enforce-lockfile)
   if [[ "$pub_get_offline" == 1 ]]; then
     pub_args+=(--offline)
   fi
@@ -193,14 +258,8 @@ build_command() {
         "$dart_bin"
         --suppress-analytics
         run
-        "$repo_root/bin/build_runner_accelerator.dart"
+        build_runner_accelerator
         build
-        --root
-        .
-        --dart
-        "$dart_bin"
-        --jobs
-        "$accelerator_jobs"
       )
     else
       BUILD_COMMAND=(
@@ -214,9 +273,10 @@ build_command() {
         .
         --dart
         "$dart_bin"
-        --jobs
-        "$accelerator_jobs"
       )
+    fi
+    if [[ "$accelerator_jobs" != default ]]; then
+      BUILD_COMMAND+=(--jobs "$accelerator_jobs")
     fi
     return 0
   fi
@@ -228,7 +288,6 @@ build_command() {
     run
     build_runner
     build
-    --verbose-durations
   )
   case "$mode" in
     default) ;;
@@ -289,12 +348,41 @@ prewarm_aot_worker() {
 }
 
 set_marker() {
-  local package_dir=$1
-  local marker=$2
-  local file
-  while IFS= read -r -d '' file; do
-    sed -i -E "s#// baseline-marker: .*#// baseline-marker: $marker#" "$file"
-  done < <(find "$package_dir/lib" -type f -name 'model_*.dart' -print0 | sort -z)
+  "$python_bin" - "$1" "$2" "$workload" <<'MARKER'
+import re
+import sys
+from pathlib import Path
+root, marker, workload = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+if workload == 'application':
+    shared = root / 'lib/shared.dart'
+    text = shared.read_text()
+    text = re.sub(r'enum Lifecycle \{[^}]+\}',
+                  'enum Lifecycle { unknown, draft, active, archived' +
+                  (', paused }' if marker == 'broad' else ' }'), text)
+    if text != shared.read_text():
+        shared.write_text(text)
+    paths = sorted((root / 'lib/features').glob('*/model.dart'))
+    if marker == 'one-file':
+        paths = paths[:1]
+    for path in paths:
+        before = path.read_text()
+        after = re.sub(r"@JsonKey\(name: 'title_[^']*'\)",
+                       "@JsonKey(name: 'title_" + ('one-file' if marker == 'one-file' else 'base') + "')", before)
+        if before != after:
+            path.write_text(after)
+    sys.exit(0)
+paths = [p for p in sorted((root / 'lib').glob('model_*.dart'))
+         if not p.name.endswith('.g.dart')]
+if marker == 'one-file':
+    paths = paths[:1]
+for path in paths:
+    before = path.read_text()
+    after = re.sub(r'// baseline-marker: .*', '// baseline-marker: ' + marker, before)
+    after = re.sub(r"@JsonKey\(name: 'value_[^']*'\)",
+                   "@JsonKey(name: 'value_" + marker + "')", after)
+    if before != after:
+        path.write_text(after)
+MARKER
 }
 
 measure_case() {
@@ -309,7 +397,7 @@ measure_case() {
   local worker_aot_state=stock-default
   if [[ "$lane" == accelerator ]]; then
     if [[ "$case_name" == clean ]]; then
-      worker_aot_state=background-cold
+      worker_aot_state=launcher-default-cold
     else
       worker_aot_state=prewarmed-explicit-path
     fi
@@ -320,7 +408,7 @@ measure_case() {
   local trace_args=()
   local parallelism=default
   if [[ "$lane" == accelerator ]]; then
-    parallelism="jobs:$accelerator_jobs"
+    [[ "$accelerator_jobs" == default ]] || parallelism="jobs:$accelerator_jobs"
   fi
   if [[ "$trace_mode" == 1 ]]; then
     trace_args+=(--trace "$trace_path")
@@ -344,7 +432,9 @@ measure_case() {
     --metadata build_runner_parallelism="$parallelism" \
     --metadata pubspec_lock_sha256="$package_lock_sha" \
     --metadata fixture_sha256="$fixture_sha" \
-    --metadata input_count=10 \
+    --metadata input_count="$input_count" \
+    --metadata workload="$workload" \
+    --metadata feature_count="$model_count" \
     --metadata worker_aot_state="$worker_aot_state" \
     "${trace_args[@]}" \
     -- "${case_command[@]}" || status=$?
@@ -356,66 +446,96 @@ measure_case() {
     return "$status"
   fi
 
-  local output_count
-  local output_sha
-  output_count=$(find "$package_dir/lib" -type f -name '*.g.dart' | wc -l | tr -d ' ')
-  [[ "$output_count" == 10 ]] || fail "expected 10 generated outputs for $mode/$case_name, got $output_count"
-  output_sha=$(hash_outputs "$package_dir")
-  "$python_bin" - "$metric_path" "$output_sha" "$output_count" <<'PY'
+  snapshot_outputs "$package_dir" "$output_path.outputs.json"
+  "$python_bin" - "$metric_path" "$output_path.outputs.json" \
+    "$results_dir/$mode.baseline.outputs.json" "$case_name" \
+    "$expected_output_count" "$model_count" "$workload" <<'PYTHON'
 import json
 import sys
-
-metric_path, output_sha, output_count = sys.argv[1:]
-with open(metric_path, encoding="utf-8") as stream:
-    record = json.load(stream)
-record["output_sha256"] = output_sha
-record["output_count"] = int(output_count)
-with open(metric_path, "w", encoding="utf-8") as stream:
-    json.dump(record, stream, ensure_ascii=False, sort_keys=True)
-    stream.write("\n")
-PY
+from pathlib import Path
+metric_path, inventory_path, baseline_path = map(Path, sys.argv[1:4])
+case, count, models, workload = sys.argv[4:]
+record = json.loads(metric_path.read_text())
+inventory = json.loads(inventory_path.read_text())
+if len(inventory['files']) != int(count):
+    raise SystemExit(f'expected {count} generated files, got {len(inventory["files"])}')
+record.update(output_sha256=inventory['sha256'], output_count=len(inventory['files']),
+              output_bytes=inventory['bytes'], output_manifest=inventory_path.name)
+if case != 'clean':
+    baseline = json.loads(baseline_path.read_text())
+    if inventory['files'].keys() != baseline['files'].keys():
+        raise SystemExit('incremental build changed the generated file set')
+    changed = sum(digest != baseline['files'][name] for name, digest in inventory['files'].items())
+    expected = 0 if case == 'no-op' or (workload == 'json' and int(models) == 10) else (1 if case == 'one-file' else int(models))
+    if changed != expected:
+        raise SystemExit(f'{case}: expected {expected} changed outputs, got {changed}')
+    record['changed_output_count'] = changed
+metric_path.write_text(json.dumps(record, sort_keys=True) + '\n')
+PYTHON
+  local output_sha
+  output_sha=$("$python_bin" -c 'import json,sys; print(json.load(open(sys.argv[1]))["output_sha256"])' "$metric_path")
   if [[ "$worker_aot_state" == prewarmed-explicit-path ]] &&
     rg -q -e 'using Dart script' -e 'using kernel/script' -e 'Generated:.*\.aot' \
       "$output_path.stdout" "$output_path.stderr"; then
     fail "measured build did not use the prewarmed AOT worker for $case_name/r$repeat_index"
   fi
+  if [[ -f "$results_dir/expected-output-sha256.$case_name" ]]; then
+    [[ "$output_sha" == "$(cat "$results_dir/expected-output-sha256.$case_name")" ]] || fail "generated output set/content mismatch: $case_name/r$repeat_index"
+  else
+    printf '%s\n' "$output_sha" >"$results_dir/expected-output-sha256.$case_name"
+  fi
   cat "$metric_path" >>"$results_jsonl"
 }
 
-fixture_sha=$(hash_fixture)
 for mode in "${modes[@]}"; do
   build_command "$mode"
   mode_root="$work_root/$mode"
   mkdir -p "$mode_root"
   worker_attach "$mode_root"
-  for ((repeat_index = 1; repeat_index <= repeat_count; repeat_index++)); do
-    for case_name in "${cases[@]}"; do
-      package_dir="$work_root/$mode/r$repeat_index/$case_name"
-      prepare_package "$package_dir" "current_json_${mode//-/_}_${repeat_index}_${case_name//-/_}"
+  cp -R "$repo_root/bin" "$mode_root/bin"
+  # Cold samples must remain independent: no workspace or shared cache reuse.
+  if [[ " ${cases[*]} " == *" clean "* ]]; then
+    for ((repeat_index = 1; repeat_index <= repeat_count; repeat_index++)); do
+      package_dir="$mode_root/r$repeat_index/clean"
+      export BUILD_RUNNER_ACCELERATOR_CACHE="$package_dir.shared-cache"
+      prepare_package "$package_dir" "benchmark_${workload}_${mode//-/_}"
       package_lock_sha=$(sha256sum "$package_dir/pubspec.lock" | awk '{print $1}')
-      case_build_command=("${BUILD_COMMAND[@]}")
+      fixture_sha=$(hash_fixture "$package_dir")
+      measure_case "$package_dir" "$mode" clean "$repeat_index" \
+        "$package_lock_sha" "$fixture_sha" "${BUILD_COMMAND[@]}"
+    done
+  fi
+  [[ "${cases[*]}" == clean ]] && continue
 
-      if [[ "$lane" == accelerator && "$case_name" != clean ]]; then
-        prewarmed_aot_path=$(prewarm_aot_worker "$package_dir" "${mode}.${case_name}.r${repeat_index}")
-        case_build_command=(
-          env
-          "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH=$prewarmed_aot_path"
-          "${BUILD_COMMAND[@]:1}"
-        )
+  # One compilation/prewarm and initial build for all warm samples. Reset input
+  # and rebuild the baseline outside timing before each edited sample, so edits
+  # do not accumulate and stock/native start with the same input and output set.
+  if [[ " ${cases[*]} " != *" clean "* ]]; then
+    package_dir="$mode_root/warm/app"
+    export BUILD_RUNNER_ACCELERATOR_CACHE="$package_dir.shared-cache"
+    prepare_package "$package_dir" "benchmark_${workload}_${mode//-/_}"
+    package_lock_sha=$(sha256sum "$package_dir/pubspec.lock" | awk '{print $1}')
+    fixture_sha=$(hash_fixture "$package_dir")
+  fi
+  case_build_command=("${BUILD_COMMAND[@]}")
+  if [[ "$lane" == accelerator ]]; then
+    prewarmed_aot_path=$(prewarm_aot_worker "$package_dir" "$mode.warm")
+    case_build_command=(env "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH=$prewarmed_aot_path" "${BUILD_COMMAND[@]:1}")
+  fi
+  run_unmeasured "$package_dir" warmup "${case_build_command[@]}"
+  snapshot_outputs "$package_dir" "$results_dir/$mode.baseline.outputs.json"
+  for case_name in "${cases[@]}"; do
+    [[ "$case_name" == clean ]] && continue
+    for ((repeat_index = 1; repeat_index <= repeat_count; repeat_index++)); do
+      if [[ "$case_name" != no-op || "$repeat_index" == 1 ]]; then
+        set_marker "$package_dir" base
+        run_unmeasured "$package_dir" "reset-$case_name-r$repeat_index" "${case_build_command[@]}"
+        snapshot_outputs "$package_dir" "$results_dir/$mode.reset.outputs.json"
+        cmp "$results_dir/$mode.baseline.outputs.json" "$results_dir/$mode.reset.outputs.json" || fail 'baseline output restoration mismatch'
       fi
-
-      case "$case_name" in
-        clean)
-          ;;
-        no-op|one-file|broad)
-          run_unmeasured "$package_dir" warmup "${case_build_command[@]}"
-          ;;
-      esac
-      case "$case_name" in
-        one-file) set_marker "$package_dir" one-file ;;
-        broad) set_marker "$package_dir" broad ;;
-      esac
-
+      if [[ "$case_name" != no-op ]]; then
+        set_marker "$package_dir" "$case_name"
+      fi
       measure_case "$package_dir" "$mode" "$case_name" "$repeat_index" \
         "$package_lock_sha" "$fixture_sha" "${case_build_command[@]}"
     done
