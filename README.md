@@ -1,9 +1,14 @@
 # build_runner_accelerator
 
-An experimental Rust frontend for [build_runner](https://pub.dev/packages/build_runner). Rust plans actions and manages incremental state; a Dart worker runs builders through build_runner APIs.
+An experimental Rust frontend for [build_runner](https://pub.dev/packages/build_runner).
+Rust plans actions and manages incremental state; a Dart worker runs builders
+through build_runner APIs.
 
-Before adopting the tool, read the [1.x compatibility contract](docs/launcher-and-release.md#1x-compatibility-contract)
-for supported SDKs, tested workloads, public interfaces, and limits.
+Requires Dart >=3.11.0 <4.0.0 and build_runner >=2.15.3 <2.17.0.
+Support applies to the validated configurations in the
+[compatibility inventory](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-probes.md), not every feature of a
+named builder. Read the [compatibility contract](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/launcher-and-release.md#1x-compatibility-contract)
+before adopting it.
 
 ## Performance
 
@@ -16,7 +21,7 @@ caches cleared were approximately **1.1× faster**, and no-op builds were
 
 Our 500-feature mixed-builder benchmark measured **1.2× faster clean builds**
 and **4.6× faster warm no-op builds**. These are Linux measurements;
-see [benchmarks](docs/benchmarks.md) for cache definitions, conditions and results.
+see [benchmarks](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/benchmarks.md) for cache definitions, conditions and results.
 
 ## Installation
 
@@ -50,103 +55,43 @@ dart run build_runner_accelerator prewarm --background
 
 Prewarm prepares caches but does not run build actions. It is optional.
 
-## Native execution
+## Before you build
 
-The launcher downloads and verifies a matching native binary. Builds, watches,
-and prewarm fail explicitly when the binary or requested feature is unavailable.
-Stock build_runner is never started by the accelerator. To use stock, run
-`dart run build_runner build` or `dart run build_runner watch` directly.
+The launcher downloads and verifies a matching native binary. Published targets
+are Linux x64/arm64, macOS arm64, and Windows x64/arm64; platform limits are in
+[binary selection](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/launcher-and-release.md#binary-selection-and-integrity).
+Unsupported requests or an unavailable binary fail explicitly. The accelerator
+never starts stock build_runner; run `dart run build_runner build` directly
+when needed. Stop native commands before running stock in the same workspace,
+and follow the [recovery guide](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-cleanup.md#safe-recovery)
+before returning to native.
 
-**Breaking in 0.14.0:** automatic stock fallback and `--mode` are removed.
-Remove `--mode auto` and `--mode rust` from accelerator commands. Replace
-`--mode dart` commands with direct stock invocations. macOS Intel needs a
-compatible preinstalled native binary or direct stock execution. See the
-[upgrade and recovery guide](docs/compatibility-cleanup.md).
+Builder failures leave outputs and the graph at their last successful state.
+Interrupted publication is recovered before the next build/watch; preserve any
+pending undo evidence. Publication is not a simultaneous atomic snapshot and
+has no power-loss durability guarantee. See [interrupted publication](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-cleanup.md#interrupted-publication).
 
-## Build selected outputs
-
-Use `--build-filter` to build matching outputs and the producers they need:
+## Common options
 
 ```bash
+# Build selected outputs and their dependencies.
 dart run build_runner_accelerator build --build-filter='lib/*.g.dart'
-```
 
-Repeat the option or provide comma-separated patterns to select more outputs.
-A selected action may write its other declared outputs too. A filter with no
-matches succeeds.
-
-| Filtered build state | Worker policy |
-| --- | --- |
-| No demanded changes | No artifact resolution, worker start, or initialization |
-| Dirty roots, default | One worker |
-| Explicit `--jobs N` | Up to N workers, capped by dirty-root count, when the shared byte store is enabled |
-| `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0` | One worker, even when `--jobs` is set |
-| Unfiltered build | Existing machine-based default |
-
-See [ADR 0033](docs/adr/0033-filtered-demand-scheduler.md) for worker ownership,
-failure, and scaling limits.
-
-Filters limit demand; they do not guarantee that unselected generated files
-remain on disk across later builds or watch restarts. Unsupported filter syntax,
-builder types, or prior-state transitions fail with an explicit error. See [ADR 0032](docs/adr/0032-native-build-filter-demand-and-output-state.md)
-for the selection, dependency, deletion, and failure rules.
-
-## Verify or retain generated outputs
-
-```bash
+# Verify generated outputs without changing them (exit 1 on differences).
 dart run build_runner_accelerator build --only-check
+
+# Retain manual output edits until their producer reruns.
 dart run build_runner_accelerator build --keep-modified-outputs
 ```
 
-Verification exits 1 on output differences without writing generated files or
-incremental state. Keep retains manual edits until the producer reruns; missing
-outputs regenerate. Both flags support normal-builder chains and build filters,
-and are mutually exclusive and build-only in native mode. See the
-[output policy reference](docs/launcher-and-release.md#output-policies) for
-compatibility limits and state recovery.
+Output policies are build-only and mutually exclusive. Filters and policies
+have compatibility limits; see the [CLI reference](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/launcher-and-release.md).
+For `build.yaml`, named configs and `--define`, see [configuration](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/configuration.md).
+Upgrading from an older preview? See the [migration guide](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-cleanup.md).
 
-## Compatibility and recovery
+## Documentation and contributing
 
-The native frontend supports build_runner `>=2.15.3 <2.17.0` and Analyzer
-`>=13.3.0 <15.0.0`. Main current-fixture comparisons use stock build_runner
-2.16.2; the [dependency review](docs/dependency-window-review.md) and
-[SDK lifecycle checks](docs/development.md#sdk-lifecycle-comparison) describe
-the tested resolutions. Validation covers selected combinations, not every
-version in the supported window. The supported manifest subset is checked for
-byte-identical outputs and incremental, failure, deletion, rename,
-and watch behavior. Requests outside that subset fail explicitly.
-An isolated [resolver backport](docs/dependency-window-review.md) keeps Analyzer
-13.3 through 14.x usable without separate release lines.
-
-Native build and watch commands acquire an exclusive workspace lock; a competing
-native invocation fails. Direct stock runs bypass that lock. Do not run stock
-concurrently with a native command in the same workspace.
-
-A builder failure leaves native outputs and graph at their last successful
-state. An undo journal detects interrupted publication and restores the previous
-outputs and graph before the next native build/watch reuses them. Unexpected
-external edits or damaged recovery evidence stop recovery with instructions.
-Publication is not a simultaneous atomic snapshot and has no power-loss
-durability guarantee. See the [recovery guide](docs/compatibility-cleanup.md#interrupted-publication).
-
-Successful native builds retain build-start evidence for existing sources,
-keeping edits or deletions during actions visible to the next build or watch
-cycle. Filtered builds also retain first worker observations of eligible
-external sources absent at build start; see
-[ADR 0032](docs/adr/0032-native-build-filter-demand-and-output-state.md).
-
-## Project guides
-
-| If you need to… | See |
-| --- | --- |
-| Check supported CLI options, worker modes, and environment controls | [Launcher reference](docs/launcher-and-release.md) |
-| Understand `build.yaml`, `--define`, release, and named-config behavior | [Configuration guide](docs/configuration.md) |
-| Review native build-filter guarantees and limits | [ADR 0032](docs/adr/0032-native-build-filter-demand-and-output-state.md) |
-| Understand Rust/Dart responsibilities and IPC | [Protocol v1](protocol/v1.md) and [ADR index](docs/adr/README.md) |
-| Contribute or run correctness checks | [Development guide](docs/development.md) |
-| Verify release archives and review publication checks | [Distribution validation](docs/distribution-validation.md) |
-| Review measured performance | [Benchmarks](docs/benchmarks.md) |
-| Check release status and remaining work | [Roadmap](docs/roadmap.md) |
-
-For updates that affect existing workspaces, use the
-[compatibility cleanup guide](docs/compatibility-cleanup.md).
+The [documentation index](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/README.md) separates usage, contribution guides,
+and historical evidence. Start with [development](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/development.md) to
+contribute, [benchmarks](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/benchmarks.md) for measured performance, or the
+[roadmap](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/roadmap.md) for remaining release gates.

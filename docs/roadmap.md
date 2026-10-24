@@ -1,204 +1,70 @@
 # Roadmap
 
-This roadmap tracks the release baseline and the small number of remaining
-decisions that affect users. Commit-level experiments are intentionally not
-listed here; the durable architecture is summarized in
-[`docs/adr/README.md`](adr/README.md).
+Open work for the pre-release line. Implemented behavior belongs in the
+[compatibility contract](launcher-and-release.md), [fixture inventory](compatibility-probes.md)
+and [ADRs](adr/README.md). This page does not establish that a release has run.
 
-## Release baseline
-
-The following are implemented and covered by the current fixture suite:
-
-- Rust frontend and resident Dart worker with a versioned IPC protocol.
-- Workspace snapshots, dependency-aware action graphs, dirty propagation,
-  overlay visibility, and recoverable all-success publication.
-- Native watch with worker reuse.
-- Manifest-first builder loading from official `PackageGraph` and
-  `BuildConfig` resolution.
-- Generic target/package ordering, multiple extension mappings, source/cache
-  outputs, the `build_extensions: {"": [...]}` all-asset mapping, and the
-  supported post-process subset.
-- Runtime post-process input mappings for applications with resolved options,
-  including overrides of legacy declared extensions, input selection changes,
-  stale-output cleanup, and no-op behavior.
-- Runtime expected-output mapping probes for selected applications that
-  need runtime data (including multi-factory and option-dependent builders),
-  phase-aware generated-input visibility, and resident-worker Builder/Resource
-  lifetime coverage.
-- An isolated supported subset for the official
-  `preparing_builder` → `drift_dev:analyzer` → `drift_dev:modular` chain at
-  the pinned Drift versions, including `discover`/`analyzer` factories,
-  `.dart`/`.drift` runtime mappings, analyzer cache artifact visibility,
-  modular `.drift.dart` source outputs, Resolver/BuildStep APIs, stale-output
-  cleanup, builder-failure output protection, and native watch.
-- The official `drift_dev:not_shared` source builder and complete
-  `driftCleanup` input set at the same pinned Drift versions, including stock's
-  logical-delete/physical-cache distinction, intermediate visibility,
-  byte-identical lifecycle output, builder-failure recovery, and native watch.
-- Stock virtual primary IDs with normal suffix/scoped action semantics and
-  unreadable asset visibility. An isolated Conduit registry configuration uses
-  a fixture-only Analyzer override for stock/native byte, lifecycle, ordered
-  enumeration, builder-failure recovery, and paired watch comparisons.
-- Demand-driven execution for compatible normal `is_optional` builders when a
-  later action reads or uses their declared output.
-- Stock-vs-native output comparisons for clean, no-op, incremental, failure,
-  deletion, rename, and watch cases.
-- A single project-facing Dart launcher with automatic signed native artifact
-  download and explicit native-only execution.
-- Five release targets with manifest, signature, checksum, and cache
-  validation.
+The mixed-application benchmark with default workers and three repeats is
+complete; see [results and replay](benchmarks.md).
 
 ## First-release gates
 
-- [x] Retain the mixed application launcher-inclusive fixture benchmark
-  with default workers and three repeats;
-  [results and replay](benchmarks.md).
-- [x] Add the repository license and make `dart pub publish --dry-run` pass.
-- [ ] Configure the release signing secret and publish a tagged test release.
-- [x] Implement locked release builds/tests, same-commit correctness/source/tag
-  gates, and a non-publishing workflow dry-run. Replay via the
-  [distribution validation guide](distribution-validation.md#workflow-dry-run-no-tag-or-production-secret-required).
-- [x] Add signed-archive Dart-only consumer E2E to the existing five target lanes:
-  prewarm, initial build, no-op, incremental and watch with stock byte comparisons.
-  [Local replay and evidence](distribution-validation.md#local-replay) distinguish
-  implemented checks from platform runs that still need execution.
+The workflow implements same-commit correctness gates, locked builds/tests,
+five-target signed-artifact E2E, and GitHub Artifact Attestation verification
+before Release publication and again before pub.dev. SDK minimum/current
+Resolver lifecycle checks are also implemented. Remaining operational gates:
+
+- [ ] Configure the production release signing secret and publish a tagged test release.
 - [ ] Retain successful five-target packaged-distribution evidence for the
-  candidate commit from CI, a release run, or a workflow dry-run. A separate
-  manual dry-run is not required when CI supplies this evidence; local Linux
-  evidence alone is insufficient.
-- [x] Add GitHub Artifact Attestation for the five archives and release manifest,
-  with exact commit/workflow/ref verification before Release and again from
-  downloaded Release assets before pub.dev. See [verification and rollout](distribution-validation.md#artifact-attestation).
+  candidate commit from CI, a release run or a workflow dry-run.
 - [ ] Retain successful Actions OIDC/attestation evidence and published-asset
-  verification from the next candidate release; local tests cannot establish this.
-- [x] Exercise packaged frontends through launcher prewarm/cache in the
-  distribution lanes; replay with `scripts/distribution_e2e.py` as documented
-  [here](distribution-validation.md#local-replay). This does not claim that a
-  public tagged release has been exercised.
-- [x] Compare real Resolver-based generation, incremental changes, deletion,
-  rename, builder failure/recovery and paired watch at Dart 3.11.0/minimum and
-  3.13.3/current dependency resolutions. Reuse the existing two SDK jobs;
-  [local replay and scope](development.md#sdk-lifecycle-comparison).
-- [x] Fix the [public 1.x compatibility contract](launcher-and-release.md#1x-compatibility-contract),
-  with the existing configuration, distribution and recovery limits.
+  verification from the candidate release.
 
-SDK/dependency lifecycle checks and five-target packaged-distribution E2E are
-separate release gates. A full platform × SDK × dependency cross-product is not
-required for 1.0; add focused combinations when a platform-specific SDK issue
-needs regression coverage. Neither gate establishes exhaustive combination coverage.
+Use [distribution validation](distribution-validation.md) for workflow replay,
+signing requirements and evidence. Local Linux success cannot establish the
+other platforms or GitHub OIDC/publication behavior. SDK/dependency checks and
+packaged-distribution E2E are separate gates; a complete platform × SDK ×
+dependency matrix is not required for 1.0.
 
-## Post-1.0 distribution work
+## Distribution after 1.0
 
-- [ ] Add macOS Developer ID code signing and notarization.
+- [ ] Add macOS Developer ID signing and notarization.
 - [ ] Add Windows Authenticode signing.
 
-Neither is configured in the current release workflow. The current distribution
-conditions and unverified Gatekeeper/SmartScreen behavior are recorded in the
-[platform facts](distribution-validation.md#platform-facts-and-unverified-minimums).
-Attestation verifies build provenance and is not OS code signing or notarization.
+Neither is configured in the current workflow. Attestation verifies provenance,
+not OS signing or Gatekeeper/SmartScreen approval. See
+[platform evidence and limits](distribution-validation.md#platform-facts-and-unverified-minimums).
 
-## Post-release research
+## Compatibility
 
-The next compatibility milestone is integration coverage beyond the validated
-optional/post-process and Drift builder chains:
+- [ ] Resolve the published Conduit dependency conflict: generators requiring
+  Analyzer 12 cannot use the native Analyzer 13.3+ window. Keep the validated
+  registry fixture's Analyzer override distinct from ordinary package support.
+- [ ] Validate additional web compiler configurations: DDC hot reload,
+  library bundles/frontend server, nondefault flags, dart2wasm,
+  release/deferred outputs, the dev extractor's exposed `.deps`, cold
+  script-worker watch and multi-package workspaces. Existing dart2js/DDC
+  fixtures cover only their documented configurations; retained compiler
+  archives are not raw-byte identical.
+- [ ] Expand the validated `build.yaml`, post-process and workspace subsets,
+  preserving explicit rejection outside them.
+- [ ] Validate additional mixed builders and multi-package real projects beyond
+  the pinned single-root FVM probe.
+- [ ] Compare conditional import/export dependency selection with stock before
+  changing invalidation rules.
 
-- [x] Resolve option-dependent post-process input extensions from the configured
-  runtime factory, with stock comparisons for mapping changes and cleanup.
-- [x] Validate optional producer chains with post-process cleanup, including
-  source/cache outputs and incremental, failure, and watch lifecycle behavior.
-  See [ADR 0038](adr/0038-optional-post-process-demand.md) for the execution rules
-  and the [fixture guide](../fixtures/optional_cleanup_app/README.md) for coverage.
-- [x] Extend the pinned Drift fixture to `not_shared` and the full
-  `driftCleanup` runtime input set. Compare stock/native lifecycle bytes,
-  intermediate visibility, logical cleanup, builder-failure output protection, and watch.
-  See the [fixture guide](../fixtures/drift_analyzer_app/README.md).
-- [x] Validate Conduit's real `registry_builder` in an isolated fixture using
-  an explicit Analyzer 14.5.0 override with stock/native build_runner 2.16.2.
-  See the [override fixture](../fixtures/registry_builder_override_app/README.md)
-  for configuration, byte comparisons, virtual-input scope and visibility,
-  ordered enumeration, source/cache lifecycle, builder-failure recovery, and paired watch.
-- [ ] Resolve Conduit's published dependency constraints with a dependency
-  solution compatible with the native baseline. Published
-  `conduit_build_runner` 6.0.0/7.0.0 require Analyzer 12, while the
-  native compatibility window requires Analyzer 13.3 or newer. The
-  [stock-only fixture](../fixtures/registry_builder_app/README.md) records the
-  7.0.0 contract on stock 2.14.1 and checks both dependency conflicts in CI.
-  Keep the fixture-only override distinct from an ordinary supported package
-  solution. Other Conduit generators and full project workspaces remain
-  unvalidated; do not widen production constraints based on this probe.
-- [x] Validate published `build_web_compilers` 4.8.12 with build_runner 2.16.2,
-  build 4.0.11 and Analyzer 14.6.0, without overrides, on Dart 3.13.3: a single
-  package using dart2js `-O1`, dev configuration, `generate_for: [web/**.dart]`,
-  `filter_outputs: true`, and AOT paired watch. See the
-  [fixture guide](../fixtures/build_web_compilers_app/README.md) for raw public
-  JS/map equality, generated module dependencies, cleanup and builder-failure recovery.
-- [x] Validate the minimal published DDC chain at the same pinned versions:
-  single root package, `compiler: dartdevc`, dev, `generate_for: [web/**.dart]`,
-  AMD defaults and hot reload disabled. See the
-  [DDC fixture](../fixtures/build_web_compilers_ddc_app/README.md) for the full
-  public kernel/module/bootstrap/SDK artifact set, raw bytes, optional demand,
-  ordered inputs, compiler-failure output protection and AOT paired watch.
-- [ ] Validate other web compiler modes/configurations and versions: DDC hot
-  reload, library bundles/frontend server and nondefault compiler flags,
-  dart2wasm, release/deferred outputs, the default dev extractor's exposed
-  `.deps`, cold script-worker watch, and multi-package workspaces. Retained
-  compiler archives contain time and scratch/SDK paths and are not raw-byte
-  identical; this probe does not claim otherwise.
+Exact validated versions, configurations and blockers are maintained in the
+[compatibility inventory](compatibility-probes.md) and linked fixture guides.
 
-- [ ] Expand the manifest subset toward complete `build.yaml` semantics while
-  preserving explicit rejection outside the validated subset. Full post-process behavior and
-  workspace semantics remain separate follow-ups.
-- [ ] Compare conditional import/export dependency selection with stock
-  `build_runner` before attempting a more precise invalidation rule.
-- [ ] Evaluate chunked build-result frames for outputs beyond the v1 frame
-  limit.
-- [ ] Re-evaluate indexed/lazy graph persistence and automatic worker-count
-  selection using reproducible benchmarks.
-- [ ] Validate resolver-aware batching on larger mixed-builder workspaces before
-  changing the default worker count.
-- [x] Probe the root Dart CLI package of FVM at a fixed commit with published
-  dart_mappable_builder 4.10.0 and build_version 2.2.1: introduced dependency
-  solution, stock/native initial/no-op/model edit and paired watch, complete
-  public file sets and raw bytes. See the [FVM replay](probes/fvm/README.md)
-  for the upstream-to-introduced dependency changes and the shared literal
-  filename suffix fix. This does not validate FVM's old lock on native,
-  other commits/solutions/options, nested projects or Flutter runtime tests.
-- [ ] Validate additional mixed builders and multi-package workspaces from
-  real projects beyond the pinned single-root FVM probe.
-- [ ] Consider builder-specific fast paths only when they beat the generic
-  manifest path under the same fixture and SDK conditions.
+## Performance and protocol research
 
-## Verification policy
+- [ ] Evaluate chunked results for outputs beyond the protocol v1 frame limit.
+- [ ] Re-evaluate indexed/lazy graph persistence and automatic worker counts
+  using reproducible benchmarks.
+- [ ] Validate resolver-aware batching in larger mixed-builder workspaces.
+- [ ] Consider builder-specific fast paths only with a measured advantage over
+  the generic manifest path under identical conditions.
 
-Use one Dart SDK, Rust toolchain, and pub cache for both stock and native
-comparisons. The repository scripts accept `DART_BIN`, `CARGO_BIN`,
-`PUB_CACHE`, `RUSTUP_HOME`, and `CARGO_HOME`.
-
-The minimum checks are:
-
-```bash
-cargo test --locked --manifest-path rust/Cargo.toml
-cargo build --locked --manifest-path rust/Cargo.toml
-bash scripts/verify.sh
-VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
-git diff --check
-```
-
-Before a release candidate, run the full correctness suite and the relevant
-watch and benchmark scripts:
-
-```bash
-VERIFY_LEVEL=full bash scripts/verify.sh
-bash scripts/watch_smoke.sh
-bash scripts/benchmark_matrix.sh
-```
-
-Performance changes require clean, no-op, one-file, and broad incremental
-measurements together with SDK versions, worker count, command lines, and
-byte-identical output results. Runtime metrics are opt-in through
-`BUILD_RUNNER_ACCELERATOR_METRICS=1`.
-
-The Drift analyzer compatibility work has not been benchmarked. In particular,
-small analyzer targets may be dominated by launcher, resident-worker startup,
-and IPC fixed costs, so no performance improvement is implied by the
-compatibility probe.
+Use the [development verification guide](development.md) and
+[benchmark method](benchmarks.md#measurement-notes). Compatibility probes alone make no
+performance claim; small targets can be dominated by startup and IPC costs.

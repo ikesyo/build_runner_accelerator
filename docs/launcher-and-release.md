@@ -10,7 +10,7 @@ This is the compatibility baseline for 1.0 and subsequent 1.x releases.
 The package is currently 0.x; this document does not announce a 1.0 release.
 
 - The supported SDK and core dependency constraints are listed in
-  [development](development.md#supported-toolchain) and declared in `pubspec.yaml`.
+  [supported dependencies](#supported-dependencies) and declared in `pubspec.yaml`.
   Their intersection must resolve in Pub. CI checks two points, Dart 3.11.0
   with minimum dependencies and Dart 3.13.3 with current dependencies; it does
   not test every SDK or every combination allowed by the constraints.
@@ -55,16 +55,31 @@ real Resolver-based generation and incremental/watch behavior in addition to
 package analysis/tests. Distribution and interrupted-publication tests remain
 separate gates, so SDK coverage does not imply all platform/SDK combinations.
 
-## Install and invoke
+## Supported dependencies
 
-```bash
-dart pub add dev:build_runner_accelerator
-dart run build_runner_accelerator build
-dart run build_runner_accelerator watch
-```
+The release line supports Dart >=3.11.0 <4.0.0. CI checks a minimum solution
+with Dart 3.11.0 and a current solution with Dart 3.13.3. The core package
+window is:
 
-`dart run` starts the launcher. Worker AOT settings control the generated Dart
-worker, not the launcher.
+| Package | Supported version |
+| --- | --- |
+| analyzer | >=13.3.0 <15.0.0 |
+| build | >=4.0.9 <5.0.0 |
+| build_config | >=1.3.2 <1.4.0 |
+| build_runner | >=2.15.3 <2.17.0 |
+| package_config | >=2.2.0 <4.0.0 |
+
+The runner upper bound protects private worker interfaces. Runners 2.15.3, 2.16.0 and 2.16.1
+allow Analyzer 13.3; the accelerator backports #5197 in an isolated compilation
+resolution so those runners also work with Analyzer 14.5 and newer. Runner
+2.16.2 retains its upstream Analyzer 14.3 floor. See the
+[dependency window review](dependency-window-review.md) and
+[ADR 0042](adr/0042-runner-resolver-compatibility.md). One package and the existing
+release pipeline cover these resolutions. Runner 2.15.3's default output retention
+is selected internally, with the existing retained-output API safety limits.
+
+`dart run` starts the launcher; see the [installation guide](../README.md#installation).
+Worker AOT settings control the generated Dart worker, not the launcher.
 
 ## Native-only CLI
 
@@ -107,6 +122,21 @@ These requests are rejected. Prewarm has no stock equivalent:
 it accepts supported configuration settings but rejects stock-only and
 build-only arguments. Package-path output conflicts in dependencies also require
 a direct stock invocation, including ordinary builds and watches; native fails before actions.
+
+## Build filters
+
+Repeat `--build-filter` or supply comma-separated patterns to select outputs and
+their required producers. A selected action may write its other declared
+outputs; a filter with no matches succeeds. Filters limit demand but do not
+preserve every unselected generated file across later builds/watch restarts.
+Unsupported syntax, builder shapes and prior-state transitions fail explicitly.
+
+An unchanged filtered build starts no worker. Dirty filtered builds use one
+worker by default; `--jobs N` allows up to N workers, capped by dirty roots.
+Disabling the shared byte store forces one worker. See
+[ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md) for graph,
+deletion and source-observation rules and
+[ADR 0033](adr/0033-filtered-demand-scheduler.md) for scheduling.
 
 ## Output policies
 
@@ -157,7 +187,7 @@ ignored. Public compatibility intent applies only to the Public row.
 | Class | Suffixes | Use |
 | --- | --- | --- |
 | Public | `BIN`, `CACHE`, `RELEASE_BASE_URL`, `WORKER_AOT` | Select a preinstalled binary, cache root, HTTPS release mirror, or worker compilation policy. |
-| Diagnostics | `DEBUG`, `METRICS`, `ANALYSIS_TRACE`, `WALL_TRACE`, `PLAN_ONLY` | Error details, worker metrics, analysis/timing traces, and plan inspection. Traces need `METRICS`; `PLAN_ONLY` exits before actions. Output schemas are not stable. |
+| Diagnostics | `DEBUG`, `METRICS`, `ANALYSIS_TRACE`, `WALL_TRACE`, `PLAN_ONLY` | Error details, worker metrics, analysis/timing traces, and plan inspection. `ANALYSIS_TRACE` needs `METRICS`; `WALL_TRACE` is independent. `PLAN_ONLY` exits before actions. Output schemas are not stable. |
 | Cache recovery | `BYTE_STORE`, `DEP_CACHE`, `DEP_PREFETCH`, `MANIFEST_SNAPSHOT`, `EARLY_CATALOG`, `PART_FILTER`, `SDK_SUMMARY_PREWARM`, `ANALYSIS_PREWARM` | Set the named optimization to `0` for diagnosis. `BYTE_STORE` and `DEP_CACHE` disable their shared caches; `BYTE_STORE` also accepts `false`/`off`. |
 | Experimental | `ANALYSIS_SINGLE_FLIGHT`, `COMPILE_PREWARM`, `MANIFEST_PREWARM` | Opt-in experiments; disabled by default and subject to change. |
 | Tuning | `ANALYSIS_PREWARM_JOBS`, `ANALYSIS_PREWARM_DIRS`, `RESOLVER_CAP` | Prewarm and resolver limits; no performance guarantee. |
@@ -211,12 +241,9 @@ mirror.
 | windows-arm64 | aarch64-pc-windows-msvc | zip |
 
 macOS Intel has no published native artifact; use a compatible preinstalled
-binary or run stock directly. The signed release workflow requires
-`BUILD_RUNNER_ACCELERATOR_ED25519_PRIVATE_KEY` in repository Actions secrets;
-the corresponding public key is pinned in the package. Publication requires
-same-commit correctness CI and packaged distribution E2E. Manual workflow runs
-default to a non-publishing dry-run. See [distribution validation](distribution-validation.md)
-for the source/tag checks, signed evidence, replay commands and measured timing.
+binary or run stock directly. Maintainers should use
+[distribution validation](distribution-validation.md) for signing setup,
+publication gates and workflow replay.
 
 Linux builds currently use Ubuntu 24.04 (glibc 2.39). They are GNU/glibc binaries;
 older glibc distributions and musl/Alpine are unverified. macOS/Windows minimum

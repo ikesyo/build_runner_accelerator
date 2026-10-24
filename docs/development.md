@@ -6,26 +6,10 @@ CARGO_HOME; each also falls back to the repository toolchain and then PATH.
 
 ## Supported toolchain
 
-The release line supports Dart >=3.11.0 <4.0.0. CI checks a minimum solution
-with Dart 3.11.0 and a current solution with Dart 3.13.3. The core package
-window is:
-
-| Package | Supported version |
-| --- | --- |
-| analyzer | >=13.3.0 <15.0.0 |
-| build | >=4.0.9 <5.0.0 |
-| build_config | >=1.3.2 <1.4.0 |
-| build_runner | >=2.15.3 <2.17.0 |
-| package_config | >=2.2.0 <4.0.0 |
-
-The runner upper bound protects private worker interfaces. Runners 2.15.3, 2.16.0 and 2.16.1
-allow Analyzer 13.3; the accelerator backports #5197 in an isolated compilation
-resolution so those runners also work with Analyzer 14.5 and newer. Runner
-2.16.2 retains its upstream Analyzer 14.3 floor. See the
-[dependency window review](dependency-window-review.md) and
-[ADR 0042](adr/0042-runner-resolver-compatibility.md). One package and the existing
-release pipeline cover these resolutions. Runner 2.15.3's default output retention
-is selected internally, with the existing retained-output API safety limits.
+Supported SDK/dependency ranges and the resolver backport are documented in
+[the compatibility contract](launcher-and-release.md#supported-dependencies).
+CI checks Dart 3.11.0/minimum and Dart 3.13.3/current resolutions; use the same
+SDK and dependency solution for each stock/native comparison.
 
 The worker imports private build_runner bootstrap, build-state and resolver
 interfaces, and analyzer resolver, scanner and byte-store interfaces. Dependency
@@ -100,38 +84,11 @@ Run the closest comparison script when changing a boundary:
 | Manifest or builder output | The relevant fixture script; see the full verification groups. |
 | Literal filename suffix mapping and real Dart CLI adoption | `scripts/correctness_multi_mapping_builder.sh`; optional [pinned FVM replay](probes/fvm/README.md) |
 
-The shared CLI contract cases live in `test/data/cli_contract.json`. Dart's
-`cli_contract_test.dart` and Rust's `cli::tests::shared_cli_contract` consume the
-same acceptance and settings expectations independently. The CLI comparison
-script also uses the table for real-process rejection/help/version checks,
-including exit status, unchanged workspace files, and no child Dart execution.
-Keep diagnostic wording checks separate from these behavioral expectations.
-The stock configuration comparisons remain the reference for build_runner
-semantics; sharing test data does not couple either entrypoint's implementation.
-
-Nested-package checks accept comma-separated `NESTED_PACKAGE_CASE_GROUP` values
-(for example, `default-on,boundary`); unset runs every case. CI distributes these
-cases across the existing build-filter parallel lanes using measured durations.
-
-The CI workflow runs the same checks in functional groups:
-
-| Group | Coverage |
-| --- | --- |
-| Core | Unit tests, format, Dart analysis, Rust checks, baseline comparisons |
-| Selection | CLI and build-filter parsing, demand, unsupported requests |
-| Graph and lifecycle | Incremental state, deletion, failures, watch and configuration transitions |
-| Builder compatibility | Stock comparisons for supported builders and mappings |
-| Release | SDK bounds, package validation, signed artifact and platform checks |
-
-Watch logs and builder histories are stored outside watched workspaces, so test
-bookkeeping cannot trigger or mask a rebuild.
-
-`OUTPUT_POLICY_CASE_GROUP` selects `routing`, `modes`, `source`, `cache`,
-`failure`, or `api` in the output-policy comparison script; the default runs all groups.
-
-CI shares runner setup through parallel steps within a small number of jobs.
-Local full verification keeps each selected suite's state transitions ordered
-in isolated workspaces.
+The shared CLI cases in `test/data/cli_contract.json` are consumed independently
+by Dart and Rust tests and the real-process CLI comparison. Keep wording tests
+separate from behavioral expectations. CI configuration is maintained in
+[ci.yml](../.github/workflows/ci.yml); prefer parallel steps within existing jobs.
+Watch logs and builder histories must stay outside watched workspaces.
 
 ## SDK lifecycle comparison
 
@@ -146,31 +103,18 @@ DART_BIN=/path/to/dart-3.11.0/bin/dart bash scripts/correctness_sdk.sh --resolut
 DART_BIN=/path/to/dart-3.13.3/bin/dart bash scripts/correctness_sdk.sh --resolution upgrade
 ```
 
-The minimal `fixtures/sdk_compat_app` uses an ordinary source builder and
-`resolver.libraryFor`; it stages output before a deliberate builder failure.
-It resolves dependencies once per SDK, then copies the resulting lockfile to
-native and enforces it with Pub. Initial generation, no-op, input change,
-deletion, rename, builder failure/recovery and two paired watch regenerations compare
-complete generated file inventories and bytes. Failure asserts that native
-outputs and the persisted graph remain unchanged. Stock is a separate process
-in a separate workspace. Current-SDK fixtures keep their existing constraints.
-The second watch edit exercises resolver invalidation in the resident worker.
+`fixtures/sdk_compat_app` exercises a Resolver-based builder with one non-AOT
+worker. It compares file inventories and bytes for initial/no-op builds,
+changes, deletion, rename, failure/recovery and two paired watch edits. Native
+failure must preserve outputs and graph. Stock uses a separate workspace with
+the same resolved lockfile. Both SDK replays passed locally on Linux x64 on
+2026-10-23; CI repeats them on dependency updates.
 
-The check prints the SDK, worker mode and resolved build_runner/analyzer/build
-versions. Per-command logs, both ordinary `pubspec.lock` files and watch logs
-are retained in the printed results directory (`--results PATH` selects a new
-directory). Commands and watch waits have timeouts; CI uploads results on failure.
-No dependency-version inventory is maintained separately from Pub's lockfiles.
-
-On 2026-10-23, Linux x64 replays of both commands above passed every listed
-case, including watch and native failure protection. The resolved versions are
-available in the command logs/lockfiles; future upgrades are checked again in CI.
-
-The SDK probe uses one non-AOT worker (`--force-jit`, SDK-specific kernel/script).
-It does not test all compilation modes on every SDK. Packaged AOT/prewarm and
-platform installation remain covered by [distribution E2E](distribution-validation.md);
-forced kills and publication I/O faults remain in
-`correctness_commit_recovery.sh`. Neither suite is duplicated in the SDK probe.
+Logs and lockfiles are retained in the printed results directory (`--results
+PATH` selects one). This check does not cover all worker modes or platform/SDK
+combinations. Packaged AOT/prewarm belongs to
+[distribution E2E](distribution-validation.md); publication faults belong to
+`correctness_commit_recovery.sh`.
 
 ## Benchmarks
 
@@ -180,28 +124,19 @@ output bytes. Keep metrics and traces out of timed runs.
 
 | Goal | Entry point |
 | --- | --- |
-| Current launcher-inclusive summary | [benchmarks.md](benchmarks.md) |
+| Current launcher-inclusive comparison and user-reported examples | [benchmarks.md](benchmarks.md) |
 | Build-filter and supported-builder comparisons | `scripts/benchmark_matrix.sh`; `BUILDERS=optional bash scripts/benchmark_matrix.sh` |
 | Freezed/Riverpod fixture benchmarks | `scripts/benchmark_freezed.sh`, `scripts/benchmark_riverpod.sh` |
 | Cold start or cache investigation | Historical implementation measurements in `docs/benchmarks/`; design decisions in [ADRs](adr/README.md) |
 | Per-worker diagnostic trace | `BUILD_RUNNER_ACCELERATOR_METRICS=1` and, where needed, `BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=1` |
 
-With `BUILD_RUNNER_ACCELERATOR_METRICS=1`, watch reports disk graph reloads
-separately from `source=resident` ownership reuse. Ordinary build graph metrics
-report zero load time for resident state; `graph_reuse` in wall tracing marks
-that path. Watch cycle metrics include workspace/configuration preparation and
-worker setup, report success or failure, and exclude event waiting and debounce.
-A failed attempt discards tentative state and returns to the validated disk
-loader; source post-process tracking borrows successful committed state. See
-[ADR 0037](adr/0037-resident-watch-graph.md) for ownership and invalidation.
-`BUILD_RUNNER_ACCELERATOR_WALL_TRACE=1` adds stage intervals; disable both metrics
-and tracing for elapsed-time comparisons.
-
-Keep raw measurements local. Base the public benchmark on reproducible,
-launcher-inclusive runs. User-reported application examples may supplement
-those results in a separate section, with their conditions and evidence limits.
-Document implementation research in a focused benchmark note rather than this
-guide.
+Metrics distinguish disk graph loading from resident watch reuse; see
+[ADR 0037](adr/0037-resident-watch-graph.md). `WALL_TRACE` is independent of
+worker metrics. Disable metrics and tracing for elapsed-time comparisons.
+Keep diagnostic runs separate from timed runs. The public benchmark guide
+consolidates reproducible launcher-inclusive measurements and a separate
+section of user-reported examples with their conditions and evidence limits.
+The current mixed-application results were measured in PR #138.
 
 ## Release checks
 
