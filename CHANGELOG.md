@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.16.1](https://github.com/ikesyo/build_runner_accelerator/compare/v0.16.0...v0.16.1) - 2026-10-24
+
+- ci: attest release artifacts and verify provenance before pub.dev by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/136
+
 ## [v0.16.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.15.0...v0.16.0) - 2026-10-23
 
 - fix: recover interrupted output commits with an undo journal by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/132
