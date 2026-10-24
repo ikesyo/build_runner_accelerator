@@ -1,6 +1,6 @@
 # Roadmap
 
-Open work for the pre-release line. Implemented behavior belongs in the
+Open work toward the 1.0 release. Implemented behavior belongs in the
 [compatibility contract](launcher-and-release.md), [fixture inventory](compatibility-probes.md)
 and [ADRs](adr/README.md). This page does not establish that a release has run.
 

@@ -1,6 +1,6 @@
 # build_runner_accelerator
 
-An experimental Rust frontend for [build_runner](https://pub.dev/packages/build_runner).
+A Rust-accelerated frontend for [build_runner](https://pub.dev/packages/build_runner).
 Rust plans actions and manages incremental state; a Dart worker runs builders
 through build_runner APIs.
 
@@ -87,7 +87,7 @@ dart run build_runner_accelerator build --keep-modified-outputs
 Output policies are build-only and mutually exclusive. Filters and policies
 have compatibility limits; see the [CLI reference](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/launcher-and-release.md).
 For `build.yaml`, named configs and `--define`, see [configuration](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/configuration.md).
-Upgrading from an older preview? See the [migration guide](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-cleanup.md).
+Upgrading from an older version? See the [migration guide](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-cleanup.md).
 
 ## Documentation and contributing
 
