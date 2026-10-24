@@ -5,6 +5,19 @@ An experimental Rust frontend for [build_runner](https://pub.dev/packages/build_
 Before adopting the tool, read the [1.x compatibility contract](docs/launcher-and-release.md#1x-compatibility-contract)
 for supported SDKs, tested workloads, public interfaces, and limits.
 
+## Performance
+
+In user-reported measurements of a real-world Flutter application,
+**cache-warm clean builds were 2.6× faster** than stock build_runner
+(repeat count and variability not reported).
+Across two environments, clean builds including AOT compilation with analyzer
+caches cleared were approximately **1.1× faster**, and no-op builds were
+**2.2–4.1× faster**.
+
+Our 500-feature mixed-builder benchmark measured **1.2× faster clean builds**
+and **4.6× faster warm no-op builds**. These are Linux measurements;
+see [benchmarks](docs/benchmarks.md) for cache definitions, conditions and results.
+
 ## Installation
 
 The current package version is `0.16.0`.
@@ -94,12 +107,16 @@ compatibility limits and state recovery.
 
 ## Compatibility and recovery
 
-The native frontend supports build_runner `>=2.15.3 <2.17.0`; correctness
-comparisons use stock build_runner 2.16.2. Its supported manifest subset is
-checked for byte-identical outputs and incremental, failure, deletion, rename,
+The native frontend supports build_runner `>=2.15.3 <2.17.0` and Analyzer
+`>=13.3.0 <15.0.0`. Main current-fixture comparisons use stock build_runner
+2.16.2; the [dependency review](docs/dependency-window-review.md) and
+[SDK lifecycle checks](docs/development.md#sdk-lifecycle-comparison) describe
+the tested resolutions. Validation covers selected combinations, not every
+version in the supported window. The supported manifest subset is checked for
+byte-identical outputs and incremental, failure, deletion, rename,
 and watch behavior. Requests outside that subset fail explicitly.
 An isolated [resolver backport](docs/dependency-window-review.md) keeps Analyzer
-13.3 and newer usable without separate release lines.
+13.3 through 14.x usable without separate release lines.
 
 Native build and watch commands acquire an exclusive workspace lock; a competing
 native invocation fails. Direct stock runs bypass that lock. Do not run stock
@@ -122,11 +139,12 @@ external sources absent at build start; see
 
 | If you need to… | See |
 | --- | --- |
-| Check supported CLI options, modes, and environment controls | [Launcher reference](docs/launcher-and-release.md) |
+| Check supported CLI options, worker modes, and environment controls | [Launcher reference](docs/launcher-and-release.md) |
 | Understand `build.yaml`, `--define`, release, and named-config behavior | [Configuration guide](docs/configuration.md) |
 | Review native build-filter guarantees and limits | [ADR 0032](docs/adr/0032-native-build-filter-demand-and-output-state.md) |
 | Understand Rust/Dart responsibilities and IPC | [Protocol v1](protocol/v1.md) and [ADR index](docs/adr/README.md) |
 | Contribute or run correctness checks | [Development guide](docs/development.md) |
+| Verify release archives and review publication checks | [Distribution validation](docs/distribution-validation.md) |
 | Review measured performance | [Benchmarks](docs/benchmarks.md) |
 | Check release status and remaining work | [Roadmap](docs/roadmap.md) |
 

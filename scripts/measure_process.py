@@ -119,8 +119,9 @@ def main() -> int:
     after = _usage()
 
     # RUSAGE_CHILDREN is empty when this helper starts, so ru_maxrss is the
-    # peak for this measured command and its descendants. Linux reports KB;
-    # keep the unit explicit for portability.
+    # reported child high-water mark. It is not summed concurrent process-tree
+    # RSS; descendant accounting also depends on child wait/reaping behavior.
+    # Linux reports KiB; keep the unit explicit for portability.
     result: dict[str, object] = {
         **metadata,
         "label": args.label,

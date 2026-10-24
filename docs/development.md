@@ -183,7 +183,7 @@ output bytes. Keep metrics and traces out of timed runs.
 | Current launcher-inclusive summary | [benchmarks.md](benchmarks.md) |
 | Build-filter and supported-builder comparisons | `scripts/benchmark_matrix.sh`; `BUILDERS=optional bash scripts/benchmark_matrix.sh` |
 | Freezed/Riverpod fixture benchmarks | `scripts/benchmark_freezed.sh`, `scripts/benchmark_riverpod.sh` |
-| Cold start or cache investigation | The harness and experiment links in [benchmarks.md](benchmarks.md) |
+| Cold start or cache investigation | Historical implementation measurements in `docs/benchmarks/`; design decisions in [ADRs](adr/README.md) |
 | Per-worker diagnostic trace | `BUILD_RUNNER_ACCELERATOR_METRICS=1` and, where needed, `BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=1` |
 
 With `BUILD_RUNNER_ACCELERATOR_METRICS=1`, watch reports disk graph reloads
@@ -197,9 +197,11 @@ loader; source post-process tracking borrows successful committed state. See
 `BUILD_RUNNER_ACCELERATOR_WALL_TRACE=1` adds stage intervals; disable both metrics
 and tracing for elapsed-time comparisons.
 
-Keep raw measurements local. Update the public benchmark summary only from a
-reproducible launcher-inclusive run; document new research in a focused
-benchmark note rather than this guide.
+Keep raw measurements local. Base the public benchmark on reproducible,
+launcher-inclusive runs. User-reported application examples may supplement
+those results in a separate section, with their conditions and evidence limits.
+Document implementation research in a focused benchmark note rather than this
+guide.
 
 ## Release checks
 
