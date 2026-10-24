@@ -8,7 +8,8 @@ for supported SDKs, tested workloads, public interfaces, and limits.
 ## Performance
 
 In user-reported measurements of a real-world Flutter application,
-**cache-warm clean builds were 2.6× faster** than stock build_runner.
+**cache-warm clean builds were 2.6× faster** than stock build_runner
+(repeat count and variability not reported).
 Across two environments, clean builds including AOT compilation with analyzer
 caches cleared were approximately **1.1× faster**, and no-op builds were
 **2.2–4.1× faster**.

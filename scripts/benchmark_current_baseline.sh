@@ -223,8 +223,6 @@ prepare_package() {
   if [[ "$workload" == application ]]; then
     "$python_bin" "$script_dir/generate_application_fixture.py" \
       "$model_count" "$package_dir" >"$results_dir/generate.log"
-  elif [[ "$model_count" == 10 ]]; then
-    cp -R "$fixture_dir/lib" "$package_dir/lib"
   else
     bash "$script_dir/generate_json_serializable_fixture.sh" \
       "$model_count" "$package_dir" "$fixture_dir" >"$results_dir/generate.log"
@@ -466,7 +464,7 @@ if case != 'clean':
     if inventory['files'].keys() != baseline['files'].keys():
         raise SystemExit('incremental build changed the generated file set')
     changed = sum(digest != baseline['files'][name] for name, digest in inventory['files'].items())
-    expected = 0 if case == 'no-op' or (workload == 'json' and int(models) == 10) else (1 if case == 'one-file' else int(models))
+    expected = 0 if case == 'no-op' else (1 if case == 'one-file' else int(models))
     if changed != expected:
         raise SystemExit(f'{case}: expected {expected} changed outputs, got {changed}')
     record['changed_output_count'] = changed

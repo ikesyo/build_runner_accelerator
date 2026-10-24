@@ -197,9 +197,11 @@ loader; source post-process tracking borrows successful committed state. See
 `BUILD_RUNNER_ACCELERATOR_WALL_TRACE=1` adds stage intervals; disable both metrics
 and tracing for elapsed-time comparisons.
 
-Keep raw measurements local. Update the public benchmark summary only from a
-reproducible launcher-inclusive run; document new research in a focused
-benchmark note rather than this guide.
+Keep raw measurements local. Base the public benchmark on reproducible,
+launcher-inclusive runs. User-reported application examples may supplement
+those results in a separate section, with their conditions and evidence limits.
+Document implementation research in a focused benchmark note rather than this
+guide.
 
 ## Release checks
 

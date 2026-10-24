@@ -22,8 +22,8 @@ and Riverpod. Its uniform modules and single shared dependency layer are simpler
 than a production application; the results do not predict other projects or OSes.
 
 - Implementation: 0.16.0, `aecded06cb0cf1ea166c7d6814b742f5e9ab558f`.
-  The measured harness and generator are preserved in `c3a0ad9`; they match
-  the scripts linked below. No execution-engine changes are included.
+  Measured harness/generator snapshot: `c3a0ad9`.
+  No execution-engine changes are included.
 - Host: Debian 13 Linux x64, AMD EPYC 9V74; 3 visible CPUs, cgroup quota 2 CPUs,
   memory limit 8 GiB. Native uses its default limit of two workers;
   `--jobs` is not specified.
