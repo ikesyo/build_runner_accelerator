@@ -59,9 +59,8 @@ jobs:
       - name: Check fixture lockfiles
         if: matrix.resolution == 'upgrade'
         run: python3 scripts/sync_release_metadata.py --check
-      # AOT compilation competes with package-test compilers. Run 40207408998
-      # made upgrade slower (462s -> 495s), while downgrade improved to 318s.
-      # Keep upgrade's package checks serial; overlap only its lifecycle probes.
+      # Keep package-test compilers separate from AOT compilation. The latest
+      # SDK's normal-builder AOT probe shares the linux-x64 release build below.
       - name: Dart package checks (latest SDK)
         if: matrix.resolution == 'upgrade'
         run: |
@@ -84,9 +83,6 @@ jobs:
                 dart test --compiler=source
               fi
               bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/baseline"
-              if [[ '${{ matrix.resolution }}' == 'upgrade' ]]; then
-                bash scripts/correctness_sdk.sh --resolution upgrade --runner 2.17.1 --worker-mode aot --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/runner-2.17.1"
-              fi
           - name: Shared parts and minimum SDK runner lifecycle
             timeout-minutes: 20
             run: |
@@ -971,6 +967,23 @@ jobs:
           python3 scripts/distribution_e2e.py --dart "$(command -v dart)" --target '${{ matrix.target_id }}' \
             --archive "dist/build_runner_accelerator-${{ matrix.target_id }}.$extension" \
             --results 'distribution-results/${{ matrix.target_id }}'
+      # Reuse the release binary and SDK on this shorter lane instead of
+      # adding another AOT compilation to the SDK package-check jobs.
+      - name: Runner 2.17.1 normal-builder AOT lifecycle
+        if: matrix.target_id == 'linux-x64'
+        shell: bash
+        run: |
+          BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
+            bash scripts/correctness_sdk.sh --resolution upgrade --runner 2.17.1 --worker-mode aot \
+            --results "$RUNNER_TEMP/runner-2.17.1-aot"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure() && matrix.target_id == 'linux-x64'
+        with:
+          name: runner-2.17.1-aot
+          path: |
+            ${{ runner.temp }}/runner-2.17.1-aot/**/*.log
+            ${{ runner.temp }}/runner-2.17.1-aot/**/pubspec.lock
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
