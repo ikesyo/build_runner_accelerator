@@ -54,7 +54,6 @@ Benchmarks and mechanical refactors do not need one.
 | [0040](0040-interrupted-commit-recovery.md) | Undo journal and repeatable recovery of interrupted output publication |
 | [0041](0041-public-1x-compatibility.md) | Public 1.x interfaces, guarantees and internal implementation boundary |
 | [0042](0042-runner-resolver-compatibility.md) | Isolated runner resolver backport and single-release compatibility window |
-| [0043](0043-runner-2-17-dependencies.md) | Runner 2.17.1 dependency window and SDK lifecycle validation |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
 artifacts and launcher behavior are in

@@ -78,11 +78,15 @@ resolution so those runners also work with Analyzer 14.5 and newer. Runner
 release pipeline cover these resolutions. Runner 2.15.3's default output retention
 is selected internally, with the existing retained-output API safety limits.
 
-Runner 2.17.1 requires build 5.0 and build_config 1.4. Builders must themselves
-allow build 5.0. Runner 2.17.0 requires retracted build 4.1.0 and is not certified;
-Pub cannot exclude one intermediate version while preserving this older range.
+For the 2.17 line, the validated and supported version is 2.17.1, which uses
+build 5.0 and build_config 1.4. Builders must themselves allow build 5.0;
+expanding the accelerator's range does not override generator constraints.
+Runner 2.17.0 depends on the retracted build 4.1.0 and is outside the validated
+support scope, although the continuous Pub constraint includes it. Use 2.17.1
+when selecting a 2.17 release.
+
 Shared-library builders are rejected before actions until native shared-part
-execution is introduced. See [ADR 0043](adr/0043-runner-2-17-dependencies.md).
+execution is introduced.
 
 `dart run` starts the launcher; see the [installation guide](../README.md#installation).
 Worker AOT settings control the generated Dart worker, not the launcher.
