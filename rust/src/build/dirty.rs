@@ -159,6 +159,21 @@ pub(super) fn analyze(
             dirty.push(spec);
         }
     }
+    // Contributions can change a library's resolved elements without an
+    // ordinary output edge. Conservatively replay the plan for those changes.
+    if dirty
+        .iter()
+        .any(|spec| spec.instance.builder.adds_to_library)
+        || deleted_actions
+            .iter()
+            .any(|(_, action)| action.shared_part.is_some())
+    {
+        dirty = specs
+            .iter()
+            .filter(|spec| !spec.instance.builder.is_optional)
+            .cloned()
+            .collect();
+    }
     filesystem_metrics.dirty_check_us = dirty_check_started.elapsed().as_micros();
 
     Ok(DirtyPlan {

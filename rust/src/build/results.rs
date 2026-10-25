@@ -60,6 +60,7 @@ pub(super) fn record_missing_primary_input(
     pending.pending_actions.push((
         key,
         ActionState {
+            shared_part: None,
             builder: spec.instance.builder.id.to_owned(),
             input: spec.input.clone(),
             reads: Vec::new(),
@@ -87,6 +88,27 @@ pub(super) fn record_build_result(
     pending: &mut PendingTransaction,
 ) -> io::Result<()> {
     let builder = spec.instance.builder.as_ref();
+    if builder.adds_to_library && result.status == "success" && result.shared_part.is_none() {
+        return Err(io::Error::other(
+            "shared-part contribution metadata is missing",
+        ));
+    }
+    if !builder.adds_to_library && result.shared_part.is_some() {
+        return Err(io::Error::other("unexpected shared-part contribution"));
+    }
+    // A directive replay replaces earlier staged writes. Never publish an
+    // intermediate pass: the undo journal records only final output digests.
+    if !pending.source_edits.is_empty() {
+        let mut replaced = spec.outputs.iter().cloned().collect::<BTreeSet<_>>();
+        for (key, action) in &pending.pending_actions {
+            if key == &spec.action_key() {
+                replaced.extend(action.outputs.iter().cloned());
+            }
+        }
+        pending
+            .pending_outputs
+            .retain(|(_, asset, _)| !replaced.contains(asset));
+    }
     if result.status != "success" && result.status != "not_triggered" {
         return Err(io::Error::other(
             result.error.unwrap_or_else(|| "Builder failed".to_owned()),
@@ -282,6 +304,7 @@ pub(super) fn record_build_result(
     pending.pending_actions.push((
         spec.action_key(),
         ActionState {
+            shared_part: result.shared_part,
             builder: spec.instance.builder.id.to_owned(),
             input: spec.input.clone(),
             reads: result.reads,

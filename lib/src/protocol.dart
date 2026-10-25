@@ -240,6 +240,7 @@ class WorkerBuildRequest {
     required this.isRoot,
     required this.blockedAssets,
     required this.triggers,
+    this.partPhaseIndex,
   });
 
   factory WorkerBuildRequest.fromJson(
@@ -252,6 +253,13 @@ class WorkerBuildRequest {
     }
     final instanceKey = _requiredString(message, 'instance_key', 'build');
     final phase = _requiredInt(message, 'phase', 'build');
+    final partPhaseIndex = message['part_phase_index'];
+    if (partPhaseIndex != null &&
+        (partPhaseIndex is! int || partPhaseIndex < 0 || kind != 'normal')) {
+      throw const FormatException(
+        'build part_phase_index requires a nonnegative normal-builder phase',
+      );
+    }
     if (instanceKey.isEmpty || phase < 0) {
       throw const FormatException(
         'build requires non-empty instance_key and nonnegative phase',
@@ -268,6 +276,7 @@ class WorkerBuildRequest {
       ),
       options: _stringKeyedMap(message['options'], 'build options'),
       phase: phase,
+      partPhaseIndex: partPhaseIndex as int?,
       instanceKey: instanceKey,
       isRoot: _requiredBool(message, 'is_root', 'build'),
       blockedAssets: blockedAssets,
@@ -286,6 +295,7 @@ class WorkerBuildRequest {
   final bool isRoot;
   final List<String> blockedAssets;
   final List<WorkerBuildTrigger> triggers;
+  final int? partPhaseIndex;
 
   bool get isPostProcess => kind == 'post_process';
 }

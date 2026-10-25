@@ -102,10 +102,13 @@ Run the same comparison locally with an installed SDK:
 DART_BIN=/path/to/dart-3.11.0/bin/dart bash scripts/correctness_sdk.sh --resolution downgrade
 DART_BIN=/path/to/dart-3.13.3/bin/dart bash scripts/correctness_sdk.sh --resolution upgrade
 DART_BIN=/path/to/dart-3.13.3/bin/dart bash scripts/correctness_sdk.sh --resolution upgrade --runner 2.17.1 --worker-mode aot
+DART_BIN=/path/to/dart-3.13.3/bin/dart bash scripts/correctness_shared_parts.sh --worker-mode aot --jobs 2
 ```
 
-`fixtures/sdk_compat_app` exercises a Resolver-based builder with one non-AOT
-worker. It compares file inventories and bytes for initial/no-op builds,
+`fixtures/sdk_compat_app` exercises a Resolver-based builder with one worker
+(JIT by default; `--worker-mode aot` selects AOT for both implementations).
+`--runner` pins the stock and native runner without dependency overrides.
+It compares file inventories and bytes for initial/no-op builds,
 changes, deletion, rename, failure/recovery and two paired watch edits. Native
 failure must preserve outputs and graph. Stock uses a separate workspace with
 the same resolved lockfile. Both SDK replays passed locally on Linux x64 on

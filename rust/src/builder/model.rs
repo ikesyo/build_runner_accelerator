@@ -34,6 +34,7 @@ pub(crate) struct BuilderTrigger {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BuilderDefinition {
+    pub(crate) adds_to_library: bool,
     pub(crate) id: String,
     pub(crate) kind: BuilderKind,
     pub(crate) extensions: Vec<BuilderExtension>,

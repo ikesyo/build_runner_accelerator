@@ -38,6 +38,7 @@ impl ResolverChanges {
 /// attempt. Staging changes here does not alter workspace files; callers must
 /// reach `commit` only after every required action has succeeded.
 pub(super) struct PendingTransaction {
+    pub(super) source_edits: BTreeMap<String, SourceEdit>,
     // Immutable output allocations are shared with pending_outputs (and lazy
     // results); deleting an overlay entry only releases that entry's reference.
     pub(super) overlay: BTreeMap<String, Arc<[u8]>>,
@@ -51,6 +52,11 @@ pub(super) struct PendingTransaction {
     pub(super) pending_stock_globs: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     pub(super) deleted_actions: Vec<(String, ActionState)>,
     pub(super) resolver: ResolverChanges,
+}
+
+pub(super) struct SourceEdit {
+    pub(super) original: Arc<[u8]>,
+    pub(super) updated: Arc<[u8]>,
 }
 
 impl PendingTransaction {
@@ -71,6 +77,7 @@ impl PendingTransaction {
             deleted_overlay.extend(action.outputs.iter().cloned());
         }
         Self {
+            source_edits: BTreeMap::new(),
             overlay: BTreeMap::new(),
             deleted_overlay,
             pending_outputs: Vec::new(),

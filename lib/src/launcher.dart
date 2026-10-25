@@ -72,6 +72,7 @@ is never started. Run dart run build_runner directly when stock is needed.
   --config NAME, -c NAME Select build.<name>.yaml
   --define BUILDER=OPTION=VALUE
                          Override a builder option
+  --enable-experiment NAME Enable Dart language experiments; comma-separate
   --build-filter PATTERN Select build/watch outputs; repeat or comma-separate
   --only-check           Build-only verification; report I/M/U, exit 1 on differences
   --keep-modified-outputs Build-only retention until the producer reruns

@@ -789,6 +789,7 @@ impl WorkerClient {
             "allowed_outputs": request.outputs,
             "options": request.options,
             "phase": request.phase,
+                    "part_phase_index": request.part_phase_index,
             "instance_key": request.instance_key,
             "is_root": request.is_root,
             "blocked_assets": blocked_assets,
@@ -882,6 +883,7 @@ impl WorkerClient {
                     "allowed_outputs": request.outputs,
                     "options": request.options,
                     "phase": request.phase,
+                    "part_phase_index": request.part_phase_index,
                     "instance_key": request.instance_key,
                     "is_root": request.is_root,
                     "triggers": request.triggers,
@@ -1615,6 +1617,7 @@ impl FilteredExecution<'_> {
             overlay.remove(output);
         }
         let request = BuildRequest {
+            part_phase_index: None,
             builder: spec.instance.builder.id.clone(),
             input: spec.input.clone(),
             outputs: spec.outputs.clone(),

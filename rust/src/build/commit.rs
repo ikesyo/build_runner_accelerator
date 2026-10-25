@@ -162,6 +162,17 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         );
     }
     let journaled = !changes.is_empty();
+    for (asset, edit) in &transaction.source_edits {
+        let (original, bytes) = (&edit.original, &edit.updated);
+        let path = workspace.path_for_asset(asset)?;
+        if fs::read(&path)?.as_slice() != original.as_ref() {
+            return Err(io::Error::other(
+                "shared-part source changed before publication; retry",
+            ));
+        }
+        changes.insert(path, Some(crate::digest::digest_bytes(bytes)));
+    }
+    let journaled = journaled || !transaction.source_edits.is_empty();
     if journaled {
         super::recovery::prepare(state_path, changes)?;
     }
@@ -228,6 +239,17 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
     for (key, action) in transaction.pending_actions {
         state.actions.insert(key, action);
     }
+    for (asset, edit) in &transaction.source_edits {
+        let bytes = &edit.updated;
+        let path = workspace.path_for_asset(asset)?;
+        if fs::read(&path)?.as_slice() != edit.original.as_ref() {
+            return Err(io::Error::other(
+                "shared-part source changed during publication; undo evidence preserved",
+            ));
+        }
+        super::recovery::write_output(&path, bytes)?;
+        boundary("after_output")?;
+    }
     for (key, inputs) in transaction.pending_stock_inputs {
         if let Some(inputs) = inputs {
             state.stock_input_order.insert(key, inputs);
@@ -283,6 +305,9 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         // ordinary workers can consume first-seen external assets or generated
         // outputs during this transaction.
         for (asset, initial) in initial_snapshot {
+            if transaction.source_edits.contains_key(asset) {
+                continue;
+            }
             if !generated_assets.contains(asset) && !asset.starts_with("__glob__|") {
                 post_snapshot.insert(asset.clone(), initial.clone());
             }
@@ -392,6 +417,10 @@ fn verify_outputs(state: &GraphState, inputs: &CommitInputs<'_>) -> io::Result<(
         if builder.build_to == BuildTo::Source {
             changes.insert(asset.clone(), Some(bytes.as_ref()));
         }
+    }
+    for (asset, edit) in &transaction.source_edits {
+        let bytes = &edit.updated;
+        changes.insert(asset.clone(), Some(bytes.as_ref()));
     }
     let mut lines = Vec::new();
     for (asset, expected) in changes {

@@ -42,6 +42,18 @@ pub(super) fn create(
     // them in the persisted snapshot for their own action bookkeeping, but
     // remove them from the candidate snapshot used by normal builders.
     let mut normal_snapshot = current_snapshot.clone();
+    if build_config
+        .builders
+        .iter()
+        .any(|builder| builder.definition.adds_to_library)
+    {
+        normal_snapshot.retain(|asset, _| {
+            !asset.split_once('|').is_some_and(|(_, path)| {
+                (path.starts_with("_br_/") || path.starts_with("lib/_br_/"))
+                    && path.ends_with(".part.dart")
+            })
+        });
+    }
     for action in state.actions.values() {
         if build_config
             .definition(&action.builder)
@@ -104,6 +116,7 @@ pub(super) fn create(
             }
             specs.extend(phase_specs);
         }
+        super::shared_parts::declare(&mut specs)?;
         validate_unique_outputs(&specs)?;
         let expected_keys = specs
             .iter()
@@ -160,6 +173,7 @@ pub(super) fn create(
         .collect::<BTreeMap<String, (BuildTo, bool)>>();
     let mut specs = normal_specs;
     specs.extend(post_specs);
+
     let visibility = AssetVisibility::from_specs(&specs, state, build_config);
     Ok(PlannedActions {
         specs,

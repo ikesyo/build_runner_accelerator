@@ -144,6 +144,7 @@ List<ManifestDefinition>? tryConvertDefinition(
         requiredInputSuffixes: requiredInputSuffixes,
         triggers: triggers,
         builderType: mapping.builderType,
+        addsToLibrary: info.addsToLibrary,
       ),
     );
   }

@@ -33,7 +33,11 @@ Future<void> generateWorkerCatalog(
     overrides: settings.overrides(graph.root.name),
   );
   if (selected.isNotEmpty) {
-    await emitWorkerEntrypoint(workerEntrypoint, earlyCatalogEntries(selected));
+    await emitWorkerEntrypoint(
+      workerEntrypoint,
+      earlyCatalogEntries(selected),
+      experiments: settings.experiments,
+    );
   }
 }
 
@@ -158,6 +162,7 @@ List<CatalogEntry> earlyCatalogEntries(
               importUri: normal.import,
               factory: normal.builderFactories[index],
               isPostProcess: false,
+              addsToLibrary: definition.addsToLibrary,
             ),
           );
         }

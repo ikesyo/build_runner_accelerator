@@ -54,6 +54,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     await emitWorkerEntrypoint(
       options.workerEntrypoint,
       earlyCatalogEntries(selection.selected),
+      experiments: options.settings.experiments,
     );
   }
   reportStage('entrypoint');
@@ -537,6 +538,7 @@ Future<void> _emitArtifacts(
   catalogEntries: normalized.catalogEntries,
   triggerDigest: triggerDigest,
   assetSources: sources,
+  experiments: options.settings.experiments,
 );
 
 /// Resolves the `part` directive suffix an input must declare before a
@@ -607,6 +609,7 @@ CatalogEntry _catalogEntry(ManifestDefinition definition) => CatalogEntry(
   importUri: definition.importUri,
   factory: definition.factory,
   isPostProcess: definition.isPostProcess,
+  addsToLibrary: definition.addsToLibrary,
 );
 
 class _Arguments {

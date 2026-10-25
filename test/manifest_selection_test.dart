@@ -5,7 +5,7 @@ import 'package:test/test.dart';
 
 void main() {
   for (final enabled in [true, false]) {
-    test('shared-part opt-in is rejected only when selected: $enabled', () {
+    test('shared-part flag survives selection when enabled=$enabled', () {
       final config = BuildConfig.fromMap('example', const <String>[], {
         'targets': {
           r'$default': {
@@ -23,10 +23,11 @@ void main() {
           'example:producer': DefinitionInfo.normal(_LibraryBuilder()),
         },
       );
+      final selected = select();
       if (enabled) {
-        expect(select, throwsUnsupportedError);
+        expect(selected.values.single.definition.addsToLibrary, isTrue);
       } else {
-        expect(select(), isEmpty);
+        expect(selected, isEmpty);
       }
     });
   }

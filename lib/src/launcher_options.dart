@@ -134,6 +134,7 @@ class LauncherOptions {
         // Configuration values may look like launcher flags.
         const buildValueOptions = {
           '--build-filter',
+          '--enable-experiment',
           '--config',
           '-c',
           '--define',

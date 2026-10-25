@@ -10,6 +10,8 @@ import 'package:build_runner/src/build/build_step_impl.dart' show BuildStepImpl;
 import 'package:build_runner/src/build/library_cycle_graph/phased_asset_deps.dart'
     show PhasedAssetDeps;
 import 'package:build_runner/src/build/input_tracker.dart' show InputTracker;
+import 'package:build_runner/src/build/builder_filesystem.dart'
+    show BuilderFilesystem;
 import 'worker_resolvers.dart' show WorkerResolversImpl;
 import 'package:build_runner/src/build_plan/build_packages.dart'
     show BuildPackages;
@@ -43,12 +45,31 @@ final _resetTraceEnabled =
     Platform.environment['BUILD_RUNNER_ACCELERATOR_WALL_TRACE'] == '1';
 
 /// Serves framed builder IPC, or the manifest/probe mode selected by arguments.
+typedef SharedPartEncoder = Future<JsonMap> Function(BuildStepImpl, String);
+typedef SharedPartStepFactory =
+    BuildStepImpl Function(
+      AssetId,
+      Iterable<AssetId>,
+      InputTracker,
+      BuilderFilesystem,
+      int,
+      int,
+      Resolvers,
+      ResourceManager,
+    );
+SharedPartEncoder? _sharedPartEncoder;
+SharedPartStepFactory? _sharedPartStepFactory;
+
 Future<void> runWorker({
   required Map<String, BuilderFactory> catalog,
+  SharedPartEncoder? sharedPartEncoder,
+  SharedPartStepFactory? sharedPartStepFactory,
   List<String> arguments = const [],
   Map<String, PostProcessBuilderFactory> postProcessCatalog =
       const <String, PostProcessBuilderFactory>{},
 }) async {
+  _sharedPartEncoder = sharedPartEncoder;
+  _sharedPartStepFactory = sharedPartStepFactory;
   if ((arguments.length == 3 || arguments.length == 4) &&
       arguments.first == '--manifest-triggers') {
     await writeManifestTriggers(
@@ -131,6 +152,9 @@ Future<void> runWorker({
                 'reset-overlay-blob-v1',
                 'build-runner-current-v1',
                 'retained-output-guard-v1',
+                if (_sharedPartEncoder != null &&
+                    _sharedPartStepFactory != null)
+                  'shared-library-parts-v1',
               ],
             });
           case WorkerResetMessage reset:
@@ -936,6 +960,7 @@ Future<JsonMap> _runBuild(
     }
     final deleted = <AssetId>{};
     BuildStepImpl? step;
+    JsonMap? sharedPart;
     InputTracker? triggerInputTracker;
     var triggered = true;
     if (!isPostProcess && options['run_only_if_triggered'] == true) {
@@ -1009,20 +1034,46 @@ Future<JsonMap> _runBuild(
       final createStep = runtime.retainedOutputGuard
           ? _RetainedOutputBuildStep.new
           : BuildStepImpl.new;
-      step = createStep(
-        inputId: input,
-        expectedOutputs: [
-          for (final output in request.allowedOutputs) AssetId.parse(output),
-        ],
-        inputTracker: inputTracker,
-        buildFilesystem: runtime.buildFilesystem,
-        phase: request.phase,
-        resolvers: resolver,
-        resourceManager: runtime.resourceManager,
-      );
+      if (request.partPhaseIndex != null && runtime.retainedOutputGuard) {
+        throw UnsupportedError(_retainedApiUnsupported);
+      }
+      final expectedOutputs = [
+        for (final output in request.allowedOutputs) AssetId.parse(output),
+      ];
+      if (request.partPhaseIndex == null) {
+        step = createStep(
+          inputId: input,
+          expectedOutputs: expectedOutputs,
+          inputTracker: inputTracker,
+          buildFilesystem: runtime.buildFilesystem,
+          phase: request.phase,
+          resolvers: resolver,
+          resourceManager: runtime.resourceManager,
+        );
+      } else {
+        final create = _sharedPartStepFactory;
+        if (create == null)
+          throw StateError('Shared-part worker factory is missing');
+        step = create(
+          input,
+          expectedOutputs,
+          inputTracker,
+          runtime.buildFilesystem,
+          request.phase,
+          request.partPhaseIndex!,
+          resolver,
+          runtime.resourceManager,
+        );
+      }
       await BuildLogLogger.scopeLogAsync(() async {
         try {
           await builder!.build(step!);
+          if (request.partPhaseIndex != null) {
+            final encode = _sharedPartEncoder;
+            if (encode == null)
+              throw StateError('Shared-part worker codec is missing');
+            sharedPart = await encode(step!, builderId);
+          }
         } finally {
           try {
             await step!.complete();
@@ -1123,6 +1174,7 @@ Future<JsonMap> _runBuild(
       'id': request.id,
       'status': profile.status,
       'outputs': outputs,
+      if (sharedPart != null) 'shared_part': sharedPart,
       'deleted': <String>[for (final asset in deleted) asset.toString()]
         ..sort(),
       'reads': reads,

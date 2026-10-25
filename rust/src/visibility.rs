@@ -67,6 +67,31 @@ impl AssetVisibility {
             }
         }
 
+        // A shared part evolves after each contributing phase. Its final
+        // graph owner does not hide earlier contributions from later phases.
+        let mut shared = BTreeMap::<String, u32>::new();
+        for spec in specs
+            .iter()
+            .filter(|spec| spec.instance.builder.adds_to_library)
+        {
+            if let Some(id) = crate::build::shared_parts::part_id(&spec.input) {
+                shared
+                    .entry(id)
+                    .and_modify(|phase| *phase = (*phase).min(spec.instance.phase))
+                    .or_insert(spec.instance.phase);
+            }
+        }
+        for (asset, first_phase) in shared {
+            visibility.locations.insert(asset.clone(), BuildTo::Source);
+            for outputs in visibility.normal_output_phases.values_mut() {
+                outputs.remove(&asset);
+            }
+            visibility
+                .normal_output_phases
+                .entry(first_phase)
+                .or_default()
+                .insert(asset);
+        }
         visibility
     }
 
@@ -152,6 +177,7 @@ mod tests {
         Arc::new(BuildAction {
             instance: Arc::new(BuilderInstance {
                 builder: Arc::new(BuilderDefinition {
+                    adds_to_library: false,
                     id: id.to_owned(),
                     kind: BuilderKind::Normal,
                     extensions: vec![BuilderExtension {

@@ -85,8 +85,14 @@ Runner 2.17.0 depends on the retracted build 4.1.0 and is outside the validated
 support scope, although the continuous Pub constraint includes it. Use 2.17.1
 when selecting a 2.17 release.
 
-Shared-library builders are rejected before actions until native shared-part
-execution is introduced.
+Shared-library parts (`adds_to_library: true`) use native phase
+aggregation and transactional part-directive updates. `--enable-experiment`
+enables language experiments for generated workers, including `enhanced-parts`
+for `LibrarySourceSink.addImport`. Shared builders currently require an
+unfiltered build without explicit `--keep-modified-outputs`. Input additions,
+renames and deletions also support downstream normal resolvers. Stock 2.17.1
+has an incremental partial-content cache defect; the comparison corrects an isolated stock copy and additionally checks unmodified
+clean stock outputs. See [ADR 0044](adr/0044-shared-library-parts.md).
 
 `dart run` starts the launcher; see the [installation guide](../README.md#installation).
 Worker AOT settings control the generated Dart worker, not the launcher.
@@ -108,6 +114,7 @@ The launcher recognizes these options:
 | `--only-check`, `--keep-modified-outputs` | Build-only output policies for the normal-builder demand subset; see [output policies](#output-policies). |
 | `--build-filter PATTERN` | Select build/watch outputs; syntax and manifest limits are in [ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md). |
 | `--define`, `--release`, `--no-release`, `--config` | Resolve `build_runner` settings; see [configuration](configuration.md). |
+| `--enable-experiment NAME` | Enable Dart language experiments in generated workers; repeat or comma-separate. Shared-part imports require `enhanced-parts`. |
 | `--delete-conflicting-outputs`, `-d` | Accepted retired flags throughout the supported runner window; they have no effect and are never added automatically. |
 | `prewarm [--background]` | Prepare caches without running builders. |
 | `aot-cache-key` | Print a native worker cache key; no stock equivalent. |

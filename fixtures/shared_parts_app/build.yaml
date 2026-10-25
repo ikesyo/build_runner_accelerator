@@ -1,0 +1,39 @@
+builders:
+  optional_payload:
+    import: 'package:shared_parts_app/builder.dart'
+    builder_factories: [optionalPayload]
+    build_extensions: {'.dart': ['.optional.txt']}
+    auto_apply: root_package
+    build_to: cache
+    is_optional: true
+    runs_before: [shared_parts_app:first]
+    defaults:
+      generate_for: ['lib/model*.dart', 'lib/nested/model*.dart', 'bin/model*.dart']
+  first:
+    import: 'package:shared_parts_app/builder.dart'
+    builder_factories: [first]
+    build_extensions: {'.dart': ['.first.txt']}
+    auto_apply: root_package
+    build_to: source
+    adds_to_library: true
+    runs_before: [shared_parts_app:second]
+    defaults:
+      generate_for: ['lib/model*.dart', 'lib/nested/model*.dart', 'bin/model*.dart']
+  second:
+    import: 'package:shared_parts_app/builder.dart'
+    builder_factories: [second]
+    build_extensions: {'.dart': []}
+    auto_apply: root_package
+    build_to: source
+    adds_to_library: true
+    runs_before: [shared_parts_app:summary]
+    defaults:
+      generate_for: ['lib/model*.dart', 'lib/nested/model*.dart', 'bin/model*.dart']
+  summary:
+    import: 'package:shared_parts_app/builder.dart'
+    builder_factories: [summary]
+    build_extensions: {'.dart': ['.summary']}
+    auto_apply: root_package
+    build_to: source
+    defaults:
+      generate_for: ['lib/model*.dart', 'lib/nested/model*.dart', 'bin/model*.dart']

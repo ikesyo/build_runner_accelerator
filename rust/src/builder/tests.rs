@@ -5,7 +5,7 @@ use serde_json::json;
 #[test]
 fn dynamic_manifest_preserves_builder_phase_order() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -111,6 +111,14 @@ fn dynamic_manifest_preserves_builder_phase_order() {
         ]
     }))
     .unwrap();
+    let mut inconsistent = manifest.clone();
+    inconsistent.builders[0].adds_to_library = true;
+    assert!(
+        rust_build_config_from_manifest(inconsistent)
+            .unwrap_err()
+            .to_string()
+            .contains("metadata disagrees")
+    );
     let config = rust_build_config_from_manifest(manifest).unwrap();
     assert_eq!(
         config
@@ -132,7 +140,7 @@ fn dynamic_manifest_preserves_builder_phase_order() {
 #[test]
 fn configured_phase_is_the_global_worker_phase() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -247,7 +255,7 @@ fn configured_phase_is_the_global_worker_phase() {
 #[test]
 fn dynamic_manifest_preserves_configured_input_exclusions() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -313,7 +321,7 @@ fn dynamic_manifest_preserves_configured_input_exclusions() {
 fn dynamic_manifest_preserves_multiple_outputs() {
     for output_suffixes in [vec![".gen.txt"], vec![".gen.txt", ".meta.txt"]] {
         let manifest: BuilderManifestFile = serde_json::from_value(json!({
-            "version": 10, "asset_sources": {},
+            "version": 11, "asset_sources": {},
             "fingerprint": "fingerprint",
             "trigger_digest": "stock-trigger-digest",
             "worker_entrypoint": "dynamic_worker.dart",
@@ -378,7 +386,7 @@ fn dynamic_manifest_preserves_multiple_outputs() {
 #[test]
 fn dynamic_manifest_preserves_all_required_input_suffixes() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -442,7 +450,7 @@ fn dynamic_manifest_preserves_all_required_input_suffixes() {
 #[test]
 fn dynamic_manifest_preserves_optional_builder_flag() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -503,7 +511,7 @@ fn dynamic_manifest_preserves_optional_builder_flag() {
 #[test]
 fn dynamic_manifest_preserves_trigger_metadata_and_digest() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "trigger_digest": "trigger-digest",
@@ -584,7 +592,7 @@ fn dynamic_manifest_preserves_trigger_metadata_and_digest() {
 #[test]
 fn dynamic_manifest_rejects_unsupported_trigger_kind() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -645,7 +653,7 @@ fn dynamic_manifest_rejects_unsupported_trigger_kind() {
 #[test]
 fn dynamic_manifest_accepts_multiple_extension_mappings() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -727,7 +735,7 @@ fn dynamic_manifest_accepts_multiple_extension_mappings() {
 #[test]
 fn dynamic_manifest_accepts_all_input_mapping() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -792,7 +800,7 @@ fn dynamic_manifest_accepts_all_input_mapping() {
 #[test]
 fn dynamic_manifest_rejects_non_empty_all_input_metadata() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -857,7 +865,7 @@ fn dynamic_manifest_rejects_non_empty_all_input_metadata() {
 #[test]
 fn dynamic_manifest_accepts_post_process_definition() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -915,7 +923,7 @@ fn dynamic_manifest_accepts_post_process_definition() {
 #[test]
 fn dynamic_manifest_accepts_source_post_process_definition() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -967,7 +975,7 @@ fn dynamic_manifest_accepts_source_post_process_definition() {
 #[test]
 fn dynamic_manifest_accepts_capture_mapping() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -1028,7 +1036,7 @@ fn dynamic_manifest_accepts_capture_mapping() {
 #[test]
 fn dynamic_manifest_preserves_per_application_runtime_mapping() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -1125,7 +1133,7 @@ fn dynamic_manifest_rejects_missing_worker_entrypoint() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
         "builders": [],
         "definitions": [],
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": ""
@@ -1143,7 +1151,7 @@ fn dynamic_manifest_rejects_missing_worker_entrypoint() {
 fn dynamic_manifest_rejects_duplicate_definitions() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
         "builders": [],
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -1206,7 +1214,7 @@ fn dynamic_manifest_rejects_duplicate_definitions() {
 #[test]
 fn dynamic_manifest_rejects_configured_builder_without_definition() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -1271,7 +1279,7 @@ fn dynamic_manifest_rejects_configured_builder_without_definition() {
 #[test]
 fn dynamic_manifest_rejects_configured_builder_without_generate_for() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -1335,7 +1343,7 @@ fn dynamic_manifest_rejects_configured_builder_without_generate_for() {
 #[test]
 fn dynamic_manifest_rejects_configured_builder_without_target_scope() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -1400,7 +1408,7 @@ fn dynamic_manifest_rejects_configured_builder_without_target_scope() {
 #[test]
 fn dynamic_manifest_rejects_invalid_input_match() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -1465,7 +1473,7 @@ fn dynamic_manifest_rejects_invalid_input_match() {
 #[test]
 fn dynamic_manifest_rejects_invalid_capture_output() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -1531,7 +1539,7 @@ fn dynamic_manifest_rejects_invalid_capture_output() {
 #[test]
 fn dynamic_manifest_rejects_post_process_triggers() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -1586,7 +1594,7 @@ fn dynamic_manifest_rejects_post_process_triggers() {
 #[test]
 fn dynamic_manifest_rejects_mismatched_normal_runtime_mapping() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -1652,7 +1660,7 @@ fn dynamic_manifest_rejects_mismatched_normal_runtime_mapping() {
 #[test]
 fn dynamic_manifest_preserves_post_process_runtime_mapping() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {},
+        "version": 11, "asset_sources": {},
         "fingerprint": "fingerprint",
         "trigger_digest": "stock-trigger-digest",
         "worker_entrypoint": "dynamic_worker.dart",
@@ -1716,7 +1724,7 @@ fn dynamic_manifest_preserves_post_process_runtime_mapping() {
 fn flattened_manifest_is_rejected_without_guessing_extensions() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
         "builders": [],
-        "version": 10, "asset_sources": {}, "fingerprint": "x", "trigger_digest": "digest", "worker_entrypoint": "worker.dart",
+        "version": 11, "asset_sources": {}, "fingerprint": "x", "trigger_digest": "digest", "worker_entrypoint": "worker.dart",
         "trigger_digest": "stock-trigger-digest",
         "definitions": [{
         "required_input_suffixes": [],
@@ -1735,7 +1743,7 @@ fn flattened_manifest_is_rejected_without_guessing_extensions() {
 #[test]
 fn configured_manifest_requires_root_bit() {
     let manifest: BuilderManifestFile = serde_json::from_value(json!({
-        "version": 10, "asset_sources": {}, "fingerprint": "x", "trigger_digest": "digest", "worker_entrypoint": "worker.dart",
+        "version": 11, "asset_sources": {}, "fingerprint": "x", "trigger_digest": "digest", "worker_entrypoint": "worker.dart",
         "trigger_digest": "stock-trigger-digest",
         "definitions": [{
         "required_input_suffixes": [],

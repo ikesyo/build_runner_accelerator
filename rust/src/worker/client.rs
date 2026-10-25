@@ -35,6 +35,7 @@ pub(super) fn is_worker_script(worker_executable: &str) -> bool {
 /// Owns one child process and its framed stdin/stdout streams. The protocol
 /// reserves stdout for IPC; worker diagnostics are inherited from stderr.
 pub struct WorkerClient {
+    pub(super) shared_parts_capable: bool,
     child: Child,
     input: BufWriter<ChildStdin>,
     output: BufReader<ChildStdout>,
@@ -164,6 +165,7 @@ impl WorkerClient {
                 ..WorkerClientMetrics::default()
             },
             dep_graph: BTreeMap::new(),
+            shared_parts_capable: false,
         })
     }
 
@@ -199,6 +201,7 @@ impl WorkerClient {
             return Err(protocol_error("worker initialization failed", &response));
         }
         validate_initialized(&response, id)?;
+        self.shared_parts_capable = has_capability(&response, "shared-library-parts-v1");
         if retained_output_guard && !has_capability(&response, "retained-output-guard-v1") {
             return Err(io::Error::other("worker lacks retained-output-guard-v1"));
         }
@@ -320,6 +323,7 @@ impl WorkerClient {
                     "allowed_outputs": request.outputs,
                     "options": request.options,
                     "phase": request.phase,
+                    "part_phase_index": request.part_phase_index,
                     "instance_key": request.instance_key,
                     "is_root": request.is_root,
                     "triggers": request.triggers,

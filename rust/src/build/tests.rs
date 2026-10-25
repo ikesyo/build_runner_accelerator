@@ -15,6 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn configured_builder(id: &str, target: &str, target_order: u32, phase: u32) -> ConfiguredBuilder {
     ConfiguredBuilder {
         definition: Arc::new(BuilderDefinition {
+            adds_to_library: false,
             id: id.to_owned(),
             kind: BuilderKind::Normal,
             extensions: Vec::new(),
@@ -96,6 +97,7 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
             (
                 producer.action_key(),
                 ActionState {
+                    shared_part: None,
                     builder: producer.instance.builder.id.clone(),
                     input: producer.input.clone(),
                     status: "not_triggered".to_owned(),
@@ -105,6 +107,7 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
             (
                 consumer.action_key(),
                 ActionState {
+                    shared_part: None,
                     builder: consumer.instance.builder.id.clone(),
                     input: consumer.input.clone(),
                     status: "skipped_missing_input".to_owned(),
@@ -179,6 +182,7 @@ fn undemanded_optional_chain_does_not_dirty_cleanup_without_normal_demand() {
             (
                 spec.action_key(),
                 ActionState {
+                    shared_part: None,
                     builder: spec.instance.builder.id.clone(),
                     input: spec.input.clone(),
                     status: status.into(),
@@ -228,6 +232,7 @@ fn generated_glob_candidates_invalidate_consumers_with_phase_visibility() {
             (
                 hidden.action_key(),
                 ActionState {
+                    shared_part: None,
                     input: hidden.input.clone(),
                     reads: vec!["app|lib/old.stage".into()],
                     status: "success".into(),
@@ -237,6 +242,7 @@ fn generated_glob_candidates_invalidate_consumers_with_phase_visibility() {
             (
                 aggregate.action_key(),
                 ActionState {
+                    shared_part: None,
                     input: aggregate.input.clone(),
                     glob_reads: vec![crate::protocol::GlobRead {
                         package: "app".into(),
@@ -250,6 +256,7 @@ fn generated_glob_candidates_invalidate_consumers_with_phase_visibility() {
             (
                 consumer.action_key(),
                 ActionState {
+                    shared_part: None,
                     input: consumer.input.clone(),
                     reads: aggregate.outputs.clone(),
                     status: "success".into(),
@@ -447,6 +454,7 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
     fs::write(temporary.0.join("lib/obsolete.out"), b"no longer needed")?;
     fs::write(temporary.0.join("lib/new.txt"), b"new input")?;
     let old_action = ActionState {
+        shared_part: None,
         builder: builder.definition.id.clone(),
         input: old_spec.input.clone(),
         outputs: vec![output.clone(), obsolete_output.clone()],
@@ -454,6 +462,7 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
         ..ActionState::default()
     };
     let new_action = ActionState {
+        shared_part: None,
         builder: builder.definition.id.clone(),
         input: new_spec.input.clone(),
         outputs: vec![output.clone()],
@@ -699,6 +708,7 @@ fn removing_target_with_shared_builder_invalidates_glob_consumer() -> io::Result
                 (
                     spec.action_key(),
                     ActionState {
+                        shared_part: None,
                         builder: spec.instance.builder.id.clone(),
                         input: spec.input.clone(),
                         glob_reads: if spec.action_key() == consumer.action_key() {
@@ -813,6 +823,7 @@ fn dirty_outputs_read_each_physical_path_once_per_pass() -> io::Result<()> {
             (
                 "a".to_owned(),
                 ActionState {
+                    shared_part: None,
                     builder: source.definition.id.clone(),
                     outputs: vec![shared.into(), missing.into(), recorded_only.into()],
                     ..ActionState::default()
@@ -821,6 +832,7 @@ fn dirty_outputs_read_each_physical_path_once_per_pass() -> io::Result<()> {
             (
                 "b".to_owned(),
                 ActionState {
+                    shared_part: None,
                     builder: cache.definition.id.clone(),
                     outputs: vec![shared.into()],
                     ..ActionState::default()
@@ -830,6 +842,7 @@ fn dirty_outputs_read_each_physical_path_once_per_pass() -> io::Result<()> {
             (
                 "c".to_owned(),
                 ActionState {
+                    shared_part: None,
                     builder: "unknown".into(),
                     outputs: vec!["invalid asset".into()],
                     ..ActionState::default()
@@ -977,6 +990,7 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
     let optional_spec = build_spec(&optional, "app|lib/optional", &[]);
     let deleted_spec = build_spec(&source, "app|lib/deleted", &[]);
     let action = |spec: &BuildSpec, output: &str, bytes: &[u8]| ActionState {
+        shared_part: None,
         builder: spec.instance.builder.id.clone(),
         input: spec.input.clone(),
         outputs: vec![output.into()],
@@ -1166,6 +1180,7 @@ fn planning_fixture(
         let mut builder = configured_builder(&factory.id, target, phase, phase);
         builder.definition = if optional {
             Arc::new(BuilderDefinition {
+                adds_to_library: false,
                 id: "app:optional".into(),
                 is_optional: true,
                 ..(*factory).clone()
@@ -1225,6 +1240,7 @@ fn undemanded_optional_stays_demandable_without_changing_successful_empty_reuse(
     state.actions.insert(
         key.clone(),
         ActionState {
+            shared_part: None,
             builder: spec.instance.builder.id.clone(),
             input: spec.input.clone(),
             status: "undemanded".into(),
@@ -1437,6 +1453,13 @@ fn recovery_commit_fixture(root: &std::path::Path) -> io::Result<()> {
         .map(|(key, action)| (key.clone(), action.clone()))
         .collect();
     let mut transaction = PendingTransaction::new(&[], &state, deleted);
+    transaction.source_edits.insert(
+        "app|lib/edited.dart".into(),
+        super::transaction::SourceEdit {
+            original: Arc::from(&b"class Model {}\n"[..]),
+            updated: Arc::from(&b"part '_br_/edited.part.dart';\nclass Model {}\n"[..]),
+        },
+    );
     transaction
         .pending_deletions
         .push((source.definition.clone(), "app|lib/obsolete.out".to_owned()));
@@ -1471,6 +1494,7 @@ fn recovery_commit_fixture(root: &std::path::Path) -> io::Result<()> {
 }
 
 fn seed_recovery_fixture(root: &std::path::Path) -> io::Result<()> {
+    fs::write(root.join("lib/edited.dart"), b"class Model {}\n")?;
     fs::write(root.join("lib/updated.out"), b"old source")?;
     fs::write(root.join("lib/obsolete.out"), b"obsolete source")?;
     fs::write(root.join("lib/handwritten.txt"), b"handwritten")?;
@@ -1485,6 +1509,7 @@ fn seed_recovery_fixture(root: &std::path::Path) -> io::Result<()> {
         actions: BTreeMap::from([(
             "obsolete-action".to_owned(),
             ActionState {
+                shared_part: None,
                 builder: "source".to_owned(),
                 input: "app|lib/removed.txt".to_owned(),
                 outputs: vec!["app|lib/obsolete.out".to_owned()],
@@ -1505,6 +1530,7 @@ fn assert_recovered_fixture(root: &std::path::Path) -> io::Result<()> {
     assert_eq!(fs::read(root.join("lib/updated.out"))?, b"old source");
     assert_eq!(fs::read(root.join("lib/obsolete.out"))?, b"obsolete source");
     assert_eq!(fs::read(root.join("lib/handwritten.txt"))?, b"handwritten");
+    assert_eq!(fs::read(root.join("lib/edited.dart"))?, b"class Model {}\n");
     assert_eq!(
         fs::read(root.join(".dart_tool/build_runner_accelerator/cache/app/lib/old.cache"))?,
         b"obsolete cache"
@@ -1526,6 +1552,10 @@ fn assert_recovered_fixture(root: &std::path::Path) -> io::Result<()> {
         Some(&false)
     );
     recovery_commit_fixture(root)?;
+    assert_eq!(
+        fs::read(root.join("lib/edited.dart"))?,
+        b"part '_br_/edited.part.dart';\nclass Model {}\n"
+    );
     assert_eq!(fs::read(root.join("lib/updated.out"))?, b"new source");
     assert!(!root.join("lib/obsolete.out").exists());
     assert!(
@@ -1570,6 +1600,37 @@ fn interrupted_commit_boundaries_restore_outputs_and_graph() -> io::Result<()> {
         assert_recovered_fixture(&temporary.0)?;
     }
     Ok(())
+}
+
+#[test]
+fn source_edit_during_publication_is_preserved_and_blocks_recovery() -> io::Result<()> {
+    let temporary = TemporaryWorkspace::new()?;
+    seed_recovery_fixture(&temporary.0)?;
+    thread_local! { static EDIT_ROOT: std::cell::RefCell<PathBuf> = const { std::cell::RefCell::new(PathBuf::new()) }; }
+    EDIT_ROOT.with(|root| *root.borrow_mut() = temporary.0.clone());
+    super::commit::COMMIT_BOUNDARY.with(|hook| {
+        *hook.borrow_mut() = Some(|name| {
+            if name == "after_output" {
+                EDIT_ROOT.with(|root| {
+                    fs::write(root.borrow().join("lib/edited.dart"), b"user edit\n")
+                })?;
+            }
+            Ok(())
+        });
+    });
+    let result = recovery_commit_fixture(&temporary.0);
+    super::commit::COMMIT_BOUNDARY.with(|hook| *hook.borrow_mut() = None);
+    assert!(result.is_err());
+    let source = temporary.0.join("lib/edited.dart");
+    assert_eq!(fs::read(&source)?, b"user edit\n");
+    let graph = temporary
+        .0
+        .join(".dart_tool/build_runner_accelerator/graph-v3.bin");
+    assert!(super::recovery::pending(&graph));
+    assert!(super::recovery::recover(&graph).is_err());
+    assert_eq!(fs::read(&source)?, b"user edit\n");
+    fs::write(source, b"class Model {}\n")?;
+    assert_recovered_fixture(&temporary.0)
 }
 
 #[test]
@@ -1844,6 +1905,7 @@ fn filtered_retention_preserves_bytes_without_recording_implicit_history() -> io
             actions: BTreeMap::from([(
                 spec.action_key(),
                 ActionState {
+                    shared_part: None,
                     builder: builder.definition.id.clone(),
                     input: spec.input.clone(),
                     outputs: vec![output.clone()],

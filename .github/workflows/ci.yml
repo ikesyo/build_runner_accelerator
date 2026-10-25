@@ -38,7 +38,7 @@ jobs:
   dart-package:
     name: Dart ${{ matrix.sdk }} (${{ matrix.resolution }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -76,9 +76,11 @@ jobs:
       - name: SDK stock/native lifecycle comparison
         timeout-minutes: 12
         run: bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --results 'sdk-results/${{ matrix.sdk }}'
-      - name: Runner 2.17.1 stock/native lifecycle comparison
-        timeout-minutes: 12
-        run: bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --runner 2.17.1 --worker-mode '${{ matrix.resolution == 'upgrade' && 'aot' || 'jit' }}' --results 'sdk-results/${{ matrix.sdk }}/runner-2.17.1'
+      - name: Runner 2.17.1 and shared-part lifecycle
+        timeout-minutes: 20
+        run: |
+          bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --runner 2.17.1 --worker-mode '${{ matrix.resolution == 'upgrade' && 'aot' || 'jit' }}' --results 'sdk-results/${{ matrix.sdk }}/runner-2.17.1'
+          bash scripts/correctness_shared_parts.sh --resolution '${{ matrix.resolution }}' --worker-mode '${{ matrix.resolution == 'upgrade' && 'aot' || 'jit' }}' --jobs 2 --results 'sdk-results/${{ matrix.sdk }}/shared-parts'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:

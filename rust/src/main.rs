@@ -105,6 +105,7 @@ Native execution only. Unsupported requests fail; run dart run build_runner dire
 Options: --root PATH --dart PATH --jobs N --interval-ms N --worker PACKAGE:EXECUTABLE
 --background (prewarm only), --force-aot | --force-jit
 --define BUILDER=OPTION=VALUE --release | --no-release | -r --config NAME | -c NAME
+--enable-experiment NAME (repeat or comma-separate)
 --build-filter PATH (build/watch), --only-check | --keep-modified-outputs (build only)
 --delete-conflicting-outputs | -d (retired; no effect), --help | -h, --version
 Output policies and filters support the validated normal-builder demand subset.
