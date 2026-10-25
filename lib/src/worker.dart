@@ -1040,8 +1040,9 @@ Future<JsonMap> _runBuild(
       final expectedOutputs = [
         for (final output in request.allowedOutputs) AssetId.parse(output),
       ];
+      final BuildStepImpl activeStep;
       if (request.partPhaseIndex == null) {
-        step = createStep(
+        activeStep = createStep(
           inputId: input,
           expectedOutputs: expectedOutputs,
           inputTracker: inputTracker,
@@ -1054,7 +1055,7 @@ Future<JsonMap> _runBuild(
         final create = _sharedPartStepFactory;
         if (create == null)
           throw StateError('Shared-part worker factory is missing');
-        step = create(
+        activeStep = create(
           input,
           expectedOutputs,
           inputTracker,
@@ -1065,23 +1066,24 @@ Future<JsonMap> _runBuild(
           runtime.resourceManager,
         );
       }
+      step = activeStep;
       await BuildLogLogger.scopeLogAsync(() async {
         try {
-          await builder!.build(step!);
+          await builder!.build(activeStep);
           if (request.partPhaseIndex != null) {
             final encode = _sharedPartEncoder;
             if (encode == null)
               throw StateError('Shared-part worker codec is missing');
-            sharedPart = await encode(step!, builderId);
+            sharedPart = await encode(activeStep, builderId);
           }
         } finally {
           try {
-            await step!.complete();
+            await activeStep.complete();
           } finally {
             // Latch the unsupported API even if a builder catches its exception
             // or fails later. Never publish the builder's catch-path output.
-            if ((step is _RetainedOutputBuildStep &&
-                    step.unsupportedDigestUsed) ||
+            if ((activeStep is _RetainedOutputBuildStep &&
+                    activeStep.unsupportedDigestUsed) ||
                 (trackedResolver.retainedOutputGuard &&
                     trackedResolver.wasUsed)) {
               throw UnsupportedError(_retainedApiUnsupported);
