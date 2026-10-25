@@ -101,6 +101,7 @@ Run the same comparison locally with an installed SDK:
 ```bash
 DART_BIN=/path/to/dart-3.11.0/bin/dart bash scripts/correctness_sdk.sh --resolution downgrade
 DART_BIN=/path/to/dart-3.13.3/bin/dart bash scripts/correctness_sdk.sh --resolution upgrade
+DART_BIN=/path/to/dart-3.13.3/bin/dart bash scripts/correctness_sdk.sh --resolution upgrade --runner 2.17.1 --worker-mode aot
 ```
 
 `fixtures/sdk_compat_app` exercises a Resolver-based builder with one non-AOT

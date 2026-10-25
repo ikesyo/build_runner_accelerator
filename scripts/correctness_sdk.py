@@ -17,6 +17,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--resolution', choices=('downgrade', 'upgrade'), required=True)
     parser.add_argument('--results', type=Path)
+    parser.add_argument('--runner', help='Pin the same build_runner version for stock/native')
+    parser.add_argument('--worker-mode', choices=('jit', 'aot'), default='jit')
     args = parser.parse_args()
     results = (args.results or Path(tempfile.mkdtemp(prefix='sdk-compat-'))).resolve()
     results.mkdir(parents=True, exist_ok=True)
@@ -53,11 +55,11 @@ def main():
         return log.read_text().split('\n', 1)[1]
 
     def stock(root, command='build'):
-        return [dart, 'run', 'build_runner', command]
+        return [dart, 'run', 'build_runner', command, f'--force-{args.worker_mode}']
 
     def accelerator(root, command='build'):
         return [native, command, '--root', str(root), '--dart', dart,
-                '--jobs', '1', '--force-jit']
+                '--jobs', '1', f'--force-{args.worker_mode}']
 
     def outputs(root):
         # Compare the entire generated inventory, including unexpected files.
@@ -73,13 +75,16 @@ def main():
 
     try:
         print(run([dart, '--version'], results).strip(), flush=True)
-        print('Worker: --force-jit (SDK-specific kernel/script); jobs=1', flush=True)
+        print(f'Worker: --force-{args.worker_mode}; jobs=1', flush=True)
         stock_root, native_root = results / 'stock', results / 'native'
         for root in (stock_root, native_root):
             shutil.copytree(REPO / 'fixtures/sdk_compat_app', root,
                             ignore=shutil.ignore_patterns('.dart_tool', '*.summary'))
             pubspec = root / 'pubspec.yaml'
             pubspec.write_text(pubspec.read_text().replace('path: ../..', f'path: {REPO}'))
+            if args.runner:
+                with pubspec.open('a') as spec:
+                    spec.write(f'  build_runner: {args.runner}\n')
         run([dart, 'pub', args.resolution], stock_root)
         shutil.copy2(stock_root / 'pubspec.lock', native_root / 'pubspec.lock')
         run([dart, 'pub', 'get', '--enforce-lockfile'], native_root)

@@ -4,6 +4,32 @@ import 'package:build_runner_accelerator/src/manifest/selection.dart';
 import 'package:test/test.dart';
 
 void main() {
+  for (final enabled in [true, false]) {
+    test('shared-part opt-in is rejected only when selected: $enabled', () {
+      final config = BuildConfig.fromMap('example', const <String>[], {
+        'targets': {
+          r'$default': {
+            'builders': {
+              'example:producer': {'enabled': enabled},
+            },
+          },
+        },
+      });
+      Map<String, SelectedBuilder> select() => selectApplications(
+        rootPackageName: 'example',
+        rootConfig: config,
+        orderedTargets: [_target(config)],
+        definitions: {
+          'example:producer': DefinitionInfo.normal(_LibraryBuilder()),
+        },
+      );
+      if (enabled) {
+        expect(select, throwsUnsupportedError);
+      } else {
+        expect(select(), isEmpty);
+      }
+    });
+  }
   test('selects auto-applied builders and terminates applies cycles', () {
     final config = BuildConfig.fromMap('example', const <String>[], {
       'builders': {
@@ -147,6 +173,25 @@ void main() {
       },
     );
   });
+}
+
+// Supply the new flag even when testing against build_config 1.3.x.
+class _LibraryBuilder extends BuilderDefinition {
+  _LibraryBuilder()
+    : super(
+        builderFactories: ['createProducer'],
+        buildExtensions: {
+          '.dart': ['.g.dart'],
+        },
+        import: 'package:example/builder.dart',
+        autoApply: AutoApply.rootPackage,
+        buildTo: BuildTo.source,
+      );
+
+  bool get addsToLibrary => true;
+
+  @override
+  String get key => 'example:producer';
 }
 
 Map<String, dynamic> _builder(

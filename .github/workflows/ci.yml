@@ -76,13 +76,16 @@ jobs:
       - name: SDK stock/native lifecycle comparison
         timeout-minutes: 12
         run: bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --results 'sdk-results/${{ matrix.sdk }}'
+      - name: Runner 2.17.1 stock/native lifecycle comparison
+        timeout-minutes: 12
+        run: bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --runner 2.17.1 --worker-mode '${{ matrix.resolution == 'upgrade' && 'aot' || 'jit' }}' --results 'sdk-results/${{ matrix.sdk }}/runner-2.17.1'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: sdk-compatibility-${{ matrix.sdk }}
           path: |
-            sdk-results/${{ matrix.sdk }}/*.log
-            sdk-results/${{ matrix.sdk }}/*/pubspec.lock
+            sdk-results/${{ matrix.sdk }}/**/*.log
+            sdk-results/${{ matrix.sdk }}/**/pubspec.lock
           if-no-files-found: ignore
 
   rust:
