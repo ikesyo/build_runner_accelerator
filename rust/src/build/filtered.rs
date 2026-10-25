@@ -231,11 +231,7 @@ pub(super) fn run(
         )?;
     }
     let demanded = lazy.demanded_keys();
-    let rebuilt: BTreeSet<&String> = transaction
-        .pending_actions
-        .iter()
-        .map(|(key, _)| key)
-        .collect();
+    let rebuilt: BTreeSet<&String> = transaction.pending_actions.keys().collect();
     let actual_outputs: BTreeSet<String> = state
         .actions
         .iter()
@@ -244,8 +240,8 @@ pub(super) fn run(
         .chain(
             transaction
                 .pending_actions
-                .iter()
-                .flat_map(|(_, action)| action.outputs.iter().cloned()),
+                .values()
+                .flat_map(|action| action.outputs.iter().cloned()),
         )
         .collect();
     let compatible = state.is_compatible(config_digest);

@@ -18,8 +18,20 @@ sections in graph schema 7. Give the final shared output one graph owner, the
 last contributing action for that library. Its visibility begins after the
 first contributing phase. Reconstruct each phase's accumulated content using
 both reused and newly executed contributions, with no stock subprocess.
-Conservatively rerun normal actions when contributions are dirty or removed,
-because ordinary output edges do not describe the changing resolved library.
+Represent a contribution change as a phase-visible resolved-library dependency,
+in addition to its shared-part asset. Invalidate later resolver consumers through
+their recorded entrypoints and dependency graph, preserving unrelated actions.
+Directive edits are ordinary source changes visible to every phase; replay uses
+the current transaction's read edges and invalidates only affected optional
+producers, which still run only on demand.
+
+Index contributors and final owners once in `SharedLibraryPlan`. The phase
+coordinator reconstructs a library only when its visible contributor count
+changes and publishes only libraries with fresh contribution evidence. Staged
+actions and outputs replace earlier results by key rather than accumulating
+intermediate passes. Keep the persisted contribution separate from transport
+metadata and per-library source-edit evidence; consume that evidence before
+replay so watch state cannot retain handwritten source copies.
 
 Generate a typed shared-step factory and codec only for shared-part catalogs.
 Those workers compile the resolved runner's constructor, accumulator, codec,

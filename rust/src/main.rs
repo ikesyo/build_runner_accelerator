@@ -14,6 +14,7 @@ mod plan;
 mod process;
 mod protocol;
 mod runner_compatibility;
+mod shared_library;
 mod snapshot;
 mod visibility;
 mod wall;

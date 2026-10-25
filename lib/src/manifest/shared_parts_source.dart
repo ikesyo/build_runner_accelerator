@@ -30,17 +30,21 @@ Future<Map<String, dynamic>> encodeSharedPart(BuildStepImpl step, String key) as
   final uri = id.sharedPartUri;
   if (uri == null) throw StateError('Shared-part input is in the reserved namespace: $id');
   final accumulator = SharedPartAccumulator(id, step.languageVersion);
-  if (step.wrotePartContribution) {
+  final wroteContribution = step.wrotePartContribution;
+  final imports = step.partImports;
+  if (wroteContribution) {
     accumulator.addContribution(step.phase, PartContribution.of(
       builderKey: key,
-      imports: step.partImports,
+      imports: imports,
       contribution: step.partContribution ?? '',
     ));
   }
   final content = accumulator.finalContent().stringValue();
   final importsMarker = '// === $key imports.\n';
   final sourceMarker = '// === $key contribution.\n';
-  final importsStart = content.indexOf(importsMarker);
+  // A marker inside a generated string literal is data, not an imports section.
+  final importsStart = wroteContribution && imports.isNotEmpty
+      ? content.indexOf(importsMarker) : -1;
   final sourceStart = content.indexOf(sourceMarker);
   final first = [importsStart, sourceStart].where((offset) => offset >= 0).fold(content.length, (a, b) => a < b ? a : b);
   String? edit(bool add) {

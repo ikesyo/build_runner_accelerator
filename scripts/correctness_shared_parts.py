@@ -42,7 +42,7 @@ def main():
         log = results / f'{"resume-" if args.resume_imports else ""}{sequence:03d}-{root.name}.log'
         with log.open('w') as output:
             output.write(f'{command!r}\n'); output.flush()
-            process = subprocess.Popen(command, cwd=root, env={**env, 'SHARED_OPTIONAL_HISTORY': str(results / f'{root.name}-optional.history')}, stdout=output,
+            process = subprocess.Popen(command, cwd=root, env={**env, 'SHARED_OPTIONAL_HISTORY': str(results / f'{root.name}-optional.history'), 'SHARED_ACTION_HISTORY': str(results / f'{root.name}-actions.history')}, stdout=output,
                                        stderr=subprocess.STDOUT, start_new_session=True)
             try:
                 code = process.wait(timeout=300)
@@ -120,8 +120,10 @@ def main():
         logs = build('no-op')
         assert 'No work to do (Rust frontend)' in logs[1], logs[1]
         assert graph.read_bytes() == previous_graph
+        unrelated_calls = (results / 'native-actions.history').read_text().count('summary:shared_parts_app|lib/unrelated.dart')
         edit('class Model {}', 'class Changed {}')
         build('incremental')
+        assert (results / 'native-actions.history').read_text().count('summary:shared_parts_app|lib/unrelated.dart') == unrelated_calls, 'unrelated action rebuilt'
         edit('class Changed {}', 'class Changed {} // empty')
         build('empty contribution / automatic directive removal')
         assert not part.exists()
@@ -172,14 +174,27 @@ def main():
         assert all(not history.exists() for history in histories), 'undemanded optional builder ran'
     for history in histories:
         history.unlink(missing_ok=True)
+    # Both lazy producers run in the first pass, but only model.dart needs a
+    # directive replay. The other producer must retain its completed result.
+    for root in roots:
+        path = root / 'bin/model.dart'
+        path.write_text(path.read_text().replace('class Executable {}', 'class OptionalExecutable {} // optional'))
     write('class OptionalReplay {} // optional\n')
     build('optional demand after staged directive edit')
     expected_length = len((roots[1] / 'lib/model.dart').read_text())
     assert f'const optionalLength = {expected_length};' in part.read_text()
-    assert histories[0].read_bytes() == histories[1].read_bytes(), 'optional demand/replay history differs'
+    def per_input_history(history):
+        events = {}
+        for line in history.read_text().splitlines():
+            asset, length = line.rsplit(':', 1)
+            events.setdefault(asset, []).append(int(length))
+        return events
+    assert per_input_history(histories[0]) == per_input_history(histories[1]), 'optional demand/replay history differs'
+    assert len(per_input_history(histories[1])['shared_parts_app|bin/model.dart']) == 1, 'unaffected optional producer replayed'
     previous_history = histories[1].read_bytes()
     build('optional demand no-op')
-    assert all(history.read_bytes() == previous_history for history in histories)
+    assert histories[1].read_bytes() == previous_history
+    assert per_input_history(histories[0]) == per_input_history(histories[1])
     write('class ReplayFailure {} // replay-failure\n')
     before, saved_graph = inventory(roots[1]), graph.read_bytes()
     logs = build('failure after staged directive edit', success=False)
@@ -216,9 +231,13 @@ def main():
         wait(lambda: 'native filesystem events' in (results / 'native-watch.log').read_text()
              and 'Built with build_runner' in (results / 'stock-watch.log').read_text())
         for old, new in [('Recovered', 'Watched'), ('Watched', 'WatchedAgain')]:
+            completions = [(results / 'stock-watch.log').read_text().count('Built with build_runner'),
+                           (results / 'native-watch.log').read_text().count('Build completed (Rust frontend)')]
             edit(f'class {old}', f'class {new}')
             expected = f'class {new}'.encode()
-            wait(lambda: all(expected in (root / 'lib/model.first.txt').read_bytes() for root in roots))
+            wait(lambda: all(expected in (root / 'lib/model.first.txt').read_bytes() for root in roots)
+                 and (results / 'stock-watch.log').read_text().count('Built with build_runner') > completions[0]
+                 and (results / 'native-watch.log').read_text().count('Build completed (Rust frontend)') > completions[1])
             assert inventory(roots[0]) == inventory(roots[1])
             print(f'shared-parts: watch {new}: PASS', flush=True)
     finally:

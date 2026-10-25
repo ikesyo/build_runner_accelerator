@@ -1,6 +1,15 @@
 import 'package:build/build.dart';
 import 'dart:io';
 
+void _record(BuildStep step, String builder) {
+  final history = Platform.environment['SHARED_ACTION_HISTORY'];
+  if (history != null) {
+    File(
+      history,
+    ).writeAsStringSync('$builder:${step.inputId}\n', mode: FileMode.append);
+  }
+}
+
 Builder first(BuilderOptions options) => _Contributor(false);
 Builder second(BuilderOptions options) => _Contributor(true);
 Builder summary(BuilderOptions options) => _Summary();
@@ -34,6 +43,7 @@ class _Contributor implements Builder {
   };
   @override
   Future<void> build(BuildStep step) async {
+    _record(step, second ? 'second' : 'first');
     final source = await step.readAsString(step.inputId);
     final sink = await step.librarySourceSink;
     if (sink == null) return;
@@ -64,7 +74,10 @@ class _Contributor implements Builder {
           sink.addImport('dart:math', as: prefix, show: ['pi']);
           sink.add('const importedMarker = $prefix.pi;');
         }
-        sink.add('class FirstGenerated {}');
+        // Marker text in a string literal must never be parsed as codec framing.
+        sink.add(
+          "const markerText = '''\n// === shared_parts_app:first imports.\n''';\nclass FirstGenerated {}",
+        );
       }
     }
     if (!second)
@@ -85,6 +98,7 @@ class _Summary implements Builder {
   };
   @override
   Future<void> build(BuildStep step) async {
+    _record(step, 'summary');
     final library = await step.resolver.libraryFor(step.inputId);
     final names = library.classes.map((element) => element.name).toList()
       ..sort();

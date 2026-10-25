@@ -18,6 +18,7 @@ use super::part_directive::{part_directive_filter_disabled, part_directive_skips
 
 pub(super) struct PlannedActions {
     pub(super) specs: Vec<BuildSpec>,
+    pub(super) shared_libraries: super::shared_parts::SharedLibraryPlan,
     pub(super) generated_output_locations: BTreeMap<String, (BuildTo, bool)>,
     pub(super) visibility: AssetVisibility,
 }
@@ -175,7 +176,10 @@ pub(super) fn create(
     specs.extend(post_specs);
 
     let visibility = AssetVisibility::from_specs(&specs, state, build_config);
+    let shared_libraries =
+        super::shared_parts::SharedLibraryPlan::new(&specs, &build_config.builders);
     Ok(PlannedActions {
+        shared_libraries,
         specs,
         generated_output_locations,
         visibility,

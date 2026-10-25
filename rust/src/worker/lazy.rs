@@ -430,6 +430,14 @@ impl LazyBuildState {
         self.built_keys.contains(&spec.action_key())
     }
 
+    /// Source-overlay replay invalidates only affected optional producers.
+    /// Unaffected demand results remain reusable within the transaction.
+    pub(crate) fn invalidate_optional(&mut self, keys: &BTreeSet<String>) {
+        self.force_keys.extend(keys.iter().cloned());
+        self.built_keys.retain(|key| !keys.contains(key));
+        self.demanded_keys.retain(|key| !keys.contains(key));
+    }
+
     pub fn new(force_keys: BTreeSet<String>) -> Self {
         Self {
             force_keys,

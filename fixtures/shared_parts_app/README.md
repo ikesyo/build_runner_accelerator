@@ -4,7 +4,11 @@ Pins build_runner 2.17.1. Two `adds_to_library` builders contribute to each
 library; the first also writes an ordinary output, and the second resolves the
 first phase's contribution. A later normal builder checks the completed
 library throughout the lifecycle, including input-set changes. An optional cache producer verifies
-demand and replay behavior, including identical stock/native call histories.
+demand and replay behavior, including identical per-input stock/native call histories.
+Generated string literals contain codec-marker text as a framing regression.
+A second optional input keeps its first-pass result during another library's
+directive replay. An independent normal input verifies that shared-library edits do not rebuild
+unrelated actions. Watch comparisons wait for both build-completion messages.
 
 Run from the repository root with one Dart SDK and Pub cache for both sides:
 

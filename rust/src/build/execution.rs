@@ -29,6 +29,8 @@ pub(super) struct ExecutionInputs<'a> {
     pub(super) retained_output_guard: bool,
 }
 
+const MAX_DIRECTIVE_REPLAYS: usize = 8;
+
 pub(super) struct ExecutionResult {
     pub(super) transaction: PendingTransaction,
     pub(super) expected_outputs: BTreeSet<String>,
@@ -56,10 +58,9 @@ pub(super) fn run(
         deleted_actions,
     } = dirty_plan;
     let specs = &plan.specs;
-    let has_shared_parts = build_config
-        .builders
-        .iter()
-        .any(|builder| builder.definition.adds_to_library);
+    let has_shared_parts = !plan.shared_libraries.is_empty();
+    let mut shared_libraries =
+        super::shared_parts::SharedLibraryCoordinator::new(&plan.shared_libraries);
     let mut dirty_keys = dirty
         .iter()
         .map(|spec| spec.action_key())
@@ -130,8 +131,7 @@ pub(super) fn run(
             for configured_builder_index in execution_order(&build_config.builders) {
                 let configured_builder = &build_config.builders[configured_builder_index];
                 if has_shared_parts {
-                    super::shared_parts::refresh(
-                        specs,
+                    shared_libraries.refresh(
                         state,
                         &mut transaction,
                         configured_builder.phase.checked_sub(1),
@@ -270,20 +270,16 @@ pub(super) fn run(
                 drop(select);
                 let assemble = crate::wall::Span::new("phase_requests")
                     .phase(configured_builder.phase, &builder.id);
+                let part_phase_index = if builder.adds_to_library {
+                    plan.shared_libraries
+                        .phase_index(&configured_builder.package, configured_builder.phase)
+                } else {
+                    None
+                };
                 let requests = runnable_phase_specs
                     .iter()
                     .map(|spec| BuildRequest {
-                        part_phase_index: builder.adds_to_library.then(|| {
-                            build_config
-                                .builders
-                                .iter()
-                                .filter(|other| {
-                                    other.package == configured_builder.package
-                                        && other.definition.adds_to_library
-                                        && other.phase < configured_builder.phase
-                                })
-                                .count() as u32
-                        }),
+                        part_phase_index,
                         builder: spec.instance.builder.id.to_owned(),
                         input: spec.input.clone(),
                         outputs: spec
@@ -399,57 +395,30 @@ pub(super) fn run(
             if !has_shared_parts {
                 break;
             }
-            super::shared_parts::refresh(specs, state, &mut transaction, Some(u32::MAX));
-            if !super::shared_parts::finish(workspace, specs, state, &mut transaction)? {
+            let edited_libraries = shared_libraries.finish(workspace, state, &mut transaction)?;
+            if edited_libraries.is_empty() {
                 break;
             }
             replay += 1;
-            if replay > 8 {
+            if replay > MAX_DIRECTIVE_REPLAYS {
                 return Err(io::Error::other(
                     "shared-part directive updates did not stabilize; no outputs were published",
                 ));
             }
-            dirty_keys = specs
+            let replay_plan = super::dirty::replay_after_source_edits(
+                specs,
+                state,
+                &transaction.pending_actions,
+                &edited_libraries,
+            );
+            dirty_keys = replay_plan
+                .dirty
                 .iter()
-                .filter(|spec| !spec.instance.builder.is_optional)
                 .map(|spec| spec.action_key())
                 .collect();
-            let optional_outputs = specs
-                .iter()
-                .filter(|spec| spec.instance.builder.is_optional)
-                .flat_map(|spec| spec.outputs.iter().cloned())
-                .collect::<BTreeSet<_>>();
-            transaction
-                .pending_outputs
-                .retain(|(_, asset, _)| !optional_outputs.contains(asset));
-            for spec in specs
-                .iter()
-                .filter(|spec| spec.instance.builder.is_optional)
-            {
-                for output in &spec.outputs {
-                    transaction.overlay.remove(output);
-                    // Keep the path demandable: a deletion hint would prevent
-                    // the worker from asking Rust to run its optional producer.
-                    transaction.deleted_overlay.remove(output);
-                    if spec.instance.builder.build_to == BuildTo::Cache {
-                        transaction.resolver.resolver_cache_updated.remove(output);
-                        transaction
-                            .resolver
-                            .resolver_cache_deleted
-                            .insert(output.clone());
-                    } else {
-                        transaction.resolver.resolver_updated.remove(output);
-                        transaction.resolver.resolver_deleted.insert(output.clone());
-                    }
-                }
-            }
-            lazy_state = LazyBuildState::new(
-                specs
-                    .iter()
-                    .filter(|spec| spec.instance.builder.is_optional)
-                    .map(|spec| spec.action_key())
-                    .collect(),
-            );
+            let forced_optional = replay_plan.lazy_force_keys;
+            transaction.invalidate_optional_outputs(specs, &forced_optional);
+            lazy_state.invalidate_optional(&forced_optional);
             lazy_demand_possible = !lazy_specs_by_output.is_empty();
             pruned_optional = false;
             resolver_needs_reset = true;

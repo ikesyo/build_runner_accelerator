@@ -36,4 +36,4 @@ builders:
     auto_apply: root_package
     build_to: source
     defaults:
-      generate_for: ['lib/model*.dart', 'lib/nested/model*.dart', 'bin/model*.dart']
+      generate_for: ['lib/model*.dart', 'lib/nested/model*.dart', 'bin/model*.dart', 'lib/unrelated.dart']

@@ -16,7 +16,7 @@ const GRAPH_MAX_COLLECTION_ITEMS: usize = 4_000_000;
 /// retain the actual output set from its last successful execution.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ActionState {
-    pub shared_part: Option<crate::protocol::SharedPart>,
+    pub shared_part: Option<crate::shared_library::SharedContribution>,
     pub builder: String,
     pub input: String,
     pub reads: Vec<String>,
@@ -596,13 +596,10 @@ impl<'a> Decoder<'a> {
 
     fn read_action(&mut self) -> io::Result<ActionState> {
         let shared_part = if self.read_bool()? {
-            Some(crate::protocol::SharedPart {
+            Some(crate::shared_library::SharedContribution {
                 header: self.read_string()?,
                 imports: self.read_string()?,
                 source: self.read_string()?,
-                original: String::new(),
-                with_part: None,
-                without_part: None,
             })
         } else {
             None
@@ -888,15 +885,12 @@ mod tests {
             actions: BTreeMap::from([(
                 "example:builder|app|lib/model.dart".to_owned(),
                 ActionState {
-                    shared_part: Some(crate::protocol::SharedPart {
+                    shared_part: Some(crate::shared_library::SharedContribution {
                         header: "// dart format off\npart of '../model.dart';\n\n".into(),
                         imports: "// === example:builder imports.\nimport 'dart:math' as i0;\n\n"
                             .into(),
                         source: "// === example:builder contribution.\nclass Generated {}\n\n"
                             .into(),
-                        original: String::new(),
-                        with_part: None,
-                        without_part: None,
                     }),
                     builder: "example:builder".to_owned(),
                     input: "app|lib/model.dart".to_owned(),

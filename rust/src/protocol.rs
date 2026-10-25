@@ -71,6 +71,30 @@ pub struct SharedPart {
     pub without_part: Option<String>,
 }
 
+impl SharedPart {
+    /// Move transport fields into their distinct domain lifetimes; no source
+    /// strings are cloned or retained in the persisted contribution.
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        crate::shared_library::SharedContribution,
+        crate::shared_library::SourceEditEvidence,
+    ) {
+        (
+            crate::shared_library::SharedContribution {
+                header: self.header,
+                imports: self.imports,
+                source: self.source,
+            },
+            crate::shared_library::SourceEditEvidence {
+                original: self.original,
+                with_part: self.with_part,
+                without_part: self.without_part,
+            },
+        )
+    }
+}
+
 #[derive(Debug)]
 pub struct BinaryFrame {
     pub magic: [u8; 4],

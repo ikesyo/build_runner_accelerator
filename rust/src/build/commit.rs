@@ -155,7 +155,7 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
             }
         }
     }
-    for (builder, asset, bytes) in &transaction.pending_outputs {
+    for (asset, (builder, bytes)) in &transaction.pending_outputs {
         changes.insert(
             output_path(workspace, builder, asset)?,
             Some(crate::digest::digest_bytes(bytes)),
@@ -181,11 +181,7 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
     // No phase or asset RPC can read the overlay once all actions have succeeded.
     // Release its references so committing each output can free its buffer.
     let written_outputs: BTreeSet<_> = if keep_modified_outputs {
-        transaction
-            .pending_outputs
-            .iter()
-            .map(|(_, asset, _)| asset.clone())
-            .collect()
+        transaction.pending_outputs.keys().cloned().collect()
     } else {
         BTreeSet::new()
     };
@@ -232,7 +228,7 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         state.actions.remove(&action_key);
     }
     boundary("after_deletions")?;
-    for (builder, asset, bytes) in transaction.pending_outputs {
+    for (asset, (builder, bytes)) in transaction.pending_outputs {
         super::recovery::write_output(&output_path(workspace, builder.as_ref(), &asset)?, &bytes)?;
         boundary("after_output")?;
     }
@@ -413,7 +409,7 @@ fn verify_outputs(state: &GraphState, inputs: &CommitInputs<'_>) -> io::Result<(
             }
         }
     }
-    for (builder, asset, bytes) in &transaction.pending_outputs {
+    for (asset, (builder, bytes)) in &transaction.pending_outputs {
         if builder.build_to == BuildTo::Source {
             changes.insert(asset.clone(), Some(bytes.as_ref()));
         }

@@ -484,14 +484,13 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
     };
     let mut transaction =
         PendingTransaction::new(&[], &state, vec![(old_spec.action_key(), old_action)]);
-    transaction.pending_outputs.push((
-        builder.definition.clone(),
+    transaction.pending_outputs.insert(
         output.clone(),
-        new_bytes.clone().into(),
-    ));
+        (builder.definition.clone(), new_bytes.clone().into()),
+    );
     transaction
         .pending_actions
-        .push((new_spec.action_key(), new_action.clone()));
+        .insert(new_spec.action_key(), new_action.clone());
     let state_path = temporary.0.join(".dart_tool/graph-v3.bin");
     let scanned_packages = BTreeSet::from(["app".to_owned()]);
 
@@ -556,7 +555,7 @@ fn output_registration_shares_buffers_and_releases_aborted_transaction() -> io::
             }
             record_build_result(&workspace, &state, &spec, result, &mut pending)?;
             let overlay = &pending.overlay[asset];
-            let commit_bytes = &pending.pending_outputs[0].2;
+            let commit_bytes = &pending.pending_outputs[asset].1;
             assert!(Arc::ptr_eq(overlay, commit_bytes));
             assert_eq!(Arc::strong_count(overlay), 2);
             assert_eq!(overlay.as_ref(), bytes);
@@ -564,7 +563,7 @@ fn output_registration_shares_buffers_and_releases_aborted_transaction() -> io::
             // A later action failure aborts the pending transaction. Removing
             // visibility must leave the bytes available for commit until then.
             pending.overlay.remove(asset);
-            assert_eq!(pending.pending_outputs[0].2.as_ref(), bytes);
+            assert_eq!(pending.pending_outputs[asset].1.as_ref(), bytes);
             drop(pending);
             assert!(weak.upgrade().is_none());
             assert_eq!(fs::read(temporary.0.join("lib/input.out"))?, b"committed");
@@ -731,6 +730,7 @@ fn removing_target_with_shared_builder_invalidates_glob_consumer() -> io::Result
         ..GraphState::default()
     };
     let mut plan = PlannedActions {
+        shared_libraries: Default::default(),
         specs: vec![first.clone(), second.clone(), consumer.clone()],
         generated_output_locations: BTreeMap::new(),
         visibility: AssetVisibility::default(),
@@ -1022,6 +1022,7 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
         ..GraphState::default()
     };
     let plan = PlannedActions {
+        shared_libraries: Default::default(),
         specs: vec![
             source_spec.clone(),
             cache_spec.clone(),
@@ -1090,6 +1091,7 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
     };
     let retained_config = dirty_test_config(&[source]);
     let retained_plan = PlannedActions {
+        shared_libraries: Default::default(),
         specs: vec![source_spec.clone()],
         generated_output_locations: BTreeMap::new(),
         visibility: AssetVisibility::default(),
@@ -1463,16 +1465,14 @@ fn recovery_commit_fixture(root: &std::path::Path) -> io::Result<()> {
     transaction
         .pending_deletions
         .push((source.definition.clone(), "app|lib/obsolete.out".to_owned()));
-    transaction.pending_outputs.push((
-        source.definition.clone(),
+    transaction.pending_outputs.insert(
         "app|lib/updated.out".to_owned(),
-        Arc::from(&b"new source"[..]),
-    ));
-    transaction.pending_outputs.push((
-        cache.definition.clone(),
+        (source.definition.clone(), Arc::from(&b"new source"[..])),
+    );
+    transaction.pending_outputs.insert(
         "app|lib/new.cache".to_owned(),
-        Arc::from(&b"new cache"[..]),
-    ));
+        (cache.definition.clone(), Arc::from(&b"new cache"[..])),
+    );
     commit(
         &mut state,
         CommitInputs {
@@ -1943,5 +1943,126 @@ fn filtered_retention_preserves_bytes_without_recording_implicit_history() -> io
         assert_eq!(state.retained_output_state, explicit_keep || prior_history);
         assert_eq!(GraphState::load(&path)?, state);
     }
+    Ok(())
+}
+
+#[test]
+fn shared_contributions_invalidate_later_resolvers_but_not_unrelated_or_plain_reads() {
+    let mut contributor = configured_builder("shared", "app:default", 0, 1);
+    Arc::make_mut(&mut contributor.definition).adds_to_library = true;
+    let producer = build_spec(&contributor, "app|lib/model.dart", &[]);
+    let early = build_spec(
+        &configured_builder("early", "app:default", 0, 0),
+        "app|lib/early.dart",
+        &[],
+    );
+    let later = build_spec(
+        &configured_builder("later", "app:default", 0, 3),
+        "app|lib/importer.dart",
+        &[],
+    );
+    let plain = build_spec(
+        &configured_builder("plain", "app:default", 0, 3),
+        "app|lib/plain.txt",
+        &[],
+    );
+    let unrelated = build_spec(
+        &configured_builder("other", "app:default", 0, 3),
+        "app|lib/other.dart",
+        &[],
+    );
+    let specs = vec![
+        producer.clone(),
+        early.clone(),
+        later.clone(),
+        plain.clone(),
+        unrelated.clone(),
+    ];
+    let mut state = GraphState::default();
+    for spec in &specs {
+        let resolving =
+            spec.action_key() == early.action_key() || spec.action_key() == later.action_key();
+        state.actions.insert(
+            spec.action_key(),
+            ActionState {
+                input: spec.input.clone(),
+                status: "success".into(),
+                reads: vec![if spec.action_key() == plain.action_key() {
+                    "app|lib/model.dart".into()
+                } else {
+                    spec.input.clone()
+                }],
+                resolver_entrypoints: if resolving {
+                    vec![spec.input.clone()]
+                } else {
+                    Vec::new()
+                },
+                ..ActionState::default()
+            },
+        );
+        if resolving {
+            state.resolver_dep_graph.insert(
+                spec.input.clone(),
+                vec!["app|lib/model.dart".into()].into_iter().collect(),
+            );
+        }
+    }
+    let mut dirty = vec![producer.clone()];
+    expand_dirty_dependents(&mut dirty, &specs, &state);
+    assert_eq!(
+        dirty
+            .iter()
+            .map(|spec| spec.action_key())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([producer.action_key(), later.action_key()])
+    );
+    // A physical directive edit also invalidates plain readers, using newly
+    // observed edges from this transaction rather than only committed reads.
+    let staged = BTreeMap::from([(
+        unrelated.action_key(),
+        ActionState {
+            reads: vec!["app|lib/model.dart".into()],
+            ..state.actions[&unrelated.action_key()].clone()
+        },
+    )]);
+    let replay = super::dirty::replay_after_source_edits(
+        &specs,
+        &state,
+        &staged,
+        &BTreeSet::from(["app|lib/model.dart".into()]),
+    );
+    let keys: BTreeSet<_> = replay.dirty.iter().map(|spec| spec.action_key()).collect();
+    assert!(keys.contains(&plain.action_key()));
+    assert!(keys.contains(&early.action_key()));
+    assert!(keys.contains(&unrelated.action_key()));
+}
+
+#[test]
+fn shared_source_evidence_is_transaction_local_and_deduplicated_per_library() -> io::Result<()> {
+    let temporary = TemporaryWorkspace::new()?;
+    let workspace = Workspace::load(temporary.0.clone())?;
+    let mut state = GraphState::default();
+    let mut pending = super::transaction::PendingTransaction::new(&[], &state, Vec::new());
+    for id in ["first", "second"] {
+        let mut builder = configured_builder(id, "app:default", 0, 1);
+        Arc::make_mut(&mut builder.definition).adds_to_library = true;
+        let spec = build_spec(&builder, "app|lib/model.dart", &[]);
+        let result = serde_json::from_value(serde_json::json!({
+            "type":"build_result", "id":1, "status":"success", "outputs":[], "resolver_used":false,
+            "shared_part": {"header":"header", "imports":"", "source":"class Generated {}", "original":"source".repeat(1000), "with_part":"edited", "without_part":null}
+        }))?;
+        super::results::record_build_result(&workspace, &state, &spec, result, &mut pending)?;
+    }
+    assert_eq!(pending.source_edit_evidence.len(), 1);
+    state.actions = pending.pending_actions;
+    state.schema_version = crate::graph::GRAPH_SCHEMA_VERSION;
+    let path = temporary.0.join(".dart_tool/shared-graph");
+    state.save(&path)?;
+    assert_eq!(GraphState::load(&path)?, state);
+    assert!(
+        !fs::read(&path)?
+            .windows(60)
+            .any(|window| window == "source".repeat(10).as_bytes())
+    );
     Ok(())
 }

@@ -128,7 +128,7 @@ pub(super) fn analyze(
         })
         .map(|(key, action)| (key.clone(), action.clone()))
         .collect();
-    let removed_outputs = deleted_actions
+    let mut removed_outputs = deleted_actions
         .iter()
         // A changed configuration already invalidates every retained action.
         // Only compatible graphs need phase-aware removal edges; their target,
@@ -145,6 +145,20 @@ pub(super) fn analyze(
             })
         })
         .collect::<Vec<_>>();
+    // Removing a contribution changes the resolved library as well as its part.
+    for (key, action) in deleted_actions
+        .iter()
+        .filter(|(_, action)| action.shared_part.is_some())
+    {
+        if compatible
+            && let Some(producer) = build_config.builders.iter().find(|builder| {
+                builder.definition.id == action.builder
+                    && key.starts_with(&format!("{}|", builder.target))
+            })
+        {
+            removed_outputs.push((action.input.clone(), producer.phase, BuilderKind::Normal));
+        }
+    }
     expand_dirty_dependents_with_removed(&mut dirty_roots, specs, state, &removed_outputs);
     let mut dirty_keys = dirty
         .iter()
@@ -158,21 +172,6 @@ pub(super) fn analyze(
         } else if dirty_keys.insert(key) {
             dirty.push(spec);
         }
-    }
-    // Contributions can change a library's resolved elements without an
-    // ordinary output edge. Conservatively replay the plan for those changes.
-    if dirty
-        .iter()
-        .any(|spec| spec.instance.builder.adds_to_library)
-        || deleted_actions
-            .iter()
-            .any(|(_, action)| action.shared_part.is_some())
-    {
-        dirty = specs
-            .iter()
-            .filter(|spec| !spec.instance.builder.is_optional)
-            .cloned()
-            .collect();
     }
     filesystem_metrics.dirty_check_us = dirty_check_started.elapsed().as_micros();
 
@@ -323,6 +322,29 @@ fn collect_parallel<T: Sync, R: Send>(
     })
 }
 
+/// Borrow current action evidence; ordinary builds allocate no merged map.
+struct ActionStates<'a> {
+    committed: &'a BTreeMap<String, ActionState>,
+    staged: Option<&'a BTreeMap<String, ActionState>>,
+}
+
+impl<'a> ActionStates<'a> {
+    fn get(&self, key: &str) -> Option<&'a ActionState> {
+        self.staged
+            .and_then(|actions| actions.get(key))
+            .or_else(|| self.committed.get(key))
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&'a str, &'a ActionState)> + '_ {
+        let staged = self.staged;
+        self.committed
+            .iter()
+            .filter(move |(key, _)| !staged.is_some_and(|actions| actions.contains_key(*key)))
+            .chain(staged.into_iter().flat_map(|actions| actions.iter()))
+            .map(|(key, action)| (key.as_str(), action))
+    }
+}
+
 /// Follow primary and recorded read dependencies from dirty normal roots.
 /// Undemanded producers remain forceable, but cleanup alone cannot make their
 /// possible outputs dirty work. Actual new reads are handled during execution.
@@ -330,6 +352,7 @@ fn required_by_dirty_normal(
     dirty: &[BuildSpec],
     specs: &[BuildSpec],
     state: &GraphState,
+    actions: &ActionStates<'_>,
 ) -> BTreeSet<String> {
     let mut pending = dirty
         .iter()
@@ -353,7 +376,7 @@ fn required_by_dirty_normal(
             continue;
         }
         let mut assets = vec![spec.input.clone()];
-        if let Some(action) = state.actions.get(&key) {
+        if let Some(action) = actions.get(key.as_str()) {
             assets.extend(
                 action
                     .reads
@@ -393,24 +416,98 @@ pub(super) fn expand_dirty_dependents_with_removed(
     state: &GraphState,
     removed_outputs: &[(String, u32, BuilderKind)],
 ) {
+    expand_with_source_changes(dirty, specs, state, removed_outputs, &BTreeSet::new(), None);
+}
+
+/// A source directive edit is visible to every phase; current pass results
+/// override committed edges so newly discovered optional reads are included.
+pub(super) fn replay_after_source_edits(
+    specs: &[BuildSpec],
+    state: &GraphState,
+    staged: &BTreeMap<String, ActionState>,
+    changed: &BTreeSet<String>,
+) -> DirtyPlan {
+    let mut affected: Vec<_> = specs
+        .iter()
+        .filter(|spec| changed.contains(&spec.input))
+        .cloned()
+        .collect();
+    expand_with_source_changes(&mut affected, specs, state, &[], changed, Some(staged));
+    let lazy_force_keys = affected
+        .iter()
+        .filter(|spec| spec.instance.builder.is_optional)
+        .map(|spec| spec.action_key())
+        .collect();
+    DirtyPlan {
+        dirty: affected
+            .into_iter()
+            .filter(|spec| !spec.instance.builder.is_optional)
+            .collect(),
+        lazy_force_keys,
+        deleted_actions: Vec::new(),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ChangeVisibility {
+    All,
+    After(u32),
+    PostProcessOnly,
+}
+
+struct AssetImpact {
+    asset: String,
+    visibility: ChangeVisibility,
+    glob_phase: Option<u32>,
+    resolver_only: bool,
+}
+
+impl AssetImpact {
+    fn output(asset: String, phase: u32, kind: BuilderKind, removed: bool) -> Self {
+        let visibility = match (removed, kind) {
+            (false, _) => ChangeVisibility::All,
+            (true, BuilderKind::Normal) => ChangeVisibility::After(phase),
+            (true, BuilderKind::PostProcess) => ChangeVisibility::PostProcessOnly,
+        };
+        Self {
+            asset,
+            visibility,
+            glob_phase: (kind == BuilderKind::Normal).then_some(phase),
+            resolver_only: false,
+        }
+    }
+}
+
+fn expand_with_source_changes(
+    dirty: &mut Vec<BuildSpec>,
+    specs: &[BuildSpec],
+    state: &GraphState,
+    removed_outputs: &[(String, u32, BuilderKind)],
+    changed_sources: &BTreeSet<String>,
+    staged: Option<&BTreeMap<String, ActionState>>,
+) {
     let specs_by_key = specs
         .iter()
         .map(|spec| (spec.action_key(), spec))
         .collect::<BTreeMap<_, _>>();
+    let actions = ActionStates {
+        committed: &state.actions,
+        staged,
+    };
     let mut dependents_by_asset = BTreeMap::<&str, Vec<&str>>::new();
     let mut actions_by_entrypoint = BTreeMap::<&str, Vec<&str>>::new();
     let mut glob_dependents = Vec::new();
-    for (action_key, action) in &state.actions {
+    for (action_key, action) in actions.iter() {
         if let Some(spec) = specs_by_key.get(action_key) {
             for glob in &action.glob_reads {
-                glob_dependents.push((action_key.as_str(), spec.instance.phase, glob));
+                glob_dependents.push((action_key, spec.instance.phase, glob));
             }
         }
         for dependency in action.reads.iter().chain(action.resolver_reads.iter()) {
             dependents_by_asset
                 .entry(dependency.as_str())
                 .or_default()
-                .push(action_key.as_str());
+                .push(action_key);
         }
         // Entrypoint edges stay lazy: expanding every entrypoint's closure
         // here would duplicate the whole dep graph per action. When a dirty
@@ -420,7 +517,7 @@ pub(super) fn expand_dirty_dependents_with_removed(
             actions_by_entrypoint
                 .entry(entrypoint.as_str())
                 .or_default()
-                .push(action_key.as_str());
+                .push(action_key);
         }
         // A consumer whose primary input was unavailable has no read or
         // resolver dependency to record. Preserve that edge so a producer
@@ -431,7 +528,7 @@ pub(super) fn expand_dirty_dependents_with_removed(
             dependents_by_asset
                 .entry(action.input.as_str())
                 .or_default()
-                .push(action_key.as_str());
+                .push(action_key);
         }
     }
     let mut parents_by_asset = BTreeMap::<&str, Vec<&str>>::new();
@@ -445,12 +542,11 @@ pub(super) fn expand_dirty_dependents_with_removed(
     }
 
     let required = if dirty.iter().any(|spec| {
-        state
-            .actions
-            .get(&spec.action_key())
+        actions
+            .get(spec.action_key().as_str())
             .is_some_and(|action| action.status == "undemanded")
     }) {
-        required_by_dirty_normal(dirty, specs, state)
+        required_by_dirty_normal(dirty, specs, state, &actions)
     } else {
         BTreeSet::new()
     };
@@ -460,10 +556,14 @@ pub(super) fn expand_dirty_dependents_with_removed(
         .collect::<BTreeSet<_>>();
     let mut cursor = 0;
     let mut removed_cursor = 0;
-    while cursor < dirty.len() || removed_cursor < removed_outputs.len() {
-        let (source_outputs, source_phase, source_kind, removed) = if cursor < dirty.len() {
+    let mut changed_sources = changed_sources.iter();
+    while cursor < dirty.len()
+        || removed_cursor < removed_outputs.len()
+        || changed_sources.len() > 0
+    {
+        let impacts = if cursor < dirty.len() {
             let source_key = dirty[cursor].action_key();
-            let source_outputs = match state.actions.get(&source_key) {
+            let source_outputs = match actions.get(source_key.as_str()) {
                 Some(action)
                     if action.status == "undemanded" && !required.contains(&source_key) =>
                 {
@@ -505,31 +605,71 @@ pub(super) fn expand_dirty_dependents_with_removed(
                     .unwrap_or_default(),
             };
             let source = &dirty[cursor];
-            let result = (
-                source_outputs,
-                source.instance.phase,
-                source.instance.builder.kind,
-                false,
-            );
+            let mut impacts: Vec<_> = source_outputs
+                .into_iter()
+                .map(|asset| {
+                    AssetImpact::output(
+                        asset,
+                        source.instance.phase,
+                        source.instance.builder.kind,
+                        false,
+                    )
+                })
+                .collect();
+            if source.instance.builder.adds_to_library {
+                if let Some(part) = super::shared_parts::part_id(&source.input) {
+                    if !impacts.iter().any(|impact| impact.asset == part) {
+                        impacts.push(AssetImpact::output(
+                            part.clone(),
+                            source.instance.phase,
+                            BuilderKind::Normal,
+                            false,
+                        ));
+                    }
+                    for impact in &mut impacts {
+                        if impact.asset == part {
+                            impact.visibility = ChangeVisibility::After(source.instance.phase);
+                        }
+                    }
+                }
+                impacts.push(AssetImpact {
+                    asset: source.input.clone(),
+                    visibility: ChangeVisibility::After(source.instance.phase),
+                    glob_phase: None,
+                    resolver_only: true,
+                });
+            }
             cursor += 1;
-            result
-        } else {
+            impacts
+        } else if removed_cursor < removed_outputs.len() {
             let (asset, phase, kind) = &removed_outputs[removed_cursor];
             removed_cursor += 1;
-            (vec![asset.clone()], *phase, *kind, true)
+            vec![AssetImpact::output(asset.clone(), *phase, *kind, true)]
+        } else {
+            vec![AssetImpact {
+                asset: changed_sources.next().expect("source remaining").clone(),
+                visibility: ChangeVisibility::All,
+                glob_phase: None,
+                resolver_only: false,
+            }]
         };
         let mut ancestors_seen = BTreeSet::<&str>::new();
-        for output in &source_outputs {
-            let mut dependent_keys: Vec<&str> = dependents_by_asset
-                .get(output.as_str())
-                .into_iter()
-                .flatten()
-                .copied()
-                .collect();
+        for impact in &impacts {
+            let output = &impact.asset;
+            let mut dependent_keys: Vec<&str> = if impact.resolver_only {
+                Vec::new()
+            } else {
+                dependents_by_asset
+                    .get(output.as_str())
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .collect()
+            };
             // Globs observe earlier-phase generated candidates, including new
             // optional outputs and removed producers whose cache bytes remain.
             // A recorded content read cannot represent a new glob member.
-            if source_kind == BuilderKind::Normal {
+            if let Some(source_phase) = impact.glob_phase {
                 dependent_keys.extend(glob_dependents.iter().filter_map(|(key, phase, glob)| {
                     (source_phase < *phase
                         && output.split_once('|').is_some_and(|(package, path)| {
@@ -565,12 +705,12 @@ pub(super) fn expand_dirty_dependents_with_removed(
                 let Some(spec) = specs_by_key.get(dependent_key) else {
                     continue;
                 };
-                // Do not turn removed hidden outputs into new invalidation
-                // edges. Preserve ordinary dirty-producer propagation: its
-                // resolver evidence can conservatively include future parts.
-                let visible = !removed
-                    || spec.instance.builder.kind == BuilderKind::PostProcess
-                    || (source_kind == BuilderKind::Normal && source_phase < spec.instance.phase);
+                let visible = spec.instance.builder.kind == BuilderKind::PostProcess
+                    || match impact.visibility {
+                        ChangeVisibility::All => true,
+                        ChangeVisibility::After(phase) => phase < spec.instance.phase,
+                        ChangeVisibility::PostProcessOnly => false,
+                    };
                 if visible && dirty_keys.insert(dependent_key.to_owned()) {
                     dirty.push((*spec).clone());
                 }
