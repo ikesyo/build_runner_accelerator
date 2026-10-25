@@ -95,6 +95,10 @@ Watch logs and builder histories must stay outside watched workspaces.
 The existing SDK/dependency jobs run both package analysis/tests and a real
 worker comparison. These cover different boundaries: `build_runner --help`
 does not initialize the native worker or resolve a Dart input library.
+Each job shares SDK/Rust setup across two parallel lanes: package checks plus
+its default-resolution comparison, and the pinned 2.17.1 plus shared-part
+comparisons. Each probe uses a separate results workspace under `RUNNER_TEMP`,
+keeping generated comparison files outside the publish package.
 
 Run the same comparison locally with an installed SDK:
 
