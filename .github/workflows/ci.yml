@@ -59,30 +59,40 @@ jobs:
       - name: Check fixture lockfiles
         if: matrix.resolution == 'upgrade'
         run: python3 scripts/sync_release_metadata.py --check
+      # AOT compilation competes with package-test compilers. Run 40207408998
+      # made upgrade slower (462s -> 495s), while downgrade improved to 318s.
+      # Keep upgrade's package checks serial; overlap only its lifecycle probes.
+      - name: Dart package checks (latest SDK)
+        if: matrix.resolution == 'upgrade'
+        run: |
+          dart format --output=none --set-exit-if-changed lib bin test tool
+          dart analyze --fatal-infos lib bin test tool
+          dart run build_runner --help
+          dart test --compiler=source
       - name: Validate publish package
         if: matrix.resolution == 'upgrade'
         run: dart pub publish --dry-run
-      # Run 40205357978: SDK jobs took 440s/462s after the new comparisons.
-      # Balance two lanes inside the existing jobs, sharing SDK/Rust setup.
-      # Results stay outside the package and each probe owns its workspace.
+      # Two active lanes per SDK share setup and own separate temp workspaces.
       - parallel:
-          - name: Dart package checks and SDK lifecycle
+          - name: Package checks (minimum SDK) and SDK lifecycle
             timeout-minutes: 20
             shell: bash
             run: |
-              # Use the development SDK's formatter; older SDKs can format differently.
-              if [[ '${{ matrix.resolution }}' == 'upgrade' ]]; then
-                dart format --output=none --set-exit-if-changed lib bin test tool
+              if [[ '${{ matrix.resolution }}' == 'downgrade' ]]; then
+                dart analyze --fatal-infos lib bin test tool
+                dart run build_runner --help
+                dart test --compiler=source
               fi
-              dart analyze --fatal-infos lib bin test tool
-              # Ensure the stock comparison baseline compiles under both dependency solutions.
-              dart run build_runner --help
-              dart test --compiler=source
               bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/baseline"
-          - name: Runner 2.17.1 and shared-part lifecycle
+              if [[ '${{ matrix.resolution }}' == 'upgrade' ]]; then
+                bash scripts/correctness_sdk.sh --resolution upgrade --runner 2.17.1 --worker-mode aot --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/runner-2.17.1"
+              fi
+          - name: Shared parts and minimum SDK runner lifecycle
             timeout-minutes: 20
             run: |
-              bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --runner 2.17.1 --worker-mode '${{ matrix.resolution == 'upgrade' && 'aot' || 'jit' }}' --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/runner-2.17.1"
+              if [[ '${{ matrix.resolution }}' == 'downgrade' ]]; then
+                bash scripts/correctness_sdk.sh --resolution downgrade --runner 2.17.1 --worker-mode jit --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/runner-2.17.1"
+              fi
               bash scripts/correctness_shared_parts.sh --resolution '${{ matrix.resolution }}' --worker-mode '${{ matrix.resolution == 'upgrade' && 'aot' || 'jit' }}' --jobs 2 --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/shared-parts"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
