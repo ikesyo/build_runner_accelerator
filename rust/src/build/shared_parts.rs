@@ -231,6 +231,11 @@ impl<'a> SharedLibraryCoordinator<'a> {
         let mut edited = BTreeSet::new();
         for (id, library) in &self.plan.libraries {
             let spec = &library.owner;
+            if pending.deleted_overlay.contains(&spec.input) {
+                return Err(io::Error::other(
+                    "post-process deletion of a shared-library primary input is outside the supported subset",
+                ));
+            }
             // Phase visibility may rebuild views for clean libraries too; only
             // libraries with a fresh contribution need publication/graph edits.
             let Some(evidence) = pending.source_edit_evidence.remove(&spec.input) else {
@@ -264,11 +269,6 @@ impl<'a> SharedLibraryCoordinator<'a> {
                 pending
                     .pending_deletions
                     .push((spec.instance.builder.clone(), id.clone()));
-            }
-            if pending.deleted_overlay.contains(&spec.input) {
-                return Err(io::Error::other(
-                    "post-process deletion of a shared-library primary input is outside the supported subset",
-                ));
             }
             if library.generated_input {
                 continue;
