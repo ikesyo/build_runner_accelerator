@@ -118,14 +118,36 @@ DART_BIN=/path/to/dart-3.13.3/bin/dart bash scripts/correctness_shared_parts.sh 
 It compares file inventories and bytes for initial/no-op builds,
 changes, deletion, rename, failure/recovery and two paired watch edits. Native
 failure must preserve outputs and graph. Stock uses a separate workspace with
-the same resolved lockfile. Both SDK replays passed locally on Linux x64 on
-2026-10-23; CI repeats them on dependency updates.
+the same resolved lockfile. CI runs these comparisons on dependency updates.
 
 Logs and lockfiles are retained in the printed results directory (`--results
 PATH` selects one). This check does not cover all worker modes or platform/SDK
 combinations. Packaged AOT/prewarm belongs to
 [distribution E2E](distribution-validation.md); publication faults belong to
 `correctness_commit_recovery.sh`.
+
+## Dependency window comparison
+
+The older-runner adapter has a focused stock/native comparison:
+
+```bash
+DART_BIN=/path/to/dart BUILD_RUNNER_ACCELERATOR_BIN=/path/to/frontend \
+  python3 scripts/correctness_dependency_window.py
+```
+
+It resolves the supported older-runner/Analyzer combinations without dependency
+overrides. On Analyzer 14.5, stock references use the fixed runner 2.16.2 because
+the affected older stock resolvers cannot compile. The legacy retention reference
+also selects stock's matching output policy. This is adapter coverage, not a
+claim that the unmodified older stock runner works on that Analyzer.
+
+The comparison checks generation, incremental reuse, failure/recovery, AOT and
+watch behavior, including legacy retention and upgrading to the repair default.
+Application configuration and upstream resolver sources must remain unchanged.
+Cases share the existing trigger, arbitrary-builder and output-policy CI jobs.
+See [ADR 0042](adr/0042-runner-resolver-compatibility.md) for the design and the
+[compatibility contract](launcher-and-release.md#supported-dependencies) for
+current ranges and limits.
 
 ## Benchmarks
 

@@ -20,7 +20,6 @@
 | [Distribution validation](distribution-validation.md) | Release workflow, packaged E2E, provenance verification and platform evidence |
 | [Architecture decisions](adr/README.md) | Durable decisions and superseded contracts |
 | [Worker protocol](../protocol/v1.md) | Internal Rust/Dart wire contract |
-| [Dependency window review](dependency-window-review.md) | Dated compatibility investigation and replay command |
 
 Fixture READMEs own detailed configuration and coverage; the compatibility
 inventory links to them. Files under [benchmarks/](benchmarks/) and

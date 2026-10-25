@@ -72,10 +72,9 @@ window is:
 The runner upper bound protects private worker interfaces. Runners 2.15.3, 2.16.0 and 2.16.1
 allow Analyzer 13.3; the accelerator backports #5197 in an isolated compilation
 resolution so those runners also work with Analyzer 14.5 and newer. Runner
-2.16.2 retains its upstream Analyzer 14.3 floor. See the
-[dependency window review](dependency-window-review.md) and
-[ADR 0042](adr/0042-runner-resolver-compatibility.md). One package and the existing
-release pipeline cover these resolutions. Runner 2.15.3's default output retention
+2.16.2 retains its upstream Analyzer 14.3 floor. See
+[ADR 0042](adr/0042-runner-resolver-compatibility.md) for the adapter boundary.
+One package and the existing release pipeline cover these resolutions. Runner 2.15.3's default output retention
 is selected internally, with the existing retained-output API safety limits.
 
 For the 2.17 line, the validated and supported version is 2.17.1, which uses
@@ -161,7 +160,7 @@ Ordinary build/watch follows the resolved runner's default: 2.15.3 retains
 modified outputs, while 2.16+ repairs them. This is selected internally without
 adding CLI flags or the explicit demand-mode restrictions below. The retained
 output API safety boundary still applies when unrelated edits must survive a
-build; see the [dependency window review](dependency-window-review.md).
+build, as described below.
 Upgrading the runner restores its new default without clearing native state.
 
 `build --only-check` verifies expected package-path outputs without writing or

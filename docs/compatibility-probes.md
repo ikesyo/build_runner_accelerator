@@ -28,7 +28,7 @@ See [development](development.md#correctness-and-ci) for focused commands.
 | Web compiler dart2js | [Fixture guide](../fixtures/build_web_compilers_app/README.md): published 4.8.12, single package, dev, `-O1`, filtered outputs and AOT watch |
 | Web compiler DDC | [Fixture guide](../fixtures/build_web_compilers_ddc_app/README.md): same compiler version, single root, dev/AMD, hot reload disabled; public artifacts and AOT watch |
 | FVM root CLI | [Pinned replay](probes/fvm/README.md): introduced dependency solution with dart_mappable_builder 4.10.0 / build_version 2.2.1, initial/no-op/edit/watch bytes. Excludes the old upstream lock, other commits, nested projects and Flutter runtime tests |
-| SDK/dependency boundaries | [SDK lifecycle](development.md#sdk-lifecycle-comparison) and [dependency review](dependency-window-review.md): Resolver-based generation at minimum/current resolutions and older-runner adapter coverage |
+| SDK/dependency boundaries | [SDK lifecycle](development.md#sdk-lifecycle-comparison) and [dependency comparison](development.md#dependency-window-comparison): Resolver-based generation at minimum/current resolutions and older-runner adapter coverage |
 
 Full Drift examples, other Conduit generators, broader web compiler modes and
 multi-package upstream workspaces remain unvalidated. A dependency-resolution
