@@ -92,7 +92,7 @@ for `LibrarySourceSink.addImport`. Shared builders currently require an
 unfiltered build without explicit `--keep-modified-outputs`. Input additions,
 renames and deletions also support downstream normal resolvers. Stock 2.17.1
 has an incremental partial-content cache defect; the comparison corrects an isolated stock copy and additionally checks unmodified
-clean stock outputs. See [ADR 0044](adr/0044-shared-library-parts.md).
+clean stock outputs. See [ADR 0043](adr/0043-shared-library-parts.md).
 
 `dart run` starts the launcher; see the [installation guide](../README.md#installation).
 Worker AOT settings control the generated Dart worker, not the launcher.

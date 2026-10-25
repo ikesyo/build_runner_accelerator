@@ -31,7 +31,7 @@ and the native runtime stay unchanged. The normal consumer stays enabled for
 all lifecycle cases. After addition, rename and deletion, the probe also runs
 an unmodified, clean stock workspace and compares its complete inventory and
 bytes. `--stock-reference raw` reproduces the upstream incremental mismatch.
-See [ADR 0044](../../docs/adr/0044-shared-library-parts.md#stock-reference-correction).
+See [ADR 0043](../../docs/adr/0043-shared-library-parts.md#stock-reference-correction).
 
 The test does not certify filtered/retained-output shared builds, other
 platforms, or every runner patch/SDK combination.

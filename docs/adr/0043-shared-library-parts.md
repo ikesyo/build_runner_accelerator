@@ -1,4 +1,4 @@
-# ADR 0044: Native shared-library parts
+# ADR 0043: Native shared-library parts
 
 - Status: Accepted
 - Date: 2026-10-25

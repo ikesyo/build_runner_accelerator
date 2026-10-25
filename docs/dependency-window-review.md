@@ -3,7 +3,7 @@
 This section records the older-runner backport review. The 2026-10-25
 extension to runner 2.17.1 and current supported ranges are documented in the
 [compatibility contract](launcher-and-release.md#supported-dependencies).
-The shared-library design is recorded in [ADR 0044](adr/0044-shared-library-parts.md).
+The shared-library design is recorded in [ADR 0043](adr/0043-shared-library-parts.md).
 
 The supported window is `build_runner >=2.15.3 <2.17.0` and
 `analyzer >=13.3.0 <15.0.0`, with Dart `>=3.11.0 <4.0.0`. The runner floor

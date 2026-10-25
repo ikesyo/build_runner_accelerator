@@ -8,7 +8,7 @@ Requires Dart >=3.11.0 <4.0.0 and build_runner >=2.15.3 <2.18.0.
 See [supported dependencies](docs/launcher-and-release.md#supported-dependencies)
 for compatibility details.
 Shared-library parts (`adds_to_library: true`) are supported within the
-[shared-part compatibility boundary](docs/adr/0044-shared-library-parts.md#supported-boundary).
+[shared-part compatibility boundary](docs/adr/0043-shared-library-parts.md#supported-boundary).
 Support applies to the validated configurations in the
 [compatibility inventory](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-probes.md), not every feature of a
 named builder. Read the [compatibility contract](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/launcher-and-release.md#1x-compatibility-contract)
