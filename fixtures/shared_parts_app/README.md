@@ -18,7 +18,7 @@ The probe uses separate stock/native workspaces and identical lockfiles. It
 compares complete source/output inventories and bytes through initial/no-op,
 input edits, empty contributions, automatic directive edits, modified/deleted
 output repair, only-check, multiple/nested/non-lib inputs, rename/deletion,
-failure and recovery, enhanced-parts imports, and two resident watch edits.
+failure and recovery, enhanced-parts imports (imports without source are ignored, as in stock), and two resident watch edits.
 It checks rollback both before and after a directive edit has been staged.
 Logs and lockfiles remain in the printed results directory. For local debugging,
 `--resume-imports --results PATH` resumes the final checks in an existing run.

@@ -88,6 +88,7 @@ jobs:
           path: |
             sdk-results/${{ matrix.sdk }}/**/*.log
             sdk-results/${{ matrix.sdk }}/**/pubspec.lock
+            sdk-results/${{ matrix.sdk }}/**/stock-reference.json
           if-no-files-found: ignore
 
   rust:

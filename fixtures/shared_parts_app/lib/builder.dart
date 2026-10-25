@@ -37,7 +37,15 @@ class _Contributor implements Builder {
     final source = await step.readAsString(step.inputId);
     final sink = await step.librarySourceSink;
     if (sink == null) return;
-    if (!source.contains('// empty')) {
+    if (source.contains('// imports-only')) {
+      if (!second) {
+        sink.addImport(
+          'dart:math',
+          as: '${sink.importPrefix}math',
+          show: ['pi'],
+        );
+      }
+    } else if (!source.contains('// empty')) {
       if (second) {
         final library = await step.resolver.libraryFor(step.inputId);
         final seesFirst = library.classes.any(

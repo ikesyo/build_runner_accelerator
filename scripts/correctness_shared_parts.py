@@ -192,6 +192,14 @@ def main():
     build('imports / reserved prefix / enhanced-parts')
     assert "import 'dart:math' as " in part.read_text()
     build('imports no-op')
+    write('class Recovered {} // imports-only\n')
+    build('imports-only ignored / source removal')
+    assert not part.exists()
+    assert "part '_br_/model.part.dart';" not in (roots[1] / 'lib/model.dart').read_text()
+    assert (roots[1] / 'lib/model.summary').read_text() == 'Recovered\n'
+    build('imports-only no-op')
+    write('class Recovered {} // imports\n')
+    build('source contributions restored after imports-only')
     processes = []
     try:
         for root in roots:
