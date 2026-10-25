@@ -64,9 +64,9 @@ window is:
 | Package | Supported version |
 | --- | --- |
 | analyzer | >=13.3.0 <15.0.0 |
-| build | >=4.0.9 <5.0.0 |
-| build_config | >=1.3.2 <1.4.0 |
-| build_runner | >=2.15.3 <2.17.0 |
+| build | >=4.0.9 <5.1.0 |
+| build_config | >=1.3.2 <1.5.0 |
+| build_runner | >=2.15.3 <2.18.0 |
 | package_config | >=2.2.0 <4.0.0 |
 
 The runner upper bound protects private worker interfaces. Runners 2.15.3, 2.16.0 and 2.16.1
@@ -77,6 +77,16 @@ resolution so those runners also work with Analyzer 14.5 and newer. Runner
 [ADR 0042](adr/0042-runner-resolver-compatibility.md). One package and the existing
 release pipeline cover these resolutions. Runner 2.15.3's default output retention
 is selected internally, with the existing retained-output API safety limits.
+
+For the 2.17 line, the validated and supported version is 2.17.1, which uses
+build 5.0 and build_config 1.4. Builders must themselves allow build 5.0;
+expanding the accelerator's range does not override generator constraints.
+Runner 2.17.0 depends on the retracted build 4.1.0 and is outside the validated
+support scope, although the continuous Pub constraint includes it. Use 2.17.1
+when selecting a 2.17 release.
+
+Shared-library builders are rejected before actions until native shared-part
+execution is introduced.
 
 `dart run` starts the launcher; see the [installation guide](../README.md#installation).
 Worker AOT settings control the generated Dart worker, not the launcher.

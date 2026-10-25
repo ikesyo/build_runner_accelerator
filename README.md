@@ -4,7 +4,9 @@ A Rust-accelerated frontend for [build_runner](https://pub.dev/packages/build_ru
 Rust plans actions and manages incremental state; a Dart worker runs builders
 through build_runner APIs.
 
-Requires Dart >=3.11.0 <4.0.0 and build_runner >=2.15.3 <2.17.0.
+Requires Dart >=3.11.0 <4.0.0 and build_runner >=2.15.3 <2.18.0.
+See [supported dependencies](docs/launcher-and-release.md#supported-dependencies)
+for compatibility details.
 Support applies to the validated configurations in the
 [compatibility inventory](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-probes.md), not every feature of a
 named builder. Read the [compatibility contract](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/launcher-and-release.md#1x-compatibility-contract)
