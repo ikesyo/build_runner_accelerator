@@ -44,7 +44,6 @@ final _metricsEnabled =
 final _resetTraceEnabled =
     Platform.environment['BUILD_RUNNER_ACCELERATOR_WALL_TRACE'] == '1';
 
-/// Serves framed builder IPC, or the manifest/probe mode selected by arguments.
 typedef SharedPartEncoder = Future<JsonMap> Function(BuildStepImpl, String);
 typedef SharedPartStepFactory =
     BuildStepImpl Function(
@@ -60,6 +59,7 @@ typedef SharedPartStepFactory =
 SharedPartEncoder? _sharedPartEncoder;
 SharedPartStepFactory? _sharedPartStepFactory;
 
+/// Serves framed builder IPC, or the manifest/probe mode selected by arguments.
 Future<void> runWorker({
   required Map<String, BuilderFactory> catalog,
   SharedPartEncoder? sharedPartEncoder,
