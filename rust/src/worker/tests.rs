@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 fn build_request(phase: u32, post_process: bool) -> BuildRequest {
     BuildRequest {
+        part_phase_index: None,
         builder: "example:builder".to_owned(),
         input: "example|lib/input.txt".to_owned(),
         outputs: Vec::new(),

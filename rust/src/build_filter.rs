@@ -88,12 +88,33 @@ pub(crate) fn configuration_arguments(
         result.push("--define".to_owned());
         result.push(value.clone());
     }
+    if !settings.experiments.is_empty() {
+        result.push(format!(
+            "--enable-experiment={}",
+            settings.experiments.join(",")
+        ));
+    }
     Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn experiments_change_configuration_identity() {
+        let default = crate::cli::BuildSettings::default();
+        let enabled =
+            crate::cli::BuildSettings::parse(&["--enable-experiment=enhanced-parts".into()])
+                .unwrap();
+        assert_ne!(
+            configuration_arguments(&default).unwrap(),
+            configuration_arguments(&enabled).unwrap()
+        );
+        assert_eq!(
+            configuration_arguments(&enabled).unwrap(),
+            ["--enable-experiment=enhanced-parts"]
+        );
+    }
     #[test]
     fn stock_basic_paths_and_package_globs() {
         for (filter, matches) in [

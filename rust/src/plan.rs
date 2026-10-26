@@ -73,6 +73,9 @@ pub(crate) fn input_candidates_with_primary_inputs(
         .keys()
         .filter_map(|asset| {
             let path = asset.strip_prefix(&prefix)?;
+            if definition.adds_to_library && crate::build::shared_parts::part_id(asset).is_none() {
+                return None;
+            }
             if !snapshot.get(asset).is_some_and(|entry| entry.exists) {
                 return None;
             }
@@ -384,6 +387,7 @@ mod tests {
     #[test]
     fn outputs_for_uses_builder_definition_metadata() {
         let builder = Arc::new(BuilderDefinition {
+            adds_to_library: false,
             id: "example:builder".to_owned(),
             kind: BuilderKind::Normal,
             extensions: vec![BuilderExtension {
@@ -413,6 +417,7 @@ mod tests {
     #[test]
     fn exact_input_outputs_preserve_package_and_use_literal_paths() {
         let builder = Arc::new(BuilderDefinition {
+            adds_to_library: false,
             id: "example:builder".to_owned(),
             kind: BuilderKind::Normal,
             extensions: vec![BuilderExtension {
@@ -448,6 +453,7 @@ mod tests {
     #[test]
     fn multiple_mappings_union_outputs_for_overlapping_input() {
         let builder = Arc::new(BuilderDefinition {
+            adds_to_library: false,
             id: "example:builder".to_owned(),
             kind: BuilderKind::Normal,
             extensions: vec![
@@ -491,6 +497,7 @@ mod tests {
     #[test]
     fn capture_input_outputs_replace_named_parts_and_preserve_package() {
         let builder = Arc::new(BuilderDefinition {
+            adds_to_library: false,
             id: "example:builder".to_owned(),
             kind: BuilderKind::Normal,
             extensions: vec![BuilderExtension {
@@ -521,6 +528,7 @@ mod tests {
     #[test]
     fn duplicate_outputs_are_rejected_before_execution() {
         let first = Arc::new(BuilderDefinition {
+            adds_to_library: false,
             id: "example:first".to_owned(),
             kind: BuilderKind::Normal,
             extensions: vec![BuilderExtension {
@@ -583,6 +591,7 @@ mod tests {
     #[test]
     fn empty_input_mapping_matches_every_asset_and_coexists_with_suffixes() {
         let builder = Arc::new(BuilderDefinition {
+            adds_to_library: false,
             id: "example:builder".to_owned(),
             kind: BuilderKind::Normal,
             extensions: vec![
@@ -630,6 +639,7 @@ mod tests {
     #[test]
     fn empty_output_mapping_is_a_valid_expected_output_plan() {
         let builder = Arc::new(BuilderDefinition {
+            adds_to_library: false,
             id: "example:builder".to_owned(),
             kind: BuilderKind::Normal,
             extensions: vec![BuilderExtension {

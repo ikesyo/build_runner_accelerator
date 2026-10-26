@@ -145,8 +145,25 @@ fn validate_native_manifest(
                 );
             }
             let settings = &options.settings;
-            let demand_policy =
-                settings.only_check || settings.keep_modified_outputs || retained_output_state;
+            if config.builders.iter().any(|builder| {
+                builder.definition.adds_to_library
+                    && builder
+                        .options
+                        .get("run_only_if_triggered")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true)
+            }) {
+                return unsupported(
+                    "shared-library trigger-only builders are outside the supported subset",
+                );
+            }
+            let demand_policy = (settings.only_check
+                && !config
+                    .builders
+                    .iter()
+                    .any(|builder| builder.definition.adds_to_library))
+                || settings.keep_modified_outputs
+                || retained_output_state;
             let filters = &settings.build_filters;
             if (demand_policy || !filters.is_empty())
                 && config.builders.iter().any(|b| {
@@ -182,8 +199,13 @@ fn preflight_native_state(
     retained_output_state: bool,
 ) -> io::Result<Option<crate::build::Preflight>> {
     let settings = &options.settings;
-    let demand_policy =
-        settings.only_check || settings.keep_modified_outputs || retained_output_state;
+    let demand_policy = (settings.only_check
+        && !config
+            .builders
+            .iter()
+            .any(|builder| builder.definition.adds_to_library))
+        || settings.keep_modified_outputs
+        || retained_output_state;
     let filters = &settings.build_filters;
     let mut preflight = None;
     let transition_reason = if demand_policy || !filters.is_empty() {
@@ -264,7 +286,7 @@ fn read_manifest(
         Ok(manifest) => manifest,
         Err(_) => return Ok(None),
     };
-    if manifest.version != 10 || manifest.fingerprint != fingerprint {
+    if manifest.version != 11 || manifest.fingerprint != fingerprint {
         return Ok(None);
     }
     if !expected_worker_entrypoint.is_file() {
@@ -864,7 +886,7 @@ mod tests {
         fs::write(&local, "local worker").unwrap();
         fs::write(&stale, "stale worker").unwrap();
         let mut valid = serde_json::json!({
-            "version": 10, "asset_sources": {}, "fingerprint": "same", "trigger_digest": "stock", "worker_entrypoint": stale,
+            "version": 11, "asset_sources": {}, "fingerprint": "same", "trigger_digest": "stock", "worker_entrypoint": stale,
             "worker_source_digest": crate::digest::digest_bytes(b"local worker"),
             "definitions": [{"id": "app:copy", "kind": "normal", "extensions": [{"input_suffix": ".txt", "input_match": "suffix", "input_anchored": false, "output_suffixes": [".out"]}], "build_to": "source", "phase": 0}],
             "builders": [{"id": "app:copy", "kind": "normal", "build_to": "source", "phase": 0, "target": "app:app", "package": "app", "is_root": true, "generate_for": ["**"]}]

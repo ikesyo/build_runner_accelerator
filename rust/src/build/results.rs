@@ -22,6 +22,7 @@ pub(super) fn record_missing_primary_input(
     pending: &mut PendingTransaction,
 ) -> io::Result<()> {
     let key = spec.action_key();
+    pending.replace_action_outputs(spec);
     let mut outputs_to_delete = state
         .actions
         .get(&key)
@@ -57,9 +58,10 @@ pub(super) fn record_missing_primary_input(
     pending
         .pending_stock_globs
         .insert(key.clone(), BTreeMap::new());
-    pending.pending_actions.push((
+    pending.pending_actions.insert(
         key,
         ActionState {
+            shared_part: None,
             builder: spec.instance.builder.id.to_owned(),
             input: spec.input.clone(),
             reads: Vec::new(),
@@ -75,7 +77,7 @@ pub(super) fn record_missing_primary_input(
             }
             .to_owned(),
         },
-    ));
+    );
     Ok(())
 }
 
@@ -87,6 +89,16 @@ pub(super) fn record_build_result(
     pending: &mut PendingTransaction,
 ) -> io::Result<()> {
     let builder = spec.instance.builder.as_ref();
+    if builder.adds_to_library && result.status == "success" && result.shared_part.is_none() {
+        return Err(io::Error::other(
+            "shared-part contribution metadata is missing",
+        ));
+    }
+    if !builder.adds_to_library && result.shared_part.is_some() {
+        return Err(io::Error::other("unexpected shared-part contribution"));
+    }
+    // Replacement is keyed by action/asset, not inferred from source-edit state.
+    pending.replace_action_outputs(spec);
     if result.status != "success" && result.status != "not_triggered" {
         return Err(io::Error::other(
             result.error.unwrap_or_else(|| "Builder failed".to_owned()),
@@ -201,11 +213,10 @@ pub(super) fn record_build_result(
                 .resolver_cache_deleted
                 .remove(&generated.asset);
         }
-        pending.pending_outputs.push((
-            spec.instance.builder.clone(),
+        pending.pending_outputs.insert(
             generated.asset.clone(),
-            Arc::clone(&generated.bytes),
-        ));
+            (spec.instance.builder.clone(), Arc::clone(&generated.bytes)),
+        );
     }
     let mut output_digests = BTreeMap::new();
     let actual_outputs = result
@@ -279,9 +290,17 @@ pub(super) fn record_build_result(
     pending
         .pending_stock_globs
         .insert(spec.action_key(), result.stock_globs.unwrap_or_default());
-    pending.pending_actions.push((
+    let shared_part = result.shared_part.map(|part| {
+        let (contribution, edit) = part.into_parts();
+        pending
+            .source_edit_evidence
+            .insert(spec.input.clone(), edit);
+        contribution
+    });
+    pending.pending_actions.insert(
         spec.action_key(),
         ActionState {
+            shared_part,
             builder: spec.instance.builder.id.to_owned(),
             input: spec.input.clone(),
             reads: result.reads,
@@ -296,6 +315,6 @@ pub(super) fn record_build_result(
             output_digests,
             status: result.status,
         },
-    ));
+    );
     Ok(())
 }

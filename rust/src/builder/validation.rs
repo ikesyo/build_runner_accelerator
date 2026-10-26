@@ -48,6 +48,7 @@ pub(super) fn dynamic_builder_definition(
             ));
         }
         return Ok(BuilderDefinition {
+            adds_to_library: entry.adds_to_library,
             id: entry.id,
             kind,
             extensions: Vec::new(),
@@ -176,6 +177,18 @@ pub(super) fn dynamic_builder_definition(
     }
 
     let required_input_suffixes = entry.required_input_suffixes;
+    if entry.adds_to_library
+        && (build_to != BuildTo::Source
+            || entry.is_optional
+            || extensions
+                .iter()
+                .any(|extension| !extension.input_suffix.ends_with(".dart")))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "shared-part builders require non-optional Dart inputs and build_to: source",
+        ));
+    }
     let invalid_required_input = |suffix: &str| invalid_suffix(suffix) || !suffix.starts_with('.');
     if entry.id.is_empty()
         || required_input_suffixes
@@ -196,6 +209,7 @@ pub(super) fn dynamic_builder_definition(
     }
 
     Ok(BuilderDefinition {
+        adds_to_library: entry.adds_to_library,
         id: entry.id,
         kind,
         extensions,

@@ -430,6 +430,14 @@ impl LazyBuildState {
         self.built_keys.contains(&spec.action_key())
     }
 
+    /// Source-overlay replay invalidates only affected optional producers.
+    /// Unaffected demand results remain reusable within the transaction.
+    pub(crate) fn invalidate_optional(&mut self, keys: &BTreeSet<String>) {
+        self.force_keys.extend(keys.iter().cloned());
+        self.built_keys.retain(|key| !keys.contains(key));
+        self.demanded_keys.retain(|key| !keys.contains(key));
+    }
+
     pub fn new(force_keys: BTreeSet<String>) -> Self {
         Self {
             force_keys,
@@ -789,6 +797,7 @@ impl WorkerClient {
             "allowed_outputs": request.outputs,
             "options": request.options,
             "phase": request.phase,
+                    "part_phase_index": request.part_phase_index,
             "instance_key": request.instance_key,
             "is_root": request.is_root,
             "blocked_assets": blocked_assets,
@@ -882,6 +891,7 @@ impl WorkerClient {
                     "allowed_outputs": request.outputs,
                     "options": request.options,
                     "phase": request.phase,
+                    "part_phase_index": request.part_phase_index,
                     "instance_key": request.instance_key,
                     "is_root": request.is_root,
                     "triggers": request.triggers,
@@ -1615,6 +1625,7 @@ impl FilteredExecution<'_> {
             overlay.remove(output);
         }
         let request = BuildRequest {
+            part_phase_index: None,
             builder: spec.instance.builder.id.clone(),
             input: spec.input.clone(),
             outputs: spec.outputs.clone(),

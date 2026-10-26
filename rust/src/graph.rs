@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-pub const GRAPH_SCHEMA_VERSION: u32 = 6;
+pub const GRAPH_SCHEMA_VERSION: u32 = 7;
 const GRAPH_MAGIC: &[u8; 4] = b"BRAG";
 const GRAPH_FORMAT_VERSION: u8 = 3;
 const GRAPH_HEADER_LENGTH: usize = GRAPH_MAGIC.len() + 1 + 4;
@@ -16,6 +16,7 @@ const GRAPH_MAX_COLLECTION_ITEMS: usize = 4_000_000;
 /// retain the actual output set from its last successful execution.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ActionState {
+    pub shared_part: Option<crate::shared_library::SharedContribution>,
     pub builder: String,
     pub input: String,
     pub reads: Vec<String>,
@@ -425,6 +426,14 @@ impl Encoder {
     }
 
     fn write_action(&mut self, action: &ActionState) -> io::Result<()> {
+        self.write_u8(u8::from(action.shared_part.is_some()))?;
+        if let Some(part) = &action.shared_part {
+            // Source-edit candidates are transaction-only. Persist reusable
+            // contribution sections, without duplicating handwritten sources.
+            self.write_string(&part.header)?;
+            self.write_string(&part.imports)?;
+            self.write_string(&part.source)?;
+        }
         self.write_string(&action.builder)?;
         self.write_string(&action.input)?;
         self.write_strings(&action.reads, "action reads")?;
@@ -586,6 +595,15 @@ impl<'a> Decoder<'a> {
     }
 
     fn read_action(&mut self) -> io::Result<ActionState> {
+        let shared_part = if self.read_bool()? {
+            Some(crate::shared_library::SharedContribution {
+                header: self.read_string()?,
+                imports: self.read_string()?,
+                source: self.read_string()?,
+            })
+        } else {
+            None
+        };
         let builder = self.read_string()?;
         let input = self.read_string()?;
         let reads = self.read_strings("action reads")?;
@@ -603,6 +621,7 @@ impl<'a> Decoder<'a> {
         let output_digests = self.read_string_map()?;
         let status = self.read_string()?;
         Ok(ActionState {
+            shared_part,
             builder,
             input,
             reads,
@@ -864,6 +883,13 @@ mod tests {
             actions: BTreeMap::from([(
                 "example:builder|app|lib/model.dart".to_owned(),
                 ActionState {
+                    shared_part: Some(crate::shared_library::SharedContribution {
+                        header: "// dart format off\npart of '../model.dart';\n\n".into(),
+                        imports: "// === example:builder imports.\nimport 'dart:math' as i0;\n\n"
+                            .into(),
+                        source: "// === example:builder contribution.\nclass Generated {}\n\n"
+                            .into(),
+                    }),
                     builder: "example:builder".to_owned(),
                     input: "app|lib/model.dart".to_owned(),
                     reads: vec!["app|lib/model.dart".to_owned()],

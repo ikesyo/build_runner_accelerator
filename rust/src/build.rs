@@ -6,6 +6,7 @@ mod part_directive;
 mod planning;
 pub(crate) mod recovery;
 mod results;
+pub(crate) mod shared_parts;
 mod snapshot;
 mod transaction;
 
@@ -180,10 +181,20 @@ pub(crate) fn run_with_config_session(
     };
     drop(scan);
     let settings = &options.settings;
+    let has_shared_parts = build_config
+        .builders
+        .iter()
+        .any(|builder| builder.definition.adds_to_library);
+    if has_shared_parts && (!settings.build_filters.is_empty() || settings.keep_modified_outputs) {
+        return Err(io::Error::other(
+            "shared-part builders currently require an unfiltered build without --keep-modified-outputs",
+        ));
+    }
     let mut filters = settings.build_filters.clone();
     let mut retained_output_guard = false;
     let mut retained_outputs = std::collections::BTreeSet::new();
-    if (settings.only_check || settings.keep_modified_outputs || state.retained_output_state)
+    if !has_shared_parts
+        && (settings.only_check || settings.keep_modified_outputs || state.retained_output_state)
         && filters.is_empty()
     {
         filters.push(crate::build_filter::BuildFilter::parse("asset:**/**")?);
@@ -328,6 +339,9 @@ pub(crate) fn run_with_config_session(
         && cache_source_conflicts.is_empty()
     {
         println!("No work to do (Rust frontend)");
+        if settings.only_check {
+            return Ok(Some(state));
+        }
         let graph_metrics = commit::save_no_work(
             &mut state,
             &state_path,
@@ -402,7 +416,7 @@ pub(crate) fn run_with_config_session(
     let graph_metrics = commit::commit(
         &mut state,
         commit::CommitInputs {
-            only_check: false,
+            only_check: settings.only_check,
             keep_modified_outputs: settings.legacy_keep_modified_outputs,
             explicit_keep_modified_outputs: settings.keep_modified_outputs,
             workspace: &workspace,

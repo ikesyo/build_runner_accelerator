@@ -30,6 +30,9 @@ pub struct GlobRead {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildResult {
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shared_part: Option<SharedPart>,
     #[serde(rename = "type")]
     pub message_type: String,
     pub id: u64,
@@ -56,6 +59,40 @@ pub struct BuildResult {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SharedPart {
+    pub header: String,
+    pub imports: String,
+    pub source: String,
+    pub original: String,
+    pub with_part: Option<String>,
+    pub without_part: Option<String>,
+}
+
+impl SharedPart {
+    /// Move transport fields into their distinct domain lifetimes; no source
+    /// strings are cloned or retained in the persisted contribution.
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        crate::shared_library::SharedContribution,
+        crate::shared_library::SourceEditEvidence,
+    ) {
+        (
+            crate::shared_library::SharedContribution {
+                header: self.header,
+                imports: self.imports,
+                source: self.source,
+            },
+            crate::shared_library::SourceEditEvidence {
+                original: self.original,
+                with_part: self.with_part,
+                without_part: self.without_part,
+            },
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -201,6 +238,8 @@ struct BinaryBuildOutput {
 
 #[derive(Debug, Deserialize)]
 struct BinaryBuildResultMetadata {
+    #[serde(default)]
+    shared_part: Option<SharedPart>,
     v: u32,
     #[serde(rename = "type")]
     message_type: String,
@@ -267,6 +306,7 @@ impl BinaryBuildResultMetadata {
         }
 
         Ok(BuildResult {
+            shared_part: self.shared_part,
             message_type: self.message_type,
             id: self.id,
             status: self.status,

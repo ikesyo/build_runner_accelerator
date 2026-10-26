@@ -155,11 +155,21 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
             }
         }
     }
-    for (builder, asset, bytes) in &transaction.pending_outputs {
+    for (asset, (builder, bytes)) in &transaction.pending_outputs {
         changes.insert(
             output_path(workspace, builder, asset)?,
             Some(crate::digest::digest_bytes(bytes)),
         );
+    }
+    for (asset, edit) in &transaction.source_edits {
+        let (original, bytes) = (&edit.original, &edit.updated);
+        let path = workspace.path_for_asset(asset)?;
+        if fs::read(&path)?.as_slice() != original.as_ref() {
+            return Err(io::Error::other(
+                "shared-part source changed before publication; retry",
+            ));
+        }
+        changes.insert(path, Some(crate::digest::digest_bytes(bytes)));
     }
     let journaled = !changes.is_empty();
     if journaled {
@@ -170,11 +180,7 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
     // No phase or asset RPC can read the overlay once all actions have succeeded.
     // Release its references so committing each output can free its buffer.
     let written_outputs: BTreeSet<_> = if keep_modified_outputs {
-        transaction
-            .pending_outputs
-            .iter()
-            .map(|(_, asset, _)| asset.clone())
-            .collect()
+        transaction.pending_outputs.keys().cloned().collect()
     } else {
         BTreeSet::new()
     };
@@ -221,12 +227,23 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         state.actions.remove(&action_key);
     }
     boundary("after_deletions")?;
-    for (builder, asset, bytes) in transaction.pending_outputs {
+    for (asset, (builder, bytes)) in transaction.pending_outputs {
         super::recovery::write_output(&output_path(workspace, builder.as_ref(), &asset)?, &bytes)?;
         boundary("after_output")?;
     }
     for (key, action) in transaction.pending_actions {
         state.actions.insert(key, action);
+    }
+    for (asset, edit) in &transaction.source_edits {
+        let bytes = &edit.updated;
+        let path = workspace.path_for_asset(asset)?;
+        if fs::read(&path)?.as_slice() != edit.original.as_ref() {
+            return Err(io::Error::other(
+                "shared-part source changed during publication; undo evidence preserved",
+            ));
+        }
+        super::recovery::write_output(&path, bytes)?;
+        boundary("after_output")?;
     }
     for (key, inputs) in transaction.pending_stock_inputs {
         if let Some(inputs) = inputs {
@@ -283,6 +300,9 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         // ordinary workers can consume first-seen external assets or generated
         // outputs during this transaction.
         for (asset, initial) in initial_snapshot {
+            if transaction.source_edits.contains_key(asset) {
+                continue;
+            }
             if !generated_assets.contains(asset) && !asset.starts_with("__glob__|") {
                 post_snapshot.insert(asset.clone(), initial.clone());
             }
@@ -388,10 +408,14 @@ fn verify_outputs(state: &GraphState, inputs: &CommitInputs<'_>) -> io::Result<(
             }
         }
     }
-    for (builder, asset, bytes) in &transaction.pending_outputs {
+    for (asset, (builder, bytes)) in &transaction.pending_outputs {
         if builder.build_to == BuildTo::Source {
             changes.insert(asset.clone(), Some(bytes.as_ref()));
         }
+    }
+    for (asset, edit) in &transaction.source_edits {
+        let bytes = &edit.updated;
+        changes.insert(asset.clone(), Some(bytes.as_ref()));
     }
     let mut lines = Vec::new();
     for (asset, expected) in changes {

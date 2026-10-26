@@ -12,6 +12,7 @@ import '../build_filter.dart';
 class BuildSettings {
   const BuildSettings({
     this.release = false,
+    this.experiments = const [],
     this.config,
     this.defines = const [],
     this.deletionFlag = false,
@@ -23,6 +24,7 @@ class BuildSettings {
   final bool onlyCheck;
   final bool keepModifiedOutputs;
   final bool release;
+  final List<String> experiments;
   final String? config;
   final List<String> defines;
   final bool deletionFlag;
@@ -49,6 +51,7 @@ class BuildSettings {
         '-c',
         '--define',
         '--build-filter',
+        '--enable-experiment',
       }.contains(argument)) {
         expanded.add(argument);
         if (i + 1 < arguments.length) expanded.add(arguments[++i]);
@@ -72,6 +75,7 @@ class BuildSettings {
     var deletionFlag = false;
     String? config;
     final defines = <String>[];
+    final experiments = <String>[];
     final buildFilters = <String>[];
     final pairs = <(bool, String, String)>{};
     for (var i = 0; i < arguments.length; i++) {
@@ -99,6 +103,7 @@ class BuildSettings {
             '-c',
             '--define',
             '--build-filter',
+            '--enable-experiment',
           }.contains(name)) {
             throw FormatException('Unsupported native argument: $argument');
           }
@@ -121,6 +126,11 @@ class BuildSettings {
               NativeBuildFilter.parse(filter);
               buildFilters.add(filter);
             }
+          } else if (name == '--enable-experiment') {
+            final values = value.split(',');
+            if (values.any((value) => value.isEmpty))
+              throw const FormatException('Empty experiment name');
+            experiments.addAll(values);
           } else if (name == '--define') {
             if (value.split('=').length < 3) {
               throw FormatException(
@@ -156,6 +166,7 @@ class BuildSettings {
       release: release,
       config: config,
       defines: defines,
+      experiments: experiments,
       deletionFlag: deletionFlag,
       buildFilters: buildFilters,
     );

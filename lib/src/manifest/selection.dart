@@ -58,12 +58,6 @@ Map<String, SelectedBuilder> selectApplications({
     if (!explicit && disabled.contains(selectedKey)) return;
     if (!explicit && selected.containsKey(selectedKey)) return;
 
-    if (definition.normal != null && _addsToLibrary(definition.normal!)) {
-      throw UnsupportedError(
-        'Builder ${definition.key} uses adds_to_library; native shared-part execution is not enabled yet.',
-      );
-    }
-
     final global = rootConfig.globalOptions[key];
     final mergedOptions = <String, dynamic>{
       ...definition.defaults.options,
@@ -150,16 +144,3 @@ bool _autoAppliesToTarget(BuilderDefinition definition, PackageInfo target) {
 }
 
 String _selectedKey(String target, String builder) => '$target|$builder';
-
-// build_config 1.3.x predates the opt-in. Avoid repeated missing-getter
-// exceptions while preserving the existing dependency floor.
-final _legacyDefinitionTypes = <Type>{};
-bool _addsToLibrary(BuilderDefinition definition) {
-  if (_legacyDefinitionTypes.contains(definition.runtimeType)) return false;
-  try {
-    return (definition as dynamic).addsToLibrary as bool;
-  } on NoSuchMethodError {
-    _legacyDefinitionTypes.add(definition.runtimeType);
-    return false;
-  }
-}

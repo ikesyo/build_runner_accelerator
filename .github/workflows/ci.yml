@@ -59,33 +59,44 @@ jobs:
       - name: Check fixture lockfiles
         if: matrix.resolution == 'upgrade'
         run: python3 scripts/sync_release_metadata.py --check
-      - name: Dart package checks
-        shell: bash
+      # Keep package-test compilers separate from lifecycle compilers.
+      # AOT comparisons reuse the SDK and release binaries in native-build.
+      - name: Dart package checks (latest SDK)
+        if: matrix.resolution == 'upgrade'
         run: |
-          # Use the development SDK's formatter; older SDKs can format differently.
-          if [[ '${{ matrix.resolution }}' == 'upgrade' ]]; then
-            dart format --output=none --set-exit-if-changed lib bin test tool
-          fi
+          dart format --output=none --set-exit-if-changed lib bin test tool
           dart analyze --fatal-infos lib bin test tool
-          # Ensure the stock comparison baseline compiles under both dependency solutions.
           dart run build_runner --help
           dart test --compiler=source
       - name: Validate publish package
         if: matrix.resolution == 'upgrade'
         run: dart pub publish --dry-run
-      - name: SDK stock/native lifecycle comparison
-        timeout-minutes: 12
-        run: bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --results 'sdk-results/${{ matrix.sdk }}'
-      - name: Runner 2.17.1 stock/native lifecycle comparison
-        timeout-minutes: 12
-        run: bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --runner 2.17.1 --worker-mode '${{ matrix.resolution == 'upgrade' && 'aot' || 'jit' }}' --results 'sdk-results/${{ matrix.sdk }}/runner-2.17.1'
+      # The minimum SDK overlaps package checks with JIT lifecycle checks.
+      - parallel:
+          - name: SDK lifecycle and minimum SDK package checks
+            timeout-minutes: 20
+            shell: bash
+            run: |
+              if [[ '${{ matrix.resolution }}' == 'downgrade' ]]; then
+                dart analyze --fatal-infos lib bin test tool
+                dart run build_runner --help
+                dart test --compiler=source
+              fi
+              bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/baseline"
+          - name: Minimum SDK runner and shared-part lifecycles
+            if: matrix.resolution == 'downgrade'
+            timeout-minutes: 20
+            run: |
+              bash scripts/correctness_sdk.sh --resolution downgrade --runner 2.17.1 --worker-mode jit --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/runner-2.17.1"
+              bash scripts/correctness_shared_parts.sh --resolution downgrade --worker-mode jit --jobs 2 --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/shared-parts"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: sdk-compatibility-${{ matrix.sdk }}
           path: |
-            sdk-results/${{ matrix.sdk }}/**/*.log
-            sdk-results/${{ matrix.sdk }}/**/pubspec.lock
+            ${{ runner.temp }}/sdk-results/${{ matrix.sdk }}/**/*.log
+            ${{ runner.temp }}/sdk-results/${{ matrix.sdk }}/**/pubspec.lock
+            ${{ runner.temp }}/sdk-results/${{ matrix.sdk }}/**/stock-reference.json
           if-no-files-found: ignore
 
   rust:
@@ -955,6 +966,31 @@ jobs:
           python3 scripts/distribution_e2e.py --dart "$(command -v dart)" --target '${{ matrix.target_id }}' \
             --archive "dist/build_runner_accelerator-${{ matrix.target_id }}.$extension" \
             --results 'distribution-results/${{ matrix.target_id }}'
+      # Reuse the release binary and SDK on this shorter lane instead of
+      # adding another AOT compilation to the SDK package-check jobs.
+      - name: Runner 2.17.1 normal-builder AOT lifecycle
+        if: matrix.target_id == 'linux-x64'
+        shell: bash
+        run: |
+          BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
+            bash scripts/correctness_sdk.sh --resolution upgrade --runner 2.17.1 --worker-mode aot \
+            --results "$RUNNER_TEMP/runner-2.17.1-aot"
+      - name: Shared-part AOT lifecycle
+        if: matrix.target_id == 'linux-arm64'
+        shell: bash
+        run: |
+          BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
+            bash scripts/correctness_shared_parts.sh --resolution upgrade --worker-mode aot --jobs 2 \
+            --results "$RUNNER_TEMP/runner-2.17.1-aot"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure() && (matrix.target_id == 'linux-x64' || matrix.target_id == 'linux-arm64')
+        with:
+          name: runner-2.17.1-aot-${{ matrix.target_id }}
+          path: |
+            ${{ runner.temp }}/runner-2.17.1-aot/**/*.log
+            ${{ runner.temp }}/runner-2.17.1-aot/**/pubspec.lock
+            ${{ runner.temp }}/runner-2.17.1-aot/**/stock-reference.json
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

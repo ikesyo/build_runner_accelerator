@@ -14,9 +14,13 @@ Users need older Analyzer support without separate package releases or artifacts
 
 ## Decision
 
-Support runner `>=2.15.3 <2.17.0` and Analyzer `>=13.3.0 <15.0.0` in one release
-line. For runners 2.15.3, 2.16.0 and 2.16.1, prepare a content-keyed private copy of the
-library, pubspec and license, applying only the #5197 AnalysisOptionsBuilder backport.
+Support older-runner/newer-Analyzer combinations within the
+[current dependency window](../launcher-and-release.md#supported-dependencies)
+in one release line. Independent Pub constraints cannot express the conditional
+runner/Analyzer compatibility requirement. For runners 2.15.3, 2.16.0 and
+2.16.1, prepare a content-keyed private copy of the library, pubspec and license,
+applying only the #5197 AnalysisOptionsBuilder backport through the worker's
+analysis-options factory.
 Reject unexpected patch shapes. Preserve Pub's original package and the
 application's package configuration and lockfile.
 
@@ -30,11 +34,6 @@ Builder-visible assets and resolver package roots retain the original applicatio
 resolution; the copied sources are compiler inputs only.
 No stock runner is launched by the accelerator and no stock installation is
 repaired. The native protocol and output transaction boundary do not change.
-
-Keep one package/tagpr flow and the existing five Rust artifacts. Add mixed
-resolution correctness checks inside an existing CI lane; do not add manual
-release steps or version-specific publishing. Minimum/latest Dart jobs retain
-their existing SDKs and downgrade/upgrade strategy.
 
 ## Consequences
 
@@ -63,4 +62,7 @@ The dependency comparison covers legacy retention, restart, regeneration,
 watch and upgrade in the same release line.
 The backport is a deliberately bounded private-source compatibility surface;
 additional fixes require explicit evidence rather than opportunistic text edits.
-See the [review and verification command](../dependency-window-review.md).
+Direct stock use with the affected runner/Analyzer combination remains broken;
+the backport only fixes accelerator compilation. The
+[dependency comparison](../development.md#dependency-window-comparison) describes
+how stock references are selected and how to replay the supported combinations.

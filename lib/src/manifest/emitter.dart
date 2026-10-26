@@ -3,8 +3,9 @@ import 'dart:io';
 
 import 'model.dart';
 import 'source.dart';
+import 'shared_parts_source.dart';
 
-const _manifestVersion = 10;
+const _manifestVersion = 11;
 
 /// Writes just the worker entrypoint. `generate_builder_manifest` emits it
 /// early — before the factory probe — so the frontend can overlap the
@@ -13,11 +14,15 @@ const _manifestVersion = 10;
 /// (a builder that fails conversion) only wastes the overlapping compile.
 Future<void> emitWorkerEntrypoint(
   String workerEntrypoint,
-  Iterable<CatalogEntry> catalogEntries,
-) async {
+  Iterable<CatalogEntry> catalogEntries, {
+  List<String> experiments = const [],
+}) async {
   final workerFile = File(workerEntrypoint);
   await workerFile.parent.create(recursive: true);
-  await _writeAtomically(workerFile, workerSource(catalogEntries));
+  await _writeAtomically(
+    workerFile,
+    workerSource(catalogEntries, experiments: experiments),
+  );
 }
 
 /// Publishes each artifact atomically, binding the manifest to its worker source.
@@ -30,12 +35,13 @@ Future<void> emitManifestArtifacts({
   required Iterable<CatalogEntry> catalogEntries,
   required String triggerDigest,
   required Map<String, dynamic> assetSources,
+  List<String> experiments = const [],
 }) async {
   final manifestFile = File(manifestPath);
   final workerFile = File(workerEntrypoint);
   await manifestFile.parent.create(recursive: true);
   await workerFile.parent.create(recursive: true);
-  final source = workerSource(catalogEntries);
+  final source = workerSource(catalogEntries, experiments: experiments);
   await _writeAtomically(workerFile, source);
   final manifest = <String, dynamic>{
     'version': _manifestVersion,
@@ -60,7 +66,10 @@ String workerSourceDigest(String source) {
       (hash & 0xffffffff).toRadixString(16).padLeft(8, '0');
 }
 
-String workerSource(Iterable<CatalogEntry> entries) {
+String workerSource(
+  Iterable<CatalogEntry> entries, {
+  List<String> experiments = const [],
+}) {
   final sorted = entries.toList()
     ..sort((left, right) => left.id.compareTo(right.id));
   final imports = <String, String>{};
@@ -76,6 +85,14 @@ String workerSource(Iterable<CatalogEntry> entries) {
       "import 'package:build/build.dart' show BuilderFactory, PostProcessBuilderFactory;",
     )
     ..writeln("import 'package:build_runner_accelerator/src/worker.dart';");
+  if (experiments.isNotEmpty)
+    output.writeln(
+      "import 'package:build/experiments.dart' show withEnabledExperiments;",
+    );
+  final sharedParts = sorted.any((entry) => entry.addsToLibrary);
+  if (sharedParts) {
+    output.writeln(sharedPartsImports);
+  }
   for (final entry in imports.entries) {
     output.writeln(
       'import ' + dartSourceString(entry.key) + ' as ' + entry.value + ';',
@@ -83,8 +100,15 @@ String workerSource(Iterable<CatalogEntry> entries) {
   }
   output
     ..writeln()
-    ..writeln('Future<void> main(List<String> args) => runWorker(')
+    ..writeln(
+      'Future<void> main(List<String> args) => ${experiments.isEmpty ? '' : 'withEnabledExperiments(() => '}runWorker(',
+    )
     ..writeln('  arguments: args,')
+    ..write(
+      sharedParts
+          ? '  sharedPartEncoder: encodeSharedPart,\n  sharedPartStepFactory: createSharedPartStep,\n'
+          : '',
+    )
     ..writeln('  catalog: <String, BuilderFactory>{');
   for (final entry in sorted.where((entry) => !entry.isPostProcess)) {
     output.writeln(
@@ -113,7 +137,12 @@ String workerSource(Iterable<CatalogEntry> entries) {
   }
   output
     ..writeln('  },')
-    ..writeln(');');
+    ..writeln(
+      experiments.isEmpty
+          ? ');'
+          : '), const [${experiments.map(dartSourceString).join(', ')}]);',
+    );
+  if (sharedParts) output.writeln(sharedPartsImplementation);
   return output.toString();
 }
 

@@ -32,6 +32,7 @@ pub struct WorkerPool {
     max_jobs: usize,
     initialized: Option<(PathBuf, String, String, usize, bool, bool)>,
     retained_output_guard: bool,
+    native_overlay: bool,
     initialized_workers: usize,
     input_restrictions: BTreeMap<String, Vec<String>>,
     resolver_usage: BTreeMap<(String, String), bool>,
@@ -158,6 +159,7 @@ impl WorkerPool {
             max_jobs,
             initialized: None,
             retained_output_guard: false,
+            native_overlay: false,
             initialized_workers: 0,
             input_restrictions: BTreeMap::new(),
             resolver_usage: BTreeMap::new(),
@@ -189,6 +191,10 @@ impl WorkerPool {
         self.retained_output_guard = enabled;
     }
 
+    pub(crate) fn set_native_overlay(&mut self, enabled: bool) {
+        self.native_overlay = enabled;
+    }
+
     /// Reuses workers only for an identical workspace/configuration signature.
     /// A changed signature clears resolver-use hints and restarts the resident
     /// processes; each newly admitted process must pass worker IPC checks.
@@ -215,6 +221,15 @@ impl WorkerPool {
             self.retained_output_guard,
         );
         if self.initialized.as_ref() == Some(&signature) {
+            if self.native_overlay
+                && self
+                    .workers
+                    .iter()
+                    .take(self.initialized_workers)
+                    .any(|worker| !worker.shared_parts_capable)
+            {
+                return Err(io::Error::other("worker lacks shared-library-parts-v1"));
+            }
             if self.auto_worker_artifact && self.allow_worker_artifact_upgrade {
                 match background_worker_aot_if_ready(
                     root,
@@ -387,6 +402,9 @@ impl WorkerPool {
                 &self.input_restrictions,
                 self.retained_output_guard,
             )?;
+            if self.native_overlay && !worker.shared_parts_capable {
+                return Err(io::Error::other("worker lacks shared-library-parts-v1"));
+            }
         }
         self.worker_initializes += pending as u64;
         self.initialized_workers = self.workers.len();
@@ -869,11 +887,11 @@ impl WorkerPool {
         if count == 0 {
             return Ok(());
         }
-        if count == 1 {
+        if count == 1 && !self.native_overlay {
             validate_memory_overlay(overlay, &updated_sources, &updated_cache)?;
         }
         let spool = crate::wall::Span::new("reset_overlay_spool");
-        let blob = if count > 1 {
+        let blob = if count > 1 || self.native_overlay {
             let updated_assets = updated_sources.union(&updated_cache).cloned().collect();
             Some(super::overlay_blob::OverlayBlob::create(
                 root,

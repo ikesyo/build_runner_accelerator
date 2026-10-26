@@ -11,6 +11,8 @@ void main() {
     for (final arguments in <List<String>>[
       [],
       ['--release'],
+      ['--enable-experiment=enhanced-parts'],
+      ['--enable-experiment', 'enhanced-parts', '--enable-experiment=variance'],
       ['--no-release'],
       ['-cnamed', '-rrd', '--no-release', '-dr', '-cother'],
       ['-crd'],
@@ -51,6 +53,10 @@ void main() {
       );
       expect(native.release, stock.isReleaseBuild);
       expect(native.config, stock.configKey);
+      expect(
+        native.experiments,
+        cli.enableExperiments?.toList() ?? const <String>[],
+      );
       expect(
         native.deletionFlag,
         cli.removedOptionsUsed.contains(deleteFilesByDefaultOption),
@@ -211,6 +217,8 @@ void main() {
   test('invalid settings fail before native execution', () {
     for (final arguments in <List<String>>[
       ['--define'],
+      ['--enable-experiment'],
+      ['--enable-experiment='],
       ['--define=x=y'],
       ['--define=:b=x=1', '--define=:b=x=2'],
       ['--release=true'],

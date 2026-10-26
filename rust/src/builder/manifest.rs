@@ -38,6 +38,8 @@ pub(crate) struct BuilderManifestRuntime {
 
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct BuilderManifestDefinition {
+    #[serde(default)]
+    pub(crate) adds_to_library: bool,
     pub(crate) id: String,
     pub(crate) kind: String,
     #[serde(default)]
@@ -80,7 +82,7 @@ pub(crate) struct BuilderManifestDefinition {
 pub(crate) fn rust_build_config_from_manifest(
     manifest: BuilderManifestFile,
 ) -> io::Result<RustBuildConfig> {
-    if manifest.version != 10 {
+    if manifest.version != 11 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unsupported builder manifest version: {}", manifest.version),
@@ -125,11 +127,14 @@ pub(crate) fn rust_build_config_from_manifest(
             BuildTo::Source => "source",
             BuildTo::Cache => "cache",
         };
-        if entry.kind != expected_kind || entry.build_to != expected_build_to {
+        if entry.kind != expected_kind
+            || entry.build_to != expected_build_to
+            || entry.adds_to_library != definition.adds_to_library
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
-                    "configured builder metadata disagrees with definition: {} (kind/build_to)",
+                    "configured builder metadata disagrees with definition: {} (kind/build_to/adds_to_library)",
                     entry.id
                 ),
             ));

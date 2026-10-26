@@ -10,6 +10,7 @@ use std::io;
 /// option/target instances of the same builder.
 #[derive(Clone)]
 pub struct BuildRequest {
+    pub part_phase_index: Option<u32>,
     pub builder: String,
     pub input: String,
     pub outputs: Vec<String>,

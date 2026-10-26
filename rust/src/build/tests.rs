@@ -15,6 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn configured_builder(id: &str, target: &str, target_order: u32, phase: u32) -> ConfiguredBuilder {
     ConfiguredBuilder {
         definition: Arc::new(BuilderDefinition {
+            adds_to_library: false,
             id: id.to_owned(),
             kind: BuilderKind::Normal,
             extensions: Vec::new(),
@@ -475,14 +476,13 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
     };
     let mut transaction =
         PendingTransaction::new(&[], &state, vec![(old_spec.action_key(), old_action)]);
-    transaction.pending_outputs.push((
-        builder.definition.clone(),
+    transaction.pending_outputs.insert(
         output.clone(),
-        new_bytes.clone().into(),
-    ));
+        (builder.definition.clone(), new_bytes.clone().into()),
+    );
     transaction
         .pending_actions
-        .push((new_spec.action_key(), new_action.clone()));
+        .insert(new_spec.action_key(), new_action.clone());
     let state_path = temporary.0.join(".dart_tool/graph-v3.bin");
     let scanned_packages = BTreeSet::from(["app".to_owned()]);
 
@@ -547,7 +547,7 @@ fn output_registration_shares_buffers_and_releases_aborted_transaction() -> io::
             }
             record_build_result(&workspace, &state, &spec, result, &mut pending)?;
             let overlay = &pending.overlay[asset];
-            let commit_bytes = &pending.pending_outputs[0].2;
+            let commit_bytes = &pending.pending_outputs[asset].1;
             assert!(Arc::ptr_eq(overlay, commit_bytes));
             assert_eq!(Arc::strong_count(overlay), 2);
             assert_eq!(overlay.as_ref(), bytes);
@@ -555,7 +555,7 @@ fn output_registration_shares_buffers_and_releases_aborted_transaction() -> io::
             // A later action failure aborts the pending transaction. Removing
             // visibility must leave the bytes available for commit until then.
             pending.overlay.remove(asset);
-            assert_eq!(pending.pending_outputs[0].2.as_ref(), bytes);
+            assert_eq!(pending.pending_outputs[asset].1.as_ref(), bytes);
             drop(pending);
             assert!(weak.upgrade().is_none());
             assert_eq!(fs::read(temporary.0.join("lib/input.out"))?, b"committed");
@@ -721,6 +721,7 @@ fn removing_target_with_shared_builder_invalidates_glob_consumer() -> io::Result
         ..GraphState::default()
     };
     let mut plan = PlannedActions {
+        shared_libraries: Default::default(),
         specs: vec![first.clone(), second.clone(), consumer.clone()],
         generated_output_locations: BTreeMap::new(),
         visibility: AssetVisibility::default(),
@@ -1008,6 +1009,7 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
         ..GraphState::default()
     };
     let plan = PlannedActions {
+        shared_libraries: Default::default(),
         specs: vec![
             source_spec.clone(),
             cache_spec.clone(),
@@ -1076,6 +1078,7 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
     };
     let retained_config = dirty_test_config(&[source]);
     let retained_plan = PlannedActions {
+        shared_libraries: Default::default(),
         specs: vec![source_spec.clone()],
         generated_output_locations: BTreeMap::new(),
         visibility: AssetVisibility::default(),
@@ -1437,19 +1440,24 @@ fn recovery_commit_fixture(root: &std::path::Path) -> io::Result<()> {
         .map(|(key, action)| (key.clone(), action.clone()))
         .collect();
     let mut transaction = PendingTransaction::new(&[], &state, deleted);
+    transaction.source_edits.insert(
+        "app|lib/edited.dart".into(),
+        super::transaction::SourceEdit {
+            original: Arc::from(&b"class Model {}\n"[..]),
+            updated: Arc::from(&b"part '_br_/edited.part.dart';\nclass Model {}\n"[..]),
+        },
+    );
     transaction
         .pending_deletions
         .push((source.definition.clone(), "app|lib/obsolete.out".to_owned()));
-    transaction.pending_outputs.push((
-        source.definition.clone(),
+    transaction.pending_outputs.insert(
         "app|lib/updated.out".to_owned(),
-        Arc::from(&b"new source"[..]),
-    ));
-    transaction.pending_outputs.push((
-        cache.definition.clone(),
+        (source.definition.clone(), Arc::from(&b"new source"[..])),
+    );
+    transaction.pending_outputs.insert(
         "app|lib/new.cache".to_owned(),
-        Arc::from(&b"new cache"[..]),
-    ));
+        (cache.definition.clone(), Arc::from(&b"new cache"[..])),
+    );
     commit(
         &mut state,
         CommitInputs {
@@ -1471,6 +1479,7 @@ fn recovery_commit_fixture(root: &std::path::Path) -> io::Result<()> {
 }
 
 fn seed_recovery_fixture(root: &std::path::Path) -> io::Result<()> {
+    fs::write(root.join("lib/edited.dart"), b"class Model {}\n")?;
     fs::write(root.join("lib/updated.out"), b"old source")?;
     fs::write(root.join("lib/obsolete.out"), b"obsolete source")?;
     fs::write(root.join("lib/handwritten.txt"), b"handwritten")?;
@@ -1505,6 +1514,7 @@ fn assert_recovered_fixture(root: &std::path::Path) -> io::Result<()> {
     assert_eq!(fs::read(root.join("lib/updated.out"))?, b"old source");
     assert_eq!(fs::read(root.join("lib/obsolete.out"))?, b"obsolete source");
     assert_eq!(fs::read(root.join("lib/handwritten.txt"))?, b"handwritten");
+    assert_eq!(fs::read(root.join("lib/edited.dart"))?, b"class Model {}\n");
     assert_eq!(
         fs::read(root.join(".dart_tool/build_runner_accelerator/cache/app/lib/old.cache"))?,
         b"obsolete cache"
@@ -1526,6 +1536,10 @@ fn assert_recovered_fixture(root: &std::path::Path) -> io::Result<()> {
         Some(&false)
     );
     recovery_commit_fixture(root)?;
+    assert_eq!(
+        fs::read(root.join("lib/edited.dart"))?,
+        b"part '_br_/edited.part.dart';\nclass Model {}\n"
+    );
     assert_eq!(fs::read(root.join("lib/updated.out"))?, b"new source");
     assert!(!root.join("lib/obsolete.out").exists());
     assert!(
@@ -1570,6 +1584,37 @@ fn interrupted_commit_boundaries_restore_outputs_and_graph() -> io::Result<()> {
         assert_recovered_fixture(&temporary.0)?;
     }
     Ok(())
+}
+
+#[test]
+fn source_edit_during_publication_is_preserved_and_blocks_recovery() -> io::Result<()> {
+    let temporary = TemporaryWorkspace::new()?;
+    seed_recovery_fixture(&temporary.0)?;
+    thread_local! { static EDIT_ROOT: std::cell::RefCell<PathBuf> = const { std::cell::RefCell::new(PathBuf::new()) }; }
+    EDIT_ROOT.with(|root| *root.borrow_mut() = temporary.0.clone());
+    super::commit::COMMIT_BOUNDARY.with(|hook| {
+        *hook.borrow_mut() = Some(|name| {
+            if name == "after_output" {
+                EDIT_ROOT.with(|root| {
+                    fs::write(root.borrow().join("lib/edited.dart"), b"user edit\n")
+                })?;
+            }
+            Ok(())
+        });
+    });
+    let result = recovery_commit_fixture(&temporary.0);
+    super::commit::COMMIT_BOUNDARY.with(|hook| *hook.borrow_mut() = None);
+    assert!(result.is_err());
+    let source = temporary.0.join("lib/edited.dart");
+    assert_eq!(fs::read(&source)?, b"user edit\n");
+    let graph = temporary
+        .0
+        .join(".dart_tool/build_runner_accelerator/graph-v3.bin");
+    assert!(super::recovery::pending(&graph));
+    assert!(super::recovery::recover(&graph).is_err());
+    assert_eq!(fs::read(&source)?, b"user edit\n");
+    fs::write(source, b"class Model {}\n")?;
+    assert_recovered_fixture(&temporary.0)
 }
 
 #[test]
@@ -1882,4 +1927,119 @@ fn filtered_retention_preserves_bytes_without_recording_implicit_history() -> io
         assert_eq!(GraphState::load(&path)?, state);
     }
     Ok(())
+}
+
+#[test]
+fn shared_contributions_are_not_skipped_by_part_directive_filter() -> io::Result<()> {
+    let temporary = TemporaryWorkspace::new()?;
+    let workspace = Workspace::load(temporary.0.clone())?;
+    let builder = configured_builder("part", "app:default", 0, 0);
+    let input = "app|lib/model.dart";
+    let mut spec = build_spec(&builder, input, &["app|lib/model.g.dart"]);
+    let action = Arc::get_mut(&mut spec).unwrap();
+    Arc::get_mut(&mut action.instance)
+        .unwrap()
+        .part_directive_suffix = Some(".g.dart".into());
+    let overlay = BTreeMap::from([(input.to_owned(), Arc::from(&b"class Model {}"[..]))]);
+    assert!(super::part_directive::part_directive_skips(
+        &workspace, &overlay, &spec
+    ));
+    let action = Arc::get_mut(&mut spec).unwrap();
+    let instance = Arc::get_mut(&mut action.instance).unwrap();
+    Arc::make_mut(&mut instance.builder).adds_to_library = true;
+    assert!(!super::part_directive::part_directive_skips(
+        &workspace, &overlay, &spec
+    ));
+    Ok(())
+}
+
+#[test]
+fn shared_contributions_invalidate_later_resolvers_but_not_unrelated_or_plain_reads() {
+    let mut contributor = configured_builder("shared", "app:default", 0, 1);
+    Arc::make_mut(&mut contributor.definition).adds_to_library = true;
+    let producer = build_spec(&contributor, "app|lib/model.dart", &[]);
+    let early = build_spec(
+        &configured_builder("early", "app:default", 0, 0),
+        "app|lib/early.dart",
+        &[],
+    );
+    let later = build_spec(
+        &configured_builder("later", "app:default", 0, 3),
+        "app|lib/importer.dart",
+        &[],
+    );
+    let plain = build_spec(
+        &configured_builder("plain", "app:default", 0, 3),
+        "app|lib/plain.txt",
+        &[],
+    );
+    let unrelated = build_spec(
+        &configured_builder("other", "app:default", 0, 3),
+        "app|lib/other.dart",
+        &[],
+    );
+    let specs = vec![
+        producer.clone(),
+        early.clone(),
+        later.clone(),
+        plain.clone(),
+        unrelated.clone(),
+    ];
+    let mut state = GraphState::default();
+    for spec in &specs {
+        let resolving =
+            spec.action_key() == early.action_key() || spec.action_key() == later.action_key();
+        state.actions.insert(
+            spec.action_key(),
+            ActionState {
+                input: spec.input.clone(),
+                status: "success".into(),
+                reads: vec![if spec.action_key() == plain.action_key() {
+                    "app|lib/model.dart".into()
+                } else {
+                    spec.input.clone()
+                }],
+                resolver_entrypoints: if resolving {
+                    vec![spec.input.clone()]
+                } else {
+                    Vec::new()
+                },
+                ..ActionState::default()
+            },
+        );
+        if resolving {
+            state.resolver_dep_graph.insert(
+                spec.input.clone(),
+                vec!["app|lib/model.dart".into()].into_iter().collect(),
+            );
+        }
+    }
+    let mut dirty = vec![producer.clone()];
+    expand_dirty_dependents(&mut dirty, &specs, &state);
+    assert_eq!(
+        dirty
+            .iter()
+            .map(|spec| spec.action_key())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([producer.action_key(), later.action_key()])
+    );
+    // A physical directive edit also invalidates plain readers, using newly
+    // observed edges from this transaction rather than only committed reads.
+    let staged = BTreeMap::from([(
+        unrelated.action_key(),
+        ActionState {
+            reads: vec!["app|lib/model.dart".into()],
+            ..state.actions[&unrelated.action_key()].clone()
+        },
+    )]);
+    let replay = super::dirty::replay_after_source_edits(
+        &specs,
+        &state,
+        &staged,
+        &BTreeSet::from(["app|lib/model.dart".into()]),
+    );
+    let keys: BTreeSet<_> = replay.dirty.iter().map(|spec| spec.action_key()).collect();
+    assert!(keys.contains(&plain.action_key()));
+    assert!(keys.contains(&early.action_key()));
+    assert!(keys.contains(&unrelated.action_key()));
 }

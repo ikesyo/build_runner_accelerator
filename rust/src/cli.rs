@@ -174,7 +174,10 @@ impl Options {
 }
 
 fn build_option_takes_value(argument: &str) -> bool {
-    matches!(argument, "--build-filter" | "--config" | "-c" | "--define")
+    matches!(
+        argument,
+        "--build-filter" | "--config" | "-c" | "--define" | "--enable-experiment"
+    )
 }
 
 /// Lexical capability check only. Dart/build_config owns normalized overrides
@@ -187,6 +190,7 @@ pub(crate) struct BuildSettings {
     pub(crate) legacy_keep_modified_outputs: bool,
     pub(crate) release: bool,
     pub(crate) defines: Vec<String>,
+    pub(crate) experiments: Vec<String>,
     pub(crate) config: Option<String>,
     pub(crate) build_filters: Vec<crate::build_filter::BuildFilter>,
     pub(crate) force_aot: bool,
@@ -205,7 +209,7 @@ impl BuildSettings {
         while let Some(argument) = original.next() {
             if matches!(
                 argument.as_str(),
-                "--config" | "-c" | "--define" | "--build-filter"
+                "--config" | "-c" | "--define" | "--build-filter" | "--enable-experiment"
             ) {
                 expanded.push(argument.clone());
                 if let Some(value) = original.next() {
@@ -246,8 +250,10 @@ impl BuildSettings {
                         .map_or((argument.as_str(), None), |(name, value)| {
                             (name, Some(value))
                         });
-                    if !matches!(name, "--define" | "--config" | "-c" | "--build-filter")
-                        || (name == "-c" && inline.is_some())
+                    if !matches!(
+                        name,
+                        "--define" | "--config" | "-c" | "--build-filter" | "--enable-experiment"
+                    ) || (name == "-c" && inline.is_some())
                     {
                         return Err(io::Error::other(format!(
                             "Unsupported native argument: {argument}"
@@ -262,6 +268,13 @@ impl BuildSettings {
                                 .build_filters
                                 .push(crate::build_filter::BuildFilter::parse(filter)?);
                         }
+                    } else if name == "--enable-experiment" {
+                        if value.split(',').any(str::is_empty) {
+                            return Err(io::Error::other("Empty experiment name"));
+                        }
+                        settings
+                            .experiments
+                            .extend(value.split(',').map(str::to_owned));
                     } else if name == "--define" {
                         if value.split('=').count() < 3 {
                             return Err(io::Error::other(
@@ -594,6 +607,7 @@ mod tests {
             let actual = serde_json::json!({
                 "config": settings.config, "config_path": config_path, "release": settings.release,
                 "defines": settings.defines, "filters": settings.build_filters.len(),
+                "experiments": settings.experiments,
                 "only_check": settings.only_check,
                 "keep_modified_outputs": settings.keep_modified_outputs,
                 "deletion": settings.deletion_flag,

@@ -95,6 +95,13 @@ Watch logs and builder histories must stay outside watched workspaces.
 The existing SDK/dependency jobs run both package analysis/tests and a real
 worker comparison. These cover different boundaries: `build_runner --help`
 does not initialize the native worker or resolve a Dart input library.
+The minimum SDK overlaps package checks with the pinned-runner/shared-part
+JIT comparisons. The latest SDK runs package checks followed by its
+normal-builder lifecycle comparison. AOT comparisons reuse the installed SDK
+and release frontend in the existing native-build jobs: pinned runner 2.17.1
+on Linux x64 and shared parts on Linux ARM64. Each probe uses a separate
+workspace under `RUNNER_TEMP`, keeping comparison files outside the publish
+package and AOT compilation off the package-test runner.
 
 Run the same comparison locally with an installed SDK:
 
@@ -102,20 +109,45 @@ Run the same comparison locally with an installed SDK:
 DART_BIN=/path/to/dart-3.11.0/bin/dart bash scripts/correctness_sdk.sh --resolution downgrade
 DART_BIN=/path/to/dart-3.13.3/bin/dart bash scripts/correctness_sdk.sh --resolution upgrade
 DART_BIN=/path/to/dart-3.13.3/bin/dart bash scripts/correctness_sdk.sh --resolution upgrade --runner 2.17.1 --worker-mode aot
+DART_BIN=/path/to/dart-3.13.3/bin/dart bash scripts/correctness_shared_parts.sh --worker-mode aot --jobs 2
 ```
 
-`fixtures/sdk_compat_app` exercises a Resolver-based builder with one non-AOT
-worker. It compares file inventories and bytes for initial/no-op builds,
+`fixtures/sdk_compat_app` exercises a Resolver-based builder with one worker
+(JIT by default; `--worker-mode aot` selects AOT for both implementations).
+`--runner` pins the stock and native runner without dependency overrides.
+It compares file inventories and bytes for initial/no-op builds,
 changes, deletion, rename, failure/recovery and two paired watch edits. Native
 failure must preserve outputs and graph. Stock uses a separate workspace with
-the same resolved lockfile. Both SDK replays passed locally on Linux x64 on
-2026-10-23; CI repeats them on dependency updates.
+the same resolved lockfile. CI runs these comparisons on dependency updates.
 
 Logs and lockfiles are retained in the printed results directory (`--results
 PATH` selects one). This check does not cover all worker modes or platform/SDK
 combinations. Packaged AOT/prewarm belongs to
 [distribution E2E](distribution-validation.md); publication faults belong to
 `correctness_commit_recovery.sh`.
+
+## Dependency window comparison
+
+The older-runner adapter has a focused stock/native comparison:
+
+```bash
+DART_BIN=/path/to/dart BUILD_RUNNER_ACCELERATOR_BIN=/path/to/frontend \
+  python3 scripts/correctness_dependency_window.py
+```
+
+It resolves the supported older-runner/Analyzer combinations without dependency
+overrides. On Analyzer 14.5, stock references use the fixed runner 2.16.2 because
+the affected older stock resolvers cannot compile. The legacy retention reference
+also selects stock's matching output policy. This is adapter coverage, not a
+claim that the unmodified older stock runner works on that Analyzer.
+
+The comparison checks generation, incremental reuse, failure/recovery, AOT and
+watch behavior, including legacy retention and upgrading to the repair default.
+Application configuration and upstream resolver sources must remain unchanged.
+Cases share the existing trigger, arbitrary-builder and output-policy CI jobs.
+See [ADR 0042](adr/0042-runner-resolver-compatibility.md) for the design and the
+[compatibility contract](launcher-and-release.md#supported-dependencies) for
+current ranges and limits.
 
 ## Benchmarks
 

@@ -29,6 +29,8 @@ pub(super) struct ExecutionInputs<'a> {
     pub(super) retained_output_guard: bool,
 }
 
+const MAX_DIRECTIVE_REPLAYS: usize = 8;
+
 pub(super) struct ExecutionResult {
     pub(super) transaction: PendingTransaction,
     pub(super) expected_outputs: BTreeSet<String>,
@@ -56,7 +58,10 @@ pub(super) fn run(
         deleted_actions,
     } = dirty_plan;
     let specs = &plan.specs;
-    let dirty_keys = dirty
+    let has_shared_parts = !plan.shared_libraries.is_empty();
+    let mut shared_libraries =
+        super::shared_parts::SharedLibraryCoordinator::new(&plan.shared_libraries);
+    let mut dirty_keys = dirty
         .iter()
         .map(|spec| spec.action_key())
         .collect::<BTreeSet<_>>();
@@ -68,7 +73,7 @@ pub(super) fn run(
     let expected_outputs = plan.expected_outputs();
     let mut transaction = PendingTransaction::new(&dirty, state, deleted_actions);
     let lazy_specs_by_output = optional_specs_by_output(specs);
-    let lazy_demand_possible = !lazy_force_keys.is_empty() && !lazy_specs_by_output.is_empty();
+    let mut lazy_demand_possible = !lazy_force_keys.is_empty() && !lazy_specs_by_output.is_empty();
     // The optional-builder capability flag is part of the pool signature, so
     // derive it from the plan rather than the dirty set: an optional spec
     // leaving the dirty set must not restart the resident workers.
@@ -97,6 +102,7 @@ pub(super) fn run(
         }
         let active_pool = worker_pool.expect("worker pool was just initialized");
         active_pool.set_retained_output_guard(retained_output_guard);
+        active_pool.set_native_overlay(has_shared_parts);
         let first_package = dirty
             .first()
             .map(|spec| spec.instance.package.clone())
@@ -120,235 +126,303 @@ pub(super) fn run(
         // which clears the cached graph only then.
         let mut initialized_package = first_package;
 
-        for configured_builder_index in execution_order(&build_config.builders) {
-            let configured_builder = &build_config.builders[configured_builder_index];
-            let builder = configured_builder.definition.as_ref();
-            if builder.kind == BuilderKind::PostProcess && !pruned_optional {
-                prune_undemanded_optional(workspace, state, specs, &lazy_state, &mut transaction)?;
-                pruned_optional = true;
-            }
-            let _phase =
-                crate::wall::Span::new("phase").phase(configured_builder.phase, &builder.id);
-            let select =
-                crate::wall::Span::new("phase_select").phase(configured_builder.phase, &builder.id);
-            let phase_specs = specs
-                .iter()
-                .filter(|spec| {
-                    spec.instance.target == configured_builder.target
-                        && spec.instance.builder.id == builder.id
-                        && (dirty_keys.contains(&spec.action_key())
-                            || (builder.kind == BuilderKind::PostProcess
-                                && lazy_specs_by_output
-                                    .get(&spec.input)
-                                    .is_some_and(|producer| lazy_state.has_built(producer))))
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            let mut runnable_phase_specs = Vec::with_capacity(phase_specs.len());
-            for spec in phase_specs {
-                if let Some((build_to, is_optional)) =
-                    plan.generated_output_locations.get(&spec.input)
-                {
-                    // Normal primary inputs demand their optional producer before
-                    // checking existence. Post-process inputs never create demand.
-                    if *is_optional && builder.kind == BuilderKind::Normal {
-                        // Primary demand executes before the consumer request.
-                        // Refresh the worker first, just as nested demand after
-                        // the ordinary phase reset observes earlier outputs.
-                        if configured_builder.package != initialized_package {
-                            active_pool.initialize(
+        let mut replay = 0;
+        loop {
+            for configured_builder_index in execution_order(&build_config.builders) {
+                let configured_builder = &build_config.builders[configured_builder_index];
+                if has_shared_parts {
+                    shared_libraries.refresh(
+                        state,
+                        &mut transaction,
+                        configured_builder.phase.checked_sub(1),
+                    );
+                }
+                resolver_needs_reset |= transaction.resolver.has_changes();
+                let builder = configured_builder.definition.as_ref();
+                if builder.kind == BuilderKind::PostProcess && !pruned_optional {
+                    prune_undemanded_optional(
+                        workspace,
+                        state,
+                        specs,
+                        &lazy_state,
+                        &mut transaction,
+                    )?;
+                    pruned_optional = true;
+                }
+                let _phase =
+                    crate::wall::Span::new("phase").phase(configured_builder.phase, &builder.id);
+                let select = crate::wall::Span::new("phase_select")
+                    .phase(configured_builder.phase, &builder.id);
+                let phase_specs = specs
+                    .iter()
+                    .filter(|spec| {
+                        spec.instance.target == configured_builder.target
+                            && spec.instance.builder.id == builder.id
+                            && (dirty_keys.contains(&spec.action_key())
+                                || (builder.kind == BuilderKind::PostProcess
+                                    && lazy_specs_by_output
+                                        .get(&spec.input)
+                                        .is_some_and(|producer| lazy_state.has_built(producer))))
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let mut runnable_phase_specs = Vec::with_capacity(phase_specs.len());
+                for spec in phase_specs {
+                    if let Some((build_to, is_optional)) =
+                        plan.generated_output_locations.get(&spec.input)
+                    {
+                        // Normal primary inputs demand their optional producer before
+                        // checking existence. Post-process inputs never create demand.
+                        if *is_optional && builder.kind == BuilderKind::Normal {
+                            // Primary demand executes before the consumer request.
+                            // Refresh the worker first, just as nested demand after
+                            // the ordinary phase reset observes earlier outputs.
+                            if configured_builder.package != initialized_package {
+                                active_pool.initialize(
+                                    workspace,
+                                    &configured_builder.package,
+                                    config_digest,
+                                    phase_count,
+                                    optional_builder_capability_required,
+                                )?;
+                                initialized_package = configured_builder.package.clone();
+                                transaction.resolver.clear();
+                                resolver_needs_reset = false;
+                            } else if resolver_needs_reset || transaction.resolver.has_changes() {
+                                active_pool.reset_resolver(
+                                    &workspace.root,
+                                    &transaction.overlay,
+                                    std::mem::take(&mut transaction.resolver.resolver_updated),
+                                    std::mem::take(&mut transaction.resolver.resolver_deleted),
+                                    std::mem::take(
+                                        &mut transaction.resolver.resolver_cache_updated,
+                                    ),
+                                    std::mem::take(
+                                        &mut transaction.resolver.resolver_cache_deleted,
+                                    ),
+                                    true,
+                                )?;
+                                resolver_needs_reset = false;
+                            }
+                            active_pool.materialize_optional_primary(
                                 workspace,
-                                &configured_builder.package,
-                                config_digest,
-                                phase_count,
-                                optional_builder_capability_required,
+                                &spec,
+                                &mut transaction.overlay,
+                                &mut transaction.deleted_overlay,
+                                &plan.visibility,
+                                &lazy_specs_by_output,
+                                &mut lazy_state,
                             )?;
-                            initialized_package = configured_builder.package.clone();
-                            transaction.resolver.clear();
-                            resolver_needs_reset = false;
-                        } else if resolver_needs_reset || transaction.resolver.has_changes() {
-                            active_pool.reset_resolver(
-                                &workspace.root,
-                                &transaction.overlay,
-                                std::mem::take(&mut transaction.resolver.resolver_updated),
-                                std::mem::take(&mut transaction.resolver.resolver_deleted),
-                                std::mem::take(&mut transaction.resolver.resolver_cache_updated),
-                                std::mem::take(&mut transaction.resolver.resolver_cache_deleted),
-                                true,
-                            )?;
-                            resolver_needs_reset = false;
+                            state
+                                .resolver_dep_graph
+                                .extend(active_pool.take_dep_graph());
+                            for lazy_result in lazy_state.take_results() {
+                                record_build_result(
+                                    workspace,
+                                    state,
+                                    &lazy_result.spec,
+                                    lazy_result.result,
+                                    &mut transaction,
+                                )?;
+                            }
                         }
-                        active_pool.materialize_optional_primary(
-                            workspace,
-                            &spec,
-                            &mut transaction.overlay,
-                            &mut transaction.deleted_overlay,
-                            &plan.visibility,
-                            &lazy_specs_by_output,
-                            &mut lazy_state,
-                        )?;
-                        state
-                            .resolver_dep_graph
-                            .extend(active_pool.take_dep_graph());
-                        for lazy_result in lazy_state.take_results() {
-                            record_build_result(
+                        let output_is_visible = !transaction.deleted_overlay.contains(&spec.input)
+                            && (transaction.overlay.contains_key(&spec.input)
+                                || workspace.asset_exists_at(&spec.input, *build_to)?);
+                        if !output_is_visible {
+                            record_missing_primary_input(
                                 workspace,
                                 state,
-                                &lazy_result.spec,
-                                lazy_result.result,
+                                &spec,
                                 &mut transaction,
                             )?;
+                            continue;
                         }
                     }
-                    let output_is_visible = !transaction.deleted_overlay.contains(&spec.input)
-                        && (transaction.overlay.contains_key(&spec.input)
-                            || workspace.asset_exists_at(&spec.input, *build_to)?);
-                    if !output_is_visible {
-                        record_missing_primary_input(workspace, state, &spec, &mut transaction)?;
-                        continue;
-                    }
+                    runnable_phase_specs.push(spec);
                 }
-                runnable_phase_specs.push(spec);
-            }
-            if transaction.resolver.has_changes() {
-                resolver_needs_reset = true;
-            }
-            // A part-family builder provably emits nothing when its input
-            // does not declare the generated file in a `part` directive, so
-            // dispatching it to a worker only pays IPC, resolver setup, and
-            // generator warmup to arrive at the same empty result. Skip those
-            // actions here and record the empty result directly.
-            let (skipped_specs, runnable_phase_specs): (Vec<BuildSpec>, Vec<BuildSpec>) =
-                if part_directive_filter_disabled() {
-                    (Vec::new(), runnable_phase_specs)
+                if transaction.resolver.has_changes() {
+                    resolver_needs_reset = true;
+                }
+                // A part-family builder provably emits nothing when its input
+                // does not declare the generated file in a `part` directive, so
+                // dispatching it to a worker only pays IPC, resolver setup, and
+                // generator warmup to arrive at the same empty result. Skip those
+                // actions here and record the empty result directly.
+                let (skipped_specs, runnable_phase_specs): (Vec<BuildSpec>, Vec<BuildSpec>) =
+                    if part_directive_filter_disabled() {
+                        (Vec::new(), runnable_phase_specs)
+                    } else {
+                        runnable_phase_specs.into_iter().partition(|spec| {
+                            part_directive_skips(workspace, &transaction.overlay, spec)
+                        })
+                    };
+                part_filtered_actions += skipped_specs.len();
+                for spec in skipped_specs {
+                    record_build_result(
+                        workspace,
+                        state,
+                        &spec,
+                        empty_build_result(&spec),
+                        &mut transaction,
+                    )?;
+                }
+                drop(select);
+                let assemble = crate::wall::Span::new("phase_requests")
+                    .phase(configured_builder.phase, &builder.id);
+                let part_phase_index = if builder.adds_to_library {
+                    plan.shared_libraries
+                        .phase_index(&configured_builder.package, configured_builder.phase)
                 } else {
-                    runnable_phase_specs.into_iter().partition(|spec| {
-                        part_directive_skips(workspace, &transaction.overlay, spec)
-                    })
+                    None
                 };
-            part_filtered_actions += skipped_specs.len();
-            for spec in skipped_specs {
-                record_build_result(
-                    workspace,
-                    state,
-                    &spec,
-                    empty_build_result(&spec),
-                    &mut transaction,
-                )?;
+                let requests = runnable_phase_specs
+                    .iter()
+                    .map(|spec| BuildRequest {
+                        part_phase_index,
+                        builder: spec.instance.builder.id.to_owned(),
+                        input: spec.input.clone(),
+                        outputs: spec
+                            .outputs
+                            .iter()
+                            .filter(|asset| !super::shared_parts::owns_part(spec, asset))
+                            .cloned()
+                            .collect(),
+                        options: spec.instance.options.clone(),
+                        phase: spec.instance.phase,
+                        instance_key: spec.instance.instance_key.clone(),
+                        is_root: configured_builder.is_root,
+                        post_process: builder.kind == BuilderKind::PostProcess,
+                        triggers: spec.instance.builder.triggers.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                drop(assemble);
+                if requests.is_empty() {
+                    continue;
+                }
+                let reset = crate::wall::Span::new("phase_reset")
+                    .phase(configured_builder.phase, &builder.id);
+                if configured_builder.package != initialized_package {
+                    active_pool.initialize(
+                        workspace,
+                        &configured_builder.package,
+                        config_digest,
+                        phase_count,
+                        optional_builder_capability_required,
+                    )?;
+                    initialized_package = configured_builder.package.clone();
+                    resolver_needs_reset = false;
+                    transaction.resolver.clear();
+                } else if resolver_needs_reset {
+                    active_pool.reset_resolver(
+                        &workspace.root,
+                        &transaction.overlay,
+                        std::mem::take(&mut transaction.resolver.resolver_updated),
+                        std::mem::take(&mut transaction.resolver.resolver_deleted),
+                        std::mem::take(&mut transaction.resolver.resolver_cache_updated),
+                        std::mem::take(&mut transaction.resolver.resolver_cache_deleted),
+                        true,
+                    )?;
+                    resolver_needs_reset = false;
+                }
+                drop(reset);
+                let dispatch = crate::wall::Span::new("phase_dispatch")
+                    .phase(configured_builder.phase, &builder.id);
+                let results = if !lazy_demand_possible {
+                    active_pool.build_parallel(
+                        workspace,
+                        &requests,
+                        &transaction.overlay,
+                        &transaction.deleted_overlay,
+                        &plan.visibility,
+                    )?
+                } else {
+                    active_pool.build_parallel_lazy(
+                        workspace,
+                        &requests,
+                        &mut transaction.overlay,
+                        &mut transaction.deleted_overlay,
+                        &plan.visibility,
+                        &lazy_specs_by_output,
+                        &mut lazy_state,
+                    )?
+                };
+
+                drop(dispatch);
+                let merge = crate::wall::Span::new("dep_graph_merge")
+                    .phase(configured_builder.phase, &builder.id);
+                // Merge resolver dependency edges the workers reported with
+                // these results so dirty checks can expand entrypoints through
+                // them, like stock's previousLibraryCycleGraphLoader.
+                state
+                    .resolver_dep_graph
+                    .extend(active_pool.take_dep_graph());
+
+                drop(merge);
+                let record = crate::wall::Span::new("results_record")
+                    .phase(configured_builder.phase, &builder.id);
+                let lazy_results = lazy_state.take_results();
+                let lazy_source_output = lazy_results.iter().any(|lazy_result| {
+                    lazy_result.spec.instance.builder.build_to == BuildTo::Source
+                });
+                for lazy_result in lazy_results {
+                    record_build_result(
+                        workspace,
+                        state,
+                        &lazy_result.spec,
+                        lazy_result.result,
+                        &mut transaction,
+                    )?;
+                }
+                if lazy_source_output {
+                    resolver_needs_reset = true;
+                }
+
+                for (spec, result) in runnable_phase_specs.into_iter().zip(results) {
+                    record_build_result(workspace, state, &spec, result, &mut transaction)?;
+                }
+
+                drop(record);
+                if transaction.resolver.has_changes() {
+                    resolver_needs_reset = true;
+                }
+
+                if builder.kind == BuilderKind::Normal && builder.build_to == BuildTo::Source {
+                    resolver_needs_reset = true;
+                }
             }
-            drop(select);
-            let assemble = crate::wall::Span::new("phase_requests")
-                .phase(configured_builder.phase, &builder.id);
-            let requests = runnable_phase_specs
+
+            if !has_shared_parts {
+                break;
+            }
+            let edited_libraries = shared_libraries.finish(workspace, state, &mut transaction)?;
+            if edited_libraries.is_empty() {
+                break;
+            }
+            replay += 1;
+            if replay > MAX_DIRECTIVE_REPLAYS {
+                return Err(io::Error::other(
+                    "shared-part directive updates did not stabilize; no outputs were published",
+                ));
+            }
+            let replay_plan = super::dirty::replay_after_source_edits(
+                specs,
+                state,
+                &transaction.pending_actions,
+                &edited_libraries,
+            );
+            dirty_keys = replay_plan
+                .dirty
                 .iter()
-                .map(|spec| BuildRequest {
-                    builder: spec.instance.builder.id.to_owned(),
-                    input: spec.input.clone(),
-                    outputs: spec.outputs.clone(),
-                    options: spec.instance.options.clone(),
-                    phase: spec.instance.phase,
-                    instance_key: spec.instance.instance_key.clone(),
-                    is_root: configured_builder.is_root,
-                    post_process: builder.kind == BuilderKind::PostProcess,
-                    triggers: spec.instance.builder.triggers.clone(),
-                })
-                .collect::<Vec<_>>();
-            drop(assemble);
-            if requests.is_empty() {
-                continue;
-            }
-            let reset =
-                crate::wall::Span::new("phase_reset").phase(configured_builder.phase, &builder.id);
-            if configured_builder.package != initialized_package {
-                active_pool.initialize(
-                    workspace,
-                    &configured_builder.package,
-                    config_digest,
-                    phase_count,
-                    optional_builder_capability_required,
-                )?;
-                initialized_package = configured_builder.package.clone();
-                resolver_needs_reset = false;
-                transaction.resolver.clear();
-            } else if resolver_needs_reset {
-                active_pool.reset_resolver(
-                    &workspace.root,
-                    &transaction.overlay,
-                    std::mem::take(&mut transaction.resolver.resolver_updated),
-                    std::mem::take(&mut transaction.resolver.resolver_deleted),
-                    std::mem::take(&mut transaction.resolver.resolver_cache_updated),
-                    std::mem::take(&mut transaction.resolver.resolver_cache_deleted),
-                    true,
-                )?;
-                resolver_needs_reset = false;
-            }
-            drop(reset);
-            let dispatch = crate::wall::Span::new("phase_dispatch")
-                .phase(configured_builder.phase, &builder.id);
-            let results = if !lazy_demand_possible {
-                active_pool.build_parallel(
-                    workspace,
-                    &requests,
-                    &transaction.overlay,
-                    &transaction.deleted_overlay,
-                    &plan.visibility,
-                )?
-            } else {
-                active_pool.build_parallel_lazy(
-                    workspace,
-                    &requests,
-                    &mut transaction.overlay,
-                    &mut transaction.deleted_overlay,
-                    &plan.visibility,
-                    &lazy_specs_by_output,
-                    &mut lazy_state,
-                )?
-            };
-
-            drop(dispatch);
-            let merge = crate::wall::Span::new("dep_graph_merge")
-                .phase(configured_builder.phase, &builder.id);
-            // Merge resolver dependency edges the workers reported with
-            // these results so dirty checks can expand entrypoints through
-            // them, like stock's previousLibraryCycleGraphLoader.
-            state
-                .resolver_dep_graph
-                .extend(active_pool.take_dep_graph());
-
-            drop(merge);
-            let record = crate::wall::Span::new("results_record")
-                .phase(configured_builder.phase, &builder.id);
-            let lazy_results = lazy_state.take_results();
-            let lazy_source_output = lazy_results
-                .iter()
-                .any(|lazy_result| lazy_result.spec.instance.builder.build_to == BuildTo::Source);
-            for lazy_result in lazy_results {
-                record_build_result(
-                    workspace,
-                    state,
-                    &lazy_result.spec,
-                    lazy_result.result,
-                    &mut transaction,
-                )?;
-            }
-            if lazy_source_output {
-                resolver_needs_reset = true;
-            }
-
-            for (spec, result) in runnable_phase_specs.into_iter().zip(results) {
-                record_build_result(workspace, state, &spec, result, &mut transaction)?;
-            }
-
-            drop(record);
-            if transaction.resolver.has_changes() {
-                resolver_needs_reset = true;
-            }
-
-            if builder.kind == BuilderKind::Normal && builder.build_to == BuildTo::Source {
-                resolver_needs_reset = true;
-            }
+                .map(|spec| spec.action_key())
+                .collect();
+            let forced_optional = replay_plan.lazy_force_keys;
+            transaction.invalidate_optional_outputs(specs, &forced_optional);
+            lazy_state.invalidate_optional(&forced_optional);
+            lazy_demand_possible = !lazy_specs_by_output.is_empty();
+            pruned_optional = false;
+            resolver_needs_reset = true;
         }
-
         pool_metrics = Some(active_pool.metrics());
     }
     if !pruned_optional {

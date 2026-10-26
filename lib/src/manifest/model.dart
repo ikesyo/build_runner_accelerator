@@ -1,5 +1,18 @@
 import 'package:build_config/build_config.dart';
 
+final _legacyBuilderDefinitionTypes = <Type>{};
+
+bool _readAddsToLibrary(BuilderDefinition definition) {
+  if (_legacyBuilderDefinitionTypes.contains(definition.runtimeType))
+    return false;
+  try {
+    return (definition as dynamic).addsToLibrary as bool;
+  } on NoSuchMethodError {
+    _legacyBuilderDefinitionTypes.add(definition.runtimeType);
+    return false; // build_config 1.3.x predates shared parts.
+  }
+}
+
 /// The package graph data needed while generating the worker manifest.
 class PackageGraph {
   PackageGraph({required this.root, required this.allPackages});
@@ -51,8 +64,15 @@ class TargetOrder<T> {
 }
 
 class DefinitionInfo {
-  DefinitionInfo.normal(this.normal) : postProcess = null;
-  DefinitionInfo.postProcess(this.postProcess) : normal = null;
+  DefinitionInfo.normal(BuilderDefinition definition)
+    : normal = definition,
+      postProcess = null,
+      addsToLibrary = _readAddsToLibrary(definition);
+  DefinitionInfo.postProcess(this.postProcess)
+    : normal = null,
+      addsToLibrary = false;
+
+  final bool addsToLibrary;
 
   final BuilderDefinition? normal;
   final PostProcessBuilderDefinition? postProcess;
@@ -151,6 +171,7 @@ class ManifestDefinition {
     required this.requiredInputSuffixes,
     required this.triggers,
     this.builderType,
+    this.addsToLibrary = false,
   });
 
   final String id;
@@ -164,6 +185,7 @@ class ManifestDefinition {
   final bool isOptional;
   final List<String> requiredInputSuffixes;
   final List<ManifestTrigger> triggers;
+  final bool addsToLibrary;
 
   /// Runtime type of the instantiated builder (e.g. `SharedPartBuilder`),
   /// when the factory probe captured one. Not emitted to the manifest.
@@ -201,6 +223,7 @@ class ManifestDefinition {
     if (package != null) 'package': package,
     if (target != null) 'target_order': targetOrder,
     'is_optional': isOptional,
+    'adds_to_library': addsToLibrary,
     'output_is_optional': outputIsOptional,
     'required_input_suffixes': requiredInputSuffixes,
     'triggers': [for (final trigger in triggers) trigger.toJson()],
@@ -223,10 +246,12 @@ class CatalogEntry {
     required this.importUri,
     required this.factory,
     required this.isPostProcess,
+    this.addsToLibrary = false,
   });
 
   final String id;
   final String importUri;
   final String factory;
   final bool isPostProcess;
+  final bool addsToLibrary;
 }
