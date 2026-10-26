@@ -41,9 +41,16 @@ pub(crate) fn legacy_output_defaults(root: &Path) -> io::Result<bool> {
         .is_ok_and(|spec| spec.lines().any(|line| line.trim() == "version: 2.15.3")))
 }
 
+#[cfg(test)]
+thread_local! {
+    static PREPARE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Called before loading a workspace, including native-only and prewarm paths.
 /// The effective resolution participates in all existing graph/compiler keys.
 pub(crate) fn prepare(root: &Path) -> io::Result<PathBuf> {
+    #[cfg(test)]
+    PREPARE_CALLS.with(|calls| calls.set(calls.get() + 1));
     let original = root.join(".dart_tool/package_config.json");
     let mut config: Value = serde_json::from_slice(&fs::read(&original)?)?;
     let packages = config["packages"]
@@ -341,6 +348,91 @@ mod tests {
             root.join(".dart_tool/package_config.json")
         );
         assert!(!root.join(CONFIG).exists());
+    }
+
+    #[test]
+    fn aot_keys_reuse_only_the_supplied_prepared_workspace() {
+        use crate::worker_kernel::worker_aot_cache_key;
+        use crate::workspace::Workspace;
+
+        let first = Fixture::new();
+        let second = Fixture::new();
+        let sdk = first.0.join("sdk");
+        fs::create_dir_all(sdk.join("bin")).unwrap();
+        fs::create_dir_all(sdk.join("lib/_internal")).unwrap();
+        fs::write(sdk.join("bin/dart"), "").unwrap();
+        fs::write(sdk.join("version"), "test sdk").unwrap();
+        fs::write(sdk.join("lib/_internal/allowed_experiments.json"), "{}").unwrap();
+        let dart = sdk.join("bin/dart");
+        let dart = dart.to_str().unwrap();
+        for fixture in [&first, &second] {
+            fs::write(fixture.0.join("worker.dart"), "void main() {}\n").unwrap();
+        }
+        // Different workspaces keep their own compiler roots and worker keys.
+        fs::write(second.0.join("upstream runner/lib/other.dart"), "// other").unwrap();
+        fs::write(
+            second.0.join("worker.dart"),
+            "void main() { /* other */ }\n",
+        )
+        .unwrap();
+        let before = PREPARE_CALLS.get();
+        let a = Workspace::load(first.0.clone()).unwrap();
+        let b = Workspace::load(second.0.clone()).unwrap();
+        let key = worker_aot_cache_key(&a, dart, "worker.dart").unwrap();
+        assert_eq!(worker_aot_cache_key(&a, dart, "worker.dart").unwrap(), key);
+        assert_ne!(worker_aot_cache_key(&b, dart, "worker.dart").unwrap(), key);
+        assert_eq!(PREPARE_CALLS.get(), before + 2);
+        let dependency = format!("package:build_runner:{RESOLVER}");
+        let original_copy = a.resolve_logical_dependency(&dependency).unwrap();
+        assert!(original_copy.starts_with(&first.0));
+        assert!(
+            b.resolve_logical_dependency(&dependency)
+                .unwrap()
+                .starts_with(&second.0)
+        );
+
+        // A new preparation unit observes dependency edits and validates copies.
+        fs::write(first.0.join("upstream runner/lib/new.dart"), "// changed").unwrap();
+        let refreshed = Workspace::load(first.0.clone()).unwrap();
+        assert_ne!(
+            refreshed.resolve_logical_dependency(&dependency).unwrap(),
+            original_copy
+        );
+        let config = package_config(&first.0);
+        let parsed: Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+        let copy = resolve_uri(
+            config.parent().unwrap(),
+            parsed["packages"][1]["rootUri"].as_str().unwrap(),
+        );
+        let resolver = fs::read(copy.join(RESOLVER)).unwrap();
+        fs::write(copy.join(RESOLVER), "broken").unwrap();
+        assert!(Workspace::load(first.0.clone()).is_err());
+        fs::write(copy.join(RESOLVER), resolver).unwrap();
+        assert!(Workspace::load(first.0.clone()).is_ok());
+
+        // Changing package resolution removes the old compile selection.
+        fs::write(
+            first.0.join("upstream runner/pubspec.yaml"),
+            "version: 2.16.2\n",
+        )
+        .unwrap();
+        let current = Workspace::load(first.0.clone()).unwrap();
+        assert!(!first.0.join(CONFIG).exists());
+        assert_eq!(
+            canonicalize(current.resolve_logical_dependency(&dependency).unwrap()).unwrap(),
+            first.0.join("upstream runner").join(RESOLVER)
+        );
+        let original = first.0.join(".dart_tool/package_config.json");
+        let mut resolution: Value = serde_json::from_slice(&fs::read(&original).unwrap()).unwrap();
+        resolution["packages"][1]["rootUri"] =
+            Value::String(file_uri(&second.0.join("upstream runner")));
+        fs::write(&original, serde_json::to_vec(&resolution).unwrap()).unwrap();
+        let changed = Workspace::load(first.0.clone()).unwrap();
+        assert_eq!(
+            canonicalize(changed.package_root("build_runner").unwrap()).unwrap(),
+            second.0.join("upstream runner")
+        );
+        assert!(first.0.join(CONFIG).is_file());
     }
 
     #[test]

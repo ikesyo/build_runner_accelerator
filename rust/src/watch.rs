@@ -339,7 +339,7 @@ fn run_watch_build(
         let worker_command = worker_executable(options, build_config)?;
         let mut worker_pool = if filtered {
             WorkerPool::start_deferred(
-                &workspace.root,
+                &workspace,
                 dart_binary,
                 &worker_command,
                 options.jobs,
@@ -347,7 +347,7 @@ fn run_watch_build(
             )?
         } else {
             WorkerPool::start(
-                &workspace.root,
+                &workspace,
                 dart_binary,
                 &worker_command,
                 options.jobs,

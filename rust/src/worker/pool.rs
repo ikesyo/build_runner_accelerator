@@ -77,14 +77,14 @@ pub struct PoolMetrics {
 
 impl WorkerPool {
     pub fn start(
-        root: &Path,
+        workspace: &Workspace,
         dart_binary: &str,
         worker_executable: &str,
         jobs: usize,
         auto_worker_artifact: bool,
     ) -> io::Result<Self> {
         Self::start_with_initial_worker(
-            root,
+            workspace,
             dart_binary,
             worker_executable,
             jobs,
@@ -96,14 +96,14 @@ impl WorkerPool {
     /// Creates a pool descriptor without starting a Dart process. Filtered
     /// watch uses this so an initial no-op can avoid worker startup entirely.
     pub fn start_deferred(
-        root: &Path,
+        workspace: &Workspace,
         dart_binary: &str,
         worker_executable: &str,
         jobs: usize,
         auto_worker_artifact: bool,
     ) -> io::Result<Self> {
         Self::start_with_initial_worker(
-            root,
+            workspace,
             dart_binary,
             worker_executable,
             jobs,
@@ -113,19 +113,20 @@ impl WorkerPool {
     }
 
     fn start_with_initial_worker(
-        root: &Path,
+        workspace: &Workspace,
         dart_binary: &str,
         worker_executable: &str,
         jobs: usize,
         auto_worker_artifact: bool,
         start_worker: bool,
     ) -> io::Result<Self> {
+        let root = &workspace.root;
         let _wall = crate::wall::Span::new("pool_start");
         let dart_binary = dart_binary.to_owned();
         let worker_executable = worker_executable.to_owned();
         let worker_artifact = if start_worker {
             Some(resolve_worker_artifact(
-                root,
+                workspace,
                 &dart_binary,
                 &worker_executable,
                 auto_worker_artifact,
@@ -210,7 +211,7 @@ impl WorkerPool {
         // Deferred filtered-watch pools materialize only when a build actually
         // reaches worker initialization. Ordinary callers retain eager start.
         if self.workers.is_empty() {
-            self.prepare_for_requests(root, 1)?;
+            self.prepare_for_requests(workspace, 1)?;
         }
         let signature = (
             root.to_path_buf(),
@@ -232,7 +233,7 @@ impl WorkerPool {
             }
             if self.auto_worker_artifact && self.allow_worker_artifact_upgrade {
                 match background_worker_aot_if_ready(
-                    root,
+                    workspace,
                     &self.dart_binary,
                     &self.worker_executable,
                 ) {
@@ -268,13 +269,13 @@ impl WorkerPool {
             self.resolver_usage.clear();
             let worker_artifact = if self.allow_worker_artifact_upgrade {
                 resolve_worker_artifact(
-                    root,
+                    workspace,
                     &self.dart_binary,
                     &self.worker_executable,
                     self.auto_worker_artifact,
                 )?
             } else if pinned_worker_artifact_is_current(
-                root,
+                workspace,
                 &self.dart_binary,
                 &self.worker_executable,
                 self.worker_artifact
@@ -293,7 +294,7 @@ impl WorkerPool {
                     .clone()
             } else {
                 resolve_worker_artifact(
-                    root,
+                    workspace,
                     &self.dart_binary,
                     &self.worker_executable,
                     self.auto_worker_artifact,
@@ -331,12 +332,17 @@ impl WorkerPool {
 
     /// Expands to at most `min(max_jobs, request_count)` workers and never
     /// shrinks a resident pool during ordinary request preparation.
-    pub fn prepare_for_requests(&mut self, root: &Path, request_count: usize) -> io::Result<()> {
+    pub fn prepare_for_requests(
+        &mut self,
+        workspace: &Workspace,
+        request_count: usize,
+    ) -> io::Result<()> {
+        let root = &workspace.root;
         let _wall = crate::wall::Span::new("pool_expand");
         let target = target_worker_count(self.max_jobs, request_count);
         if target > self.workers.len() && self.worker_artifact.is_none() {
             self.worker_artifact = Some(resolve_worker_artifact(
-                root,
+                workspace,
                 &self.dart_binary,
                 &self.worker_executable,
                 self.auto_worker_artifact,
@@ -366,7 +372,7 @@ impl WorkerPool {
     /// resolver state may otherwise be process-local.
     pub(crate) fn prepare_for_filtered_roots(
         &mut self,
-        root: &Path,
+        workspace: &Workspace,
         root_count: usize,
     ) -> io::Result<()> {
         // When the shared analyzer byte store is disabled, a resolver may
@@ -378,7 +384,7 @@ impl WorkerPool {
         } else {
             root_count.min(1)
         };
-        self.prepare_for_requests(root, request_count)
+        self.prepare_for_requests(workspace, request_count)
     }
 
     /// Initializes only workers added since the last pool initialization.
@@ -537,7 +543,7 @@ impl WorkerPool {
             }
         }
 
-        self.prepare_for_requests(&root, requests.len())?;
+        self.prepare_for_requests(workspace, requests.len())?;
         self.initialize_pending_workers(&root, &package, phase_count, false)?;
         // Resolver-backed batches share the on-disk byte store, so extra
         // workers mostly duplicate each other's analysis warm-up instead of
@@ -669,7 +675,7 @@ impl WorkerPool {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
-        self.prepare_for_requests(&workspace.root, 1)?;
+        self.prepare_for_requests(workspace, 1)?;
         let (root, package) = match &self.initialized {
             Some((root, package, _, _, _, _)) => (root.clone(), package.clone()),
             None => {
@@ -711,7 +717,7 @@ impl WorkerPool {
         lazy_specs: &BTreeMap<String, BuildSpec>,
         lazy: &mut LazyBuildState,
     ) -> io::Result<()> {
-        self.prepare_for_requests(&workspace.root, 1)?;
+        self.prepare_for_requests(workspace, 1)?;
         self.workers[0].ensure_optional_output(
             workspace,
             &spec.input,
@@ -748,7 +754,7 @@ impl WorkerPool {
         if roots.is_empty() {
             return Ok(());
         }
-        self.prepare_for_filtered_roots(&workspace.root, roots.len())?;
+        self.prepare_for_filtered_roots(workspace, roots.len())?;
         let (root, package, _, phase_count, _, _) = self
             .initialized
             .clone()
