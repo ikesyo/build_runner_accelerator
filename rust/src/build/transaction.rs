@@ -43,7 +43,7 @@ pub(super) struct PendingTransaction {
     // results); deleting an overlay entry only releases that entry's reference.
     pub(super) overlay: BTreeMap<String, Arc<[u8]>>,
     pub(super) deleted_overlay: BTreeSet<String>,
-    pub(super) pending_outputs: BTreeMap<String, (Arc<BuilderDefinition>, Arc<[u8]>)>,
+    pub(super) pending_outputs: BTreeMap<String, PendingOutput>,
     pub(super) pending_deletions: Vec<(Arc<BuilderDefinition>, String)>,
     pub(super) pending_location_deletions: Vec<(crate::builder::BuildTo, String)>,
     pub(super) clean_artifact_tree: bool,
@@ -53,6 +53,24 @@ pub(super) struct PendingTransaction {
     pub(super) pending_stock_globs: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     pub(super) deleted_actions: Vec<(String, ActionState)>,
     pub(super) resolver: ResolverChanges,
+}
+
+/// Own the digest of the final staged bytes, shared by graph and publication.
+pub(super) struct PendingOutput {
+    pub(super) builder: Arc<BuilderDefinition>,
+    pub(super) bytes: Arc<[u8]>,
+    pub(super) digest: String,
+}
+
+impl PendingOutput {
+    pub(super) fn new(builder: Arc<BuilderDefinition>, bytes: Arc<[u8]>) -> Self {
+        let digest = crate::digest::digest_bytes(&bytes);
+        Self {
+            builder,
+            bytes,
+            digest,
+        }
+    }
 }
 
 pub(super) struct SourceEdit {

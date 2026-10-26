@@ -1,5 +1,4 @@
 use crate::builder::{BuildTo, BuilderKind};
-use crate::digest::digest_bytes;
 use crate::graph::{ActionState, GraphState};
 use crate::plan::BuildSpec;
 use crate::protocol::BuildResult;
@@ -8,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::sync::Arc;
 
-use super::transaction::PendingTransaction;
+use super::transaction::{PendingOutput, PendingTransaction};
 
 /// Record an action skipped for a missing generated primary input, or an
 /// optional producer that normal consumers did not demand. Keeping the empty action in the
@@ -145,6 +144,7 @@ pub(super) fn record_build_result(
         }
     }
 
+    let mut output_digests = BTreeMap::new();
     let allowed = spec.outputs.iter().cloned().collect::<BTreeSet<_>>();
     for generated in &result.outputs {
         if crate::placeholders::is_placeholder_asset(&generated.asset) {
@@ -213,12 +213,13 @@ pub(super) fn record_build_result(
                 .resolver_cache_deleted
                 .remove(&generated.asset);
         }
-        pending.pending_outputs.insert(
-            generated.asset.clone(),
-            (spec.instance.builder.clone(), Arc::clone(&generated.bytes)),
-        );
+        let output =
+            PendingOutput::new(spec.instance.builder.clone(), Arc::clone(&generated.bytes));
+        output_digests.insert(generated.asset.clone(), output.digest.clone());
+        pending
+            .pending_outputs
+            .insert(generated.asset.clone(), output);
     }
-    let mut output_digests = BTreeMap::new();
     let actual_outputs = result
         .outputs
         .iter()
@@ -280,9 +281,6 @@ pub(super) fn record_build_result(
                     .push((spec.instance.builder.clone(), expected.clone()));
             }
         }
-    }
-    for generated in &result.outputs {
-        output_digests.insert(generated.asset.clone(), digest_bytes(&generated.bytes));
     }
     pending
         .pending_stock_inputs
