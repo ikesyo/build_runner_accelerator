@@ -95,13 +95,13 @@ Watch logs and builder histories must stay outside watched workspaces.
 The existing SDK/dependency jobs run both package analysis/tests and a real
 worker comparison. These cover different boundaries: `build_runner --help`
 does not initialize the native worker or resolve a Dart input library.
-Each job shares SDK/Rust setup across two bounded parallel lanes. The minimum
-SDK overlaps package checks with the pinned-runner/shared-part comparisons.
-For the latest SDK, package checks finish first to avoid CPU contention with
-AOT compilers; its default-resolution comparison then overlaps the shared-part
-probe. The pinned 2.17.1 normal-builder AOT comparison runs in the existing
-Linux x64 native-build job, reusing its SDK and release binary. Each probe uses a separate results workspace under `RUNNER_TEMP`, keeping
-generated comparison files outside the publish package.
+The minimum SDK overlaps package checks with the pinned-runner/shared-part
+JIT comparisons. The latest SDK runs package checks followed by its
+normal-builder lifecycle comparison. AOT comparisons reuse the installed SDK
+and release frontend in the existing native-build jobs: pinned runner 2.17.1
+on Linux x64 and shared parts on Linux ARM64. Each probe uses a separate
+workspace under `RUNNER_TEMP`, keeping comparison files outside the publish
+package and AOT compilation off the package-test runner.
 
 Run the same comparison locally with an installed SDK:
 
