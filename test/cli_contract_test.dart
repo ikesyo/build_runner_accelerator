@@ -40,6 +40,7 @@ void main() {
       );
       expect(settings.release, expected['release']);
       expect(settings.defines, expected['defines']);
+      expect(settings.experiments, expected['experiments']);
       expect(settings.buildFilters.length, expected['filters']);
       expect(settings.onlyCheck, expected['only_check']);
       expect(settings.keepModifiedOutputs, expected['keep_modified_outputs']);

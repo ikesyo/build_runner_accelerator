@@ -130,7 +130,7 @@ The following stock features require a direct stock invocation:
 | --- | --- |
 | Output layout or build directory | `--output` / `-o`, `--workspace`, positional build directories |
 | Output layout and logging | `--symlink`, `--no-symlink`, `--verbose` / `-v`, `--verbose-durations` |
-| Dart runtime or profiling | `--enable-experiment`, `--dart-jit-vm-arg`, `--dart-aot-perf` |
+| Dart runtime or profiling | `--dart-jit-vm-arg`, `--dart-aot-perf` |
 | Serve and daemon | `--hostname`, `--log-requests`, `--live-reload`, `--build-mode` |
 | Other stock commands or arguments | `clean`, `serve`, `run`, `test`, `stop`, `daemon`, unknown arguments, invalid stock values |
 

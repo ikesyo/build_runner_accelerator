@@ -607,6 +607,7 @@ mod tests {
             let actual = serde_json::json!({
                 "config": settings.config, "config_path": config_path, "release": settings.release,
                 "defines": settings.defines, "filters": settings.build_filters.len(),
+                "experiments": settings.experiments,
                 "only_check": settings.only_check,
                 "keep_modified_outputs": settings.keep_modified_outputs,
                 "deletion": settings.deletion_flag,

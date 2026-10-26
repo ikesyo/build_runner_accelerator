@@ -1930,6 +1930,30 @@ fn filtered_retention_preserves_bytes_without_recording_implicit_history() -> io
 }
 
 #[test]
+fn shared_contributions_are_not_skipped_by_part_directive_filter() -> io::Result<()> {
+    let temporary = TemporaryWorkspace::new()?;
+    let workspace = Workspace::load(temporary.0.clone())?;
+    let builder = configured_builder("part", "app:default", 0, 0);
+    let input = "app|lib/model.dart";
+    let mut spec = build_spec(&builder, input, &["app|lib/model.g.dart"]);
+    let action = Arc::get_mut(&mut spec).unwrap();
+    Arc::get_mut(&mut action.instance)
+        .unwrap()
+        .part_directive_suffix = Some(".g.dart".into());
+    let overlay = BTreeMap::from([(input.to_owned(), Arc::from(&b"class Model {}"[..]))]);
+    assert!(super::part_directive::part_directive_skips(
+        &workspace, &overlay, &spec
+    ));
+    let action = Arc::get_mut(&mut spec).unwrap();
+    let instance = Arc::get_mut(&mut action.instance).unwrap();
+    Arc::make_mut(&mut instance.builder).adds_to_library = true;
+    assert!(!super::part_directive::part_directive_skips(
+        &workspace, &overlay, &spec
+    ));
+    Ok(())
+}
+
+#[test]
 fn shared_contributions_invalidate_later_resolvers_but_not_unrelated_or_plain_reads() {
     let mut contributor = configured_builder("shared", "app:default", 0, 1);
     Arc::make_mut(&mut contributor.definition).adds_to_library = true;

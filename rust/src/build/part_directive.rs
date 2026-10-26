@@ -8,7 +8,7 @@ pub(super) fn part_directive_filter_disabled() -> bool {
     std::env::var("BUILD_RUNNER_ACCELERATOR_PART_FILTER").is_ok_and(|value| value == "0")
 }
 
-/// Whether the spec's action provably emits nothing: the builders the
+/// Whether an ordinary part-family action provably emits nothing: the builders the
 /// manifest flags with `part_directive_suffix` can only produce output when
 /// the input declares the generated file as a `part` directive, matching
 /// source_gen's `hasExpectedPartDirective` (literal URI equality against
@@ -19,6 +19,10 @@ pub(super) fn part_directive_skips(
     overlay: &BTreeMap<String, Arc<[u8]>>,
     spec: &BuildSpec,
 ) -> bool {
+    // Shared contributions and directive edits still need a worker result.
+    if spec.instance.builder.adds_to_library {
+        return false;
+    }
     let Some(suffix) = spec.instance.part_directive_suffix.as_deref() else {
         return false;
     };
