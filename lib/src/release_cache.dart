@@ -14,6 +14,18 @@ export 'release_cache_metadata.dart'
 const defaultReleaseCacheLockTimeout = Duration(minutes: 2);
 const _cacheLockRetryDelay = Duration(milliseconds: 100);
 
+// Match isSdkSummaryLockContention without importing the worker's build_runner
+// dependencies into the launcher. Unknown errors must fail the installation.
+bool _isCacheLockContention(FileSystemException error) {
+  final code = error.osError?.errorCode;
+  return switch (Platform.operatingSystem) {
+    'linux' => code == 11 || code == 13, // EAGAIN, EACCES
+    'macos' => code == 35 || code == 13, // EAGAIN, EACCES
+    'windows' => code == 33, // ERROR_LOCK_VIOLATION
+    _ => false,
+  };
+}
+
 /// Owns the versioned release cache, including validation, extraction, and
 /// the per-target lock used to serialize installations.
 class ReleaseArtifactCache {
@@ -214,14 +226,17 @@ class _CacheLock {
         // owning process exits.
         await handle.lock(FileLock.exclusive);
         return _CacheLock(handle);
-      } on FileSystemException {
-        // A failed non-blocking lock does not own the handle. Close it before
-        // retrying so every attempt has an independently cancellable lock
-        // operation.
-        await handle.close();
-      } on Object {
-        await handle.close();
-        rethrow;
+      } on Object catch (error, stack) {
+        // Close every failed attempt, preserving the lock failure even if
+        // cleanup also fails. Successful handles stay open until release().
+        try {
+          await handle.close();
+        } on Object {
+          Error.throwWithStackTrace(error, stack);
+        }
+        if (error is! FileSystemException || !_isCacheLockContention(error)) {
+          rethrow;
+        }
       }
 
       if (elapsed.elapsed.compareTo(timeout) >= 0) {
