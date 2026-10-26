@@ -161,7 +161,6 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
             Some(crate::digest::digest_bytes(bytes)),
         );
     }
-    let journaled = !changes.is_empty();
     for (asset, edit) in &transaction.source_edits {
         let (original, bytes) = (&edit.original, &edit.updated);
         let path = workspace.path_for_asset(asset)?;
@@ -172,7 +171,7 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         }
         changes.insert(path, Some(crate::digest::digest_bytes(bytes)));
     }
-    let journaled = journaled || !transaction.source_edits.is_empty();
+    let journaled = !changes.is_empty();
     if journaled {
         super::recovery::prepare(state_path, changes)?;
     }

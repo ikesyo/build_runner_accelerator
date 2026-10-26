@@ -97,7 +97,6 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
             (
                 producer.action_key(),
                 ActionState {
-                    shared_part: None,
                     builder: producer.instance.builder.id.clone(),
                     input: producer.input.clone(),
                     status: "not_triggered".to_owned(),
@@ -107,7 +106,6 @@ fn dirty_dependents_use_planned_outputs_and_primary_inputs() {
             (
                 consumer.action_key(),
                 ActionState {
-                    shared_part: None,
                     builder: consumer.instance.builder.id.clone(),
                     input: consumer.input.clone(),
                     status: "skipped_missing_input".to_owned(),
@@ -182,7 +180,6 @@ fn undemanded_optional_chain_does_not_dirty_cleanup_without_normal_demand() {
             (
                 spec.action_key(),
                 ActionState {
-                    shared_part: None,
                     builder: spec.instance.builder.id.clone(),
                     input: spec.input.clone(),
                     status: status.into(),
@@ -232,7 +229,6 @@ fn generated_glob_candidates_invalidate_consumers_with_phase_visibility() {
             (
                 hidden.action_key(),
                 ActionState {
-                    shared_part: None,
                     input: hidden.input.clone(),
                     reads: vec!["app|lib/old.stage".into()],
                     status: "success".into(),
@@ -242,7 +238,6 @@ fn generated_glob_candidates_invalidate_consumers_with_phase_visibility() {
             (
                 aggregate.action_key(),
                 ActionState {
-                    shared_part: None,
                     input: aggregate.input.clone(),
                     glob_reads: vec![crate::protocol::GlobRead {
                         package: "app".into(),
@@ -256,7 +251,6 @@ fn generated_glob_candidates_invalidate_consumers_with_phase_visibility() {
             (
                 consumer.action_key(),
                 ActionState {
-                    shared_part: None,
                     input: consumer.input.clone(),
                     reads: aggregate.outputs.clone(),
                     status: "success".into(),
@@ -454,7 +448,6 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
     fs::write(temporary.0.join("lib/obsolete.out"), b"no longer needed")?;
     fs::write(temporary.0.join("lib/new.txt"), b"new input")?;
     let old_action = ActionState {
-        shared_part: None,
         builder: builder.definition.id.clone(),
         input: old_spec.input.clone(),
         outputs: vec![output.clone(), obsolete_output.clone()],
@@ -462,7 +455,6 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
         ..ActionState::default()
     };
     let new_action = ActionState {
-        shared_part: None,
         builder: builder.definition.id.clone(),
         input: new_spec.input.clone(),
         outputs: vec![output.clone()],
@@ -707,7 +699,6 @@ fn removing_target_with_shared_builder_invalidates_glob_consumer() -> io::Result
                 (
                     spec.action_key(),
                     ActionState {
-                        shared_part: None,
                         builder: spec.instance.builder.id.clone(),
                         input: spec.input.clone(),
                         glob_reads: if spec.action_key() == consumer.action_key() {
@@ -823,7 +814,6 @@ fn dirty_outputs_read_each_physical_path_once_per_pass() -> io::Result<()> {
             (
                 "a".to_owned(),
                 ActionState {
-                    shared_part: None,
                     builder: source.definition.id.clone(),
                     outputs: vec![shared.into(), missing.into(), recorded_only.into()],
                     ..ActionState::default()
@@ -832,7 +822,6 @@ fn dirty_outputs_read_each_physical_path_once_per_pass() -> io::Result<()> {
             (
                 "b".to_owned(),
                 ActionState {
-                    shared_part: None,
                     builder: cache.definition.id.clone(),
                     outputs: vec![shared.into()],
                     ..ActionState::default()
@@ -842,7 +831,6 @@ fn dirty_outputs_read_each_physical_path_once_per_pass() -> io::Result<()> {
             (
                 "c".to_owned(),
                 ActionState {
-                    shared_part: None,
                     builder: "unknown".into(),
                     outputs: vec!["invalid asset".into()],
                     ..ActionState::default()
@@ -990,7 +978,6 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
     let optional_spec = build_spec(&optional, "app|lib/optional", &[]);
     let deleted_spec = build_spec(&source, "app|lib/deleted", &[]);
     let action = |spec: &BuildSpec, output: &str, bytes: &[u8]| ActionState {
-        shared_part: None,
         builder: spec.instance.builder.id.clone(),
         input: spec.input.clone(),
         outputs: vec![output.into()],
@@ -1182,7 +1169,6 @@ fn planning_fixture(
         let mut builder = configured_builder(&factory.id, target, phase, phase);
         builder.definition = if optional {
             Arc::new(BuilderDefinition {
-                adds_to_library: false,
                 id: "app:optional".into(),
                 is_optional: true,
                 ..(*factory).clone()
@@ -1242,7 +1228,6 @@ fn undemanded_optional_stays_demandable_without_changing_successful_empty_reuse(
     state.actions.insert(
         key.clone(),
         ActionState {
-            shared_part: None,
             builder: spec.instance.builder.id.clone(),
             input: spec.input.clone(),
             status: "undemanded".into(),
@@ -1509,7 +1494,6 @@ fn seed_recovery_fixture(root: &std::path::Path) -> io::Result<()> {
         actions: BTreeMap::from([(
             "obsolete-action".to_owned(),
             ActionState {
-                shared_part: None,
                 builder: "source".to_owned(),
                 input: "app|lib/removed.txt".to_owned(),
                 outputs: vec!["app|lib/obsolete.out".to_owned()],
@@ -1905,7 +1889,6 @@ fn filtered_retention_preserves_bytes_without_recording_implicit_history() -> io
             actions: BTreeMap::from([(
                 spec.action_key(),
                 ActionState {
-                    shared_part: None,
                     builder: builder.definition.id.clone(),
                     input: spec.input.clone(),
                     outputs: vec![output.clone()],
@@ -2035,34 +2018,4 @@ fn shared_contributions_invalidate_later_resolvers_but_not_unrelated_or_plain_re
     assert!(keys.contains(&plain.action_key()));
     assert!(keys.contains(&early.action_key()));
     assert!(keys.contains(&unrelated.action_key()));
-}
-
-#[test]
-fn shared_source_evidence_is_transaction_local_and_deduplicated_per_library() -> io::Result<()> {
-    let temporary = TemporaryWorkspace::new()?;
-    let workspace = Workspace::load(temporary.0.clone())?;
-    let mut state = GraphState::default();
-    let mut pending = super::transaction::PendingTransaction::new(&[], &state, Vec::new());
-    for id in ["first", "second"] {
-        let mut builder = configured_builder(id, "app:default", 0, 1);
-        Arc::make_mut(&mut builder.definition).adds_to_library = true;
-        let spec = build_spec(&builder, "app|lib/model.dart", &[]);
-        let result = serde_json::from_value(serde_json::json!({
-            "type":"build_result", "id":1, "status":"success", "outputs":[], "resolver_used":false,
-            "shared_part": {"header":"header", "imports":"", "source":"class Generated {}", "original":"source".repeat(1000), "with_part":"edited", "without_part":null}
-        }))?;
-        super::results::record_build_result(&workspace, &state, &spec, result, &mut pending)?;
-    }
-    assert_eq!(pending.source_edit_evidence.len(), 1);
-    state.actions = pending.pending_actions;
-    state.schema_version = crate::graph::GRAPH_SCHEMA_VERSION;
-    let path = temporary.0.join(".dart_tool/shared-graph");
-    state.save(&path)?;
-    assert_eq!(GraphState::load(&path)?, state);
-    assert!(
-        !fs::read(&path)?
-            .windows(60)
-            .any(|window| window == "source".repeat(10).as_bytes())
-    );
-    Ok(())
 }

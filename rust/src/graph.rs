@@ -764,7 +764,6 @@ mod tests {
 
     fn action(glob: GlobRead) -> ActionState {
         ActionState {
-            shared_part: None,
             builder: "example:combining_builder".to_owned(),
             input: "app|lib/model.dart".to_owned(),
             glob_reads: vec![glob],
@@ -817,7 +816,6 @@ mod tests {
             ..GraphState::default()
         };
         let action = ActionState {
-            shared_part: None,
             builder: "example:builder".to_owned(),
             input: "app|lib/model.dart".to_owned(),
             resolver_reads: vec![dependency.clone()],

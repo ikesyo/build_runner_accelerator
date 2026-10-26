@@ -23,7 +23,6 @@ def main():
     parser.add_argument('--resolution', choices=('upgrade', 'downgrade'), default='upgrade')
     parser.add_argument('--results', type=Path)
     parser.add_argument('--stock-reference', choices=('corrected', 'raw'), default='corrected')
-    parser.add_argument('--resume-imports', action='store_true', help='Resume an existing results directory at the import/watch checks')
     args = parser.parse_args()
     results = (args.results or Path(tempfile.mkdtemp(prefix='shared-parts-'))).resolve()
     results.mkdir(parents=True, exist_ok=True)
@@ -39,7 +38,7 @@ def main():
     def run(command, root, success=True):
         nonlocal sequence
         sequence += 1
-        log = results / f'{"resume-" if args.resume_imports else ""}{sequence:03d}-{root.name}.log'
+        log = results / f'{sequence:03d}-{root.name}.log'
         with log.open('w') as output:
             output.write(f'{command!r}\n'); output.flush()
             process = subprocess.Popen(command, cwd=root, env={**env, 'SHARED_OPTIONAL_HISTORY': str(results / f'{root.name}-optional.history'), 'SHARED_ACTION_HISTORY': str(results / f'{root.name}-actions.history')}, stdout=output,
@@ -52,18 +51,17 @@ def main():
         assert (code == 0) == success, f'{command}: {code}, see {log}\n{log.read_text()}'
         return log.read_text()
 
-    if not args.resume_imports:
-        for root in roots:
-            shutil.copytree(REPO / 'fixtures/shared_parts_app', root,
-                            ignore=shutil.ignore_patterns('.dart_tool', 'pubspec.lock', '.cache'))
-            spec = root / 'pubspec.yaml'
-            spec.write_text(spec.read_text().replace('path: ../..', f'path: {REPO}'))
-        print(run([dart, '--version'], results).strip(), flush=True)
-        run([dart, 'pub', args.resolution], roots[0])
-        shutil.copy2(roots[0] / 'pubspec.lock', roots[1] / 'pubspec.lock')
-        run([dart, 'pub', 'get', '--enforce-lockfile'], roots[1])
-        if args.stock_reference == 'corrected':
-            prepare_stock_reference(roots[0], results)
+    for root in roots:
+        shutil.copytree(REPO / 'fixtures/shared_parts_app', root,
+                        ignore=shutil.ignore_patterns('.dart_tool', 'pubspec.lock', '.cache'))
+        spec = root / 'pubspec.yaml'
+        spec.write_text(spec.read_text().replace('path: ../..', f'path: {REPO}'))
+    print(run([dart, '--version'], results).strip(), flush=True)
+    run([dart, 'pub', args.resolution], roots[0])
+    shutil.copy2(roots[0] / 'pubspec.lock', roots[1] / 'pubspec.lock')
+    run([dart, 'pub', 'get', '--enforce-lockfile'], roots[1])
+    if args.stock_reference == 'corrected':
+        prepare_stock_reference(roots[0], results)
 
     def command(root, action='build', extra=()):
         if root == roots[0]:
@@ -110,70 +108,64 @@ def main():
 
     part = roots[1] / 'lib/_br_/model.part.dart'
     graph = roots[1] / '.dart_tool/build_runner_accelerator/graph-v3.bin'
-    if not args.resume_imports:
-        build('initial / automatic directive / intermediate resolver view')
-        part = roots[1] / 'lib/_br_/model.part.dart'
-        assert 'const seesFirst = true;' in part.read_text(), part.read_text()
-        assert (roots[1] / 'lib/model.summary').read_text() == 'FirstGenerated,Model,SecondGenerated\n'
-        graph = roots[1] / '.dart_tool/build_runner_accelerator/graph-v3.bin'
-        previous_graph = graph.read_bytes()
-        logs = build('no-op')
-        assert 'No work to do (Rust frontend)' in logs[1], logs[1]
-        assert graph.read_bytes() == previous_graph
-        unrelated_calls = (results / 'native-actions.history').read_text().count('summary:shared_parts_app|lib/unrelated.dart')
-        edit('class Model {}', 'class Changed {}')
-        build('incremental')
-        assert (results / 'native-actions.history').read_text().count('summary:shared_parts_app|lib/unrelated.dart') == unrelated_calls, 'unrelated action rebuilt'
-        edit('class Changed {}', 'class Changed {} // empty')
-        build('empty contribution / automatic directive removal')
-        assert not part.exists()
-        assert "part '_br_/model.part.dart';" not in (roots[1] / 'lib/model.dart').read_text()
-        build('empty no-op')
-        edit('// empty', '// emit')
-        build('contribution recovery / automatic directive addition')
-        for root in roots:
-            (root / 'lib/_br_/model.part.dart').unlink()
-        build('deleted shared output repair')
-        for root in roots:
-            (root / 'lib/_br_/model.part.dart').write_text('// corrupt\n')
-        build('modified shared output repair')
-        for root in roots:
-            p = root / 'lib/model.dart'
-            p.write_text(p.read_text().replace("part '_br_/model.part.dart';\n", ''))
-        before, saved_graph = inventory(roots[1]), graph.read_bytes()
-        build('only-check missing directive', extra=('--only-check',), success=False)
-        assert inventory(roots[1]) == before and graph.read_bytes() == saved_graph
-        build('only-check recovery')
-        build('only-check clean', extra=('--only-check',))
-        write('class Nested {}\n', 'lib/nested/model.dart')
-        write('class Executable {}\n', 'bin/model.dart')
-        build('multiple inputs / nested and non-lib paths')
-        clean_stock_reference('addition')
-        for root in roots:
-            old = root / 'lib/nested/model.dart'
-            old.rename(old.with_name('model_renamed.dart'))
-        build('rename / stale part cleanup')
-        clean_stock_reference('rename')
-        for root in roots:
-            (root / 'lib/nested/model_renamed.dart').unlink()
-        build('input deletion / stale part cleanup')
-        clean_stock_reference('deletion')
-        write('class Failure {} // fail\n')
-        before, saved_graph = inventory(roots[1]), graph.read_bytes()
-        build('failure after contribution', success=False)
-        assert inventory(roots[1]) == before and graph.read_bytes() == saved_graph
-        write('class Recovered {}\n')
-        build('failure recovery')
-        write('class Recovered {} // imports\n')
-        before, saved_graph = inventory(roots[1]), graph.read_bytes()
-        logs = build('imports require enhanced-parts', success=False)
-        assert all('Imports in parts need' in log for log in logs)
-        assert inventory(roots[1]) == before and graph.read_bytes() == saved_graph
+    build('initial / automatic directive / intermediate resolver view')
+    assert 'const seesFirst = true;' in part.read_text(), part.read_text()
+    assert (roots[1] / 'lib/model.summary').read_text() == 'FirstGenerated,Model,SecondGenerated\n'
+    previous_graph = graph.read_bytes()
+    logs = build('no-op')
+    assert 'No work to do (Rust frontend)' in logs[1], logs[1]
+    assert graph.read_bytes() == previous_graph
+    unrelated_calls = (results / 'native-actions.history').read_text().count('summary:shared_parts_app|lib/unrelated.dart')
+    edit('class Model {}', 'class Changed {}')
+    build('incremental')
+    assert (results / 'native-actions.history').read_text().count('summary:shared_parts_app|lib/unrelated.dart') == unrelated_calls, 'unrelated action rebuilt'
+    edit('class Changed {}', 'class Changed {} // empty')
+    build('empty contribution / automatic directive removal')
+    assert not part.exists()
+    assert "part '_br_/model.part.dart';" not in (roots[1] / 'lib/model.dart').read_text()
+    build('empty no-op')
+    edit('// empty', '// emit')
+    build('contribution recovery / automatic directive addition')
+    for root in roots:
+        (root / 'lib/_br_/model.part.dart').unlink()
+    build('deleted shared output repair')
+    for root in roots:
+        (root / 'lib/_br_/model.part.dart').write_text('// corrupt\n')
+    build('modified shared output repair')
+    for root in roots:
+        p = root / 'lib/model.dart'
+        p.write_text(p.read_text().replace("part '_br_/model.part.dart';\n", ''))
+    before, saved_graph = inventory(roots[1]), graph.read_bytes()
+    build('only-check missing directive', extra=('--only-check',), success=False)
+    assert inventory(roots[1]) == before and graph.read_bytes() == saved_graph
+    build('only-check recovery')
+    build('only-check clean', extra=('--only-check',))
+    write('class Nested {}\n', 'lib/nested/model.dart')
+    write('class Executable {}\n', 'bin/model.dart')
+    build('multiple inputs / nested and non-lib paths')
+    clean_stock_reference('addition')
+    for root in roots:
+        old = root / 'lib/nested/model.dart'
+        old.rename(old.with_name('model_renamed.dart'))
+    build('rename / stale part cleanup')
+    clean_stock_reference('rename')
+    for root in roots:
+        (root / 'lib/nested/model_renamed.dart').unlink()
+    build('input deletion / stale part cleanup')
+    clean_stock_reference('deletion')
+    write('class Failure {} // fail\n')
+    before, saved_graph = inventory(roots[1]), graph.read_bytes()
+    build('failure after contribution', success=False)
+    assert inventory(roots[1]) == before and graph.read_bytes() == saved_graph
+    write('class Recovered {}\n')
+    build('failure recovery')
+    write('class Recovered {} // imports\n')
+    before, saved_graph = inventory(roots[1]), graph.read_bytes()
+    logs = build('imports require enhanced-parts', success=False)
+    assert all('Imports in parts need' in log for log in logs)
+    assert inventory(roots[1]) == before and graph.read_bytes() == saved_graph
     histories = [results / f'{root.name}-optional.history' for root in roots]
-    if not args.resume_imports:
-        assert all(not history.exists() for history in histories), 'undemanded optional builder ran'
-    for history in histories:
-        history.unlink(missing_ok=True)
+    assert all(not history.exists() for history in histories), 'undemanded optional builder ran'
     # Both lazy producers run in the first pass, but only model.dart needs a
     # directive replay. The other producer must retain its completed result.
     for root in roots:

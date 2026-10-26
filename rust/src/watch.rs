@@ -857,7 +857,6 @@ mod manifest_tests {
         state.actions.insert(
             "producer".into(),
             crate::graph::ActionState {
-                shared_part: None,
                 outputs: vec!["app|lib/a.final".into()],
                 output_digests: [(
                     "app|lib/a.final".into(),

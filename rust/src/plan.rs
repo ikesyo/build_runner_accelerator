@@ -550,7 +550,6 @@ mod tests {
             triggers: Vec::new(),
         });
         let second = Arc::new(BuilderDefinition {
-            adds_to_library: false,
             id: "example:second".to_owned(),
             ..(*first).clone()
         });

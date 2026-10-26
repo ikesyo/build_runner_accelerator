@@ -61,7 +61,7 @@ pub struct BuildResult {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SharedPart {
     pub header: String,
     pub imports: String,

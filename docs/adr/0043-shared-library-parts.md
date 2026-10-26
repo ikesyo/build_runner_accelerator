@@ -87,11 +87,5 @@ separates intended output parity from the upstream incremental cache defect.
 
 ## Validation
 
-The SDK lifecycle probe pins an exact runner and selects JIT/AOT for both
-implementations. The shared-part probe compares complete source/output file
-inventories and bytes, checks directive addition/removal, intermediate resolver
-visibility, no-op reuse, empty contributions, output repair, only-check,
-multiple input paths, rename/deletion, failures, imports and paired watch edits.
-The normal resolver consumer remains enabled throughout input additions,
-renames and deletions. Clean, unmodified stock also verifies those transitions.
-Keep these checks inside the existing minimum/current SDK CI jobs.
+The [shared-part fixture](../../fixtures/shared_parts_app/README.md) defines the
+stock/native lifecycle comparison, run in the existing minimum/current SDK jobs.
