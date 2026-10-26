@@ -10,6 +10,7 @@ use std::io;
 use std::path::Path;
 use std::time::Instant;
 
+use super::recovery::Change;
 use super::snapshot;
 use super::transaction::PendingTransaction;
 
@@ -140,10 +141,10 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
             crate::builder::BuildTo::Source => workspace.path_for_asset(asset)?,
             crate::builder::BuildTo::Cache => workspace.cache_path_for_asset(asset)?,
         };
-        changes.insert(path, None);
+        changes.insert(path, Change::Delete);
     }
     for (builder, asset) in &transaction.pending_deletions {
-        changes.insert(output_path(workspace, builder, asset)?, None);
+        changes.insert(output_path(workspace, builder, asset)?, Change::Delete);
     }
     for (_, action) in &transaction.deleted_actions {
         let builder = build_config
@@ -151,14 +152,20 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
             .ok_or_else(|| io::Error::other("previous builder unavailable"))?;
         for asset in &action.outputs {
             if !expected_outputs.contains(asset) {
-                changes.insert(output_path(workspace, builder, asset)?, None);
+                changes.insert(output_path(workspace, builder, asset)?, Change::Delete);
             }
         }
     }
-    for (asset, (builder, bytes)) in &transaction.pending_outputs {
+    for (asset, output) in &transaction.pending_outputs {
+        let path = output_path(workspace, &output.builder, asset)?;
+        let remove_first = changes.contains_key(&path);
         changes.insert(
-            output_path(workspace, builder, asset)?,
-            Some(crate::digest::digest_bytes(bytes)),
+            path,
+            Change::Write {
+                bytes: &output.bytes,
+                digest: output.digest.clone(),
+                remove_first,
+            },
         );
     }
     for (asset, edit) in &transaction.source_edits {
@@ -169,12 +176,22 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
                 "shared-part source changed before publication; retry",
             ));
         }
-        changes.insert(path, Some(crate::digest::digest_bytes(bytes)));
+        let remove_first = changes.contains_key(&path);
+        changes.insert(
+            path,
+            Change::Write {
+                bytes,
+                digest: crate::digest::digest_bytes(bytes),
+                remove_first,
+            },
+        );
     }
-    let journaled = !changes.is_empty();
-    if journaled {
-        super::recovery::prepare(state_path, changes)?;
-    }
+    let mutations = if changes.is_empty() {
+        BTreeSet::new()
+    } else {
+        super::recovery::prepare(state_path, changes)?
+    };
+    let journaled = !mutations.is_empty();
     drop(undo);
 
     // No phase or asset RPC can read the overlay once all actions have succeeded.
@@ -227,9 +244,12 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         state.actions.remove(&action_key);
     }
     boundary("after_deletions")?;
-    for (asset, (builder, bytes)) in transaction.pending_outputs {
-        super::recovery::write_output(&output_path(workspace, builder.as_ref(), &asset)?, &bytes)?;
-        boundary("after_output")?;
+    for (asset, output) in transaction.pending_outputs {
+        let path = output_path(workspace, &output.builder, &asset)?;
+        if mutations.contains(&path) {
+            super::recovery::write_output(&path, &output.bytes)?;
+            boundary("after_output")?;
+        }
     }
     for (key, action) in transaction.pending_actions {
         state.actions.insert(key, action);
@@ -242,8 +262,10 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
                 "shared-part source changed during publication; undo evidence preserved",
             ));
         }
-        super::recovery::write_output(&path, bytes)?;
-        boundary("after_output")?;
+        if mutations.contains(&path) {
+            super::recovery::write_output(&path, bytes)?;
+            boundary("after_output")?;
+        }
     }
     for (key, inputs) in transaction.pending_stock_inputs {
         if let Some(inputs) = inputs {
@@ -408,9 +430,9 @@ fn verify_outputs(state: &GraphState, inputs: &CommitInputs<'_>) -> io::Result<(
             }
         }
     }
-    for (asset, (builder, bytes)) in &transaction.pending_outputs {
-        if builder.build_to == BuildTo::Source {
-            changes.insert(asset.clone(), Some(bytes.as_ref()));
+    for (asset, output) in &transaction.pending_outputs {
+        if output.builder.build_to == BuildTo::Source {
+            changes.insert(asset.clone(), Some(output.bytes.as_ref()));
         }
     }
     for (asset, edit) in &transaction.source_edits {
@@ -466,7 +488,7 @@ fn remove_output(path: &Path) -> io::Result<()> {
 // The private cache tree is disposable, but rollback must preserve it too.
 fn collect_cache_deletions(
     path: &Path,
-    changes: &mut BTreeMap<std::path::PathBuf, Option<String>>,
+    changes: &mut BTreeMap<std::path::PathBuf, Change<'_>>,
 ) -> io::Result<()> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -481,7 +503,7 @@ fn collect_cache_deletions(
             collect_cache_deletions(&entry?.path(), changes)?;
         }
     } else {
-        changes.insert(path.to_owned(), None);
+        changes.insert(path.to_owned(), Change::Delete);
     }
     Ok(())
 }

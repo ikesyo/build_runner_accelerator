@@ -432,6 +432,15 @@ impl Drop for TemporaryWorkspace {
 
 #[test]
 fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()> {
+    commit_reused_dynamic_output(b"obsolete output")
+}
+
+#[test]
+fn commit_recreates_equal_dynamic_output_after_deleting_its_old_action() -> io::Result<()> {
+    commit_reused_dynamic_output(b"replacement output")
+}
+
+fn commit_reused_dynamic_output(previous_bytes: &[u8]) -> io::Result<()> {
     use super::commit::{CommitInputs, commit};
     use super::transaction::PendingTransaction;
 
@@ -444,7 +453,7 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
     let output = "app|lib/shared.out".to_owned();
     let obsolete_output = "app|lib/obsolete.out".to_owned();
     let new_bytes = b"replacement output".to_vec();
-    fs::write(temporary.0.join("lib/shared.out"), b"obsolete output")?;
+    fs::write(temporary.0.join("lib/shared.out"), previous_bytes)?;
     fs::write(temporary.0.join("lib/obsolete.out"), b"no longer needed")?;
     fs::write(temporary.0.join("lib/new.txt"), b"new input")?;
     let old_action = ActionState {
@@ -478,7 +487,10 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
         PendingTransaction::new(&[], &state, vec![(old_spec.action_key(), old_action)]);
     transaction.pending_outputs.insert(
         output.clone(),
-        (builder.definition.clone(), new_bytes.clone().into()),
+        super::transaction::PendingOutput::new(
+            builder.definition.clone(),
+            new_bytes.clone().into(),
+        ),
     );
     transaction
         .pending_actions
@@ -516,6 +528,89 @@ fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()
 }
 
 #[test]
+fn equal_output_commit_updates_dependencies_without_backups() -> io::Result<()> {
+    use super::commit::{CommitInputs, commit};
+    use super::results::record_build_result;
+    use super::transaction::PendingTransaction;
+    use crate::protocol::BuildResult;
+
+    let temporary = TemporaryWorkspace::new()?;
+    let workspace = Workspace::load(temporary.0.clone())?;
+    let builder = configured_builder("producer", "app:default", 0, 0);
+    let asset = "app|lib/input.out";
+    let spec = build_spec(&builder, "app|lib/input.txt", &[asset]);
+    fs::write(temporary.0.join("lib/input.txt"), b"changed input")?;
+    fs::write(temporary.0.join("lib/input.out"), b"same")?;
+    fs::write(temporary.0.join("lib/new-dependency.txt"), b"dependency")?;
+    let config = dirty_test_config(&[builder]);
+    let mut state = GraphState {
+        schema_version: crate::graph::GRAPH_SCHEMA_VERSION,
+        config_digest: "config".into(),
+        actions: BTreeMap::from([(
+            spec.action_key(),
+            ActionState {
+                builder: spec.instance.builder.id.clone(),
+                input: spec.input.clone(),
+                outputs: vec![asset.into()],
+                output_digests: BTreeMap::from([(
+                    asset.into(),
+                    crate::digest::digest_bytes(b"same"),
+                )]),
+                status: "success".into(),
+                ..ActionState::default()
+            },
+        )]),
+        ..GraphState::default()
+    };
+    let state_path = super::graph_path(&workspace);
+    state.save(&state_path)?;
+    let mut transaction = PendingTransaction::new(&[], &state, Vec::new());
+    let result: BuildResult = serde_json::from_value(serde_json::json!({
+        "type": "build_result", "id": 1, "status": "success", "resolver_used": false,
+        "reads": ["app|lib/new-dependency.txt"],
+        "outputs": [{"asset": asset, "bytes": b"same"}],
+    }))?;
+    record_build_result(&workspace, &state, &spec, result, &mut transaction)?;
+    let expected = transaction.pending_actions[&spec.action_key()].clone();
+    // With no output mutations, prepare must not even create an undo directory.
+    // Also reject accidental output publication before the graph is saved.
+    super::commit::COMMIT_BOUNDARY.with(|hook| {
+        *hook.borrow_mut() = Some(|name| {
+            assert_ne!(name, "output_temporary_created");
+            Ok(())
+        })
+    });
+    let result = commit(
+        &mut state,
+        CommitInputs {
+            only_check: false,
+            keep_modified_outputs: false,
+            explicit_keep_modified_outputs: false,
+            workspace: &workspace,
+            state_path: &state_path,
+            build_config: &config,
+            config_digest: "config".into(),
+            scanned_packages: &BTreeSet::from(["app".into()]),
+            expected_outputs: BTreeSet::from([asset.into()]),
+            source_snapshot_evidence: None,
+            filtered_snapshot_evidence: None,
+            transaction,
+        },
+    );
+    super::commit::COMMIT_BOUNDARY.with(|hook| *hook.borrow_mut() = None);
+    result?;
+    assert!(!state_path.with_extension("commit-undo").exists());
+    assert_eq!(fs::read(temporary.0.join("lib/input.out"))?, b"same");
+    let saved = GraphState::load(&state_path)?;
+    assert_eq!(saved.actions[&spec.action_key()], expected);
+    assert_eq!(
+        saved.actions[&spec.action_key()].reads,
+        ["app|lib/new-dependency.txt"]
+    );
+    Ok(())
+}
+
+#[test]
 fn output_registration_shares_buffers_and_releases_aborted_transaction() -> io::Result<()> {
     use super::results::record_build_result;
     use super::transaction::PendingTransaction;
@@ -547,7 +642,7 @@ fn output_registration_shares_buffers_and_releases_aborted_transaction() -> io::
             }
             record_build_result(&workspace, &state, &spec, result, &mut pending)?;
             let overlay = &pending.overlay[asset];
-            let commit_bytes = &pending.pending_outputs[asset].1;
+            let commit_bytes = &pending.pending_outputs[asset].bytes;
             assert!(Arc::ptr_eq(overlay, commit_bytes));
             assert_eq!(Arc::strong_count(overlay), 2);
             assert_eq!(overlay.as_ref(), bytes);
@@ -555,7 +650,7 @@ fn output_registration_shares_buffers_and_releases_aborted_transaction() -> io::
             // A later action failure aborts the pending transaction. Removing
             // visibility must leave the bytes available for commit until then.
             pending.overlay.remove(asset);
-            assert_eq!(pending.pending_outputs[asset].1.as_ref(), bytes);
+            assert_eq!(pending.pending_outputs[asset].bytes.as_ref(), bytes);
             drop(pending);
             assert!(weak.upgrade().is_none());
             assert_eq!(fs::read(temporary.0.join("lib/input.out"))?, b"committed");
@@ -1452,12 +1547,34 @@ fn recovery_commit_fixture(root: &std::path::Path) -> io::Result<()> {
         .push((source.definition.clone(), "app|lib/obsolete.out".to_owned()));
     transaction.pending_outputs.insert(
         "app|lib/updated.out".to_owned(),
-        (source.definition.clone(), Arc::from(&b"new source"[..])),
+        super::transaction::PendingOutput::new(
+            source.definition.clone(),
+            Arc::from(&b"new source"[..]),
+        ),
     );
     transaction.pending_outputs.insert(
         "app|lib/new.cache".to_owned(),
-        (cache.definition.clone(), Arc::from(&b"new cache"[..])),
+        super::transaction::PendingOutput::new(
+            cache.definition.clone(),
+            Arc::from(&b"new cache"[..]),
+        ),
     );
+    for (asset, builder) in [
+        ("app|lib/unchanged.out", &source),
+        ("app|lib/recreated.out", &source),
+        ("app|lib/recreated.cache", &cache),
+    ] {
+        transaction.pending_outputs.insert(
+            asset.into(),
+            super::transaction::PendingOutput::new(
+                builder.definition.clone(),
+                Arc::from(&b"same"[..]),
+            ),
+        );
+    }
+    transaction
+        .pending_deletions
+        .push((source.definition.clone(), "app|lib/recreated.out".into()));
     commit(
         &mut state,
         CommitInputs {
@@ -1487,6 +1604,12 @@ fn seed_recovery_fixture(root: &std::path::Path) -> io::Result<()> {
     fs::write(
         root.join(".dart_tool/build_runner_accelerator/cache/app/lib/old.cache"),
         b"obsolete cache",
+    )?;
+    fs::write(root.join("lib/unchanged.out"), b"same")?;
+    fs::write(root.join("lib/recreated.out"), b"same")?;
+    fs::write(
+        root.join(".dart_tool/build_runner_accelerator/cache/app/lib/recreated.cache"),
+        b"same",
     )?;
     GraphState {
         schema_version: crate::graph::GRAPH_SCHEMA_VERSION,
@@ -1523,6 +1646,12 @@ fn assert_recovered_fixture(root: &std::path::Path) -> io::Result<()> {
         !root
             .join(".dart_tool/build_runner_accelerator/cache/app/lib/new.cache")
             .exists()
+    );
+    assert_eq!(fs::read(root.join("lib/unchanged.out"))?, b"same");
+    assert_eq!(fs::read(root.join("lib/recreated.out"))?, b"same");
+    assert_eq!(
+        fs::read(root.join(".dart_tool/build_runner_accelerator/cache/app/lib/recreated.cache"))?,
+        b"same"
     );
     let restored = GraphState::load(&graph)?;
     assert!(restored.config_digest.is_empty());

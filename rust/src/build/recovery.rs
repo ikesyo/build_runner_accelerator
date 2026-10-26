@@ -3,7 +3,7 @@
 use crate::assets::write_atomic;
 use crate::digest::digest_bytes;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -110,9 +110,6 @@ fn require_unreserved(path: &Path) -> io::Result<()> {
 /// Only for destinations already reserved in the active undo journal. Partial
 /// temporary files remain owned by that journal across publication and rollback.
 pub(super) fn write_output(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    if path.is_file() && fs::read(path)? == bytes {
-        return Ok(());
-    }
     fs::create_dir_all(
         path.parent()
             .ok_or_else(|| io::Error::other("output has no parent"))?,
@@ -150,9 +147,25 @@ fn remove_temporary(path: &Path) -> io::Result<()> {
     }
 }
 
+/// A publication step, including deletions that precede a final write.
+pub(super) enum Change<'a> {
+    Delete,
+    Write {
+        bytes: &'a [u8],
+        digest: String,
+        // Even equal final bytes need undo if publication deletes them first.
+        remove_first: bool,
+    },
+}
+
 /// Publish the journal only after every backup is complete. An interrupted
 /// preparation has changed no outputs and its unreferenced backups can be reused.
-pub(super) fn prepare(graph: &Path, changes: BTreeMap<PathBuf, Option<String>>) -> io::Result<()> {
+/// Returns exactly the destinations requiring publication. Equality uses the
+/// current safely-read bytes, never a previous graph's logical output digest.
+pub(super) fn prepare(
+    graph: &Path,
+    changes: BTreeMap<PathBuf, Change<'_>>,
+) -> io::Result<BTreeSet<PathBuf>> {
     if pending(graph) {
         return Err(io::Error::other(
             "unfinished commit must be recovered before publication",
@@ -177,10 +190,26 @@ pub(super) fn prepare(graph: &Path, changes: BTreeMap<PathBuf, Option<String>>) 
     }
     let dir = directory(graph);
     check_no_symlinks(&dir)?;
-    fs::create_dir_all(&dir)?;
     let mut entries = Vec::new();
-    for (index, (path, after)) in changes.into_iter().enumerate() {
+    for (path, change) in changes {
         let before = read_optional(&path)?;
+        let after = match change {
+            Change::Write {
+                bytes,
+                digest,
+                remove_first,
+            } => {
+                if !remove_first && before.as_deref() == Some(bytes) {
+                    continue;
+                }
+                Some(digest)
+            }
+            Change::Delete => None,
+        };
+        if entries.is_empty() {
+            fs::create_dir_all(&dir)?;
+        }
+        let index = entries.len();
         if let Some(bytes) = &before {
             let path = dir.join(index.to_string());
             check_no_symlinks(&path)?;
@@ -192,6 +221,10 @@ pub(super) fn prepare(graph: &Path, changes: BTreeMap<PathBuf, Option<String>>) 
             after,
         });
     }
+    if entries.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    let destinations = entries.iter().map(|entry| entry.path.clone()).collect();
     let before_graph = read_optional(graph)?;
     if let Some(bytes) = &before_graph {
         check_no_symlinks(&dir.join("graph"))?;
@@ -203,7 +236,8 @@ pub(super) fn prepare(graph: &Path, changes: BTreeMap<PathBuf, Option<String>>) 
         entries,
         graph: before_graph.as_deref().map(digest_bytes),
     };
-    write_atomic(&dir.join("journal.json"), &serde_json::to_vec(&journal)?)
+    write_atomic(&dir.join("journal.json"), &serde_json::to_vec(&journal)?)?;
+    Ok(destinations)
 }
 
 /// The single unlink is the commit point. Cleanup after it is best-effort;
@@ -229,7 +263,14 @@ fn backup(dir: &Path, name: &str, digest: &Option<String>) -> io::Result<Option<
 
 fn restore(path: &Path, bytes: Option<&[u8]>) -> io::Result<()> {
     match bytes {
-        Some(bytes) => write_output(path, bytes),
+        Some(bytes) => {
+            // Rollback remains idempotent; ordinary publication already compared
+            // its bytes in prepare and must not read the destination again.
+            if read_optional(path)?.as_deref() == Some(bytes) {
+                return Ok(());
+            }
+            write_output(path, bytes)
+        }
         None => match fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -346,7 +387,7 @@ mod tests {
         fn prepare(&self) {
             prepare(
                 &self.graph(),
-                BTreeMap::from([(self.output(), Some(digest_bytes(b"new")))]),
+                BTreeMap::from([(self.output(), write(b"new", false))]),
             )
             .unwrap();
         }
@@ -355,6 +396,98 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn write(bytes: &[u8], remove_first: bool) -> Change<'_> {
+        Change::Write {
+            bytes,
+            digest: digest_bytes(bytes),
+            remove_first,
+        }
+    }
+
+    #[test]
+    fn equal_bytes_need_neither_output_nor_graph_backups() {
+        let fixture = Fixture::new();
+        fs::write(fixture.output(), b"same").unwrap();
+        fs::write(fixture.graph(), b"old graph").unwrap();
+        let paths = prepare(
+            &fixture.graph(),
+            BTreeMap::from([(fixture.output(), write(b"same", false))]),
+        )
+        .unwrap();
+        assert!(paths.is_empty());
+        assert!(!directory(&fixture.graph()).exists());
+        assert_eq!(fs::read(fixture.output()).unwrap(), b"same");
+    }
+
+    #[test]
+    fn comparison_uses_bytes_even_if_digests_match() {
+        let fixture = Fixture::new();
+        fs::write(fixture.output(), b"manual edit").unwrap();
+        // A digest is journal evidence, never a substitute for comparing bytes.
+        let paths = prepare(
+            &fixture.graph(),
+            BTreeMap::from([(
+                fixture.output(),
+                Change::Write {
+                    bytes: b"generated",
+                    digest: digest_bytes(b"manual edit"),
+                    remove_first: false,
+                },
+            )]),
+        )
+        .unwrap();
+        assert_eq!(paths, BTreeSet::from([fixture.output()]));
+        assert_eq!(
+            fs::read(directory(&fixture.graph()).join("0")).unwrap(),
+            b"manual edit"
+        );
+    }
+
+    #[test]
+    fn equal_bytes_deleted_before_regeneration_are_still_journaled() {
+        let fixture = Fixture::new();
+        fs::write(fixture.output(), b"same").unwrap();
+        let paths = prepare(
+            &fixture.graph(),
+            BTreeMap::from([(fixture.output(), write(b"same", true))]),
+        )
+        .unwrap();
+        assert_eq!(paths, BTreeSet::from([fixture.output()]));
+        fs::remove_file(fixture.output()).unwrap();
+        recover(&fixture.graph()).unwrap();
+        assert_eq!(fs::read(fixture.output()).unwrap(), b"same");
+    }
+
+    #[test]
+    fn mixed_commit_does_not_restore_or_claim_unchanged_outputs() {
+        let fixture = Fixture::new();
+        let unchanged = fixture.0.join("unchanged");
+        fs::write(&unchanged, b"same").unwrap();
+        fs::write(fixture.output(), b"old").unwrap();
+        let paths = prepare(
+            &fixture.graph(),
+            BTreeMap::from([
+                (unchanged.clone(), write(b"same", false)),
+                (fixture.output(), write(b"new", false)),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(paths, BTreeSet::from([fixture.output()]));
+        let journal: Journal = serde_json::from_slice(
+            &fs::read(directory(&fixture.graph()).join("journal.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(journal.entries.len(), 1);
+        fs::write(fixture.output(), b"new").unwrap();
+        fs::write(&unchanged, b"external edit to untouched output").unwrap();
+        recover(&fixture.graph()).unwrap();
+        assert_eq!(fs::read(fixture.output()).unwrap(), b"old");
+        assert_eq!(
+            fs::read(unchanged).unwrap(),
+            b"external edit to untouched output"
+        );
     }
 
     #[test]
@@ -396,8 +529,8 @@ mod tests {
         prepare(
             &fixture.graph(),
             BTreeMap::from([
-                (fixture.output(), Some(digest_bytes(b"new first"))),
-                (later.clone(), Some(digest_bytes(b"new last"))),
+                (fixture.output(), write(b"new first", false)),
+                (later.clone(), write(b"new last", false)),
             ]),
         )
         .unwrap();
@@ -449,7 +582,7 @@ mod tests {
         assert!(
             prepare(
                 &fixture.graph(),
-                BTreeMap::from([(fixture.output(), Some(digest_bytes(b"new")))])
+                BTreeMap::from([(fixture.output(), write(b"new", false))])
             )
             .is_err()
         );
@@ -468,6 +601,17 @@ mod tests {
         let fixture = Fixture::new();
         let manual = fixture.0.join("manual");
         fs::write(&manual, b"new").unwrap();
+        symlink(&manual, fixture.output()).unwrap();
+        // Even equal bytes must not bypass path safety during preparation.
+        assert!(
+            prepare(
+                &fixture.graph(),
+                BTreeMap::from([(fixture.output(), write(b"new", false)),])
+            )
+            .is_err()
+        );
+        assert!(!pending(&fixture.graph()));
+        fs::remove_file(fixture.output()).unwrap();
         fixture.prepare();
         symlink(&manual, fixture.output()).unwrap();
         assert!(recover(&fixture.graph()).is_err());

@@ -258,13 +258,15 @@ impl<'a> SharedLibraryCoordinator<'a> {
             owner.output_digests.remove(id);
             pending.pending_outputs.remove(id);
             if let Some(bytes) = &content {
+                let output = super::transaction::PendingOutput::new(
+                    spec.instance.builder.clone(),
+                    bytes.clone(),
+                );
                 owner.outputs.push(id.clone());
                 owner
                     .output_digests
-                    .insert(id.clone(), crate::digest::digest_bytes(bytes));
-                pending
-                    .pending_outputs
-                    .insert(id.clone(), (spec.instance.builder.clone(), bytes.clone()));
+                    .insert(id.clone(), output.digest.clone());
+                pending.pending_outputs.insert(id.clone(), output);
             } else {
                 pending
                     .pending_deletions
