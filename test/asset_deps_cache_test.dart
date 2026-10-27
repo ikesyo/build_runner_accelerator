@@ -28,7 +28,9 @@ void main() {
         );
         final files = dir.listSync(recursive: true).whereType<File>();
         expect(
-          files.where((file) => file.path.endsWith('store.bin')),
+          files.where(
+            (file) => file.path.endsWith('${Platform.pathSeparator}data'),
+          ),
           hasLength(1),
         );
         expect(

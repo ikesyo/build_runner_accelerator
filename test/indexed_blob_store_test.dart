@@ -7,16 +7,73 @@ import 'package:test/test.dart';
 
 void main() {
   late Directory dir;
-  late IndexedBlobStore store;
+  late IndexedBlobPack store;
 
   setUp(() {
     dir = Directory.systemTemp.createTempSync('indexed_blob_store_test');
-    store = IndexedBlobStore('${dir.path}/store.bin');
+    store = IndexedBlobPack('${dir.path}/store.bin');
   });
 
   tearDown(() {
     store.close();
     dir.deleteSync(recursive: true);
+  });
+
+  test('admission bounds unique keys and repeated updates', () {
+    for (final repeated in [false, true]) {
+      final path = '${dir.path}/bounded-$repeated';
+      final bounded = IndexedBlobPack(path, maxRecords: 4);
+      for (var i = 0; i < 40; i++) {
+        expect(
+          bounded.put(repeated ? 'same' : 'key-$i', Uint8List.fromList([i])),
+          i < 4,
+        );
+      }
+      expect(bounded.get(repeated ? 'same' : 'key-3'), [3]);
+      final size = File(path).lengthSync();
+      bounded.close();
+      final reopened = IndexedBlobPack(path, maxRecords: 4);
+      expect(reopened.get(repeated ? 'same' : 'key-3'), [3]);
+      expect(reopened.put('extra', Uint8List(1)), isFalse);
+      expect(File(path).lengthSync(), size);
+      reopened.close();
+    }
+  });
+
+  test('oversized existing history is never truncated by bounded scan', () {
+    final path = '${dir.path}/existing';
+    final writer = IndexedBlobPack(path);
+    for (var i = 0; i < 10; i++) {
+      expect(writer.put('key-$i', Uint8List.fromList([i])), isTrue);
+    }
+    expect(writer.put('key-0', Uint8List.fromList([99])), isTrue);
+    final dataSize = File(path).lengthSync();
+    final journalSize = File('$path.index').lengthSync();
+    final bounded = IndexedBlobPack(path, maxRecords: 3);
+    expect(bounded.entryCount, 0);
+    expect(bounded.get('key-0'), isNull);
+    expect(bounded.put('extra', Uint8List(1)), isFalse);
+    expect(File(path).lengthSync(), dataSize);
+    expect(File('$path.index').lengthSync(), journalSize);
+    expect(writer.get('key-9'), [9]);
+    bounded.close();
+    writer.close();
+  });
+
+  test('data and journal budgets reject before writing a record', () {
+    for (final dataBudget in [true, false]) {
+      final path = '${dir.path}/bytes-$dataBudget';
+      final bounded = IndexedBlobPack(
+        path,
+        maxDataBytes: dataBudget ? 12 : 100,
+        maxJournalBytes: dataBudget ? 100 : 37,
+      );
+      expect(bounded.put('k', Uint8List(1)), isTrue);
+      expect(bounded.put('x', Uint8List(1)), isFalse);
+      expect(bounded.get('k'), [0]);
+      expect(bounded.put('k', Uint8List(1)), isTrue);
+      bounded.close();
+    }
   });
 
   test('miss on empty store', () {
@@ -54,14 +111,14 @@ void main() {
   test('fresh instance indexes the same file', () {
     store.put('k', Uint8List.fromList([42]));
     store.close();
-    final reopened = IndexedBlobStore('${dir.path}/store.bin');
+    final reopened = IndexedBlobPack('${dir.path}/store.bin');
     addTearDown(reopened.close);
     expect(reopened.get('k'), [42]);
   });
 
   test('reader refresh sees sibling appends without writing or reopening', () {
     store.put('existing', Uint8List.fromList([1]));
-    final sibling = IndexedBlobStore('${dir.path}/store.bin');
+    final sibling = IndexedBlobPack('${dir.path}/store.bin');
     addTearDown(sibling.close);
     sibling.put('later.linked', Uint8List.fromList([8]));
     store.refresh();
@@ -71,7 +128,7 @@ void main() {
 
   test('empty reader sees a newly created pack', () {
     expect(store.get('later'), isNull);
-    final sibling = IndexedBlobStore('${dir.path}/store.bin');
+    final sibling = IndexedBlobPack('${dir.path}/store.bin');
     addTearDown(sibling.close);
     sibling.put('later', Uint8List.fromList([8]));
     store.refresh();
@@ -82,7 +139,7 @@ void main() {
     store.put('existing', Uint8List.fromList([1]));
     final journal = File('${dir.path}/store.bin.index');
     final length = journal.lengthSync();
-    final sibling = IndexedBlobStore('${dir.path}/store.bin');
+    final sibling = IndexedBlobPack('${dir.path}/store.bin');
     sibling.put('later', Uint8List.fromList([8]));
     sibling.close();
     final record = journal.readAsBytesSync().sublist(length);
@@ -100,7 +157,7 @@ void main() {
   for (final tailLength in [20, 21]) {
     test('reader follows torn-tail repair after $tailLength invalid bytes', () {
       store.put('existing', Uint8List.fromList([1]));
-      final reader = IndexedBlobStore('${dir.path}/store.bin');
+      final reader = IndexedBlobPack('${dir.path}/store.bin');
       addTearDown(reader.close);
       expect(reader.get('existing'), [1]);
       final file = File('${dir.path}/store.bin');
@@ -127,7 +184,7 @@ void main() {
     final end = journal.lengthSync();
     final data = File('${dir.path}/store.bin');
     final dataEnd = data.lengthSync();
-    final sibling = IndexedBlobStore(data.path);
+    final sibling = IndexedBlobPack(data.path);
     sibling.put('lost', Uint8List.fromList([8]));
     sibling.close();
     final handle = journal.openSync(mode: FileMode.append);
@@ -137,7 +194,7 @@ void main() {
     expect(journal.lengthSync(), end);
     expect(data.lengthSync(), dataEnd);
     expect(store.put('after', Uint8List.fromList([9])), isTrue);
-    final reader = IndexedBlobStore(data.path);
+    final reader = IndexedBlobPack(data.path);
     addTearDown(reader.close);
     expect(reader.get('first'), value);
     expect(reader.get('lost'), isNull);
@@ -152,7 +209,7 @@ void main() {
     store.refresh();
     expect(store.get('old'), isNull);
     expect(store.put('new', Uint8List.fromList([2])), isTrue);
-    final reader = IndexedBlobStore('${dir.path}/store.bin');
+    final reader = IndexedBlobPack('${dir.path}/store.bin');
     addTearDown(reader.close);
     expect(reader.get('old'), isNull);
     expect(reader.get('new'), [2]);
@@ -164,7 +221,7 @@ void main() {
     final file = File('${dir.path}/store.bin');
     final bytes = file.readAsBytesSync()..[11] = 99;
     file.writeAsBytesSync(bytes);
-    final reader = IndexedBlobStore(file.path);
+    final reader = IndexedBlobPack(file.path);
     addTearDown(reader.close);
     expect(reader.get('bad'), isNull);
     expect(reader.get('good'), [4]);
@@ -177,7 +234,7 @@ void main() {
     store.put('old', Uint8List.fromList([1]));
     store.close();
     File('${dir.path}/store.bin.index').deleteSync();
-    final reader = IndexedBlobStore('${dir.path}/store.bin');
+    final reader = IndexedBlobPack('${dir.path}/store.bin');
     addTearDown(reader.close);
     expect(reader.get('old'), isNull);
     expect(reader.put('new', Uint8List.fromList([2])), isTrue);
@@ -192,7 +249,7 @@ void main() {
     store.put('second', Uint8List.fromList([2]));
     final bytes = journal.readAsBytesSync()..[end + 4] ^= 1;
     journal.writeAsBytesSync(bytes);
-    final reader = IndexedBlobStore('${dir.path}/store.bin');
+    final reader = IndexedBlobPack('${dir.path}/store.bin');
     addTearDown(reader.close);
     expect(reader.get('first'), [1]);
     expect(reader.get('second'), isNull);
@@ -213,7 +270,7 @@ void main() {
     handle.closeSync();
     expect(store.get('first'), isNull);
     expect(store.put('other', Uint8List.fromList([2])), isTrue);
-    final reader = IndexedBlobStore(file.path);
+    final reader = IndexedBlobPack(file.path);
     addTearDown(reader.close);
     expect(reader.get('first'), isNull);
     expect(reader.get('other'), [2]);
@@ -230,7 +287,7 @@ void main() {
       final length = file.lengthSync();
       for (var build = 0; build < 32; build++) {
         store.put(key, Uint8List.fromList(value));
-        final reopened = IndexedBlobStore(file.path);
+        final reopened = IndexedBlobPack(file.path);
         try {
           reopened.put(key, Uint8List.fromList(value));
           expect(reopened.get(key), value);
@@ -244,7 +301,7 @@ void main() {
 
   test('stale writer adopts identical sibling writes before deduplicating', () {
     store.get('prime');
-    final other = IndexedBlobStore('${dir.path}/store.bin');
+    final other = IndexedBlobPack('${dir.path}/store.bin');
     addTearDown(other.close);
     other.put('shared', Uint8List.fromList([8]));
     final length = File('${dir.path}/store.bin').lengthSync();
@@ -260,7 +317,7 @@ void main() {
     expect(store.get('k'), [255, 255, 255]);
     store.put('k', Uint8List.fromList([4]));
     expect(store.get('k'), [4]);
-    final reopened = IndexedBlobStore('${dir.path}/store.bin');
+    final reopened = IndexedBlobPack('${dir.path}/store.bin');
     addTearDown(reopened.close);
     expect(reopened.get('k'), [4]);
   });
@@ -276,11 +333,11 @@ void main() {
     expect(store.get('k'), value);
     // A fresh reader selects the published replacement and deduplicates it
     // without discarding any earlier data records.
-    final reopened = IndexedBlobStore(file.path);
+    final reopened = IndexedBlobPack(file.path);
     addTearDown(reopened.close);
     reopened.put('k', value);
     expect(reopened.get('k'), value);
-    final third = IndexedBlobStore(file.path);
+    final third = IndexedBlobPack(file.path);
     addTearDown(third.close);
     expect(third.get('k'), value);
   });
@@ -294,7 +351,7 @@ void main() {
     store.put('k', value);
     expect(file.lengthSync(), length);
     store.put('next', Uint8List.fromList([8]));
-    final reopened = IndexedBlobStore(file.path);
+    final reopened = IndexedBlobPack(file.path);
     addTearDown(reopened.close);
     expect(reopened.get('k'), value);
     expect(reopened.get('next'), [8]);
@@ -308,7 +365,7 @@ void main() {
       mode: FileMode.append,
       flush: true,
     );
-    final reopened = IndexedBlobStore('${dir.path}/store.bin');
+    final reopened = IndexedBlobPack('${dir.path}/store.bin');
     addTearDown(reopened.close);
     expect(reopened.get('good'), [1]);
     expect(reopened.entryCount, 1);
@@ -317,7 +374,7 @@ void main() {
     expect(reopened.get('after'), [2]);
     reopened.close();
     // A third process sees both records — the torn bytes were removed.
-    final third = IndexedBlobStore('${dir.path}/store.bin');
+    final third = IndexedBlobPack('${dir.path}/store.bin');
     addTearDown(third.close);
     expect(third.get('good'), [1]);
     expect(third.get('after'), [2]);
@@ -325,7 +382,7 @@ void main() {
 
   test('writer adopts records appended after its scan', () {
     store.get('prime');
-    final other = IndexedBlobStore('${dir.path}/store.bin');
+    final other = IndexedBlobPack('${dir.path}/store.bin');
     addTearDown(other.close);
     other.put('later', Uint8List.fromList([8]));
     // The stale-indexed writer picks up the sibling's entry on its next put.
@@ -333,57 +390,77 @@ void main() {
     expect(store.get('later'), [8]);
   });
 
-  test('four concurrent processes append each shared value once', () async {
-    final path = '${dir.path}/store.bin';
-    final processes = await Future.wait([
-      for (var worker = 0; worker < 4; worker++)
-        Process.start(Platform.resolvedExecutable, [
-          '--packages=${File('.dart_tool/package_config.json').absolute.path}',
-          'test/indexed_blob_store_process.dart',
-          path,
-          '$worker',
-        ]),
-    ]);
-    addTearDown(() {
+  for (final bounded in [false, true]) {
+    test('four concurrent processes append safely (bounded=$bounded)', () async {
+      final path = '${dir.path}/store.bin';
+      final processes = await Future.wait([
+        for (var worker = 0; worker < 4; worker++)
+          Process.start(Platform.resolvedExecutable, [
+            '--packages=${File('.dart_tool/package_config.json').absolute.path}',
+            'test/indexed_blob_store_process.dart',
+            path,
+            '$worker',
+            if (bounded) '32',
+          ]),
+      ]);
+      addTearDown(() {
+        for (final process in processes) {
+          process.kill();
+        }
+      });
+      final errors = [
+        for (final process in processes)
+          process.stderr.transform(utf8.decoder).join(),
+      ];
+      await Future.wait([
+        for (final process in processes)
+          process.stdout
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())
+              .first
+              .then((line) => expect(line, 'ready')),
+      ]);
       for (final process in processes) {
-        process.kill();
+        process.stdin.writeln('start');
+        await process.stdin.close();
+      }
+      var expectedLength = 0;
+      for (var round = 0; round < 32; round++) {
+        for (final key in [
+          'shared-$round.resolved',
+          for (var worker = 0; worker < 4; worker++) 'worker-$worker-$round',
+        ]) {
+          expectedLength += 8 + utf8.encode(key).length + 1 + 2;
+        }
+      }
+      for (var worker = 0; worker < 4; worker++) {
+        expect(
+          await processes[worker].exitCode,
+          0,
+          reason: await errors[worker],
+        );
+      }
+      if (bounded) {
+        expect(store.entryCount, 32);
+        for (var round = 0; round < 32; round++) {
+          for (final key in [
+            'shared-$round.resolved',
+            for (var worker = 0; worker < 4; worker++) 'worker-$worker-$round',
+          ]) {
+            final value = store.get(key);
+            if (value != null) expect(value, [round]);
+          }
+        }
+        return;
+      }
+      expect(File(path).lengthSync(), expectedLength);
+      expect(store.entryCount, 160);
+      for (var round = 0; round < 32; round++) {
+        expect(store.get('shared-$round.resolved'), [round]);
+        for (var worker = 0; worker < 4; worker++) {
+          expect(store.get('worker-$worker-$round'), [round]);
+        }
       }
     });
-    final errors = [
-      for (final process in processes)
-        process.stderr.transform(utf8.decoder).join(),
-    ];
-    await Future.wait([
-      for (final process in processes)
-        process.stdout
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())
-            .first
-            .then((line) => expect(line, 'ready')),
-    ]);
-    for (final process in processes) {
-      process.stdin.writeln('start');
-      await process.stdin.close();
-    }
-    var expectedLength = 0;
-    for (var round = 0; round < 32; round++) {
-      for (final key in [
-        'shared-$round.resolved',
-        for (var worker = 0; worker < 4; worker++) 'worker-$worker-$round',
-      ]) {
-        expectedLength += 8 + utf8.encode(key).length + 1 + 2;
-      }
-    }
-    for (var worker = 0; worker < 4; worker++) {
-      expect(await processes[worker].exitCode, 0, reason: await errors[worker]);
-    }
-    expect(File(path).lengthSync(), expectedLength);
-    expect(store.entryCount, 160);
-    for (var round = 0; round < 32; round++) {
-      expect(store.get('shared-$round.resolved'), [round]);
-      for (var worker = 0; worker < 4; worker++) {
-        expect(store.get('worker-$worker-$round'), [round]);
-      }
-    }
-  });
+  }
 }

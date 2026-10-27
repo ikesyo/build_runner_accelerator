@@ -955,6 +955,14 @@ jobs:
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
         with:
           sdk: '3.13.3'
+      - name: Shared cache generation and pack lifecycle
+        shell: bash
+        run: |
+          dart pub get
+          dart test --compiler=source --timeout 2m \
+            test/indexed_blob_generation_test.dart \
+            test/indexed_blob_store_test.dart \
+            test/packed_analysis_byte_store_test.dart
       - name: Verify packaged distribution with a Dart-only consumer
         shell: bash
         run: |

@@ -6,7 +6,7 @@ import 'package:path/path.dart' as p;
 
 import 'indexed_blob_store.dart';
 
-/// Disposable v2 analyzer pack. Earlier formats are intentionally ignored.
+/// Bounded generations of v2 analyzer packs. Single-pack caches are ignored.
 final class PackedAnalysisByteStore implements ByteStore {
   PackedAnalysisByteStore(String dir)
     : _store = IndexedBlobStore(p.join(dir, 'store.v2.bin'));

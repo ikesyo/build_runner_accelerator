@@ -22,7 +22,7 @@ import time
 
 
 def wait_for_process(process, timeout):
-    """Reap the isolated frontend with wait4; kill its group on a deadline."""
+    """Reap an isolated command with wait4; kill its group on a deadline."""
     expired = threading.Event()
 
     def kill_group():
@@ -61,15 +61,52 @@ def clear_graph(root):
         f.unlink()
 
 
+def run_stock(command, cwd, env, log, timeout):
+    """Log stock setup/build output and bound the whole process group."""
+    with log.open('wb') as output:
+        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=output,
+                                   stderr=subprocess.STDOUT, start_new_session=True)
+        wait_for_process(process, timeout)
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, command)
+
+
+def sync_stock_sources(root, stock_root):
+    """Copy inputs only; stock and native must never share generated outputs."""
+    shutil.copytree(root / 'lib', stock_root / 'lib', dirs_exist_ok=True,
+                    ignore=lambda _, names: [n for n in names
+                                              if n.endswith(('.g.dart', '.g.part'))])
+
+
+def prepare_stock_workspace(repo, root, workspace):
+    """Preserve the fixture's ../../ path dependency in an isolated workspace."""
+    if workspace.resolve().is_relative_to(root.resolve()):
+        raise ValueError('Stock workspace must be outside the native workspace')
+    workspace.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(repo / 'pubspec.yaml', workspace / 'pubspec.yaml')
+    for directory in ('lib', 'bin'):
+        if (repo / directory).exists():
+            shutil.copytree(repo / directory, workspace / directory, dirs_exist_ok=True)
+    stock_root = workspace / 'fixtures' / root.name
+    stock_root.mkdir(parents=True, exist_ok=True)
+    for name in ('pubspec.yaml', 'pubspec.lock', 'build.yaml', 'analysis_options.yaml'):
+        if (root / name).exists():
+            shutil.copy2(root / name, stock_root / name)
+    sync_stock_sources(root, stock_root)
+    return stock_root
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ('baseline-worker', 'candidate-worker', 'baseline-probe',
                  'candidate-probe', 'cache', 'results', 'dart', 'frontend'):
         p.add_argument('--' + name, type=Path, required=True)
+    p.add_argument('--stock-reference', action='store_true',
+                   help='Run stock outside timed intervals and compare public and part bytes.')
     p.add_argument('--repeats', type=int, default=5)
     p.add_argument('--jobs', type=int, default=4)
     p.add_argument('--timeout', type=float, default=300,
-                   help='Maximum seconds per frontend run (default: 300).')
+                   help='Maximum seconds per frontend run or stock command (default: 300).')
     p.add_argument('--counts', type=int, nargs='+', default=[10, 500])
     args = p.parse_args()
     if args.repeats < 1 or args.jobs < 1:
@@ -83,7 +120,8 @@ def main():
     args.results.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, PUB_CACHE=str(repo / '.pub-cache'),
                BUILD_RUNNER_ACCELERATOR_CACHE=str(args.cache),
-               BUILD_RUNNER_ACCELERATOR_METRICS='0')
+               BUILD_RUNNER_ACCELERATOR_METRICS='0',
+               BUILD_RUNNER_ACCELERATOR_WALL_TRACE='0')
     rows = []
     expected = {}
 
@@ -117,6 +155,14 @@ def main():
     for count in args.counts:
         root = repo / f'fixtures/json_serializable_{count}_app'
         sources = {f: f.read_bytes() for f in (root / 'lib').glob('model_*.dart') if not f.name.endswith('.g.dart')}
+        stock_workspace = args.results / f'stock-workspace-{count}'
+        stock_root = None
+        if args.stock_reference:
+            stock_root = prepare_stock_workspace(repo, root, stock_workspace)
+            run_stock([str(args.dart), '--suppress-analytics', 'pub', 'get',
+                       '--offline', '--enforce-lockfile'], stock_root, env,
+                      args.results / f'stock-{count}-pub-get.log', args.timeout)
+            assert (stock_root / 'pubspec.lock').read_bytes() == (root / 'pubspec.lock').read_bytes()
         def reset_sources():
             for f, content in sources.items(): f.write_bytes(content)
         worker_dir = root / '.dart_tool/build_runner_accelerator/aot-sdk/bin'
@@ -150,6 +196,8 @@ def main():
                 for size in ('small', 'large'):
                     if size == 'large':
                         packs = list((args.cache / 'byte_store').rglob('store.*.bin'))
+                        packs += [Path(str(p).removesuffix('.generations')) for p in
+                                  (args.cache / 'byte_store').rglob('store.*.bin.generations')]
                         assert len(packs) == 1, packs
                         subprocess.run([str(getattr(args, lane + '_probe')), 'seed', str(packs[0]),
                                         '32000', '16384'], check=True, stdout=subprocess.DEVNULL)
@@ -186,10 +234,23 @@ def main():
                             if case == 'broad':
                                 for f in sources:
                                     f.write_text(re.sub(r'\bvalue\b', 'valueBroad', sources[f].decode()))
+                            stock_hashes = None
+                            if args.stock_reference:
+                                sync_stock_sources(root, stock_root)
+                                run_stock([str(args.dart), '--suppress-analytics', 'run', 'build_runner', 'build',
+                                           '--delete-conflicting-outputs'], stock_root, env,
+                                          args.results / f'stock-{count}-{repeat}-{size}-{lane}-{case}.log', args.timeout)
+                                stock_files = list((stock_root / 'lib').glob('*.g.dart'))
+                                stock_files += list((stock_root / '.dart_tool/build/generated').rglob('*.g.part'))
+                                stock_hashes = {f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in stock_files}
+                                assert len(stock_hashes) == count * 2, len(stock_hashes)
                             row = run(lane, f'{count}-{repeat}-{size}-{lane}-{case}')
                             row.update(count=count, repeat=repeat, size=size, lane=lane, case=case)
                             hashes = outputs(root)
                             assert len(hashes) == count * 2, len(hashes)
+                            if stock_hashes is not None:
+                                assert {Path(k).name: v for k, v in hashes.items()} == stock_hashes
+                                row['stock_byte_identical'] = True
                             key = count, case
                             if case in ('one-file', 'broad'):
                                 assert hashes != expected[count, 'clean'], (count, case)
@@ -201,6 +262,8 @@ def main():
                             print(count, size, lane, case, round(row['elapsed_s'], 4), flush=True)
         finally:
             reset_sources()
+            if stock_root is not None and stock_workspace.exists():
+                shutil.rmtree(stock_workspace)
     summary = []
     for count in args.counts:
         for size in ('empty', 'small', 'large'):

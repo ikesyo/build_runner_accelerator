@@ -70,8 +70,14 @@ void main(List<String> args) {
   if (phase == 'get' || phase == 'write') {
     store.entryCount;
   }
-  final metadataOnly = File('$path.index').existsSync();
-  final indexPath = metadataOnly ? '$path.index' : path;
+  var dataPath = path;
+  final pointer = File('$path.generations/current');
+  if (pointer.existsSync()) {
+    final name = ascii.decode(pointer.readAsBytesSync().sublist(0, 32));
+    dataPath = '$path.generations/$name/data';
+  }
+  final metadataOnly = File('$dataPath.index').existsSync();
+  final indexPath = metadataOnly ? '$dataPath.index' : dataPath;
   final indexBytes = phase == 'index-only'
       ? File(indexPath).readAsBytesSync()
       : null;
@@ -124,7 +130,7 @@ void main(List<String> args) {
         result += got.length;
       }
     case 'read':
-      final file = File(path).openSync();
+      final file = File(dataPath).openSync();
       // Sequential value reads from the data layout, excluding checksums/index.
       for (var i = 0; i < count; i++) {
         final header = ByteData.sublistView(file.readSync(8));

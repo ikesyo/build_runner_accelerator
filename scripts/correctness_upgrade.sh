@@ -138,7 +138,7 @@ old = cache/'byte_store'/'per-key-v1'/'old-fingerprint'/'ab'/'ab.linked'
 assert list((cache/'byte_store'/'per-key-v1').rglob('*.linked')) == [old]
 assert old.read_bytes() == b'old-cache-sentinel'
 root = cache/'dep_parse'
-assert list(root.glob('v3-*/store.bin'))
+assert list(root.glob('v3-*/store.bin.generations/*/data'))
 assert not list(root.glob('per-key-v1-*/store.bin'))
 assert sorted(str(p.relative_to(root)) for p in root.rglob('*.json')) == [
     'per-key-v1-old/key.json', 'v1-old/key.json',
