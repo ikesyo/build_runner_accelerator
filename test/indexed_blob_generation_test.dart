@@ -6,6 +6,36 @@ import 'dart:typed_data';
 import 'package:build_runner_accelerator/src/indexed_blob_store.dart';
 import 'package:test/test.dart';
 
+final class RemovedLeaseFile implements File {
+  RemovedLeaseFile(this.file, {this.permissionDenied = false});
+  final File file;
+  final bool permissionDenied;
+  bool deleteAttempted = false;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnsupportedError('${invocation.memberName}');
+
+  @override
+  RandomAccessFile openSync({FileMode mode = FileMode.read}) =>
+      file.openSync(mode: mode);
+
+  @override
+  void deleteSync({bool recursive = false}) {
+    deleteAttempted = true;
+    if (permissionDenied) {
+      throw FileSystemException(
+        'Access denied',
+        file.path,
+        const OSError('', 13),
+      );
+    }
+    // Model the owner removing its lease after the inactive-lock probe.
+    file.deleteSync();
+    file.deleteSync();
+  }
+}
+
 final class Peer {
   Peer(this.process, this.lines, this.errors);
   final Process process;
@@ -78,6 +108,43 @@ void main() {
   tearDown(() => directory.deleteSync(recursive: true));
   List<Directory> generations() =>
       Directory('$path.generations').listSync().whereType<Directory>().toList();
+
+  for (final permissionDenied in [false, true]) {
+    test(
+      'lease pruning ${permissionDenied ? 'retains access errors' : 'tolerates concurrent removal'}',
+      () {
+        final writer = IndexedBlobStore(path);
+        expect(writer.put('saved', Uint8List.fromList([42])), isTrue);
+        writer.close();
+        final lease = File('${generations().single.path}/lease-0-race')
+          ..writeAsStringSync('');
+        final raced = RemovedLeaseFile(
+          lease,
+          permissionDenied: permissionDenied,
+        );
+        final reader = IndexedBlobStore(path);
+        addTearDown(reader.close);
+        IOOverrides.runZoned(
+          () {
+            expect(reader.get('saved'), permissionDenied ? isNull : [42]);
+            expect(raced.deleteAttempted, isTrue);
+            if (!permissionDenied) {
+              expect(reader.put('next', Uint8List.fromList([43])), isTrue);
+              expect(reader.get('next'), [43]);
+            }
+          },
+          createFile: (name) =>
+              name == lease.path ? raced : Zone.root.run(() => File(name)),
+        );
+        expect(lease.existsSync(), permissionDenied);
+        if (permissionDenied) {
+          lease.deleteSync();
+          reader.refresh();
+          expect(reader.get('saved'), [42]);
+        }
+      },
+    );
+  }
 
   test(
     'distinct keys and repeated updates keep saving across many rollovers',

@@ -305,7 +305,11 @@ final class IndexedBlobStore {
         case _LeaseState.unknown:
           return false;
         case _LeaseState.inactive:
-          File(entity.path).deleteSync();
+          try {
+            File(entity.path).deleteSync();
+          } on PathNotFoundException {
+            // The owner can remove its released lease outside control.
+          }
         case _LeaseState.live:
           break;
       }
