@@ -22,7 +22,7 @@ import time
 
 
 def wait_for_process(process, timeout):
-    """Reap the isolated frontend with wait4; kill its group on a deadline."""
+    """Reap an isolated command with wait4; kill its group on a deadline."""
     expired = threading.Event()
 
     def kill_group():
@@ -61,6 +61,16 @@ def clear_graph(root):
         f.unlink()
 
 
+def run_stock(command, cwd, env, log, timeout):
+    """Log stock setup/build output and bound the whole process group."""
+    with log.open('wb') as output:
+        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=output,
+                                   stderr=subprocess.STDOUT, start_new_session=True)
+        wait_for_process(process, timeout)
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, command)
+
+
 def sync_stock_sources(root, stock_root):
     """Copy inputs only; stock and native must never share generated outputs."""
     shutil.copytree(root / 'lib', stock_root / 'lib', dirs_exist_ok=True,
@@ -96,7 +106,7 @@ def main():
     p.add_argument('--repeats', type=int, default=5)
     p.add_argument('--jobs', type=int, default=4)
     p.add_argument('--timeout', type=float, default=300,
-                   help='Maximum seconds per frontend run (default: 300).')
+                   help='Maximum seconds per frontend run or stock command (default: 300).')
     p.add_argument('--counts', type=int, nargs='+', default=[10, 500])
     args = p.parse_args()
     if args.repeats < 1 or args.jobs < 1:
@@ -149,11 +159,9 @@ def main():
         stock_root = None
         if args.stock_reference:
             stock_root = prepare_stock_workspace(repo, root, stock_workspace)
-            setup = subprocess.run([str(args.dart), '--suppress-analytics', 'pub', 'get',
-                                    '--offline', '--enforce-lockfile'], cwd=stock_root,
-                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            (args.results / f'stock-{count}-pub-get.log').write_bytes(setup.stdout)
-            setup.check_returncode()
+            run_stock([str(args.dart), '--suppress-analytics', 'pub', 'get',
+                       '--offline', '--enforce-lockfile'], stock_root, env,
+                      args.results / f'stock-{count}-pub-get.log', args.timeout)
             assert (stock_root / 'pubspec.lock').read_bytes() == (root / 'pubspec.lock').read_bytes()
         def reset_sources():
             for f, content in sources.items(): f.write_bytes(content)
@@ -229,11 +237,9 @@ def main():
                             stock_hashes = None
                             if args.stock_reference:
                                 sync_stock_sources(root, stock_root)
-                                stock = subprocess.run([str(args.dart), '--suppress-analytics', 'run', 'build_runner', 'build',
-                                                        '--delete-conflicting-outputs'], cwd=stock_root, env=env,
-                                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                                (args.results / f'stock-{count}-{repeat}-{size}-{lane}-{case}.log').write_bytes(stock.stdout)
-                                stock.check_returncode()
+                                run_stock([str(args.dart), '--suppress-analytics', 'run', 'build_runner', 'build',
+                                           '--delete-conflicting-outputs'], stock_root, env,
+                                          args.results / f'stock-{count}-{repeat}-{size}-{lane}-{case}.log', args.timeout)
                                 stock_files = list((stock_root / 'lib').glob('*.g.dart'))
                                 stock_files += list((stock_root / '.dart_tool/build/generated').rglob('*.g.part'))
                                 stock_hashes = {f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in stock_files}

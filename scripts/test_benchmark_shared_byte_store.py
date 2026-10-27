@@ -10,10 +10,39 @@ import unittest
 from unittest.mock import patch
 
 from benchmark_shared_byte_store import (clear_graph, prepare_stock_workspace,
-                                         sync_stock_sources, wait_for_process)
+                                         run_stock, sync_stock_sources, wait_for_process)
 
 
 class BenchmarkLifecycleTest(unittest.TestCase):
+    def test_stock_success_and_failure_preserve_logs_and_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / 'stock.log'
+            for status in (0, 7):
+                command = [sys.executable, '-c',
+                           f'import sys; print("stdout"); print("stderr", file=sys.stderr); exit({status})']
+                if status:
+                    with self.assertRaises(subprocess.CalledProcessError) as error:
+                        run_stock(command, root, os.environ, log, 5)
+                    self.assertEqual(error.exception.returncode, status)
+                else:
+                    run_stock(command, root, os.environ, log, 5)
+                self.assertEqual(set(log.read_text().splitlines()), {'stdout', 'stderr'})
+
+    def test_stock_timeout_kills_workers_and_retains_log(self):
+        code = ('import os, time\n'
+                'if os.fork() == 0:\n'
+                ' print(os.getpid(), flush=True)\n'
+                'time.sleep(60)\n')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / 'stock.log'
+            start = time.monotonic()
+            with self.assertRaises(subprocess.TimeoutExpired):
+                run_stock([sys.executable, '-c', code], root, os.environ, log, 0.5)
+            self.assertLess(time.monotonic() - start, 5)
+            self._assert_worker_stopped(int(log.read_text()))
+
     def test_stock_workspace_shares_inputs_but_never_generated_outputs(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -87,17 +116,20 @@ class BenchmarkLifecycleTest(unittest.TestCase):
             self.assertEqual(process.returncode, -signal.SIGKILL)
             with self.assertRaises(ChildProcessError):
                 os.waitpid(process.pid, os.WNOHANG)
-            # An orphan may briefly remain as a zombie awaiting init's reap.
-            state = Path(f'/proc/{worker}/stat')
-            for _ in range(100):
-                try:
-                    if state.read_text().split(') ')[1].split()[0] == 'Z':
-                        break
-                except (FileNotFoundError, ProcessLookupError):
+            self._assert_worker_stopped(worker)
+
+    def _assert_worker_stopped(self, worker):
+        # An orphan may briefly remain as a zombie awaiting init's reap.
+        state = Path(f'/proc/{worker}/stat')
+        for _ in range(100):
+            try:
+                if state.read_text().split(') ')[1].split()[0] == 'Z':
                     break
-                time.sleep(0.01)
-            else:
-                self.fail('worker survived the frontend timeout')
+            except (FileNotFoundError, ProcessLookupError):
+                break
+            time.sleep(0.01)
+        else:
+            self.fail('worker survived the command timeout')
 
     def test_deadline_handles_proc_entry_disappearing_during_read(self):
         # procfs can return ESRCH after open succeeds if init reaps the worker
