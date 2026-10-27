@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:build_runner_accelerator/src/indexed_blob_store.dart';
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 final class RemovedLeaseFile implements File {
@@ -105,7 +106,19 @@ void main() {
     directory = Directory.systemTemp.createTempSync('blob-generations-');
     path = '${directory.path}/store';
   });
-  tearDown(() => directory.deleteSync(recursive: true));
+  tearDown(() async {
+    await retryRecovery(() {
+      try {
+        directory.deleteSync(recursive: true);
+        return true;
+      } on PathAccessException catch (error) {
+        // Process termination can leave a transient Windows sharing violation.
+        // Persistent handles and every other deletion error must still fail.
+        if (!Platform.isWindows || error.osError?.errorCode != 32) rethrow;
+        return false;
+      }
+    });
+  });
   List<Directory> generations() =>
       Directory('$path.generations').listSync().whereType<Directory>().toList();
 
@@ -133,8 +146,9 @@ void main() {
               expect(reader.get('next'), [43]);
             }
           },
-          createFile: (name) =>
-              name == lease.path ? raced : Zone.root.run(() => File(name)),
+          createFile: (name) => p.equals(name, lease.path)
+              ? raced
+              : Zone.root.run(() => File(name)),
         );
         expect(lease.existsSync(), permissionDenied);
         if (permissionDenied) {
