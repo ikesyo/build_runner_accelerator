@@ -113,6 +113,9 @@ struct PackageConfigEntry {
 }
 
 impl Workspace {
+    /// Begin a preparation unit. Reload at dependency/configuration boundaries
+    /// (including watch cycles); pass this Workspace to compiler preparation
+    /// within the unit so the runner copy is prepared and fully validated once.
     pub fn load(root: PathBuf) -> io::Result<Self> {
         let root = canonicalize(root)?;
         let root_package = package_name(&root.join("pubspec.yaml"))?;

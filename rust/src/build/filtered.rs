@@ -169,7 +169,7 @@ pub(super) fn run(
         if pool.is_none() {
             let worker = worker_executable(options, config)?;
             owned_pool = Some(WorkerPool::start(
-                &workspace.root,
+                workspace,
                 options.dart_binary.as_deref().unwrap_or("dart"),
                 &worker,
                 options.jobs,
@@ -184,7 +184,7 @@ pub(super) fn run(
         // committed by a later successful build. Drain it before any operation
         // on the resident pool can fail.
         drop(active.take_dep_graph());
-        active.prepare_for_filtered_roots(&workspace.root, dirty_roots.len())?;
+        active.prepare_for_filtered_roots(workspace, dirty_roots.len())?;
         active.set_retained_output_guard(retained_output_guard);
         active.initialize(
             workspace,

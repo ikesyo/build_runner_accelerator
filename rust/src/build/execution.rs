@@ -88,7 +88,7 @@ pub(super) fn run(
         let phase_count = build_config.phase_count();
         let mut owned_pool = if worker_pool.is_none() {
             Some(WorkerPool::start(
-                &workspace.root,
+                workspace,
                 dart_binary,
                 &worker_command,
                 options.jobs,

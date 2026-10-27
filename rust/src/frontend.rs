@@ -417,7 +417,7 @@ fn generate_manifest(
                     if let Ok(source) = fs::read(worker_entrypoint) {
                         early_source = Some(source);
                         early_compile = early_worker_aot_compile(
-                            &workspace.root,
+                            workspace,
                             dart_binary,
                             &worker_entrypoint.to_string_lossy(),
                             readiness.as_deref(),
@@ -505,7 +505,7 @@ fn generate_manifest(
                         {
                             early_source = fs::read(worker_entrypoint).ok();
                             early_compile = early_worker_aot_compile(
-                                &workspace.root,
+                                workspace,
                                 dart_binary,
                                 &worker_entrypoint.to_string_lossy(),
                                 readiness.as_deref(),
@@ -612,7 +612,7 @@ pub(crate) fn run_aot_cache_key(options: &Options) -> io::Result<()> {
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     println!(
         "{}",
-        worker_aot_cache_key(&workspace.root, dart_binary, &worker)?
+        worker_aot_cache_key(&workspace, dart_binary, &worker)?
     );
     Ok(())
 }
@@ -635,11 +635,11 @@ pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
     let analysis_prewarm = analysis_prewarm_enabled()
         .then(|| start_analysis_prewarm(&workspace.root, dart_binary))
         .flatten();
-    let artifact = prewarm_worker_aot(&workspace.root, dart_binary, &worker)?;
+    let artifact = prewarm_worker_aot(&workspace, dart_binary, &worker)?;
     if let Some(analysis_prewarm) = analysis_prewarm {
         analysis_prewarm.wait_for_children();
     }
-    let cache_key = worker_aot_cache_key(&workspace.root, dart_binary, &worker)?;
+    let cache_key = worker_aot_cache_key(&workspace, dart_binary, &worker)?;
     println!("AOT prewarm ready: {}", artifact.display());
     println!("AOT cache key: {cache_key}");
     Ok(())

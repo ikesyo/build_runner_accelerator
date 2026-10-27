@@ -53,7 +53,9 @@ struct AotMetadata {
     dependencies: BTreeMap<String, String>,
 }
 
-/// Select the worker launch artifact.
+/// Select the worker launch artifact using this build's prepared resolution.
+/// Callers load a fresh Workspace at command/watch configuration boundaries;
+/// AOT helpers must not reload it within that preparation unit.
 ///
 /// The launcher requests a synchronous AOT worker for one-shot commands and
 /// a background compile for `watch` by default. The request can be disabled,
@@ -61,18 +63,19 @@ struct AotMetadata {
 /// path takes precedence over every other mode.
 ///
 pub(crate) fn resolve_worker_artifact(
-    root: &Path,
+    workspace: &Workspace,
     dart_binary: &str,
     worker_executable: &str,
     auto: bool,
 ) -> io::Result<WorkerArtifact> {
+    let root = &workspace.root;
     if let Some(aot) = configured_worker_aot()? {
         return Ok(WorkerArtifact::Aot(aot));
     }
     if auto && is_dart_source(worker_executable) {
         match aot_request() {
             AotRequest::Force => {
-                let aot = prepare_worker_aot(root, dart_binary, worker_executable)?;
+                let aot = prepare_worker_aot(workspace, dart_binary, worker_executable)?;
                 return Ok(WorkerArtifact::Aot(aot));
             }
             AotRequest::Synchronous => {
@@ -81,7 +84,7 @@ pub(crate) fn resolve_worker_artifact(
                 if let Some(kernel) = configured_worker_kernel()? {
                     return Ok(WorkerArtifact::Kernel(kernel));
                 }
-                match prepare_worker_aot(root, dart_binary, worker_executable) {
+                match prepare_worker_aot(workspace, dart_binary, worker_executable) {
                     Ok(aot) => return Ok(WorkerArtifact::Aot(aot)),
                     Err(error) => {
                         eprintln!(
@@ -96,7 +99,7 @@ pub(crate) fn resolve_worker_artifact(
                 if let Some(kernel) = configured_worker_kernel()? {
                     return Ok(WorkerArtifact::Kernel(kernel));
                 }
-                match prepare_aot_context(root, dart_binary, worker_executable)
+                match prepare_aot_context(workspace, dart_binary, worker_executable)
                     .and_then(|context| {
                         if let Some(aot) = current_aot_from_context(&context)? {
                             return Ok(Some(aot));
@@ -148,10 +151,11 @@ pub(crate) fn resolve_worker_artifact(
 }
 
 pub(crate) fn worker_aot_cache_key(
-    root: &Path,
+    workspace: &Workspace,
     dart_binary: &str,
     worker_executable: &str,
 ) -> io::Result<String> {
+    let root = &workspace.root;
     let worker_path = absolute_worker_path(root, Path::new(worker_executable))?;
     if !is_dart_source(worker_executable) {
         return Err(io::Error::new(
@@ -163,12 +167,11 @@ pub(crate) fn worker_aot_cache_key(
         ));
     }
     let sdk_root = dart_sdk_root(dart_binary)?;
-    let workspace = Workspace::load(root.to_path_buf())?;
-    aot_cache_key(&workspace, &worker_path, &sdk_root)
+    aot_cache_key(workspace, &worker_path, &sdk_root)
 }
 
 pub(crate) fn prewarm_worker_aot(
-    root: &Path,
+    workspace: &Workspace,
     dart_binary: &str,
     worker_executable: &str,
 ) -> io::Result<PathBuf> {
@@ -178,7 +181,7 @@ pub(crate) fn prewarm_worker_aot(
             "AOT prewarm requires a Dart worker source",
         ));
     }
-    prepare_worker_aot(root, dart_binary, worker_executable)
+    prepare_worker_aot(workspace, dart_binary, worker_executable)
 }
 
 /// Starts the synchronous worker AOT compile on a background thread while the
@@ -191,7 +194,7 @@ pub(crate) fn prewarm_worker_aot(
 /// `prepare_worker_aot` invocation: temp files are named after the process id
 /// and two concurrent compiles in one process would clobber each other.
 pub(crate) fn early_worker_aot_compile(
-    root: &Path,
+    workspace: &Workspace,
     dart_binary: &str,
     worker_executable: &str,
     readiness: Option<&Path>,
@@ -202,7 +205,9 @@ pub(crate) fn early_worker_aot_compile(
     if !early_worker_aot_enabled() {
         return None;
     }
-    let root = root.to_path_buf();
+    // The thread is joined by frontend preparation before this unit ends.
+    // Clone the validated workspace, never carry it into the detached helper.
+    let workspace = workspace.clone();
     let dart_binary = dart_binary.to_string();
     let worker_executable = worker_executable.to_string();
     let readiness = readiness.map(Path::to_path_buf);
@@ -211,8 +216,9 @@ pub(crate) fn early_worker_aot_compile(
         // A panic must also settle the invocation-local readiness marker.
         // Otherwise the Dart generator can wait the full readiness timeout
         // before it falls back to the source probe.
-        let result =
-            catch_worker_aot_panic(|| prepare_worker_aot(&root, &dart_binary, &worker_executable));
+        let result = catch_worker_aot_panic(|| {
+            prepare_worker_aot(&workspace, &dart_binary, &worker_executable)
+        });
         if let Some(readiness) = readiness {
             let message = match (&result, &source) {
                 (Ok(path), Some(source))
@@ -525,14 +531,14 @@ struct AotContext {
 }
 
 fn prepare_aot_context(
-    root: &Path,
+    workspace: &Workspace,
     dart_binary: &str,
     worker_executable: &str,
 ) -> io::Result<AotContext> {
+    let root = &workspace.root;
     let worker_path = absolute_worker_path(root, Path::new(worker_executable))?;
     let sdk_root = dart_sdk_root(dart_binary)?;
-    let workspace = Workspace::load(root.to_path_buf())?;
-    let cache_key = aot_cache_key(&workspace, &worker_path, &sdk_root)?;
+    let cache_key = aot_cache_key(workspace, &worker_path, &sdk_root)?;
     let aot_sdk_root = worker_path
         .parent()
         .ok_or_else(|| io::Error::other("worker entrypoint has no parent directory"))?
@@ -568,7 +574,7 @@ fn prepare_aot_context(
     let depfile_path = PathBuf::from(format!("{}.d", aot_path.display()));
     let sdk_metadata_path = PathBuf::from(format!("{}.sdk", aot_path.display()));
     Ok(AotContext {
-        workspace,
+        workspace: workspace.clone(),
         sdk_root,
         worker_path,
         cache_key,
@@ -597,18 +603,19 @@ fn current_aot_from_context(context: &AotContext) -> io::Result<Option<PathBuf>>
 /// Script workers are deliberately treated as current so a watch session does
 /// not switch to an AOT worker that finished compiling after the session began.
 pub(crate) fn pinned_worker_artifact_is_current(
-    root: &Path,
+    workspace: &Workspace,
     dart_binary: &str,
     worker_executable: &str,
     artifact: &WorkerArtifact,
 ) -> io::Result<bool> {
+    let root = &workspace.root;
     match artifact {
         WorkerArtifact::Script => Ok(true),
         WorkerArtifact::Aot(path) => {
             if let Some(configured) = configured_worker_aot()? {
                 return Ok(configured.as_path() == path.as_path());
             }
-            let context = prepare_aot_context(root, dart_binary, worker_executable)?;
+            let context = prepare_aot_context(workspace, dart_binary, worker_executable)?;
             Ok(current_aot_from_context(&context)?
                 .as_ref()
                 .is_some_and(|current| current.as_path() == path.as_path()))
@@ -629,7 +636,7 @@ pub(crate) fn pinned_worker_artifact_is_current(
 }
 
 pub(crate) fn background_worker_aot_if_ready(
-    root: &Path,
+    workspace: &Workspace,
     dart_binary: &str,
     worker_executable: &str,
 ) -> io::Result<Option<PathBuf>> {
@@ -641,16 +648,16 @@ pub(crate) fn background_worker_aot_if_ready(
     if configured_worker_aot()?.is_some() || configured_worker_kernel()?.is_some() {
         return Ok(None);
     }
-    let context = prepare_aot_context(root, dart_binary, worker_executable)?;
+    let context = prepare_aot_context(workspace, dart_binary, worker_executable)?;
     current_aot_from_context(&context)
 }
 
 fn prepare_worker_aot(
-    root: &Path,
+    workspace: &Workspace,
     dart_binary: &str,
     worker_executable: &str,
 ) -> io::Result<PathBuf> {
-    let context = prepare_aot_context(root, dart_binary, worker_executable)?;
+    let context = prepare_aot_context(workspace, dart_binary, worker_executable)?;
     if let Some(aot) = current_aot_from_context(&context)? {
         return Ok(aot);
     }
@@ -1993,19 +2000,6 @@ mod tests {
     }
 
     #[test]
-    fn pinned_script_worker_stays_current_when_aot_may_finish() {
-        assert!(
-            pinned_worker_artifact_is_current(
-                Path::new("unused"),
-                "unused",
-                "unused.dart",
-                &WorkerArtifact::Script,
-            )
-            .unwrap()
-        );
-    }
-
-    #[test]
     fn background_lock_is_single_flight() {
         let path = std::env::temp_dir().join(format!(
             "build-runner-accelerator-lock-{}",
@@ -2073,6 +2067,16 @@ mod tests {
             depfile_path: root.join("aot-sdk/bin/worker.d"),
             sdk_metadata_path: root.join("aot-sdk/bin/worker.sdk"),
         };
+        // A script stays pinned even if an AOT compile finishes mid-session.
+        assert!(
+            pinned_worker_artifact_is_current(
+                &context.workspace,
+                "unused",
+                "unused.dart",
+                &WorkerArtifact::Script,
+            )
+            .unwrap()
+        );
         let lock_path = root.join(super::AOT_COMPILE_LOCK_NAME);
         assert!(acquire_background_aot_lock(&lock_path).unwrap());
         let deadline = std::time::Instant::now();
