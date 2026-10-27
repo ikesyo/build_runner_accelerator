@@ -20,9 +20,9 @@ import 'indexed_blob_store.dart';
 /// `AssetDeps` by `sha256(assetId + content)` so later workers and later
 /// builds reuse it instead of re-parsing.
 ///
-/// Entries live in one packed file per SDK under the shared
-/// accelerator cache directory (`v3-<sdk>/store.bin`), read through an in-memory
-/// offset index — one metadata scan per worker instead of ~900 individual file
+/// Entries live in bounded pack generations per SDK under the shared
+/// accelerator cache directory (`v3-<sdk>/store.bin.generations`), read through
+/// an in-memory offset index — one metadata scan per worker instead of ~900 individual file
 /// opens during the dep walk. The store is namespaced by the running SDK
 /// version because directive parsing is grammar-dependent. Because the key
 /// binds the exact content, a stale entry can never be selected: any content

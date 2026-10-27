@@ -9,10 +9,50 @@ import time
 import unittest
 from unittest.mock import patch
 
-from benchmark_shared_byte_store import clear_graph, wait_for_process
+from benchmark_shared_byte_store import (clear_graph, prepare_stock_workspace,
+                                         sync_stock_sources, wait_for_process)
 
 
 class BenchmarkLifecycleTest(unittest.TestCase):
+    def test_stock_workspace_shares_inputs_but_never_generated_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            repo = base / 'repo'
+            root = repo / 'fixtures/app'
+            (repo / 'lib').mkdir(parents=True)
+            (repo / 'pubspec.yaml').write_text('name: accelerator\n')
+            (repo / 'lib/worker.dart').write_text('// worker\n')
+            (root / 'lib').mkdir(parents=True)
+            (root / 'pubspec.yaml').write_text('path: ../..\n')
+            (root / 'pubspec.lock').write_text('locked\n')
+            (root / 'lib/model.dart').write_text('source\n')
+            (root / 'lib/model.g.dart').write_text('native output\n')
+            native_part = root / '.dart_tool/build_runner_accelerator/cache/model.g.part'
+            native_part.parent.mkdir(parents=True)
+            native_part.write_text('native part\n')
+
+            workspace = base / 'stock-workspace'
+            stock = prepare_stock_workspace(repo, root, workspace)
+            self.assertEqual(stock.parent.parent, workspace)
+            self.assertEqual((stock / 'pubspec.lock').read_text(), 'locked\n')
+            self.assertEqual((stock / 'lib/model.dart').read_text(), 'source\n')
+            self.assertFalse((stock / 'lib/model.g.dart').exists())
+            self.assertFalse((stock / '.dart_tool').exists())
+
+            (stock / 'lib/model.g.dart').write_text('stock output\n')
+            (root / 'lib/model.dart').write_text('edited source\n')
+            sync_stock_sources(root, stock)
+            self.assertEqual((stock / 'lib/model.dart').read_text(), 'edited source\n')
+            self.assertEqual((stock / 'lib/model.g.dart').read_text(), 'stock output\n')
+            self.assertEqual((root / 'lib/model.g.dart').read_text(), 'native output\n')
+            self.assertEqual(native_part.read_text(), 'native part\n')
+
+    def test_stock_workspace_cannot_be_nested_in_native_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ValueError, 'outside the native workspace'):
+                prepare_stock_workspace(root, root, root / 'lib/stock')
+
     def test_completion_preserves_status_and_resources(self):
         process = subprocess.Popen(
             [sys.executable, '-c', 'sum(i * i for i in range(100000)); exit(7)'],

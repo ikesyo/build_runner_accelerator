@@ -50,7 +50,9 @@ void main() {
   });
 
   test('cache write failure returns caller bytes and read remains a miss', () {
-    Directory(p.join(dir.path, 'store.v2.bin')).createSync();
+    File(
+      p.join(dir.path, 'store.v2.bin.generations'),
+    ).writeAsStringSync('blocked');
     final store = PackedAnalysisByteStore(dir.path);
     addTearDown(store.close);
     expect(store.putGet('ab123.resolved', value), value);

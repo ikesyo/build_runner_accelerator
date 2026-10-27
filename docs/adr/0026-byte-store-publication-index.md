@@ -1,5 +1,9 @@
 # ADR 0026: Publish byte-store entries through a persistent metadata index
 
+Generation ownership and reclamation are superseded by
+[ADR 0044](0044-bounded-shared-cache-generations.md); record publication and
+recovery within each pack remain unchanged.
+
 The per-key opt-out described below is removed by
 [ADR 0030](0030-compatibility-cleanup-and-disposable-state.md). The analyzer
 byte store is packed-only; BYTE_STORE=0 remains the cache-disable control.

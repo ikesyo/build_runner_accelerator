@@ -5,7 +5,10 @@ import 'dart:typed_data';
 import 'package:build_runner_accelerator/src/indexed_blob_store.dart';
 
 Future<void> main(List<String> args) async {
-  final store = IndexedBlobStore(args[0]);
+  final store = IndexedBlobPack(
+    args[0],
+    maxRecords: args.length > 2 ? int.parse(args[2]) : 65536,
+  );
   // All processes index the empty file before any process starts writing.
   store.get('prime');
   stdout.writeln('ready');
@@ -20,6 +23,7 @@ Future<void> main(List<String> args) async {
         var stored = false;
         for (var retry = 0; retry < 1000 && !stored; retry++) {
           stored = store.put(key, value);
+          if (!stored && args.length > 2) return;
           if (!stored)
             await Future<void>.delayed(const Duration(milliseconds: 1));
         }
