@@ -31,16 +31,42 @@ class BenchmarkLifecycleTest(unittest.TestCase):
 
     def test_stock_timeout_kills_workers_and_retains_log(self):
         code = ('import os, time\n'
+                'time.sleep(0.75)\n'  # Startup deliberately exceeds the kill deadline.
                 'if os.fork() == 0:\n'
                 ' print(os.getpid(), flush=True)\n'
                 'time.sleep(60)\n')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             log = root / 'stock.log'
-            start = time.monotonic()
-            with self.assertRaises(subprocess.TimeoutExpired):
-                run_stock([sys.executable, '-c', code], root, os.environ, log, 0.5)
-            self.assertLess(time.monotonic() - start, 5)
+
+            def wait_after_ready(process, timeout):
+                try:
+                    ready_by = time.monotonic() + 10
+                    while not log.read_text().endswith('\n'):
+                        if time.monotonic() >= ready_by:
+                            self.fail('stock worker did not report readiness')
+                        time.sleep(0.01)
+                except BaseException:
+                    # Readiness failures must not leave the test process group.
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait(timeout=5)
+                    raise
+                start = time.monotonic()
+                try:
+                    return wait_for_process(process, timeout)
+                finally:
+                    self.assertLess(time.monotonic() - start, 5)
+
+            # Keep production startup inside its deadline; only this test
+            # waits for the flushed PID before exercising the real watchdog.
+            with patch('benchmark_shared_byte_store.wait_for_process',
+                       side_effect=wait_after_ready) as wait:
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    run_stock([sys.executable, '-c', code], root, os.environ, log, 0.5)
+            wait.assert_called_once()
             self._assert_worker_stopped(int(log.read_text()))
 
     def test_stock_workspace_shares_inputs_but_never_generated_outputs(self):
