@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 from pathlib import Path
 import shutil
 import statistics
@@ -23,6 +24,7 @@ def main():
     parser.add_argument('--results', required=True, type=Path)
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--profiles', default='skew,balanced,inputs')
+    parser.add_argument('--diagnostics', action='store_true', help='Separate untimed worker/IPC diagnostics after each profile')
     args = parser.parse_args()
     assert args.repeat > 0
     repo = Path(__file__).resolve().parents[1]
@@ -60,6 +62,7 @@ def main():
     requested = args.profiles.split(',')
     assert all(profile in profiles for profile in requested)
     records = []
+    diagnostics = []
     metadata = {
         'dart': subprocess.check_output([str(dart), '--version'], text=True).strip(),
         'cargo': subprocess.check_output([str(cargo), '--version'], text=True).strip(),
@@ -67,6 +70,7 @@ def main():
         'cpu_quota': Path('/sys/fs/cgroup/cpu.max').read_text().strip() if Path('/sys/fs/cgroup/cpu.max').exists() else None,
         'pub_cache': env.get('PUB_CACHE'), 'native_cache': env['BUILD_RUNNER_ACCELERATOR_CACHE'],
         'worker_mode': 'JIT', 'frontend_profile': 'release', 'metrics': False,
+        'diagnostics_after_timing': args.diagnostics,
         'cache_definition': 'Untimed preparation of both implementations; retain compiler/analysis caches; clean removes native graph/generated artifacts only.',
         'stock_role': 'Untimed output reference with identical lockfiles and source bytes.',
         'binary_sha256': {name: digest(path.read_bytes()) for name, path in binaries.items()},
@@ -179,6 +183,27 @@ def main():
                     records.append(record)
                     (results / 'samples.json').write_text(json.dumps(records, indent=2) + '\n')
                     print(f'{profile_name}/{repeat}/{case}/{variant}: {elapsed:.3f}s stock-bytes=yes', flush=True)
+        if args.diagnostics:
+            for root in roots.values():
+                for path in sorted(root.rglob('*.seed')):
+                    path.write_text(f'{path.stem} untimed diagnostic edit\n')
+            run(stock_command, execution_roots['stock'], results / f'{profile_name}-diagnostic-stock.log')
+            reference = inventory(roots['stock'], stock=True, single=single)
+            for variant in binaries:
+                log = results / f'{profile_name}-diagnostic-{variant}.log'
+                history = results / f'{profile_name}-history-{variant}'
+                history.mkdir()
+                run(commands[variant], roots[variant], log,
+                    {**extra, 'BUILD_RUNNER_ACCELERATOR_METRICS': '1', 'SCHEDULER_HISTORY': str(history)})
+                assert inventory(roots[variant], single=single) == reference, 'Diagnostic bytes differ'
+                line = re.search(r'^Rust metrics: (.*)$', log.read_text(), re.MULTILINE)
+                assert line, 'Missing diagnostic worker/IPC metrics'
+                metrics = {key: int(value) for key, value in re.findall(r'(\w+)=(\d+)', line[1])}
+                starts = [json.loads(path.read_text()) for path in history.glob('*-start.json')]
+                diagnostics.append({'profile': profile_name, 'variant': variant,
+                    'stock_byte_identical': True, 'actions': len(starts), 'jobs': settings['jobs'],
+                    'worker_pids': sorted({row['pid'] for row in starts}), 'metrics': metrics})
+                (results / 'diagnostics.json').write_text(json.dumps(diagnostics, indent=2) + '\n')
     summary = []
     for profile in requested:
         for case in ['clean', 'noop', 'one-file', 'broad']:
