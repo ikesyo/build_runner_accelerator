@@ -9,6 +9,7 @@ mod results;
 pub(crate) mod shared_parts;
 mod snapshot;
 mod transaction;
+mod workspace_execution;
 
 #[cfg(test)]
 mod tests;

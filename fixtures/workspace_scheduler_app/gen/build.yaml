@@ -1,0 +1,14 @@
+builders:
+  seed:
+    import: "package:schedule_gen/builder.dart"
+    builder_factories: ["seedBuilder"]
+    build_extensions: {".seed": [".made.dart"]}
+    auto_apply: dependents
+    build_to: cache
+  summary:
+    import: "package:schedule_gen/builder.dart"
+    builder_factories: ["summaryBuilder"]
+    build_extensions: {".made.dart": [".summary"]}
+    required_inputs: [".made.dart"]
+    auto_apply: dependents
+    build_to: source

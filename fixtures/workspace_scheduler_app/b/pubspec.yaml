@@ -1,0 +1,8 @@
+name: schedule_b
+publish_to: none
+resolution: workspace
+environment:
+  sdk: ">=3.11.0 <4.0.0"
+dependencies:
+  schedule_gen:
+    path: ../gen

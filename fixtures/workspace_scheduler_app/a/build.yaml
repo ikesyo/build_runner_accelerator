@@ -1,0 +1,22 @@
+targets:
+  $default:
+    sources:
+      include: [lib/**]
+      exclude: [lib/extra.seed]
+    builders:
+      schedule_gen:seed:
+        options:
+          tag: a-seed
+      schedule_gen:summary:
+        options:
+          tag: a-summary
+  extra:
+    sources: [lib/extra.seed]
+    dependencies: [":$default"]
+    builders:
+      schedule_gen:seed:
+        options:
+          tag: extra-seed
+      schedule_gen:summary:
+        options:
+          tag: extra-summary

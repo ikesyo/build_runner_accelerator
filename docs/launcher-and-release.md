@@ -156,6 +156,10 @@ limitations; remaining work is tracked in the [roadmap](roadmap.md#compatibility
 Unavailable combinations fail before actions.
 
 Native locks every output package and keeps one graph at the workspace root.
+Independent packages can execute concurrently within a generated phase;
+`--jobs` bounds the total resident workers across the workspace. Package/target
+dependencies and phase barriers are preserved, and outputs plus graph are
+published only after all actions succeed. See [ADR 0046](adr/0046-workspace-action-scheduler.md).
 Switching between workspace and individual-package builds, or changing the set
 of output packages, requires the [state reset](compatibility-cleanup.md#safe-recovery).
 Individual-package prewarm and cache-key commands also require that reset after

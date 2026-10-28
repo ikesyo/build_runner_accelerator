@@ -1,0 +1,6 @@
+targets:
+  $default:
+    builders:
+      schedule_gen:seed:
+        options:
+          tag: helper-seed

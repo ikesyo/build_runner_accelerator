@@ -3,8 +3,9 @@ use super::asset_rpc::{
 };
 use super::client::{has_capability, is_worker_script, require_overlay_blob_capability};
 use super::pool::{
-    balanced_request_ranges, homogeneous_resolver_usage_key, remember_resolver_usage,
-    target_worker_count, validate_memory_overlay,
+    WorkspaceBatch, balanced_request_ranges, homogeneous_resolver_usage_key,
+    remember_resolver_usage, target_worker_count, validate_memory_overlay,
+    workspace_request_ranges,
 };
 use super::request::{BuildRequest, batch_blocked_assets};
 use crate::visibility::AssetVisibility;
@@ -44,6 +45,30 @@ fn requests_are_split_into_balanced_contiguous_batches() {
     );
     assert_eq!(balanced_request_ranges(3, 3), vec![(0, 1), (1, 2), (2, 3)]);
     assert_eq!(balanced_request_ranges(2, 4), vec![(0, 1), (1, 2)]);
+}
+
+#[test]
+fn workspace_leases_cover_inputs_once_within_the_global_budget() {
+    for jobs in 1..=8 {
+        for packages in 1..=jobs {
+            let batches = (0..packages)
+                .map(|index| WorkspaceBatch {
+                    package: format!("p{index}"),
+                    requests: (0..index + 3).map(|_| build_request(0, false)).collect(),
+                })
+                .collect::<Vec<_>>();
+            let ranges = workspace_request_ranges(&batches, jobs);
+            assert!(ranges.len() <= jobs);
+            for (package, batch) in batches.iter().enumerate() {
+                let covered = ranges
+                    .iter()
+                    .filter(|(index, _, _)| *index == package)
+                    .flat_map(|(_, start, end)| *start..*end)
+                    .collect::<Vec<_>>();
+                assert_eq!(covered, (0..batch.requests.len()).collect::<Vec<_>>());
+            }
+        }
+    }
 }
 
 #[test]

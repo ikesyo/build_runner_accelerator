@@ -137,6 +137,14 @@ class CopyBuilder implements Builder {
           builder['id'] == 'workspace_generator:copy',
     );
     expect(memberBuilder['is_root'], isTrue);
+    expect(
+      memberBuilder['package_dependencies'],
+      contains('workspace_generator'),
+    );
+    expect(
+      memberBuilder['target_dependencies'],
+      contains('workspace_generator:workspace_generator'),
+    );
     expect(memberBuilder['build_to'], 'source');
     expect(
       builders.where((builder) => builder['package'] == 'workspace_root'),

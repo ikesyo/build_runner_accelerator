@@ -1,0 +1,7 @@
+name: schedule_gen
+publish_to: none
+resolution: workspace
+environment:
+  sdk: ">=3.11.0 <4.0.0"
+dependencies:
+  build: any
