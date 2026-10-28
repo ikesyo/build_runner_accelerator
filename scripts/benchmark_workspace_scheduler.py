@@ -59,6 +59,10 @@ def main():
     profiles['many'] = {'jobs': 3, 'delays': {'schedule_a': 0}, 'inputs': 120}
     profiles['single-balanced'] = {'jobs': 3, 'delays': {'schedule_a': 0}, 'inputs': 120, 'single': True}
     profiles['single-inputs'] = {**profiles['inputs'], 'single': True}
+    # The reference is untimed; artificial fixture waits do not affect its
+    # output bytes. Avoid paying those waits for every clean/broad reference.
+    stock_delays = dict.fromkeys(['schedule_a', 'schedule_b', 'schedule_c'], 0)
+    stock_extra = {'SCHEDULER_DELAYS': json.dumps(stock_delays)}
     requested = args.profiles.split(',')
     assert all(profile in profiles for profile in requested)
     records = []
@@ -73,6 +77,7 @@ def main():
         'diagnostics_after_timing': args.diagnostics,
         'cache_definition': 'Untimed preparation of both implementations; retain compiler/analysis caches; clean removes native graph/generated artifacts only.',
         'stock_role': 'Untimed output reference with identical lockfiles and source bytes.',
+        'stock_artificial_delays_ms': stock_delays,
         'binary_sha256': {name: digest(path.read_bytes()) for name, path in binaries.items()},
         'profiles': {name: profiles[name] for name in requested}, 'repeat': args.repeat,
         'fixture_builder_sha256': digest((repo / 'fixtures/workspace_scheduler_app/gen/lib/builder.dart').read_bytes()),
@@ -148,7 +153,7 @@ def main():
                     for variant, binary in binaries.items()}
         extra = {'SCHEDULER_DELAYS': json.dumps(settings['delays'])}
         print(f'warming {profile_name}', flush=True)
-        run(stock_command, execution_roots['stock'], results / f'{profile_name}-stock-warm.log')
+        run(stock_command, execution_roots['stock'], results / f'{profile_name}-stock-warm.log', stock_extra)
         reference = inventory(roots['stock'], stock=True, single=single)
         for variant in binaries:
             run(commands[variant], roots[variant], results / f'{profile_name}-{variant}-warm.log', extra)
@@ -161,7 +166,7 @@ def main():
                             path.write_text(f'{path.stem} repeat {repeat} case {case}\n')
                     elif case == 'one-file':
                         (root / ('lib/input.seed' if single else 'a/lib/input.seed')).write_text(f'input repeat {repeat} case edit\n')
-                run(stock_command, execution_roots['stock'], results / f'{profile_name}-{repeat}-{case}-stock.log')
+                run(stock_command, execution_roots['stock'], results / f'{profile_name}-{repeat}-{case}-stock.log', stock_extra)
                 reference = inventory(roots['stock'], stock=True, single=single)
                 order = ['baseline', 'candidate'] if repeat % 2 == 0 else ['candidate', 'baseline']
                 for variant in order:
@@ -187,7 +192,7 @@ def main():
             for root in roots.values():
                 for path in sorted(root.rglob('*.seed')):
                     path.write_text(f'{path.stem} untimed diagnostic edit\n')
-            run(stock_command, execution_roots['stock'], results / f'{profile_name}-diagnostic-stock.log')
+            run(stock_command, execution_roots['stock'], results / f'{profile_name}-diagnostic-stock.log', stock_extra)
             reference = inventory(roots['stock'], stock=True, single=single)
             for variant in binaries:
                 log = results / f'{profile_name}-diagnostic-{variant}.log'
