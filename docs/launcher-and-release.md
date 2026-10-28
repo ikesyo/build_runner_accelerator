@@ -151,7 +151,9 @@ and must be distinct. Validated fixtures cover a normal builder and JSON Seriali
 combining and part cleanup in two members; other configurations require their
 own stock comparison. `watch`, build
 filters, output policies, named configs and `--define` are unsupported with
-`--workspace`. Unavailable combinations fail before actions.
+`--workspace`. These are accelerator limitations, not stock build_runner
+limitations; remaining work is tracked in the [roadmap](roadmap.md#compatibility).
+Unavailable combinations fail before actions.
 
 Native locks every output package and keeps one graph at the workspace root.
 Switching between workspace and individual-package builds, or changing the set
