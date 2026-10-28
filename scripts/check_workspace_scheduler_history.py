@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 import sys
 
-history, jobs, cross, same = sys.argv[1:]
+history, jobs, cross, same = sys.argv[1:5]
+ready = int(sys.argv[5]) if len(sys.argv) > 5 else 0
 jobs, cross, same = int(jobs), int(cross), int(same)
 records = [json.loads(path.read_text()) for path in Path(history).glob('*.json')]
 pairs = {}
@@ -39,4 +40,9 @@ for a in intervals:
             assert a[2] <= b[1], (a, b)
         if a[0][1] == 'seed' and b[0][1] == 'summary':
             assert a[2] <= b[1], (a, b)
+if ready:
+    a = [row for row in intervals if row[0][0] == 'schedule_a' and row[0][1] == 'seed']
+    b = next(row for row in intervals if row[0][0] == 'schedule_b' and row[0][1] == 'seed')
+    c = next(row for row in intervals if row[0][0] == 'schedule_c' and row[0][1] == 'seed')
+    assert max(row[2] for row in a) <= c[1] < b[2], (a, b, c)
 print(f'{Path(history).name}: actions={len(intervals)} peak={peak} jobs={jobs} witnesses={len(witnesses)}')

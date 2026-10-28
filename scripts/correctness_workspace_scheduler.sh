@@ -42,7 +42,7 @@ run_native() {
     build --root "$native" --dart "$dart_bin" --workspace --force-jit --jobs "$jobs"
 }
 check_history() {
-  python3 "$script_dir/check_workspace_scheduler_history.py" "$temporary/history-$1" "$2" "${3:-0}" "${4:-0}" | tee -a "$temporary/intervals.txt"
+  python3 "$script_dir/check_workspace_scheduler_history.py" "$temporary/history-$1" "$2" "${3:-0}" "${4:-0}" "${5:-0}" | tee -a "$temporary/intervals.txt"
 }
 compare() {
   local package
@@ -76,6 +76,10 @@ for jobs in 1 2 3; do
   compare "clean-$jobs"
   check_history "clean-$jobs" "$jobs" "$(( jobs > 1 ))" "$(( jobs == 3 ))"
 done
+clean_native_state
+SCHEDULER_DELAYS='{"schedule_a":200,"schedule_b":2000,"schedule_c":1800}' run_native ready-release 2
+compare ready-release
+check_history ready-release 2 1 0 1
 clean_native_state
 BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0 run_native no-shared-store 2 1
 compare no-shared-store

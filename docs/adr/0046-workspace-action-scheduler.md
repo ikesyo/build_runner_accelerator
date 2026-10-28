@@ -6,65 +6,74 @@
 
 ## Decision
 
-Run independent packages concurrently within each existing generated phase of
-`build --workspace`. Keep all normal phase barriers, and finish normal builders
-before post-process builders. Within a phase, preserve the existing execution
-order for related targets, targets in one package, and strongly connected
-components. A dependency-free wave can contain at most `--jobs` applications.
-Only applications with dirty actions participate; dependency reachability still
-includes paths through targets with no selected builders or dirty actions.
+Schedule ready actions from independent packages within each generated phase of
+`build --workspace`. Finish every normal phase before the next, and all normal
+builders before post-process builders. Preserve the established order between
+related targets, targets in one package, and strongly connected components.
 
 Emit transitive `target_dependencies` and `package_dependencies` on configured
-manifest entries, using the same official target and package graphs as phase
-ordering. Package dependencies serialize even applications of different targets
-in those packages. This is additive optimization
-metadata in manifest v11: absent metadata serializes execution. The frontend
-regenerates on-disk manifests missing these fields, so upgrading does not leave
-existing workspaces permanently serial. SCC ordinals
-alone are insufficient to establish independence. Do not infer independence
-from previous action reads or assume an unobserved read cannot occur.
+manifest entries, using the official target and package graphs. Reachability
+includes targets without selected builders or dirty actions. Package dependencies
+also serialize applications of different targets in those packages. These are
+additive fields in manifest v11. The frontend regenerates cached manifests
+missing them; directly decoded legacy manifests without this evidence remain
+serial. SCC ordinals and previous observed reads alone cannot prove independence.
 
-Use one worker pool for the whole workspace, with at most `--jobs` resident
-processes. Admit one worker per independent application before allocating spare
-workers across its inputs. Use balanced contiguous input ranges and merge results
-in stable application/input order. The ordinary single-package parallel path is
-unchanged. Without the shared analysis byte store, a workspace application uses
-one process, while independent packages can still run concurrently.
+A central controller owns readiness, staged results and the action graph. A
+configured application becomes ready when its preceding related applications in
+the phase have completed. Its inputs can use multiple workers. Completing the
+last input releases successors immediately, without waiting for unrelated
+applications. Each free worker receives one input lease; prioritize applications
+without active participants, then package affinity and remaining input count.
+This avoids fixed input partitions while retaining resident contexts where useful.
 
-Track the initialized package separately for each process. Prefer matching
-resident contexts; on reassignment, initialize that process to dispose its old
-builder, resource and resolver state. Pass options, isRoot, phase and instance
-identity from each immutable configured action. Never change the package of a
-process while it owns a running batch. The pool's single-package initialization
-signature and resolver-use hints are not shared across workspace contexts.
+Use one deferred pool with at most `--jobs` slots for the whole workspace. Dart
+processes start only when a slot receives work, and worker artifact preparation
+is shared once. The ordinary single-package parallel path is unchanged. Without
+the shared analysis byte store, an application stays on one process; independent
+packages can still run concurrently.
 
-Before every lease, hydrate the resolver with the complete current source/cache
-overlay and logical deletions, even for newly started or reassigned processes.
-Use the existing reset-overlay blob protocol and keep the blob alive until all
-threads join. The action visibility model continues to hide same/later-phase
-outputs. No peer sees a partial result from its wave.
+Each process owns one package context at a time. Reassignment initializes it to
+dispose the old builder, resource and resolver state. Options, isRoot, phase and
+instance identity remain request-local. Rust never changes a running worker's
+context. No single-package initialization signature or resolver-use hints are
+shared across workspace contexts.
 
-Join every dispatched worker on success, worker error or panic. Record results
-only after joining the wave; abort on any failed result or validation error.
-All waves share one PendingTransaction and the existing all-success publication
-and undo-recovery boundary. No intermediate output or graph is published, and no
-stock fallback is introduced.
+Take a complete source/cache overlay and logical-deletion baseline when an
+application first receives work. Its input leases share the immutable baseline:
+its own same-phase outputs are hidden, and predecessor applications are already
+complete. A later post-process application checks primary existence against the
+latest transaction, including earlier cleanup deletions. Each process resets its
+resolver when entering another application, then reuses it for subsequent input
+leases. Overlay blobs remain alive through every lease that references them.
+
+Only the controller records complete, validated action results into the shared
+PendingTransaction. Partial application results do not release dependents. On an
+observed builder error, worker exit, protocol error or panic, close admission and
+join every dispatched worker before returning. Keep each lease's baseline alive
+until its worker finishes. Publish outputs and graph only after every phase has
+succeeded, using the existing undo-recovery boundary. Introduce no stock fallback.
 
 ## Validation and limits
 
 `correctness_workspace_scheduler.sh` compares source and cache bytes with stock
-through clean/no-op/edit/broad-edit/delete/rename/failure/recovery. A real Dart
-builder rendezvous plus process-identified start/end intervals proves independent
-member overlap. Interval sweeps check jobs=1/2/3, same-package input overlap,
-dependency ordering and phase barriers. The generated-library resolver consumer,
-cross-package generated-asset read, distinct options, root/non-root options and
-whole-workspace failure snapshots exercise state isolation and publication.
-Keep `correctness_workspace.sh` and `correctness_workspace_json.sh` as separate
-compatibility checks, including AOT, post-process cleanup and scope transitions.
+through clean/no-op/edit/broad-edit/delete/rename/failure/recovery. Real builder
+rendezvous and process-identified start/end intervals verify jobs=1/2/3,
+independent-member and same-package input overlap, dependencies and phase
+barriers. A skewed case verifies that C starts after A while unrelated B is still
+running. Generated imports/constant resolution, package/target options,
+root/non-root contexts, disabled shared storage, metadata migration and worker
+exit rollback exercise state isolation and publication. Keep the existing
+workspace and JSON comparisons for AOT, cleanup and scope transitions.
 
-Scheduling uses waves, not work stealing: a slow batch can hold the next wave.
-Full-baseline resolver hydration favors correctness over minimal reset traffic.
-Builder execution must follow the asset API and declared target graph; arbitrary
-external side effects cannot be rolled back. The supported workspace subset in
-ADR 0045 is unchanged. Concurrency evidence is not a speedup measurement; any
-performance claim still requires the comparisons in ADR 0005.
+`benchmark_workspace_scheduler.py` compares native wave and ready-queue binaries
+under matched SDK/cache conditions, with stock as an untimed byte reference.
+Record clean/no-op/one-file/broad edits, repeated samples, input-delay profiles,
+worker counts and exact output equality. Separate diagnostic histories from timed
+runs. Synthetic skew measurements do not establish real-project speedups.
+
+Global phase barriers remain deliberate. Package reassignment and full-baseline
+resolver hydration still cost time; locality can compete with load balancing.
+The supported workspace subset in ADR 0045 is unchanged. Builder side effects
+outside the asset API cannot be rolled back. Larger workspaces and additional
+builder configurations require their own comparisons.

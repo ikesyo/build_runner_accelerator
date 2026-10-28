@@ -9,5 +9,9 @@ result is compared with stock too.
 
 `scripts/correctness_workspace_scheduler.sh` records action intervals outside
 the workspace, uses a builder rendezvous to prove cross-package overlap, checks
-jobs=1/2/3 and same-package input overlap, and compares stock bytes through
+jobs=1/2/3, same-package input overlap and immediate dependency release, and compares stock bytes through
 clean/no-op/edit/delete/rename/failure/recovery. No timing speedup is claimed.
+
+`scripts/benchmark_workspace_scheduler.py` compares wave and ready-queue native
+binaries on controlled skew and balanced inputs, retaining stock byte checks,
+exact commands, SDK/cache conditions and repeated clean/no-op/edit samples.

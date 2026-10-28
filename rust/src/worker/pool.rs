@@ -34,7 +34,6 @@ pub struct WorkerPool {
     retained_output_guard: bool,
     native_overlay: bool,
     initialized_workers: usize,
-    workspace_packages: Vec<Option<String>>,
     input_restrictions: BTreeMap<String, Vec<String>>,
     resolver_usage: BTreeMap<(String, String), bool>,
     retired_metrics: WorkerClientMetrics,
@@ -74,11 +73,6 @@ pub struct PoolMetrics {
     pub find_assets_results: u64,
     pub resolve_assets_requests: u64,
     pub resolve_assets_results: u64,
-}
-
-pub(crate) struct WorkspaceBatch {
-    pub(crate) package: String,
-    pub(crate) requests: Vec<BuildRequest>,
 }
 
 impl WorkerPool {
@@ -168,7 +162,6 @@ impl WorkerPool {
             retained_output_guard: false,
             native_overlay: false,
             initialized_workers: 0,
-            workspace_packages: Vec::new(),
             input_restrictions: BTreeMap::new(),
             resolver_usage: BTreeMap::new(),
             retired_metrics: WorkerClientMetrics::default(),
@@ -585,151 +578,87 @@ impl WorkerPool {
         Ok(results)
     }
 
-    /// Dispatches one dependency-free workspace wave on the shared worker
-    /// budget. Each process owns exactly one package context at a time; package
-    /// changes go through initialize, which disposes builder/resource/resolver
-    /// state. Every lease receives the complete staged baseline, including on
-    /// first initialization and after moving to another package.
-    pub(crate) fn build_workspace_batches(
+    /// Runs a bounded set of lease consumers. Dropping the controller closes
+    /// all input queues, then every running worker is joined before returning,
+    /// including on a failed build or a controller panic.
+    pub(crate) fn with_workspace_dispatch<R>(
         &mut self,
         workspace: &Workspace,
-        batches: &[WorkspaceBatch],
         phase_count: usize,
-        overlay: &BTreeMap<String, Arc<[u8]>>,
-        deleted: &BTreeSet<String>,
+        width: usize,
         visibility: &AssetVisibility,
-    ) -> io::Result<Vec<Vec<BuildResult>>> {
-        if batches.is_empty() {
-            return Ok(Vec::new());
+        run: impl FnOnce(&super::workspace::WorkspaceDispatch) -> io::Result<R>,
+    ) -> io::Result<R> {
+        use super::workspace::{WorkspaceDispatch, WorkspaceWorkerFactory, run_worker};
+        use std::sync::{OnceLock, mpsc};
+        if self.initialized.is_some() || !self.workers.is_empty() {
+            return Err(io::Error::other(
+                "workspace dispatch requires a deferred pool",
+            ));
         }
-        if self.initialized.is_some()
-            || batches.len() > self.max_jobs
-            || batches.iter().any(|batch| batch.requests.is_empty())
-        {
-            return Err(io::Error::other("invalid workspace worker wave"));
-        }
-        let request_count = batches.iter().map(|batch| batch.requests.len()).sum();
-        // With process-local analysis caches keep a package on one process.
-        let width = if shared_analysis_cache_enabled() {
-            self.max_jobs.min(request_count)
-        } else {
-            batches.len()
+        let factory = WorkspaceWorkerFactory {
+            workspace,
+            dart_binary: &self.dart_binary,
+            worker_executable: &self.worker_executable,
+            auto_worker_artifact: self.auto_worker_artifact,
+            artifact: OnceLock::new(),
+            phase_count,
+            restrictions: workspace.input_restrictions(),
+            retained_output_guard: self.retained_output_guard,
+            visibility,
         };
-        self.prepare_for_requests(workspace, width)?;
-        self.workspace_packages.resize(self.workers.len(), None);
-        let ranges = workspace_request_ranges(batches, width);
-        let mut assignments = vec![None; self.workers.len()];
-        for &(batch, start, end) in &ranges {
-            let slot = assignments
-                .iter()
-                .enumerate()
-                .position(|(slot, assigned)| {
-                    assigned.is_none()
-                        && self.workspace_packages[slot].as_deref() == Some(&batches[batch].package)
-                })
-                .or_else(|| assignments.iter().position(Option::is_none))
-                .expect("bounded worker leases");
-            assignments[slot] = Some((batch, start, end));
-        }
-        let restrictions = workspace.input_restrictions();
-        let (source_updates, cache_updates): (BTreeSet<_>, BTreeSet<_>) = overlay
-            .keys()
-            .cloned()
-            .partition(|asset| visibility.location(asset) != Some(crate::builder::BuildTo::Cache));
-        let (source_deletes, cache_deletes): (BTreeSet<_>, BTreeSet<_>) = deleted
-            .iter()
-            .cloned()
-            .partition(|asset| visibility.location(asset) != Some(crate::builder::BuildTo::Cache));
-        let blob = super::overlay_blob::OverlayBlob::create(
-            &workspace.root,
-            overlay,
-            &overlay.keys().cloned().collect(),
-        )?;
-        let updated = json!(source_updates);
-        let updated_cache = json!(cache_updates);
-        let deleted_sources = json!(source_deletes);
-        let deleted_cache = json!(cache_deletes);
-        let retained_output_guard = self.retained_output_guard;
-        let outcomes = thread::scope(|scope| {
-            let handles = self
-                .workers
-                .iter_mut()
-                .zip(&mut self.workspace_packages)
-                .zip(assignments)
-                .filter_map(|((worker, package), assignment)| {
-                    let (batch, start, end) = assignment?;
-                    let requests = &batches[batch].requests[start..end];
-                    let next_package = &batches[batch].package;
-                    let restrictions = &restrictions;
-                    let updated = &updated;
-                    let updated_cache = &updated_cache;
-                    let deleted_sources = &deleted_sources;
-                    let deleted_cache = &deleted_cache;
-                    let metadata = &blob.metadata;
-                    Some(scope.spawn(move || {
-                        let initialize = package.as_ref() != Some(next_package);
-                        let result = (|| {
-                            if initialize {
-                                worker.initialize(
-                                    &workspace.root,
-                                    next_package,
-                                    phase_count,
-                                    false,
-                                    restrictions,
-                                    retained_output_guard,
-                                )?;
-                                *package = Some(next_package.clone());
-                            }
-                            worker.reset_resolver(
-                                updated,
-                                deleted_sources,
-                                updated_cache,
-                                deleted_cache,
-                                true,
-                                metadata,
-                            )?;
-                            worker.build_batch(workspace, requests, overlay, deleted, visibility)
-                        })();
-                        (batch, start, initialize, result)
-                    }))
-                })
-                .collect::<Vec<_>>();
-            // Join every lease even when an earlier worker failed or panicked.
-            handles
+        let (result, outcomes) = thread::scope(|scope| {
+            let (completed, completions) = mpsc::channel();
+            let mut senders = Vec::new();
+            let mut handles = Vec::new();
+            for index in 0..width.max(1).min(self.max_jobs) {
+                let (sender, receiver) = mpsc::sync_channel(1);
+                senders.push(sender);
+                let completed = completed.clone();
+                let factory = &factory;
+                handles.push(scope.spawn(move || run_worker(index, factory, receiver, completed)));
+            }
+            drop(completed);
+            let dispatch = WorkspaceDispatch {
+                leases: senders,
+                completions,
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&dispatch)))
+                .unwrap_or_else(|_| Err(io::Error::other("workspace controller panicked")));
+            // Closed queues stop idle workers; running leases keep ownership of
+            // their baseline/blob until completion. No new work is admitted.
+            drop(dispatch);
+            let outcomes = handles
                 .into_iter()
                 .map(|handle| handle.join())
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (result, outcomes)
         });
-        let mut completed = Vec::new();
-        let mut first_error = None;
+        if let Some(Ok(artifact)) = factory.artifact.get() {
+            self.worker_artifact = Some(artifact.clone());
+        }
+        let mut worker_error = None;
         for outcome in outcomes {
             match outcome {
-                Ok((batch, start, initialized, result)) => {
-                    self.worker_initializes += u64::from(initialized);
-                    self.resolver_resets += 1;
-                    match result {
-                        Ok(results) => completed.push((batch, start, results)),
-                        Err(error) => {
-                            first_error.get_or_insert(error);
-                        }
+                Ok(outcome) => {
+                    self.worker_starts += outcome.starts;
+                    self.worker_initializes += outcome.initializes;
+                    self.resolver_resets += outcome.resets;
+                    if let Some(worker) = outcome.worker {
+                        self.workers.push(worker);
                     }
                 }
                 Err(_) => {
-                    first_error.get_or_insert_with(|| {
+                    worker_error.get_or_insert_with(|| {
                         io::Error::other("workspace worker thread panicked")
                     });
                 }
             }
         }
-        if let Some(error) = first_error {
-            return Err(error);
+        match (result, worker_error) {
+            (Err(error), _) | (_, Some(error)) => Err(error),
+            (Ok(value), None) => Ok(value),
         }
-        completed.sort_by_key(|(batch, start, _)| (*batch, *start));
-        let mut results = (0..batches.len()).map(|_| Vec::new()).collect::<Vec<_>>();
-        for (batch, _, values) in completed {
-            results[batch].extend(values);
-        }
-        Ok(results)
     }
 
     /// Splits requests into contiguous balanced ranges, joins every dispatched
@@ -1217,39 +1146,6 @@ pub(super) fn balanced_request_ranges(
         start = end;
     }
     ranges
-}
-
-/// Admit one lease per independent package before widening any one package.
-/// Spare leases go to the largest remaining per-worker batch, with stable ties.
-pub(super) fn workspace_request_ranges(
-    batches: &[WorkspaceBatch],
-    width: usize,
-) -> Vec<(usize, usize, usize)> {
-    let mut counts = vec![1; batches.len()];
-    for _ in batches.len()..width {
-        let Some(index) = (0..batches.len())
-            .filter(|&i| counts[i] < batches[i].requests.len())
-            .max_by_key(|&i| {
-                (
-                    batches[i].requests.len().div_ceil(counts[i]),
-                    std::cmp::Reverse(i),
-                )
-            })
-        else {
-            break;
-        };
-        counts[index] += 1;
-    }
-    batches
-        .iter()
-        .zip(counts)
-        .enumerate()
-        .flat_map(|(index, (batch, count))| {
-            balanced_request_ranges(batch.requests.len(), count)
-                .into_iter()
-                .map(move |(start, end)| (index, start, end))
-        })
-        .collect()
 }
 
 impl Drop for WorkerPool {

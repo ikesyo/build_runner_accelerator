@@ -1,65 +1,294 @@
-//! Phase barriers with bounded parallelism across independent packages.
+//! Phase barriers with a dependency-ready workspace action queue.
 use super::execution::{ExecutionInputs, ExecutionResult, execution_order};
 use super::part_directive::{
     empty_build_result, part_directive_filter_disabled, part_directive_skips,
 };
+use super::planning::PlannedActions;
 use super::results::{record_build_result, record_missing_primary_input};
 use super::transaction::PendingTransaction;
 use crate::builder::{BuilderKind, ConfiguredBuilder};
 use crate::frontend::worker_executable;
-use crate::worker::{BuildRequest, WorkerPool, WorkspaceBatch};
+use crate::graph::GraphState;
+use crate::plan::BuildSpec;
+use crate::worker::{
+    BuildRequest, WorkerPool, WorkspaceBaseline, WorkspaceDispatch, WorkspaceLease,
+    shared_analysis_cache_enabled,
+};
+use crate::workspace::Workspace;
+use std::cmp::Reverse;
 use std::io;
+use std::sync::Arc;
 
-/// Preserve the established order for related targets, every same-package
-/// application, and SCC peers. Missing reachability evidence serializes too.
+/// SCC peers, package dependencies and same-package applications retain their
+/// established order. Missing reachability evidence also serializes execution.
 fn independent(left: &ConfiguredBuilder, right: &ConfiguredBuilder) -> bool {
     left.package != right.package
         && left.target_order != right.target_order
         && left
             .package_dependencies
             .as_ref()
-            .is_some_and(|dependencies| !dependencies.contains(&right.package))
+            .is_some_and(|deps| !deps.contains(&right.package))
         && right
             .package_dependencies
             .as_ref()
-            .is_some_and(|dependencies| !dependencies.contains(&left.package))
+            .is_some_and(|deps| !deps.contains(&left.package))
         && left
             .target_dependencies
             .as_ref()
-            .is_some_and(|dependencies| !dependencies.contains(&right.target))
+            .is_some_and(|deps| !deps.contains(&right.target))
         && right
             .target_dependencies
             .as_ref()
-            .is_some_and(|dependencies| !dependencies.contains(&left.target))
+            .is_some_and(|deps| !deps.contains(&left.target))
 }
 
-pub(super) fn execution_waves(builders: &[ConfiguredBuilder], jobs: usize) -> Vec<Vec<usize>> {
-    let mut remaining = execution_order(builders);
-    let mut waves = Vec::new();
-    while let Some(&first) = remaining.first() {
-        let head = &builders[first];
-        let mut wave = Vec::new();
-        for (position, &index) in remaining.iter().enumerate() {
-            let candidate = &builders[index];
-            if candidate.definition.kind != head.definition.kind || candidate.phase != head.phase {
-                break;
-            }
-            // A predecessor stays a predecessor even if it was skipped because
-            // this wave is full or it waits on a different package.
-            if remaining[..position]
-                .iter()
-                .all(|&earlier| independent(&builders[earlier], candidate))
+fn same_phase(left: &ConfiguredBuilder, right: &ConfiguredBuilder) -> bool {
+    left.definition.kind == right.definition.kind && left.phase == right.phase
+}
+
+fn execution_dependencies(builders: &[ConfiguredBuilder]) -> Vec<Vec<usize>> {
+    let order = execution_order(builders);
+    let mut dependencies = vec![Vec::new(); builders.len()];
+    for (position, &index) in order.iter().enumerate() {
+        dependencies[index] = order[..position]
+            .iter()
+            .copied()
+            .filter(|&earlier| {
+                same_phase(&builders[earlier], &builders[index])
+                    && !independent(&builders[earlier], &builders[index])
+            })
+            .collect();
+    }
+    dependencies
+}
+
+fn execution_phases(builders: &[ConfiguredBuilder]) -> Vec<Vec<usize>> {
+    let mut phases: Vec<Vec<usize>> = Vec::new();
+    for index in execution_order(builders) {
+        if let Some(phase) = phases.last_mut()
+            && same_phase(&builders[phase[0]], &builders[index])
+        {
+            phase.push(index);
+        } else {
+            phases.push(vec![index]);
+        }
+    }
+    phases
+}
+
+struct PreparedApplication {
+    specs: Vec<BuildSpec>,
+    requests: Arc<Vec<BuildRequest>>,
+    baseline: Option<Arc<WorkspaceBaseline>>,
+}
+
+#[derive(Default)]
+struct Application {
+    prepared: Option<PreparedApplication>,
+    next: usize,
+    in_flight: usize,
+    completed: usize,
+    owner: Option<usize>,
+    done: bool,
+}
+
+struct Schedule<'a> {
+    workspace: &'a Workspace,
+    state: &'a mut GraphState,
+    plan: &'a PlannedActions,
+    dirty: &'a [BuildSpec],
+    builders: &'a [ConfiguredBuilder],
+    transaction: &'a mut PendingTransaction,
+    part_filtered_actions: &'a mut usize,
+}
+
+impl Schedule<'_> {
+    fn prepare(&mut self, index: usize) -> io::Result<PreparedApplication> {
+        let configured = &self.builders[index];
+        let mut specs = Vec::new();
+        for spec in self.dirty.iter().filter(|spec| {
+            spec.instance.target == configured.target
+                && spec.instance.builder.id == configured.definition.id
+                && spec.instance.phase == configured.phase
+        }) {
+            if let Some((build_to, _)) = self.plan.generated_output_locations.get(&spec.input)
+                && (self.transaction.deleted_overlay.contains(&spec.input)
+                    || (!self.transaction.overlay.contains_key(&spec.input)
+                        && !self.workspace.asset_exists_at(&spec.input, *build_to)?))
             {
-                wave.push(index);
-                if wave.len() == jobs.max(1) {
+                record_missing_primary_input(self.workspace, self.state, spec, self.transaction)?;
+                continue;
+            }
+            if !part_directive_filter_disabled()
+                && part_directive_skips(self.workspace, &self.transaction.overlay, spec)
+            {
+                *self.part_filtered_actions += 1;
+                record_build_result(
+                    self.workspace,
+                    self.state,
+                    spec,
+                    empty_build_result(spec),
+                    self.transaction,
+                )?;
+            } else {
+                specs.push(spec.clone());
+            }
+        }
+        let requests = Arc::new(
+            specs
+                .iter()
+                .map(|spec| BuildRequest {
+                    part_phase_index: None,
+                    builder: spec.instance.builder.id.clone(),
+                    input: spec.input.clone(),
+                    outputs: spec.outputs.clone(),
+                    options: spec.instance.options.clone(),
+                    phase: spec.instance.phase,
+                    instance_key: spec.instance.instance_key.clone(),
+                    is_root: spec.instance.is_root,
+                    post_process: spec.instance.builder.kind == BuilderKind::PostProcess,
+                    triggers: spec.instance.builder.triggers.clone(),
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        Ok(PreparedApplication {
+            specs,
+            requests,
+            baseline: None,
+        })
+    }
+
+    fn run(&mut self, dispatch: &WorkspaceDispatch) -> io::Result<()> {
+        let dependencies = execution_dependencies(self.builders);
+        let mut applications = (0..self.builders.len())
+            .map(|_| Application::default())
+            .collect::<Vec<_>>();
+        let mut running = vec![None; dispatch.worker_count()];
+        let mut packages: Vec<Option<String>> = vec![None; dispatch.worker_count()];
+        let shared_analysis = shared_analysis_cache_enabled();
+        for phase in execution_phases(self.builders) {
+            loop {
+                // Preparing a newly ready application observes complete earlier
+                // applications, including post-process deletions. Its inputs
+                // share one immutable baseline; same-phase outputs stay hidden.
+                for &index in &phase {
+                    if applications[index].prepared.is_none()
+                        && !applications[index].done
+                        && dependencies[index]
+                            .iter()
+                            .all(|&dependency| applications[dependency].done)
+                    {
+                        let prepared = self.prepare(index)?;
+                        applications[index].done = prepared.requests.is_empty();
+                        applications[index].prepared = Some(prepared);
+                    }
+                }
+                if phase.iter().all(|&index| applications[index].done) {
                     break;
+                }
+                for worker in 0..running.len() {
+                    if running[worker].is_some() {
+                        continue;
+                    }
+                    // Give an unserved ready package a participant first, then
+                    // prefer the resident package before widening other work.
+                    let selected = phase
+                        .iter()
+                        .copied()
+                        .filter(|&index| {
+                            let app = &applications[index];
+                            !app.done
+                                && app
+                                    .prepared
+                                    .as_ref()
+                                    .is_some_and(|prepared| app.next < prepared.requests.len())
+                                && (shared_analysis
+                                    || (app.in_flight == 0
+                                        && app.owner.is_none_or(|owner| owner == worker)))
+                        })
+                        .min_by_key(|&index| {
+                            let app = &applications[index];
+                            let remaining =
+                                app.prepared.as_ref().unwrap().requests.len() - app.next;
+                            (
+                                app.in_flight > 0,
+                                packages[worker].as_ref() != Some(&self.builders[index].package),
+                                Reverse(remaining),
+                                index,
+                            )
+                        });
+                    let Some(index) = selected else {
+                        continue;
+                    };
+                    let app = &mut applications[index];
+                    let prepared = app.prepared.as_mut().unwrap();
+                    if prepared.baseline.is_none() {
+                        prepared.baseline = Some(WorkspaceBaseline::new(
+                            self.workspace,
+                            &self.transaction.overlay,
+                            &self.transaction.deleted_overlay,
+                            &self.plan.visibility,
+                        )?);
+                    }
+                    let range = app.next..app.next + 1;
+                    dispatch.send(
+                        worker,
+                        WorkspaceLease {
+                            application: index,
+                            package: self.builders[index].package.clone(),
+                            requests: prepared.requests.clone(),
+                            range: range.clone(),
+                            baseline: prepared.baseline.as_ref().unwrap().clone(),
+                        },
+                    )?;
+                    app.owner.get_or_insert(worker);
+                    app.next = range.end;
+                    app.in_flight += 1;
+                    packages[worker] = Some(self.builders[index].package.clone());
+                    running[worker] = Some((index, range));
+                }
+                if running.iter().all(Option::is_none) {
+                    return Err(io::Error::other(
+                        "workspace scheduler has pending work without a runnable action",
+                    ));
+                }
+                let completed = dispatch.receive()?;
+                let lease = running
+                    .get_mut(completed.worker)
+                    .ok_or_else(|| io::Error::other("invalid workspace completion worker"))?
+                    .take();
+                if lease != Some((completed.application, completed.range.clone())) {
+                    return Err(io::Error::other(
+                        "workspace completion does not match its lease",
+                    ));
+                }
+                let results = completed.results?;
+                if results.len() != completed.range.len() {
+                    return Err(io::Error::other("workspace lease result count mismatch"));
+                }
+                self.state.resolver_dep_graph.extend(completed.dep_graph);
+                let app = &mut applications[completed.application];
+                let prepared = app.prepared.as_ref().unwrap();
+                for (spec, result) in prepared.specs[completed.range.clone()].iter().zip(results) {
+                    record_build_result(
+                        self.workspace,
+                        self.state,
+                        spec,
+                        result,
+                        self.transaction,
+                    )?;
+                }
+                app.completed += completed.range.len();
+                app.in_flight -= 1;
+                if app.completed == prepared.requests.len() {
+                    app.done = true;
+                    app.prepared = None;
                 }
             }
         }
-        remaining.retain(|index| !wave.contains(index));
-        waves.push(wave);
+        Ok(())
     }
-    waves
 }
 
 pub(super) fn run(inputs: ExecutionInputs<'_>) -> io::Result<ExecutionResult> {
@@ -73,8 +302,6 @@ pub(super) fn run(inputs: ExecutionInputs<'_>) -> io::Result<ExecutionResult> {
         retained_output_guard,
         ..
     } = inputs;
-    // Workspace admission enforces this boundary before actions. Keep it here
-    // too so a future caller cannot silently bypass the demand/replay paths.
     if build_config.builders.iter().any(|builder| {
         builder.definition.is_optional
             || builder.definition.adds_to_library
@@ -99,7 +326,7 @@ pub(super) fn run(inputs: ExecutionInputs<'_>) -> io::Result<ExecutionResult> {
             options.worker.is_none(),
         )?;
         pool.set_retained_output_guard(retained_output_guard);
-        let active_builders = build_config
+        let builders = build_config
             .builders
             .iter()
             .filter(|builder| {
@@ -111,83 +338,33 @@ pub(super) fn run(inputs: ExecutionInputs<'_>) -> io::Result<ExecutionResult> {
             })
             .cloned()
             .collect::<Vec<_>>();
-        for wave in execution_waves(&active_builders, options.jobs) {
-            let mut batches = Vec::new();
-            let mut batch_specs = Vec::new();
-            for index in wave {
-                let configured = &active_builders[index];
-                let mut runnable = Vec::new();
-                for spec in dirty.iter().filter(|spec| {
-                    spec.instance.target == configured.target
-                        && spec.instance.builder.id == configured.definition.id
-                        && spec.instance.phase == configured.phase
-                }) {
-                    if let Some((build_to, _)) = plan.generated_output_locations.get(&spec.input)
-                        && (transaction.deleted_overlay.contains(&spec.input)
-                            || (!transaction.overlay.contains_key(&spec.input)
-                                && !workspace.asset_exists_at(&spec.input, *build_to)?))
-                    {
-                        record_missing_primary_input(workspace, state, spec, &mut transaction)?;
-                        continue;
-                    }
-                    if !part_directive_filter_disabled()
-                        && part_directive_skips(workspace, &transaction.overlay, spec)
-                    {
-                        part_filtered_actions += 1;
-                        record_build_result(
-                            workspace,
-                            state,
-                            spec,
-                            empty_build_result(spec),
-                            &mut transaction,
-                        )?;
-                    } else {
-                        runnable.push(spec.clone());
-                    }
+        let width = if shared_analysis_cache_enabled() {
+            dirty.len()
+        } else {
+            builders
+                .iter()
+                .map(|builder| &builder.package)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+        };
+        pool.with_workspace_dispatch(
+            workspace,
+            build_config.phase_count(),
+            width,
+            &plan.visibility,
+            |dispatch| {
+                Schedule {
+                    workspace,
+                    state,
+                    plan,
+                    dirty: &dirty,
+                    builders: &builders,
+                    transaction: &mut transaction,
+                    part_filtered_actions: &mut part_filtered_actions,
                 }
-                if runnable.is_empty() {
-                    continue;
-                }
-                batches.push(WorkspaceBatch {
-                    package: configured.package.clone(),
-                    requests: runnable
-                        .iter()
-                        .map(|spec| BuildRequest {
-                            part_phase_index: None,
-                            builder: spec.instance.builder.id.clone(),
-                            input: spec.input.clone(),
-                            outputs: spec.outputs.clone(),
-                            options: spec.instance.options.clone(),
-                            phase: spec.instance.phase,
-                            instance_key: spec.instance.instance_key.clone(),
-                            is_root: spec.instance.is_root,
-                            post_process: spec.instance.builder.kind == BuilderKind::PostProcess,
-                            triggers: spec.instance.builder.triggers.clone(),
-                        })
-                        .collect(),
-                });
-                batch_specs.push(runnable);
-            }
-            if batches.is_empty() {
-                continue;
-            }
-            let results = pool.build_workspace_batches(
-                workspace,
-                &batches,
-                build_config.phase_count(),
-                &transaction.overlay,
-                &transaction.deleted_overlay,
-                &plan.visibility,
-            )?;
-            state.resolver_dep_graph.extend(pool.take_dep_graph());
-            // No result in this wave can become visible to its peers. Join
-            // every worker before recording anything into the next baseline.
-            for (specs, results) in batch_specs.into_iter().zip(results) {
-                for (spec, result) in specs.into_iter().zip(results) {
-                    record_build_result(workspace, state, &spec, result, &mut transaction)?;
-                }
-            }
-        }
+                .run(dispatch)
+            },
+        )?;
         pool_metrics = Some(pool.metrics());
     }
     Ok(ExecutionResult {
@@ -204,58 +381,49 @@ mod tests {
     use crate::build::tests::configured_builder;
     use std::collections::BTreeSet;
 
-    #[test]
-    fn waves_preserve_dependencies_packages_phases_and_missing_metadata() {
-        let mut builders = (0..5)
-            .map(|i| {
-                let mut builder = configured_builder("copy", &format!("p{i}:p{i}"), i, 0);
-                builder.package = format!("p{i}");
-                builder.target_dependencies = Some(BTreeSet::new());
-                builder
-            })
-            .collect::<Vec<_>>();
-        builders[2].target_dependencies = Some(BTreeSet::from(["p0:p0".into()]));
-        builders[3].package = "p1".into();
-        builders[4].phase = 1;
-        assert_eq!(
-            execution_waves(&builders, 3),
-            vec![vec![0, 1], vec![2, 3], vec![4]]
-        );
-        assert!(
-            execution_waves(&builders, 1)
-                .iter()
-                .all(|wave| wave.len() == 1)
-        );
-        builders[1].target_dependencies = None;
-        assert_eq!(execution_waves(&builders, 3)[0], vec![0]);
+    fn builder(package: &str, target_order: u32, phase: u32) -> ConfiguredBuilder {
+        let mut builder =
+            configured_builder("copy", &format!("{package}:{package}"), target_order, phase);
+        builder.package = package.into();
+        builder.target_dependencies = Some(BTreeSet::new());
+        builder
     }
 
     #[test]
-    fn scc_peers_and_post_process_have_barriers() {
-        let mut left = configured_builder("copy", "a:a", 0, 0);
-        let mut right = configured_builder("copy", "b:b", 0, 0);
-        left.package = "a".into();
-        right.package = "b".into();
-        left.target_dependencies = Some(BTreeSet::new());
-        right.target_dependencies = Some(BTreeSet::new());
+    fn dependencies_release_successors_without_waiting_for_independent_peers() {
+        let mut builders = vec![
+            builder("a", 0, 0),
+            builder("b", 1, 0),
+            builder("c", 2, 0),
+            builder("d", 3, 1),
+        ];
+        builders[2].package_dependencies = Some(BTreeSet::from(["a".into()]));
         assert_eq!(
-            execution_waves(&[left.clone(), right.clone()], 2),
-            vec![vec![0], vec![1]]
+            execution_dependencies(&builders),
+            vec![vec![], vec![], vec![0], vec![]]
+        );
+        assert_eq!(execution_phases(&builders), vec![vec![0, 1, 2], vec![3]]);
+        // C can run after A even while B is still active. Missing evidence
+        // restores a predecessor rather than assuming independence.
+        builders[1].target_dependencies = None;
+        assert_eq!(execution_dependencies(&builders)[2], vec![0, 1]);
+    }
+
+    #[test]
+    fn same_package_and_scc_peers_retain_order_and_posts_have_a_barrier() {
+        let left = builder("a", 0, 0);
+        let mut right = builder("b", 0, 0);
+        assert_eq!(
+            execution_dependencies(&[left.clone(), right.clone()]),
+            vec![vec![], vec![0]]
         );
         right.target_order = 1;
+        right.package = "a".into();
+        assert_eq!(
+            execution_dependencies(&[left.clone(), right.clone()]),
+            vec![vec![], vec![0]]
+        );
         Arc::make_mut(&mut right.definition).kind = BuilderKind::PostProcess;
-        assert_eq!(execution_waves(&[left, right], 2), vec![vec![0], vec![1]]);
+        assert_eq!(execution_phases(&[left, right]), vec![vec![0], vec![1]]);
     }
-    #[test]
-    fn package_dependencies_serialize_other_targets_in_that_package() {
-        let mut left = configured_builder("copy", "a:extra", 0, 0);
-        let mut right = configured_builder("copy", "b:custom", 1, 0);
-        left.package = "a".into();
-        right.package = "b".into();
-        left.target_dependencies = Some(BTreeSet::new());
-        right.target_dependencies = Some(BTreeSet::new());
-        right.package_dependencies = Some(BTreeSet::from(["a".into()]));
-        assert_eq!(execution_waves(&[left, right], 2), vec![vec![0], vec![1]]);
-    }
-    use std::sync::Arc;
 }

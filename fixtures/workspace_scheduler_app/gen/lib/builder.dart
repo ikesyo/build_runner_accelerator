@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:build/build.dart';
 
 Builder seedBuilder(BuilderOptions options) => SeedBuilder(options);
@@ -59,7 +60,13 @@ Future<void> pause(BuildStep step, String stage) async {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
   }
-  await Future<void>.delayed(const Duration(milliseconds: 150));
+  final delays =
+      jsonDecode(Platform.environment['SCHEDULER_DELAYS'] ?? '{}') as Map;
+  final delay =
+      delays['${step.inputId.package}|${step.inputId.path}'] ??
+      delays[step.inputId.package] ??
+      150;
+  await Future<void>.delayed(Duration(milliseconds: delay as int));
 }
 
 class SeedBuilder implements Builder {
