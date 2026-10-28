@@ -31,14 +31,18 @@ Prioritize applications without active participants, then package affinity and
 remaining input count.
 
 Share an adaptive input queue with ordinary single-package parallel execution.
-Start with one-input probes, then target 20ms batches using observed time per
-input (excluding initialization/reset), capped at eight inputs. Leave at least
+Start with one-input probes, then target 100ms batches using observed time per
+input (excluding initialization/reset), capped at sixteen inputs. This amortizes
+worker/IPC latency that can itself approach the former 20ms target. Leave at least
 two waves of work across eligible workers; expensive work and the tail use single
 inputs. Costs are learned within the current application, not across packages or
 builders. A sudden cost increase immediately reduces subsequent batches; cheaper
 samples rapidly decay warm-up costs. Unexpected expensive inputs within a batch
 can still cause stragglers. Preserve request/result order for ordinary execution,
 its resolver-worker cap, disabled-store classification and serial fast path.
+Use the serial fast path whenever the effective worker count is one, including
+a one-input edit with several resident workers, avoiding unnecessary threads
+and channels.
 Admission stops on an observed failure and all dispatched leases are joined.
 
 Use one deferred pool with at most `--jobs` slots for the whole workspace. Dart

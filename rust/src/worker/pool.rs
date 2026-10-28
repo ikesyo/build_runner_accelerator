@@ -677,7 +677,8 @@ impl WorkerPool {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
-        if self.workers.len() == 1 || worker_limit == 1 {
+        let worker_count = self.workers.len().min(requests.len()).min(worker_limit);
+        if worker_count == 1 {
             return self.workers[0].build_batch(
                 workspace,
                 requests,
@@ -687,7 +688,6 @@ impl WorkerPool {
             );
         }
 
-        let worker_count = self.workers.len().min(requests.len()).min(worker_limit);
         use super::scheduling::InputQueue;
         use std::sync::mpsc;
         use std::time::Instant;
