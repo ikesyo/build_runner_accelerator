@@ -31,11 +31,16 @@ python3 scripts/benchmark_workspace_scheduler.py \
   --results /path/to/new-results-directory --repeat 3
 ```
 
-`metadata.json` records the measured toolchains, binary/source digests and exact
-profiles. `samples.json` retains every timed command, duration and output inventory
-digest. `summary.json` contains medians and ranges. All **72** native timed samples
-were byte-identical to the stock reference, including source and cache outputs.
-The fixture uses stock build_runner 2.16.2 and analyzer 14.6.0.
+The script writes metadata, raw samples and summaries to the selected results
+directory; these generated JSON files are not tracked in the repository.
+The table below retains medians and ranges from this run. All **72** native timed
+samples were byte-identical to the stock reference, including source and cache
+outputs. The fixture uses stock build_runner 2.16.2 and analyzer 14.6.0.
+
+Measured release binary SHA-256 digests:
+
+- Wave: `48d620d845e9d025c9f75a96c6390ae7429bbb62593316a860b7677668c8f8dd`
+- Ready: `b5c3189bbfad9d0fc67825dd9fff6bc7c74f29e48bf10c5dc95117dd704dea83`
 
 - `skew`: A and B are independent; C depends on A. One input each, jobs=2,
   artificial async delays A=200ms, B=2000ms, C=1800ms.
