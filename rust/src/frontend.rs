@@ -337,6 +337,13 @@ fn read_manifest(
     if manifest.version != 11 || manifest.fingerprint != fingerprint {
         return Ok(None);
     }
+    // Refresh pre-scheduler caches even when pubspec/build.yaml inputs have
+    // not changed. Directly decoded legacy manifests remain safely serial.
+    if manifest.builders.iter().any(|builder| {
+        builder.target_dependencies.is_none() || builder.package_dependencies.is_none()
+    }) {
+        return Ok(None);
+    }
     if !expected_worker_entrypoint.is_file() {
         return Ok(None);
     }
@@ -959,6 +966,8 @@ mod tests {
             }
         }
         valid["builders"][0]["target_order"] = serde_json::json!(0);
+        valid["builders"][0]["target_dependencies"] = serde_json::json!([]);
+        valid["builders"][0]["package_dependencies"] = serde_json::json!([]);
         fs::write(&path, valid.to_string()).unwrap();
         let hit = super::read_manifest(&path, "same", &local)
             .unwrap()
@@ -1025,6 +1034,8 @@ mod tests {
             "kind",
             "options",
             "target_order",
+            "target_dependencies",
+            "package_dependencies",
             "target_sources",
             "generate_for_exclude",
             "triggers",

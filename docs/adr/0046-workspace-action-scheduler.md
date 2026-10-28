@@ -18,7 +18,9 @@ Emit transitive `target_dependencies` and `package_dependencies` on configured
 manifest entries, using the same official target and package graphs as phase
 ordering. Package dependencies serialize even applications of different targets
 in those packages. This is additive optimization
-metadata in manifest v11: absent metadata serializes execution. SCC ordinals
+metadata in manifest v11: absent metadata serializes execution. The frontend
+regenerates on-disk manifests missing these fields, so upgrading does not leave
+existing workspaces permanently serial. SCC ordinals
 alone are insufficient to establish independence. Do not infer independence
 from previous action reads or assume an unobserved read cannot occur.
 

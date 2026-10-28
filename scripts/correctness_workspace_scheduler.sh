@@ -80,6 +80,29 @@ clean_native_state
 BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0 run_native no-shared-store 2 1
 compare no-shared-store
 check_history no-shared-store 2 1
+# Old on-disk manifests must regenerate scheduling metadata without requiring
+# an unrelated configuration edit, rerunning actions, or changing the graph.
+cp "$native/.dart_tool/build_runner_accelerator/graph-v3.bin" "$temporary/metadata.graph"
+manifest="$native/.dart_tool/build_runner_accelerator/builder-manifest.json"
+python3 - "$manifest" <<'PY'
+import json
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+data = json.loads(path.read_text())
+for builder in data['builders']:
+    builder.pop('target_dependencies', None)
+    builder.pop('package_dependencies', None)
+path.write_text(json.dumps(data))
+PY
+run_native manifest-upgrade 2
+cmp "$temporary/metadata.graph" "$native/.dart_tool/build_runner_accelerator/graph-v3.bin" || fail 'metadata refresh changed graph'
+python3 - "$manifest" <<'PY'
+import json
+import sys
+data = json.load(open(sys.argv[1]))
+assert all('target_dependencies' in builder and 'package_dependencies' in builder for builder in data['builders'])
+PY
 # Distinct package options are checked independently of the stock comparison.
 grep -Fq 'a input:a-seed:true' "$native/a/lib/input.summary" || fail 'a options/isRoot differ'
 grep -Fq 'b input:b-seed:true' "$native/b/lib/input.summary" || fail 'b options/isRoot differ'
