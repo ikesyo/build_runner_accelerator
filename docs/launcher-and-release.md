@@ -112,6 +112,7 @@ The launcher recognizes these options:
 | `--force-aot`, `--force-jit` | Select worker execution mode; mutually exclusive. |
 | `--only-check`, `--keep-modified-outputs` | Build-only output policies for the normal-builder demand subset; see [output policies](#output-policies). |
 | `--build-filter PATTERN` | Select build/watch outputs; syntax and manifest limits are in [ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md). |
+| `--workspace` | Build all packages in a Pub workspace within the subset below. |
 | `--define`, `--release`, `--no-release`, `--config` | Resolve `build_runner` settings; see [configuration](configuration.md). |
 | `--enable-experiment NAME` | Enable Dart language experiments in generated workers; repeat or comma-separate. Shared-part imports require `enhanced-parts`. |
 | `--delete-conflicting-outputs`, `-d` | Accepted retired flags throughout the supported runner window; they have no effect and are never added automatically. |
@@ -128,7 +129,7 @@ The following stock features require a direct stock invocation:
 
 | Stock-only group | Examples |
 | --- | --- |
-| Output layout or build directory | `--output` / `-o`, `--workspace`, positional build directories |
+| Output layout or build directory | `--output` / `-o`, positional build directories |
 | Output layout and logging | `--symlink`, `--no-symlink`, `--verbose` / `-v`, `--verbose-durations` |
 | Dart runtime or profiling | `--dart-jit-vm-arg`, `--dart-aot-perf` |
 | Serve and daemon | `--hostname`, `--log-requests`, `--live-reload`, `--build-mode` |
@@ -138,6 +139,31 @@ These requests are rejected. Prewarm has no stock equivalent:
 it accepts supported configuration settings but rejects stock-only and
 build-only arguments. Package-path output conflicts in dependencies also require
 a direct stock invocation, including ordinary builds and watches; native fails before actions.
+
+### Workspace builds
+
+`build --workspace` resolves the Pub workspace from the current package and
+writes source outputs in all output packages. Outside a Pub workspace it builds
+the current package. Workspace builds currently accept non-optional normal and post-process
+builders without shared parts or trigger-only execution, and reject overlapping
+nested source sets. Output package paths must resolve inside the workspace root
+and must be distinct. Validated fixtures cover a normal builder and JSON Serializable with source_gen
+combining and part cleanup in two members; other configurations require their
+own stock comparison. `watch`, build
+filters, output policies, named configs and `--define` are unsupported with
+`--workspace`. These are accelerator limitations, not stock build_runner
+limitations; remaining work is tracked in the [roadmap](roadmap.md#compatibility).
+Unavailable combinations fail before actions.
+
+Native locks every output package and keeps one graph at the workspace root.
+Switching between workspace and individual-package builds, or changing the set
+of output packages, requires the [state reset](compatibility-cleanup.md#safe-recovery).
+Individual-package prewarm and cache-key commands also require that reset after
+a workspace build.
+If a background worker compilation lock exists in an output package, the
+workspace build fails; wait for compilation to finish before retrying.
+Pending publication recovery must be resolved before any reset. See
+[ADR 0045](adr/0045-pub-workspace-builds.md).
 
 ## Build filters
 

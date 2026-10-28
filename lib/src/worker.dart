@@ -70,14 +70,17 @@ Future<void> runWorker({
 }) async {
   _sharedPartEncoder = sharedPartEncoder;
   _sharedPartStepFactory = sharedPartStepFactory;
-  if ((arguments.length == 3 || arguments.length == 4) &&
+  if ((arguments.length >= 3 && arguments.length <= 5) &&
       arguments.first == '--manifest-triggers') {
     await writeManifestTriggers(
       arguments[1],
       arguments[2],
-      configKey: arguments.length == 4
+      configKey: arguments.length >= 4
           ? jsonDecode(arguments[3]) as String?
           : null,
+      buildWorkspace: arguments.length == 5
+          ? jsonDecode(arguments[4]) as bool
+          : false,
     );
     return;
   }
@@ -85,7 +88,7 @@ Future<void> runWorker({
     if (arguments.length != 3 || arguments.first != '--factory-probe') {
       stderr.writeln(
         'usage: worker [--factory-probe <requests> <result> | '
-        '--manifest-triggers <root> <result>]',
+        '--manifest-triggers <root> <result> [config-json] [workspace-json]]',
       );
       exitCode = 64;
       return;

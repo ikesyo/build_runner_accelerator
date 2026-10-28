@@ -138,6 +138,34 @@ fn validate_native_manifest(
 ) -> io::Result<RustBuildConfig> {
     match rust_build_config_from_manifest(manifest) {
         Ok(config) => {
+            for (name, locked_root) in &options.workspace_output_packages {
+                if crate::workspace::canonicalize(workspace.package_root(name)?)? != *locked_root {
+                    return unsupported(
+                        "workspace package paths changed after locks were acquired; retry",
+                    );
+                }
+            }
+            if config.builders.iter().any(|builder| {
+                let is_output = if options.settings.workspace {
+                    options
+                        .workspace_output_packages
+                        .contains_key(&builder.package)
+                } else {
+                    builder.package == workspace.root_package
+                };
+                builder.is_root != is_output
+            }) {
+                return unsupported(
+                    "manifest output-package markers disagree with the locked build scope",
+                );
+            }
+            if config.builders.iter().any(|builder| {
+                !builder.is_root
+                    && builder.definition.kind == crate::builder::BuilderKind::Normal
+                    && builder.definition.build_to == crate::builder::BuildTo::Source
+            }) {
+                return unsupported("source builders cannot write into non-output packages");
+            }
             workspace.configure_sources(config.asset_sources.as_ref());
             if workspace.includes_build_implementation_sources() {
                 return unsupported(
@@ -145,6 +173,26 @@ fn validate_native_manifest(
                 );
             }
             let settings = &options.settings;
+            if settings.workspace {
+                if config.builders.iter().any(|builder| {
+                    builder.definition.is_optional
+                        || builder.definition.adds_to_library
+                        || builder
+                            .options
+                            .get("run_only_if_triggered")
+                            .and_then(serde_json::Value::as_bool)
+                            == Some(true)
+                }) {
+                    return unsupported(
+                        "--workspace currently supports non-optional builders without shared parts or triggers",
+                    );
+                }
+                if workspace.overlapping_watch_sources()?.is_some() {
+                    return unsupported(
+                        "--workspace source sets may overlap nested packages; narrow target sources first",
+                    );
+                }
+            }
             if config.builders.iter().any(|builder| {
                 builder.definition.adds_to_library
                     && builder

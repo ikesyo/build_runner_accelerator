@@ -796,6 +796,11 @@ jobs:
               bash scripts/correctness_target_cycle.sh
               bash scripts/correctness_arbitrary_dependency_target.sh
               bash scripts/correctness_applies_builder.sh
+          - name: "Compatibility: Pub workspace"
+            shell: bash
+            run: |
+              bash scripts/correctness_workspace.sh
+              bash scripts/correctness_workspace_json.sh
 
   compatibility-mapping:
     name: Compatibility suite (mapping and empty-input)

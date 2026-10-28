@@ -77,6 +77,9 @@ pub(crate) fn configuration_arguments(
     settings: &crate::cli::BuildSettings,
 ) -> io::Result<Vec<String>> {
     let mut result = Vec::new();
+    if settings.workspace {
+        result.push("--workspace".to_owned());
+    }
     if settings.release {
         result.push("--release".to_owned());
     }
@@ -100,6 +103,15 @@ pub(crate) fn configuration_arguments(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn workspace_scope_changes_configuration_identity() {
+        let single = crate::cli::BuildSettings::default();
+        let workspace = crate::cli::BuildSettings::parse(&["--workspace".into()]).unwrap();
+        assert_ne!(
+            configuration_arguments(&single).unwrap(),
+            configuration_arguments(&workspace).unwrap()
+        );
+    }
     #[test]
     fn experiments_change_configuration_identity() {
         let default = crate::cli::BuildSettings::default();

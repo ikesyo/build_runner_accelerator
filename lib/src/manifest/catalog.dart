@@ -13,8 +13,18 @@ Future<void> generateWorkerCatalog(
   String root,
   String workerEntrypoint, {
   BuildSettings settings = const BuildSettings(),
+  bool buildWorkspace = false,
 }) async {
-  final graph = await loadPackageGraph(root);
+  final paths = buildWorkspace || settings.workspace
+      ? manifestBuildPaths(root, buildWorkspace: true)
+      : null;
+  final graph = await loadPackageGraph(
+    paths?.root ?? root,
+    buildWorkspace: paths?.buildWorkspace ?? false,
+  );
+  if (paths?.buildWorkspace == true) {
+    validateWorkspaceCurrentPackage(graph, paths!.currentPackage, root);
+  }
   final configs = await loadBuildConfigs(graph);
   final configured = settings.config == null
       ? configs
@@ -29,8 +39,11 @@ Future<void> generateWorkerCatalog(
     rootConfig: resolved.rootConfig,
     orderedTargets: resolved.orderedTargets,
     definitions: resolved.definitions,
+    workspaceOutputPackages: paths?.buildWorkspace == true
+        ? graph.allPackages.values.where((package) => package.isRoot)
+        : null,
     release: settings.release,
-    overrides: settings.overrides(graph.root.name),
+    overrides: settings.overrides(paths?.currentPackage ?? graph.root.name),
   );
   if (selected.isNotEmpty) {
     await emitWorkerEntrypoint(

@@ -14,7 +14,10 @@ import 'manifest/probe.dart';
 import 'manifest/selection.dart';
 import 'manifest/settings.dart';
 
-Future<void> generateBuilderManifest(List<String> arguments) async {
+Future<void> generateBuilderManifest(
+  List<String> arguments, {
+  bool buildWorkspace = false,
+}) async {
   final metrics =
       Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1';
   final timer = Stopwatch()..start();
@@ -30,8 +33,24 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
   }
 
   final options = _Arguments.parse(arguments);
-  final root = Directory(options.root).absolute.path;
-  final inputs = await _loadInputs(root, options.settings);
+  final packageRoot = Directory(options.root).absolute.path;
+  final paths =
+      buildWorkspace || options.buildWorkspace || options.settings.workspace
+      ? manifestBuildPaths(packageRoot, buildWorkspace: true)
+      : null;
+  final root = paths?.root ?? packageRoot;
+  final inputs = await _loadInputs(
+    root,
+    options.settings,
+    paths?.buildWorkspace ?? false,
+  );
+  if (paths?.buildWorkspace == true) {
+    validateWorkspaceCurrentPackage(
+      inputs.packageGraph,
+      paths!.currentPackage,
+      packageRoot,
+    );
+  }
   reportStage('load-inputs');
   final resolved = _resolveTargetsAndDefinitions(inputs);
   final selection = _ApplicationSelection(
@@ -40,8 +59,15 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
       rootConfig: resolved.rootConfig,
       orderedTargets: resolved.orderedTargets,
       definitions: resolved.definitions,
+      workspaceOutputPackages: paths?.buildWorkspace == true
+          ? inputs.packageGraph.allPackages.values.where(
+              (package) => package.isRoot,
+            )
+          : null,
       release: options.settings.release,
-      overrides: options.settings.overrides(inputs.packageGraph.root.name),
+      overrides: options.settings.overrides(
+        paths?.currentPackage ?? inputs.packageGraph.root.name,
+      ),
     ),
   );
   reportStage('select-builders');
@@ -62,6 +88,7 @@ Future<void> generateBuilderManifest(List<String> arguments) async {
     root,
     options.workerEntrypoint,
     configKey: options.settings.config,
+    buildWorkspace: paths?.buildWorkspace ?? false,
   );
   reportStage('triggers');
   final runtimeMappings = await _probeRuntimeMappings(
@@ -139,8 +166,15 @@ class _NormalizedManifest {
   final List<CatalogEntry> catalogEntries;
 }
 
-Future<_LoadedInputs> _loadInputs(String root, BuildSettings settings) async {
-  final packageGraph = await loadPackageGraph(root);
+Future<_LoadedInputs> _loadInputs(
+  String root,
+  BuildSettings settings,
+  bool buildWorkspace,
+) async {
+  final packageGraph = await loadPackageGraph(
+    root,
+    buildWorkspace: buildWorkspace,
+  );
   final configs = await loadBuildConfigs(packageGraph);
 
   return _LoadedInputs(
@@ -619,6 +653,7 @@ class _Arguments {
     required this.workerEntrypoint,
     required this.fingerprint,
     required this.settings,
+    required this.buildWorkspace,
   });
 
   final String root;
@@ -626,6 +661,7 @@ class _Arguments {
   final String workerEntrypoint;
   final String fingerprint;
   final BuildSettings settings;
+  final bool buildWorkspace;
 
   static _Arguments parse(List<String> arguments) {
     String? value(String name) {
@@ -656,6 +692,7 @@ class _Arguments {
       settings: BuildSettings.parse(
         (jsonDecode(value('--settings-json') ?? '[]') as List).cast<String>(),
       ),
+      buildWorkspace: jsonDecode(value('--workspace-json') ?? 'false') as bool,
     );
   }
 }

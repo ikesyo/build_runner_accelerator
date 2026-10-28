@@ -489,7 +489,9 @@ fn is_configuration_event(workspace: &Workspace, event: &Event, selected: Option
         };
         let relative = relative.to_string_lossy().replace('\\', "/");
         relative == "build.yaml"
+            || relative == "pubspec.yaml"
             || relative.ends_with(".build.yaml")
+            || (root == workspace.root && relative == ".dart_tool/package_graph.json")
             || (root == workspace.root && selected == Some(relative.as_str()))
     })
 }
@@ -643,9 +645,12 @@ fn is_relevant_event(
             .first()
             .is_some_and(|component| component.as_os_str().to_str() == Some(".dart_tool"))
         {
-            return is_root_package && name == "package_config.json";
+            return is_root_package
+                && (name == "package_config.json" || relative == ".dart_tool/package_graph.json");
         }
-        if relative == "build.yaml" || relative.ends_with(".build.yaml") {
+        if matches!(relative.as_str(), "build.yaml" | "pubspec.yaml")
+            || relative.ends_with(".build.yaml")
+        {
             return true;
         }
         let asset = format!("{package}|{relative}");
@@ -796,10 +801,14 @@ mod manifest_tests {
                 ("lib/input.txt", true),
                 ("dep/lib/build/.input.txt", true),
                 ("build.yaml", true),
+                ("pubspec.yaml", true),
+                ("dep/pubspec.yaml", true),
                 ("dep/build.yaml", true),
                 ("overrides.build.yaml", true),
                 ("selected/config.yaml", true),
                 (".dart_tool/package_config.json", true),
+                (".dart_tool/package_graph.json", true),
+                (".dart_tool/other/package_graph.json", false),
                 (
                     ".dart_tool/build_runner_accelerator/cache/out.build.yaml",
                     false,
@@ -932,6 +941,12 @@ mod manifest_tests {
             &root_event,
             Some("build.named.yaml")
         ));
+        let graph_event = Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
+            .add_path(workspace.root.join(".dart_tool/package_graph.json"));
+        assert!(is_configuration_event(&workspace, &graph_event, None));
+        let pubspec_event = Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
+            .add_path(workspace.root.join("build.dir/pubspec.yaml"));
+        assert!(is_configuration_event(&workspace, &pubspec_event, None));
         let child_config = workspace.root.join("build.dir/name.yaml");
         assert_eq!(
             configuration_package_root(&workspace, &child_config),

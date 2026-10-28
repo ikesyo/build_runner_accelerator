@@ -18,6 +18,7 @@ See [development](development.md#correctness-and-ci) for focused commands.
 | Built Value | `fixtures/built_value_app`: cache parts, combining builder, triggers and stale-output cleanup |
 | Generic mappings | `fixtures/multi_mapping_builder_app`, `fixtures/arbitrary_builder_app` (capture probe), `fixtures/empty_input_mapping_app`: runtime mappings, literal suffixes, capture and all-asset empty-key mapping; see [mapping semantics](configuration.md#input-extension-mappings) |
 | Builder lifetime and phase ordering | `fixtures/lifetime_builder_app`, `fixtures/applies_builder_app`: resident Builder/Resource lifetime and generated-input visibility |
+| Pub workspace builds | `fixtures/workspace_option_app` and `fixtures/workspace_json_app`: two output members with normal source builders and JSON Serializable/source_gen cleanup; initial/no-op/edit/delete/rename, failure recovery and scope rejection; [ADR 0045](adr/0045-pub-workspace-builds.md) |
 | Filtered demand | `fixtures/build_filter_app`: selection, dependencies, globs, transitions and explicit rejection; [ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md) |
 | Optional builders and triggers | `fixtures/optional_builder_app`, `fixtures/trigger_builder_app`: lazy demand and trigger transitions; [trigger rules](#trigger-semantics-boundary) |
 | Optional + post-process cleanup | [Fixture guide](../fixtures/optional_cleanup_app/README.md): source/cache lifecycle and watch; [ADR 0038](adr/0038-optional-post-process-demand.md) |

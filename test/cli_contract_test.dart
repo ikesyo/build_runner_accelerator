@@ -45,6 +45,7 @@ void main() {
       expect(settings.onlyCheck, expected['only_check']);
       expect(settings.keepModifiedOutputs, expected['keep_modified_outputs']);
       expect(settings.deletionFlag, expected['deletion']);
+      if (c['name'] == 'build --workspace') expect(settings.workspace, isTrue);
     });
   }
 }

@@ -86,10 +86,17 @@ dart run build_runner_accelerator build --only-check
 
 # Retain manual output edits until their producer reruns.
 dart run build_runner_accelerator build --keep-modified-outputs
+
+# Build packages in the current Pub workspace (supported subset).
+dart run build_runner_accelerator build --workspace
 ```
 
 Output policies are build-only and mutually exclusive. Filters and policies
 have compatibility limits; see the [CLI reference](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/launcher-and-release.md).
+Workspace builds currently support non-optional normal and post-process builders without shared
+parts or trigger-only builders. Watch, filters, output policies, named configs
+and `--define` are not supported with `--workspace`; switching between workspace
+and individual-package builds requires a state reset.
 For `build.yaml`, named configs and `--define`, see [configuration](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/configuration.md).
 Upgrading from an older version? See the [migration guide](https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-cleanup.md).
 

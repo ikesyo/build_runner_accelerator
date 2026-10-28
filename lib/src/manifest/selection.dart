@@ -13,9 +13,33 @@ Map<String, SelectedBuilder> selectApplications({
   required BuildConfig rootConfig,
   required List<TargetInfo> orderedTargets,
   required Map<String, DefinitionInfo> definitions,
+  Iterable<PackageInfo>? workspaceOutputPackages,
   bool release = false,
   Map<String, Map<String, dynamic>> overrides = const {},
 }) {
+  // In a workspace build, auto-application is scoped to packages which
+  // participate in a common output package's dependency closure.
+  Set<String> closureOf(PackageInfo package) {
+    final visited = <String>{};
+    final pending = <PackageInfo>[package];
+    while (pending.isNotEmpty) {
+      final current = pending.removeLast();
+      if (visited.add(current.name)) pending.addAll(current.dependencies);
+    }
+    return visited;
+  }
+
+  final workspaceClosures = workspaceOutputPackages == null
+      ? null
+      : {
+          for (final package in workspaceOutputPackages)
+            package.name: closureOf(package),
+        };
+  final outputNames = workspaceClosures?.keys.toSet();
+
+  bool isOutput(PackageInfo package) =>
+      outputNames?.contains(package.name) ?? package.name == rootPackageName;
+
   final selected = <String, SelectedBuilder>{};
   final disabled = <String>{};
   for (final key in overrides.keys) {
@@ -37,21 +61,21 @@ Map<String, SelectedBuilder> selectApplications({
     // ignores such entries when the builder application is absent from the
     // root package graph.
     if (definition == null) return;
-    // build_runner hides source outputs on non-root packages. Its phase
+    // build_runner hides source outputs on non-output packages. Its phase
     // filter therefore does not schedule those applications, even when a
     // dependency package's own build.yaml mentions the builder.
     if (!definition.isPostProcess &&
-        target.package.name != rootPackageName &&
+        !isOutput(target.package) &&
         definition.normal!.buildTo == BuildTo.source) {
       return;
     }
     if (!definition.isPostProcess &&
-        target.package.name != rootPackageName &&
+        !isOutput(target.package) &&
         definition.normal!.appliesBuilders.any(
           (applied) => definitions[applied]?.normal?.buildTo == BuildTo.source,
         )) {
       // A hidden cache builder which applies a visible source builder is also
-      // filtered out by build_runner for non-root packages.
+      // filtered out by build_runner for non-output packages.
       return;
     }
     final selectedKey = _selectedKey(target.target.key, key);
@@ -119,7 +143,14 @@ Map<String, SelectedBuilder> selectApplications({
         final selectedKey = _selectedKey(target.target.key, definition.key);
         if (selected.containsKey(selectedKey)) continue;
         if (!definition.isPostProcess &&
-            _autoAppliesToTarget(definition.normal!, target.package)) {
+            _autoAppliesToTarget(
+              definition.normal!,
+              target.package,
+              isOutput: workspaceClosures == null
+                  ? target.package.isRoot
+                  : isOutput(target.package),
+              workspaceClosures: workspaceClosures,
+            )) {
           select(definition.key, target: target, explicit: false);
         }
       }
@@ -128,12 +159,25 @@ Map<String, SelectedBuilder> selectApplications({
   return selected;
 }
 
-bool _autoAppliesToTarget(BuilderDefinition definition, PackageInfo target) {
+bool _autoAppliesToTarget(
+  BuilderDefinition definition,
+  PackageInfo target, {
+  required bool isOutput,
+  required Map<String, Set<String>>? workspaceClosures,
+}) {
   switch (definition.autoApply) {
     case AutoApply.rootPackage:
-      return target.isRoot;
+      return isOutput &&
+          (workspaceClosures == null ||
+              (workspaceClosures[target.name]?.contains(definition.package) ??
+                  false));
     case AutoApply.allPackages:
-      return true;
+      return workspaceClosures == null ||
+          workspaceClosures.values.any(
+            (closure) =>
+                closure.contains(target.name) &&
+                closure.contains(definition.package),
+          );
     case AutoApply.dependents:
       return target.dependencies.any(
         (dependency) => dependency.name == definition.package,

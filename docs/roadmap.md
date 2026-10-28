@@ -34,7 +34,17 @@ not OS signing or Gatekeeper/SmartScreen approval. See
   script-worker watch and multi-package workspaces. Existing dart2js/DDC
   fixtures cover only their documented configurations; retained compiler
   archives are not raw-byte identical.
-- [ ] Expand the validated `build.yaml`, post-process and workspace subsets,
+- [ ] Close accelerator's remaining Pub workspace compatibility gaps with
+  stock build_runner: workspace watch, build filters, output policies, named
+  configurations and `--define`. These are accelerator limitations, not stock
+  runner limitations. Validate cross-package invalidation, output selection,
+  no-op reuse and failure/recovery against stock before enabling each combination.
+- [ ] Expand workspace builder coverage to optional producers, shared-library
+  parts and trigger-only builders, and support overlapping nested source sets
+  and safe individual/workspace state transitions. Preserve transactional
+  publication and validate each boundary against stock; see the current
+  [workspace subset](launcher-and-release.md#workspace-builds).
+- [ ] Expand the validated `build.yaml` and post-process subsets,
   preserving explicit rejection outside them.
 - [ ] Validate additional mixed builders and multi-package real projects beyond
   the pinned single-root FVM probe.

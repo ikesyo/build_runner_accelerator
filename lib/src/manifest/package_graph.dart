@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:build_config/build_config.dart';
+import 'package:build_runner/src/build_plan/build_paths.dart';
 import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
@@ -8,12 +10,55 @@ import 'package:yaml/yaml.dart';
 import 'model.dart';
 import 'settings.dart';
 
+/// Resolves stock's current package and output root before loading a manifest.
+/// A workspace request outside a pub workspace falls back to a package build.
+({String root, String currentPackage, bool buildWorkspace}) manifestBuildPaths(
+  String packagePath, {
+  required bool buildWorkspace,
+}) {
+  final packageRoot = p.canonicalize(packagePath);
+  final name = _pubspecForPath(packageRoot)['name'];
+  if (name is! String || name.isEmpty) {
+    throw StateError('The current package has no name in pubspec.yaml.');
+  }
+  final paths = BuildPaths.load(packageRoot, buildWorkspace: buildWorkspace);
+  return (
+    root: p.canonicalize(paths.outputRootPath),
+    currentPackage: name,
+    buildWorkspace: paths.buildWorkspace,
+  );
+}
+
+/// Refuse a stale pub graph that no longer lists the invoking workspace member.
+void validateWorkspaceCurrentPackage(
+  PackageGraph graph,
+  String currentPackage,
+  String packagePath,
+) {
+  final package = graph.allPackages[currentPackage];
+  if (package == null ||
+      !package.isRoot ||
+      !p.equals(
+        Directory(package.path).resolveSymbolicLinksSync(),
+        Directory(packagePath).resolveSymbolicLinksSync(),
+      )) {
+    throw StateError(
+      'Workspace package graph does not contain the current package '
+      '$currentPackage at $packagePath; run `dart pub get` first.',
+    );
+  }
+}
+
 /// Loads the package graph data needed by manifest generation.
 ///
 /// Keep this adapter local to the worker package. The manifest generator only
 /// needs package names, paths, root markers, and direct dependencies; it does
 /// not need to depend on build_runner_core's retired graph implementation.
-Future<PackageGraph> loadPackageGraph(String packagePath) async {
+/// For [buildWorkspace], [packagePath] must be the workspace output root.
+Future<PackageGraph> loadPackageGraph(
+  String packagePath, {
+  bool buildWorkspace = false,
+}) async {
   final root = p.canonicalize(packagePath);
   final rootPubspec = _pubspecForPath(root);
   final rootName = rootPubspec['name'];
@@ -37,6 +82,24 @@ Future<PackageGraph> loadPackageGraph(String packagePath) async {
     throw StateError('Unable to find package_config.json for $root.');
   }
 
+  // Pub's package graph provides the flattened list of workspace roots,
+  // including nested members. Reject missing roots and unknown packages.
+  final outputPackages = <String>{rootName};
+  if (buildWorkspace) {
+    final graphFile = File(p.join(root, '.dart_tool', 'package_graph.json'));
+    final graph = jsonDecode(await graphFile.readAsString());
+    if (graph is! Map ||
+        graph['roots'] is! List ||
+        (graph['roots'] as List).any((name) => name is! String)) {
+      throw StateError('Invalid workspace package graph: ${graphFile.path}');
+    }
+    final roots = (graph['roots'] as List).cast<String>();
+    if (!roots.contains(rootName)) {
+      throw StateError('Workspace package graph does not contain $rootName.');
+    }
+    outputPackages.addAll(roots);
+  }
+
   final packages = <String, PackageInfo>{};
   final orderedPackages = packageConfig.packages.toList()
     ..sort((left, right) => left.name.compareTo(right.name));
@@ -44,7 +107,7 @@ Future<PackageGraph> loadPackageGraph(String packagePath) async {
     packages[package.name] = PackageInfo(
       name: package.name,
       path: package.root.toFilePath(),
-      isRoot: package.name == rootName,
+      isRoot: outputPackages.contains(package.name),
     );
   }
 
@@ -60,17 +123,17 @@ Future<PackageGraph> loadPackageGraph(String packagePath) async {
   }
 
   final rootNode = packageNode(rootName);
-  rootNode.dependencies.addAll(
-    _depsFromYaml(
-      rootPubspec,
-      includeDevDependencies: true,
-    ).map((name) => packageNode(name, parent: rootName)),
-  );
-  for (final package in orderedPackages.where((p) => p.name != rootName)) {
-    final pubspec = _pubspecForPath(package.root.toFilePath());
+  for (final output in outputPackages) {
+    packageNode(output);
+  }
+  for (final package in orderedPackages) {
+    final pubspec = package.name == rootName
+        ? rootPubspec
+        : _pubspecForPath(package.root.toFilePath());
     packages[package.name]!.dependencies.addAll(
       _depsFromYaml(
         pubspec,
+        includeDevDependencies: outputPackages.contains(package.name),
       ).map((name) => packageNode(name, parent: package.name)),
     );
   }

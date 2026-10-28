@@ -19,10 +19,12 @@ class BuildSettings {
     this.buildFilters = const [],
     this.onlyCheck = false,
     this.keepModifiedOutputs = false,
+    this.workspace = false,
   });
 
   final bool onlyCheck;
   final bool keepModifiedOutputs;
+  final bool workspace;
   final bool release;
   final List<String> experiments;
   final String? config;
@@ -72,6 +74,7 @@ class BuildSettings {
     var onlyCheck = false;
     var keepModifiedOutputs = false;
     var release = false;
+    var workspace = false;
     var deletionFlag = false;
     String? config;
     final defines = <String>[];
@@ -89,6 +92,8 @@ class BuildSettings {
           release = true;
         case '--no-release':
           release = false;
+        case '--workspace':
+          workspace = true;
         case '--force-aot' || '--force-jit':
           break;
         case '--delete-conflicting-outputs' || '-d':
@@ -169,6 +174,7 @@ class BuildSettings {
       experiments: experiments,
       deletionFlag: deletionFlag,
       buildFilters: buildFilters,
+      workspace: workspace,
     );
   }
 
