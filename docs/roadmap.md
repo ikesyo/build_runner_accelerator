@@ -59,7 +59,17 @@ Exact validated versions, configurations and blockers are maintained in the
 - [ ] Evaluate chunked results for outputs beyond the protocol v1 frame limit.
 - [ ] Re-evaluate indexed/lazy graph persistence and automatic worker counts
   using reproducible benchmarks.
+- [x] Share bounded adaptive input batching across ordinary and workspace builds.
+  Stock-identical synthetic comparisons cover uniform and uneven inputs;
+  standalone uneven-input clean/broad medians improved by 22.5%/27.7% in three
+  trials, while other cases remain mixed. See the
+  [conditions and limits](benchmarks/workspace-scheduler-2026-10/adaptive.md).
 - [ ] Validate resolver-aware batching in larger mixed-builder workspaces.
+- [ ] Evaluate a bounded cache of parked worker contexts if package switching
+  remains a material cost. Measure reinitialization time and retained memory;
+  consider separate budgets for running builders and idle resident processes,
+  safe context matching, background Analyzer work and eviction. Define the change
+  from the current `--jobs` resident-worker bound before enabling this policy.
 - [ ] Consider builder-specific fast paths only with a measured advantage over
   the generic manifest path under identical conditions.
 

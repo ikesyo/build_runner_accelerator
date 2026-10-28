@@ -1,5 +1,8 @@
 # Workspace scheduler comparison, 2026-10-28
 
+The subsequent [adaptive input dispatch comparison](adaptive.md) covers the
+current scheduler, including ordinary single-package execution.
+
 Compare the bounded wave scheduler at `f19ad209a0a8b18188c3fae24524326d494d99c2`
 with dependency-ready scheduling and single-input leases at
 `b0e659a1bd75d30aec4bdd6a80b75bbcfc34dfa0`.
