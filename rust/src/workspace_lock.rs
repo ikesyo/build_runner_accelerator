@@ -6,13 +6,24 @@ use std::path::{Path, PathBuf};
 /// An OS-held lock lives for the entire build or watch session. The lock file
 /// stays in place: unlinking it could let another process lock a different inode.
 pub(crate) struct WorkspaceLock {
-    _files: Vec<File>,
+    _files: Vec<LockedFile>,
 }
 
 /// Coordinates workspace builds with prewarm/cache-key commands without
 /// preventing those commands from overlapping ordinary single-package builds.
 pub(crate) struct WorkspaceCoordination {
-    _file: File,
+    _file: LockedFile,
+}
+
+/// Release ownership explicitly: close alone can leave an OS lock held by a
+/// duplicated descriptor, including a concurrent fork's pre-exec inheritance.
+/// Wrapping each acquisition also releases partially acquired groups on error.
+struct LockedFile(File);
+
+impl Drop for LockedFile {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 impl WorkspaceCoordination {
@@ -43,7 +54,9 @@ impl WorkspaceCoordination {
             ),
             std::fs::TryLockError::Error(error) => error,
         })?;
-        Ok(Self { _file: file })
+        Ok(Self {
+            _file: LockedFile(file),
+        })
     }
 }
 
@@ -88,7 +101,7 @@ impl WorkspaceLock {
                 ),
                 std::fs::TryLockError::Error(error) => error,
             })?;
-            files.push(file);
+            files.push(LockedFile(file));
         }
         Ok(Self { _files: files })
     }
@@ -158,6 +171,31 @@ mod tests {
         let exclusive = WorkspaceCoordination::acquire(&root, true).unwrap();
         assert!(WorkspaceCoordination::acquire(&root, false).is_err());
         drop(exclusive);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn dropping_the_owner_releases_locks_even_while_a_descriptor_is_duplicated() {
+        let root =
+            std::env::temp_dir().join(format!("accelerator-lock-duplicate-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let owner = WorkspaceLock::acquire(&root).unwrap();
+        // A process forked by another test can briefly inherit this open file
+        // description before exec closes its CLOEXEC descriptor.
+        let inherited = owner._files[0].0.try_clone().unwrap();
+        drop(owner);
+        let next = WorkspaceLock::acquire(&root).expect("the owner released its lock");
+        drop(next);
+        drop(inherited);
+
+        let owner = WorkspaceCoordination::acquire(&root, false).unwrap();
+        let inherited = owner._file.0.try_clone().unwrap();
+        drop(owner);
+        let next = WorkspaceCoordination::acquire(&root, true)
+            .expect("the shared owner released its lock");
+        drop(next);
+        drop(inherited);
         fs::remove_dir_all(root).unwrap();
     }
 }
