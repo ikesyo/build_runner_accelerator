@@ -193,8 +193,9 @@ def main():
                 log = results / f'{profile_name}-diagnostic-{variant}.log'
                 history = results / f'{profile_name}-history-{variant}'
                 history.mkdir()
-                run(commands[variant], roots[variant], log,
-                    {**extra, 'BUILD_RUNNER_ACCELERATOR_METRICS': '1', 'SCHEDULER_HISTORY': str(history)})
+                diagnostic_seconds = run(commands[variant], roots[variant], log,
+                    {**extra, 'BUILD_RUNNER_ACCELERATOR_METRICS': '1',
+                     'BUILD_RUNNER_ACCELERATOR_WALL_TRACE': '1', 'SCHEDULER_HISTORY': str(history)})
                 assert inventory(roots[variant], single=single) == reference, 'Diagnostic bytes differ'
                 line = re.search(r'^Rust metrics: (.*)$', log.read_text(), re.MULTILINE)
                 assert line, 'Missing diagnostic worker/IPC metrics'
@@ -202,7 +203,8 @@ def main():
                 starts = [json.loads(path.read_text()) for path in history.glob('*-start.json')]
                 diagnostics.append({'profile': profile_name, 'variant': variant,
                     'stock_byte_identical': True, 'actions': len(starts), 'jobs': settings['jobs'],
-                    'worker_pids': sorted({row['pid'] for row in starts}), 'metrics': metrics})
+                    'worker_pids': sorted({row['pid'] for row in starts}), 'metrics': metrics,
+                    'instrumented_seconds': diagnostic_seconds})
                 (results / 'diagnostics.json').write_text(json.dumps(diagnostics, indent=2) + '\n')
     summary = []
     for profile in requested:
