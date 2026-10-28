@@ -15,6 +15,8 @@ pub(crate) struct Options {
     /// Parsed once at the native entry point; raw arguments remain for Dart's
     /// official configuration resolver and detached prewarm invocations.
     pub(crate) settings: BuildSettings,
+    /// Validated by workspace discovery under all output-package locks.
+    pub(crate) workspace_output_packages: std::collections::BTreeMap<String, PathBuf>,
 }
 
 impl Options {
@@ -139,6 +141,18 @@ impl Options {
                 "Only one of --force-aot and --force-jit may be used",
             ));
         }
+        if settings.workspace
+            && (command != "build"
+                || settings.only_check
+                || settings.keep_modified_outputs
+                || !settings.build_filters.is_empty()
+                || settings.config.is_some()
+                || !settings.defines.is_empty())
+        {
+            return Err(io::Error::other(
+                "--workspace currently supports build without filters, output policies, named configs or --define",
+            ));
+        }
         let filtered_command =
             matches!(command.as_str(), "build" | "watch") && !settings.build_filters.is_empty();
         if !jobs_explicit && !filtered_command {
@@ -158,6 +172,7 @@ impl Options {
             show_version,
             build_arguments,
             settings,
+            workspace_output_packages: std::collections::BTreeMap::new(),
             command,
         })
     }
@@ -184,6 +199,7 @@ fn build_option_takes_value(argument: &str) -> bool {
 /// and configuration parsing. Build arguments retain their original spelling and values.
 #[derive(Default)]
 pub(crate) struct BuildSettings {
+    pub(crate) workspace: bool,
     pub(crate) only_check: bool,
     pub(crate) keep_modified_outputs: bool,
     /// Implicit pre-2.16 policy; does not select the explicit demand-only mode.
@@ -234,6 +250,7 @@ impl BuildSettings {
         let mut pairs = std::collections::BTreeSet::new();
         while let Some(argument) = args.next() {
             match argument.as_str() {
+                "--workspace" => settings.workspace = true,
                 "--only-check" => settings.only_check = true,
                 "--keep-modified-outputs" => settings.keep_modified_outputs = true,
                 "--release" | "-r" => settings.release = true,
@@ -603,6 +620,9 @@ mod tests {
                 "{name}"
             );
             let settings = options.settings;
+            if name == "build --workspace" {
+                assert!(settings.workspace);
+            }
             let config_path = settings.config_path().unwrap();
             let actual = serde_json::json!({
                 "config": settings.config, "config_path": config_path, "release": settings.release,

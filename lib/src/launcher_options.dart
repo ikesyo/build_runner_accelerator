@@ -178,6 +178,18 @@ class LauncherOptions {
       }
       final settings = BuildSettings.parse(passthrough);
       config = settings.config;
+      if (settings.workspace &&
+          (command != 'build' ||
+              settings.onlyCheck ||
+              settings.keepModifiedOutputs ||
+              settings.buildFilters.isNotEmpty ||
+              settings.config != null ||
+              settings.defines.isNotEmpty)) {
+        throw FormatException(
+          '--workspace currently supports build without filters, output policies, '
+          'named configs or --define',
+        );
+      }
       if (command != 'build' &&
           (settings.onlyCheck || settings.keepModifiedOutputs)) {
         throw FormatException('Output policies are supported only with build');

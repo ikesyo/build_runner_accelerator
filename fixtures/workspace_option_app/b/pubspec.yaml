@@ -1,0 +1,10 @@
+name: ws_b
+publish_to: none
+resolution: workspace
+environment:
+  sdk: ">=3.11.0 <4.0.0"
+dev_dependencies:
+  ws_gen:
+    path: ../gen
+  build_runner_accelerator:
+    path: ../../..

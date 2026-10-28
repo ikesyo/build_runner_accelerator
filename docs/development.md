@@ -81,6 +81,7 @@ Run the closest comparison script when changing a boundary:
 | Published dart2js compiler chain | `scripts/correctness_web_compilers.sh`, `scripts/watch_smoke_web_compilers.sh`; [versions, raw-byte boundary and configuration](../fixtures/build_web_compilers_app/README.md) |
 | Published DDC compiler chain, hot reload disabled | `scripts/correctness_web_compilers_ddc.sh`, `scripts/watch_smoke_web_compilers_ddc.sh`; [artifact contract and configuration](../fixtures/build_web_compilers_ddc_app/README.md) |
 | Nested path packages and source visibility | `bash scripts/correctness_nested_packages.sh` |
+| Pub workspace output scope and state transitions | `bash scripts/correctness_workspace.sh` |
 | Manifest or builder output | The relevant fixture script; see the full verification groups. |
 | Literal filename suffix mapping and real Dart CLI adoption | `scripts/correctness_multi_mapping_builder.sh`; optional [pinned FVM replay](probes/fvm/README.md) |
 

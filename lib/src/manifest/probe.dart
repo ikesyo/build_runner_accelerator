@@ -34,6 +34,7 @@ Future<ManifestTriggers> loadManifestTriggers(
   String root,
   String workerEntrypoint, {
   String? configKey,
+  bool buildWorkspace = false,
 }) async {
   final temporary = await Directory.systemTemp.createTemp('manifest-triggers-');
   // A timed-out worker may survive termination. Never share its output path
@@ -70,6 +71,7 @@ Future<ManifestTriggers> loadManifestTriggers(
             root,
             workerResult.path,
             jsonEncode(configKey),
+            if (buildWorkspace) 'true',
           ], workerResult);
           usedWorker = parsed != null;
           return parsed;
@@ -93,6 +95,7 @@ Future<ManifestTriggers> loadManifestTriggers(
             root,
             sourceResult.path,
             jsonEncode(configKey),
+            if (buildWorkspace) 'true',
           ],
           sourceResult,
           timeout: _sourceTriggerTimeout,

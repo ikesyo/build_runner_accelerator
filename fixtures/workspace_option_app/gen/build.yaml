@@ -1,0 +1,7 @@
+builders:
+  copy:
+    import: "package:ws_gen/builder.dart"
+    builder_factories: ["copyBuilder"]
+    build_extensions: {".txt": [".gen"]}
+    auto_apply: root_package
+    build_to: source

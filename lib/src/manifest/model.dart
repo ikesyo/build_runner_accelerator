@@ -26,6 +26,9 @@ class PackageInfo {
 
   final String name;
   final String path;
+
+  /// Whether this package is an output package. A workspace build can have
+  /// several; the name matches BuilderOptions.isRoot in the worker protocol.
   final bool isRoot;
   final List<PackageInfo> dependencies = <PackageInfo>[];
 }

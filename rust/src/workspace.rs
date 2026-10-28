@@ -162,26 +162,42 @@ impl Workspace {
     }
 
     pub fn builder_manifest_fingerprint(&self) -> io::Result<String> {
-        let mut bytes = b"build-runner-accelerator-manifest-v2\0".to_vec();
+        let mut bytes = b"build-runner-accelerator-manifest-v4\0".to_vec();
         bytes.extend_from_slice(self.package_config_identity.as_bytes());
         bytes.push(0);
         if let Ok(contents) = fs::read(self.root.join("pubspec.lock")) {
             bytes.extend_from_slice(&normalize_text_bytes(&contents));
             bytes.push(0xfe);
         }
+        // Pub's roots and direct dependency graph can change while the
+        // package configuration and lockfile remain byte-identical. Those
+        // roots determine the workspace output packages and builder scope.
+        match fs::read(self.root.join(".dart_tool/package_graph.json")) {
+            Ok(contents) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&normalize_text_bytes(&contents));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => bytes.push(0),
+            Err(error) => return Err(error),
+        }
+        bytes.push(0xfd);
         for (package, root) in &self.packages {
             bytes.extend_from_slice(package.as_bytes());
             bytes.push(0);
-            let config_path = root.join("build.yaml");
-            match fs::read(config_path) {
-                Ok(contents) => {
-                    bytes.push(1);
-                    bytes.extend_from_slice(&normalize_text_bytes(&contents));
+            // Pubspecs determine direct dependencies, including each output
+            // package's dev dependencies. They can change before pub writes
+            // an updated package graph or lockfile.
+            for name in ["build.yaml", "pubspec.yaml"] {
+                match fs::read(root.join(name)) {
+                    Ok(contents) => {
+                        bytes.push(1);
+                        bytes.extend_from_slice(&normalize_text_bytes(&contents));
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => bytes.push(0),
+                    Err(error) => return Err(error),
                 }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => bytes.push(0),
-                Err(error) => return Err(error),
+                bytes.push(0xff);
             }
-            bytes.push(0xff);
         }
         Ok(digest_bytes(&bytes))
     }
@@ -1018,6 +1034,50 @@ mod tests {
         assert!(path.is_dir());
         #[cfg(windows)]
         assert!(!path.as_os_str().to_string_lossy().starts_with(r"\\?\"));
+    }
+
+    #[test]
+    fn manifest_fingerprint_tracks_pub_workspace_graph_changes() {
+        let temp = TempDir::new();
+        let tool = temp.path().join(".dart_tool");
+        fs::create_dir_all(&tool).unwrap();
+        fs::create_dir_all(temp.path().join("dep")).unwrap();
+        fs::write(temp.path().join("pubspec.yaml"), "name: app\n").unwrap();
+        fs::write(temp.path().join("dep/pubspec.yaml"), "name: dep\n").unwrap();
+        fs::write(
+            tool.join("package_config.json"),
+            r#"{"configVersion":2,"packages":[{"name":"app","rootUri":"../"},{"name":"dep","rootUri":"../dep/"}]}"#,
+        )
+        .unwrap();
+        let workspace = super::Workspace::load(temp.path().to_path_buf()).unwrap();
+        let missing = workspace.builder_manifest_fingerprint().unwrap();
+        let graph = tool.join("package_graph.json");
+        fs::write(&graph, r#"{"roots":["app"]}"#).unwrap();
+        let initial = workspace.builder_manifest_fingerprint().unwrap();
+        assert_ne!(missing, initial);
+        assert_eq!(initial, workspace.builder_manifest_fingerprint().unwrap());
+        fs::write(&graph, r#"{"roots":["app","member"]}"#).unwrap();
+        let changed_graph = workspace.builder_manifest_fingerprint().unwrap();
+        assert_ne!(initial, changed_graph);
+        fs::write(
+            temp.path().join("pubspec.yaml"),
+            "name: app\ndev_dependencies:\n  generator: any\n",
+        )
+        .unwrap();
+        assert_ne!(
+            changed_graph,
+            workspace.builder_manifest_fingerprint().unwrap()
+        );
+        let changed_root = workspace.builder_manifest_fingerprint().unwrap();
+        fs::write(
+            temp.path().join("dep/pubspec.yaml"),
+            "name: dep\ndependencies:\n  generator: any\n",
+        )
+        .unwrap();
+        assert_ne!(
+            changed_root,
+            workspace.builder_manifest_fingerprint().unwrap()
+        );
     }
 
     #[cfg(windows)]

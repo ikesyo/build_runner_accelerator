@@ -563,13 +563,12 @@ pub(crate) fn dependency_output_conflict_reason(
     state: &GraphState,
     preflight: &mut Option<Preflight>,
 ) -> io::Result<Option<&'static str>> {
-    if config
-        .builders
-        .iter()
-        .any(|builder| builder.package != workspace.root_package)
-    {
+    if config.builders.iter().any(|builder| !builder.is_root) {
         let plan = &Preflight::prepare(preflight, workspace, config, state)?.plan;
         for spec in &plan.specs {
+            if spec.instance.is_root {
+                continue;
+            }
             for output in &spec.outputs {
                 if output
                     .split_once('|')

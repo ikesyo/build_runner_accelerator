@@ -76,6 +76,7 @@ is never started. Run dart run build_runner directly when stock is needed.
   --build-filter PATTERN Select build/watch outputs; repeat or comma-separate
   --only-check           Build-only verification; report I/M/U, exit 1 on differences
   --keep-modified-outputs Build-only retention until the producer reruns
+  --workspace            Build all Pub workspace packages (supported subset)
   --delete-conflicting-outputs, -d
                          Accepted retired stock flags; no effect
   --background           Detach prewarm (prewarm only)
@@ -89,7 +90,12 @@ validated subset fail before publishing outputs. Watch topology changes fail.
 Legacy stock output-policy history requires explicit recovery; see
 https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-cleanup.md#safe-recovery
 
---output, --workspace, logging options, positional build directories and stock
+Workspace builds support non-optional normal builders without shared parts or
+trigger-only builders. Watch, filters, output policies, named configs and
+--define are unsupported with --workspace. Switching build scopes requires a
+state reset; see the recovery guide above.
+
+--output, logging options, positional build directories and stock
 commands such as clean/serve/run/test/stop are unsupported. Use stock directly.
 --worker is an internal test/diagnostic override, not a third-party extension API.
 ''';

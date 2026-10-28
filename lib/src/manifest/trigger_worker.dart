@@ -11,17 +11,22 @@ import 'model.dart';
 import 'package_graph.dart';
 
 Future<void> main(List<String> arguments) async {
-  if (arguments.length < 2 || arguments.length > 3) {
-    stderr.writeln('usage: trigger_worker <root> <result> [config-json]');
+  if (arguments.length < 2 || arguments.length > 4) {
+    stderr.writeln(
+      'usage: trigger_worker <root> <result> [config-json] [workspace-json]',
+    );
     exitCode = 64;
     return;
   }
   await writeManifestTriggers(
     arguments[0],
     arguments[1],
-    configKey: arguments.length == 3
+    configKey: arguments.length >= 3
         ? jsonDecode(arguments[2]) as String?
         : null,
+    buildWorkspace: arguments.length == 4
+        ? jsonDecode(arguments[3]) as bool
+        : false,
   );
 }
 
@@ -29,11 +34,12 @@ Future<void> writeManifestTriggers(
   String root,
   String resultPath, {
   String? configKey,
+  bool buildWorkspace = false,
 }) async {
   Map<String, Object> response;
   try {
     final configs = await loadBuildConfigs(
-      await loadPackageGraph(root),
+      await loadPackageGraph(root, buildWorkspace: buildWorkspace),
       configKey: configKey,
     );
     response = manifestTriggerData(configs);

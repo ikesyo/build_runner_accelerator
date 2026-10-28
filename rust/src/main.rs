@@ -22,7 +22,9 @@ mod watch;
 mod worker;
 mod worker_kernel;
 mod workspace;
+mod workspace_discovery;
 mod workspace_lock;
+mod workspace_mode;
 
 use std::env;
 use std::io;
@@ -46,21 +48,98 @@ fn main() -> io::Result<()> {
             options.command, options.build_arguments
         ));
     }
-    if matches!(options.command.as_str(), "build" | "watch")
-        && options
+    let original_root = options.root.clone();
+    let discovery = if options.settings.workspace {
+        if env::var("BUILD_RUNNER_ACCELERATOR_PLAN_ONLY").as_deref() == Ok("1") {
+            return frontend::unsupported(
+                "--workspace is not supported with plan-only diagnostics",
+            );
+        }
+        Some(workspace_discovery::discover(
+            &original_root,
+            options.dart_binary.as_deref().unwrap_or("dart"),
+        )?)
+    } else {
+        None
+    };
+    if let Some(info) = &discovery {
+        options.root = info.root.clone();
+        if !info.build_workspace {
+            // Stock treats --workspace outside a Pub workspace as a single
+            // package build; keep the same graph/configuration identity.
+            options.settings.workspace = false;
+        }
+    }
+    let _coordination = if discovery.as_ref().is_some_and(|info| info.build_workspace) {
+        Some(workspace_lock::WorkspaceCoordination::acquire(
+            &options.root,
+            true,
+        )?)
+    } else if matches!(options.command.as_str(), "prewarm" | "aot-cache-key") {
+        let root = workspace_mode::coordination_root(&options.root)?;
+        Some(workspace_lock::WorkspaceCoordination::acquire(
+            &root, false,
+        )?)
+    } else {
+        None
+    };
+    // Hold exclusive ownership throughout native execution, including watch.
+    let _workspace_lock = match options.command.as_str() {
+        "build" | "watch" => Some(if let Some(info) = &discovery {
+            if info.build_workspace {
+                workspace_lock::WorkspaceLock::acquire_all(
+                    info.output_packages
+                        .values()
+                        .map(std::path::PathBuf::as_path),
+                )?
+            } else {
+                workspace_lock::WorkspaceLock::acquire(&options.root)?
+            }
+        } else {
+            workspace_lock::WorkspaceLock::acquire(&options.root)?
+        }),
+        _ => None,
+    };
+    if matches!(options.command.as_str(), "build" | "watch") {
+        if let Some(info) = &discovery {
+            if info.build_workspace {
+                let checked = workspace_discovery::discover(
+                    &original_root,
+                    options.dart_binary.as_deref().unwrap_or("dart"),
+                )?;
+                if checked != *info {
+                    return frontend::unsupported(
+                        "workspace configuration changed while acquiring locks; retry",
+                    );
+                }
+                options.workspace_output_packages = info.output_packages.clone();
+                for root in info.output_packages.values() {
+                    if root.join(frontend::STOCK_OUTPUT_POLICY_STATE).exists() {
+                        return frontend::unsupported(
+                            "legacy stock output-policy history cannot be reused; follow docs/compatibility-cleanup.md#safe-recovery",
+                        );
+                    }
+                }
+                workspace_mode::prepare(info)?;
+            } else {
+                workspace_mode::reject_individual_after_workspace(&options.root)?;
+            }
+        } else {
+            workspace_mode::reject_individual_after_workspace(&options.root)?;
+        }
+        if options
             .root
             .join(frontend::STOCK_OUTPUT_POLICY_STATE)
             .exists()
-    {
-        return frontend::unsupported(
-            "legacy stock output-policy history cannot be reused; stop all builders and reset both build states as described in docs/compatibility-cleanup.md#safe-recovery",
-        );
+        {
+            return frontend::unsupported(
+                "legacy stock output-policy history cannot be reused; stop all builders and reset both build states as described in docs/compatibility-cleanup.md#safe-recovery",
+            );
+        }
     }
-    // Hold exclusive ownership throughout native execution, including watch.
-    let _workspace_lock = match options.command.as_str() {
-        "build" | "watch" => Some(workspace_lock::WorkspaceLock::acquire(&options.root)?),
-        _ => None,
-    };
+    if matches!(options.command.as_str(), "prewarm" | "aot-cache-key") {
+        workspace_mode::reject_individual_after_workspace(&options.root)?;
+    }
     if matches!(options.command.as_str(), "build" | "watch") && !options.settings.only_check {
         options.settings.legacy_keep_modified_outputs =
             runner_compatibility::legacy_output_defaults(&options.root)?;
@@ -108,6 +187,7 @@ Options: --root PATH --dart PATH --jobs N --interval-ms N --worker PACKAGE:EXECU
 --define BUILDER=OPTION=VALUE --release | --no-release | -r --config NAME | -c NAME
 --enable-experiment NAME (repeat or comma-separate)
 --build-filter PATH (build/watch), --only-check | --keep-modified-outputs (build only)
+--workspace (build only; non-optional builders, no filters/policies/config/defines)
 --delete-conflicting-outputs | -d (retired; no effect), --help | -h, --version
 Output policies and filters support the validated normal-builder demand subset.
 Unsupported manifest/state/API transitions fail before output/graph publication.

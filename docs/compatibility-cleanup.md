@@ -100,10 +100,23 @@ publication sequence and I/O costs.
 
 ## Safe recovery
 
+For a `--workspace` build, the native graph and the `workspace-mode` marker
+live under the Pub workspace root; individual package graphs live under their
+respective package roots. Switching between those scopes, or changing the
+workspace output-package set, requires a cold reset of the native state in the
+workspace root and every involved member. Stop all builders first, and rename
+each `.dart_tool/build_runner_accelerator` directory to a backup rather than
+removing the marker alone. Check every state directory for a pending undo
+journal before resetting: restore the original workspace topology and run the
+same native workspace build to recover it. If recovery cannot safely proceed,
+preserve the journal and affected files as described above. Generated source
+files remain in place; back up manual edits before a subsequent build.
+
 1. Stop build/watch/prewarm processes for the workspace and shared cache.
 2. Check package and preinstalled frontend versions (`--version`); update the
    frontend to match the package. Remove internal artifact overrides.
-3. Retry `build --force-jit` for diagnostics without AOT.
+3. Retry `build --force-jit` for diagnostics without AOT. For workspace state,
+   retry `build --workspace --force-jit` with the original package topology.
    `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0` uses memory-only analyzer storage;
    `BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0` parses directives without shared
    caching. A fresh `BUILD_RUNNER_ACCELERATOR_CACHE` directory isolates disk state.
