@@ -90,10 +90,10 @@ validated subset fail before publishing outputs. Watch topology changes fail.
 Legacy stock output-policy history requires explicit recovery; see
 https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-cleanup.md#safe-recovery
 
-Workspace builds support non-optional normal builders without shared parts or
-trigger-only builders. Watch, filters, output policies, named configs and
---define are unsupported with --workspace. Switching build scopes requires a
-state reset; see the recovery guide above.
+Workspace builds support non-optional normal and post-process builders without
+shared parts or trigger-only builders. Watch, filters, output policies, named
+configs and --define are unsupported with --workspace. Switching build scopes
+requires a state reset; see the recovery guide above.
 
 --output, logging options, positional build directories and stock
 commands such as clean/serve/run/test/stop are unsupported. Use stock directly.

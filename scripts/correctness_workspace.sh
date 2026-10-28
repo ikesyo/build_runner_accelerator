@@ -98,6 +98,11 @@ PY
   done
   [[ -e "$ready" ]] || fail "$scope lock holder did not start"
   if run_native "locked-$scope"; then fail "$scope lock conflict was accepted"; fi
+  if [[ "$scope" == member ]]; then
+    grep -Fq 'native workspace writer lock is already held for ' "$temporary/native-locked-member.log" || fail 'wrong member-lock rejection'
+  else
+    grep -Fq 'workspace build conflicts with a running prewarm or cache-key command' "$temporary/native-locked-coordination.log" || fail 'wrong coordination-lock rejection'
+  fi
   cmp "$temporary/locked.graph" "$native/.dart_tool/build_runner_accelerator/graph-v3.bin" || fail "$scope lock conflict changed graph"
   touch "$release"
   wait "$holder_pid"
@@ -182,6 +187,7 @@ cp "$temporary/manifest.json" "$manifest"
 cp "$native/gen/build.yaml" "$temporary/generator.yaml"
 printf '    is_optional: true\n' >> "$native/gen/build.yaml"
 if run_native unsupported; then fail 'optional workspace builder was accepted'; fi
+grep -Fq -- '--workspace currently supports non-optional builders without shared parts or triggers' "$temporary/native-unsupported.log" || fail 'wrong optional-builder rejection'
 cmp "$temporary/recovered.graph" "$native/.dart_tool/build_runner_accelerator/graph-v3.bin" || fail 'unsupported builder changed graph'
 cp "$temporary/generator.yaml" "$native/gen/build.yaml"
 python3 - "$native/pubspec.yaml" <<'PY'
@@ -192,6 +198,7 @@ path.write_text(path.read_text().replace('workspace: [a, b, gen]', 'workspace: [
 PY
 worker_pub_get "$native" "${pub_get_args[@]}"
 if run_native topology; then fail 'workspace topology change was accepted'; fi
+grep -Fq 'workspace package topology changed or state marker is invalid' "$temporary/native-topology.log" || fail 'wrong topology rejection'
 cmp "$temporary/recovered.graph" "$native/.dart_tool/build_runner_accelerator/graph-v3.bin" || fail 'topology failure changed graph'
 standalone="$workspace/fixtures/standalone"
 mkdir -p "$standalone/lib"

@@ -29,6 +29,7 @@ mkdir -p "$workspace/fixtures"
 worker_attach "$workspace"
 cp -R "$repo_root/fixtures/workspace_json_app" "$stock"
 cp -R "$repo_root/fixtures/workspace_json_app" "$native"
+rm -rf -- "$stock/.dart_tool" "$native/.dart_tool" "$stock/a/.dart_tool" "$native/a/.dart_tool" "$stock/b/.dart_tool" "$native/b/.dart_tool"
 worker_pub_get "$stock" "${pub_get_args[@]}"
 worker_pub_get "$native" "${pub_get_args[@]}"
 run_stock() {

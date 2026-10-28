@@ -35,7 +35,11 @@ impl WorkspaceCoordination {
         result.map_err(|error| match error {
             std::fs::TryLockError::WouldBlock => io::Error::new(
                 io::ErrorKind::WouldBlock,
-                "workspace build conflicts with a running prewarm or cache-key command",
+                if exclusive {
+                    "workspace build conflicts with a running prewarm or cache-key command"
+                } else {
+                    "prewarm or cache-key command conflicts with a running workspace build"
+                },
             ),
             std::fs::TryLockError::Error(error) => error,
         })?;
