@@ -24,6 +24,7 @@ def main():
     parser.add_argument('--results', required=True, type=Path)
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--profiles', default='skew,balanced,inputs')
+    parser.add_argument('--worker-mode', choices=['jit', 'aot'], default='jit')
     parser.add_argument('--diagnostics', action='store_true', help='Separate untimed worker/IPC diagnostics after each profile')
     args = parser.parse_args()
     assert args.repeat > 0
@@ -43,12 +44,14 @@ def main():
     assert all(path.is_file() for path in binaries.values())
     assert digest(binaries['baseline'].read_bytes()) != digest(binaries['candidate'].read_bytes())
     env = os.environ.copy()
-    env.update(BUILD_RUNNER_ACCELERATOR_METRICS='0', BUILD_RUNNER_ACCELERATOR_WORKER_AOT='0',
+    env.update(BUILD_RUNNER_ACCELERATOR_METRICS='0',
+               BUILD_RUNNER_ACCELERATOR_WORKER_AOT='force' if args.worker_mode == 'aot' else '0',
                BUILD_RUNNER_ACCELERATOR_BYTE_STORE='1',
                BUILD_RUNNER_ACCELERATOR_CACHE=str(results / 'shared-native-cache'))
     for name in ['SCHEDULER_HISTORY', 'SCHEDULER_RENDEZVOUS', 'SCHEDULER_INPUT_RENDEZVOUS',
                  'SCHEDULER_CRASH', 'WALL_TRACE', 'BUILD_RUNNER_ACCELERATOR_WALL_TRACE',
-                 'BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE']:
+                 'BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE', 'BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH',
+                 'BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL', 'BUILD_RUNNER_ACCELERATOR_WORKER_AOT_BACKGROUND_LOCK']:
         env.pop(name, None)
     profiles = {
         'skew': {'jobs': 2, 'delays': {'schedule_a': 200, 'schedule_b': 2000, 'schedule_c': 1800}},
@@ -73,7 +76,7 @@ def main():
         'platform': platform.system() + '/' + platform.machine(),
         'cpu_quota': Path('/sys/fs/cgroup/cpu.max').read_text().strip() if Path('/sys/fs/cgroup/cpu.max').exists() else None,
         'pub_cache': env.get('PUB_CACHE'), 'native_cache': env['BUILD_RUNNER_ACCELERATOR_CACHE'],
-        'worker_mode': 'JIT', 'frontend_profile': 'release', 'metrics': False,
+        'worker_mode': args.worker_mode.upper(), 'frontend_profile': 'release', 'metrics': False,
         'diagnostics_after_timing': args.diagnostics,
         'cache_definition': 'Untimed preparation of both implementations; retain compiler/analysis caches; clean removes native graph/generated artifacts only.',
         'stock_role': 'Untimed output reference with identical lockfiles and source bytes.',
@@ -86,16 +89,48 @@ def main():
         'source_head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip(),
         'source_rust_sha256': digest(json.dumps({str(path.relative_to(repo)): digest(path.read_bytes())
             for path in sorted((repo / 'rust/src').rglob('*.rs'))}, sort_keys=True).encode()),
+        'aot_artifacts': {},
     }
     (results / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')
 
-    def run(command, root, log, extra=None):
+    def run(command, root, log, extra=None, worker_executables=None):
         process_env = env.copy()
         process_env.update(extra or {})
         with log.open('w') as output:
             started = time.perf_counter()
-            subprocess.run(list(map(str, command)), cwd=root, env=process_env,
-                           stdout=output, stderr=subprocess.STDOUT, check=True, timeout=600)
+            command = list(map(str, command))
+            if worker_executables is None:
+                subprocess.run(command, cwd=root, env=process_env,
+                               stdout=output, stderr=subprocess.STDOUT, check=True, timeout=600)
+            else:
+                # Only instrument separate diagnostics. Observe the actual
+                # builder processes, rather than inferring AOT from a counter.
+                process = subprocess.Popen(command, cwd=root, env=process_env,
+                                           stdout=output, stderr=subprocess.STDOUT)
+                seen = set()
+                try:
+                    while process.poll() is None:
+                        for path in Path(process_env['SCHEDULER_HISTORY']).glob('*-start.json'):
+                            if path in seen:
+                                continue
+                            try:
+                                pid = json.loads(path.read_text())['pid']
+                            except (OSError, json.JSONDecodeError):
+                                continue
+                            seen.add(path)
+                            try:
+                                worker_executables[str(pid)] = os.readlink(f'/proc/{pid}/exe')
+                            except OSError:
+                                pass
+                        if time.perf_counter() - started > 600:
+                            raise subprocess.TimeoutExpired(command, 600)
+                        time.sleep(0.01)
+                    if process.returncode:
+                        raise subprocess.CalledProcessError(process.returncode, command)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait()
             return time.perf_counter() - started
 
     def inventory(root, stock=False, single=False):
@@ -149,7 +184,7 @@ def main():
         execution_roots = roots
         stock_command = [dart, '--suppress-analytics', 'run', 'build_runner', 'build'] + ([] if single else ['--workspace'])
         commands = {variant: [binary, 'build', '--root', execution_roots[variant], '--dart', dart,
-                             '--force-jit', '--jobs', str(settings['jobs'])] + ([] if single else ['--workspace'])
+                             '--force-' + args.worker_mode, '--jobs', str(settings['jobs'])] + ([] if single else ['--workspace'])
                     for variant, binary in binaries.items()}
         extra = {'SCHEDULER_DELAYS': json.dumps(settings['delays'])}
         print(f'warming {profile_name}', flush=True)
@@ -158,6 +193,15 @@ def main():
         for variant in binaries:
             run(commands[variant], roots[variant], results / f'{profile_name}-{variant}-warm.log', extra)
             assert inventory(roots[variant], single=single) == reference, f'{profile_name}/{variant} warm bytes differ'
+            if args.worker_mode == 'aot':
+                artifact = roots[variant] / '.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker'
+                if os.name == 'nt':
+                    artifact = artifact.with_suffix('.exe')
+                assert artifact.is_file(), 'Forced-AOT warm build did not publish its executable'
+                metadata['aot_artifacts'].setdefault(profile_name, {})[variant] = {
+                    'path': str(artifact.resolve()), 'sha256': digest(artifact.read_bytes()),
+                    'mtime_ns': artifact.stat().st_mtime_ns}
+        (results / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')
         for repeat in range(args.repeat):
             for case in ['clean', 'noop', 'one-file', 'broad']:
                 for root in roots.values():
@@ -176,6 +220,9 @@ def main():
                     before = graph.read_bytes() if case == 'noop' else None
                     log = results / f'{profile_name}-{repeat}-{case}-{variant}.log'
                     elapsed = run(commands[variant], roots[variant], log, extra)
+                    if args.worker_mode == 'aot':
+                        artifact = metadata['aot_artifacts'][profile_name][variant]
+                        assert Path(artifact['path']).stat().st_mtime_ns == artifact['mtime_ns'], 'Timed run rebuilt AOT worker'
                     actual = inventory(roots[variant], single=single)
                     assert actual == reference, f'{profile_name}/{variant}/{case} stock bytes differ'
                     if case == 'noop':
@@ -198,18 +245,24 @@ def main():
                 log = results / f'{profile_name}-diagnostic-{variant}.log'
                 history = results / f'{profile_name}-history-{variant}'
                 history.mkdir()
+                worker_executables = {}
                 diagnostic_seconds = run(commands[variant], roots[variant], log,
                     {**extra, 'BUILD_RUNNER_ACCELERATOR_METRICS': '1',
-                     'BUILD_RUNNER_ACCELERATOR_WALL_TRACE': '1', 'SCHEDULER_HISTORY': str(history)})
+                     'BUILD_RUNNER_ACCELERATOR_WALL_TRACE': '1', 'SCHEDULER_HISTORY': str(history)},
+                    worker_executables)
                 assert inventory(roots[variant], single=single) == reference, 'Diagnostic bytes differ'
                 line = re.search(r'^Rust metrics: (.*)$', log.read_text(), re.MULTILINE)
                 assert line, 'Missing diagnostic worker/IPC metrics'
                 metrics = {key: int(value) for key, value in re.findall(r'(\w+)=(\d+)', line[1])}
                 starts = [json.loads(path.read_text()) for path in history.glob('*-start.json')]
+                if args.worker_mode == 'aot' and Path('/proc/self/exe').exists():
+                    expected = metadata['aot_artifacts'][profile_name][variant]['path']
+                    assert worker_executables and all(path == expected for path in worker_executables.values()), 'Observed worker is not the warmed AOT executable'
                 diagnostics.append({'profile': profile_name, 'variant': variant,
                     'stock_byte_identical': True, 'actions': len(starts), 'jobs': settings['jobs'],
                     'worker_pids': sorted({row['pid'] for row in starts}), 'metrics': metrics,
-                    'instrumented_seconds': diagnostic_seconds})
+                    'instrumented_seconds': diagnostic_seconds,
+                    'worker_executables': worker_executables})
                 (results / 'diagnostics.json').write_text(json.dumps(diagnostics, indent=2) + '\n')
     summary = []
     for profile in requested:
