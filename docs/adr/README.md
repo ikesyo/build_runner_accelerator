@@ -57,7 +57,7 @@ Benchmarks and mechanical refactors do not need one.
 | [0043](0043-shared-library-parts.md) | Native shared-library phases, source edits and incremental resolver consumers |
 | [0044](0044-bounded-shared-cache-generations.md) | Bounded shared cache generations and leased reclamation |
 | [0045](0045-pub-workspace-builds.md) | Pub workspace output scope, locks and state separation |
-| [0046](0046-workspace-action-scheduler.md) | Workspace phase barriers, independent package scheduling and global worker budget |
+| [0046](0046-workspace-action-scheduler.md) | Adaptive input dispatch, workspace readiness, state reuse and global worker budget |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
 artifacts and launcher behavior are in

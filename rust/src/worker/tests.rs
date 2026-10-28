@@ -3,8 +3,8 @@ use super::asset_rpc::{
 };
 use super::client::{has_capability, is_worker_script, require_overlay_blob_capability};
 use super::pool::{
-    balanced_request_ranges, homogeneous_resolver_usage_key, remember_resolver_usage,
-    target_worker_count, validate_memory_overlay,
+    homogeneous_resolver_usage_key, remember_resolver_usage, target_worker_count,
+    validate_memory_overlay,
 };
 use super::request::{BuildRequest, batch_blocked_assets};
 use crate::visibility::AssetVisibility;
@@ -34,16 +34,6 @@ fn worker_count_follows_available_requests() {
     assert_eq!(target_worker_count(4, 3), 3);
     assert_eq!(target_worker_count(4, 8), 4);
     assert_eq!(target_worker_count(1, 8), 1);
-}
-
-#[test]
-fn requests_are_split_into_balanced_contiguous_batches() {
-    assert_eq!(
-        balanced_request_ranges(10, 3),
-        vec![(0, 4), (4, 7), (7, 10)]
-    );
-    assert_eq!(balanced_request_ranges(3, 3), vec![(0, 1), (1, 2), (2, 3)]);
-    assert_eq!(balanced_request_ranges(2, 4), vec![(0, 1), (1, 2)]);
 }
 
 #[test]

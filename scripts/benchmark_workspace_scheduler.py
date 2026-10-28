@@ -18,8 +18,8 @@ def digest(data):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wave-bin', required=True, type=Path)
-    parser.add_argument('--ready-bin', required=True, type=Path)
+    parser.add_argument('--baseline-bin', '--wave-bin', dest='baseline_bin', required=True, type=Path)
+    parser.add_argument('--candidate-bin', '--ready-bin', dest='candidate_bin', required=True, type=Path)
     parser.add_argument('--results', required=True, type=Path)
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--profiles', default='skew,balanced,inputs')
@@ -37,9 +37,9 @@ def main():
     (workspace / 'fixtures').mkdir()
     dart = Path(os.environ['DART_BIN']).resolve()
     cargo = Path(os.environ['CARGO_BIN']).absolute()
-    binaries = {'wave': args.wave_bin.resolve(), 'ready': args.ready_bin.resolve()}
+    binaries = {'baseline': args.baseline_bin.resolve(), 'candidate': args.candidate_bin.resolve()}
     assert all(path.is_file() for path in binaries.values())
-    assert digest(binaries['wave'].read_bytes()) != digest(binaries['ready'].read_bytes())
+    assert digest(binaries['baseline'].read_bytes()) != digest(binaries['candidate'].read_bytes())
     env = os.environ.copy()
     env.update(BUILD_RUNNER_ACCELERATOR_METRICS='0', BUILD_RUNNER_ACCELERATOR_WORKER_AOT='0',
                BUILD_RUNNER_ACCELERATOR_BYTE_STORE='1',
@@ -54,6 +54,9 @@ def main():
         'inputs': {'jobs': 3, 'delays': {'schedule_a': 200, **{
             f'schedule_a|lib/{name}.seed': 2000 for name in ['input', 'input_01', 'input_02']}}},
     }
+    profiles['many'] = {'jobs': 3, 'delays': {'schedule_a': 0}, 'inputs': 120}
+    profiles['single-balanced'] = {'jobs': 3, 'delays': {'schedule_a': 0}, 'inputs': 120, 'single': True}
+    profiles['single-inputs'] = {**profiles['inputs'], 'single': True}
     requested = args.profiles.split(',')
     assert all(profile in profiles for profile in requested)
     records = []
@@ -86,9 +89,9 @@ def main():
                            stdout=output, stderr=subprocess.STDOUT, check=True, timeout=600)
             return time.perf_counter() - started
 
-    def inventory(root, stock=False):
+    def inventory(root, stock=False, single=False):
         assets = {}
-        for package in ['a', 'b', 'c', 'helper']:
+        for package in (['.'] if single else ['a', 'b', 'c', 'helper']):
             for path in (root / package / 'lib').rglob('*.summary'):
                 assets[f'source/{package}/{path.relative_to(root / package)}'] = digest(path.read_bytes())
         cache = root / ('.dart_tool/build/generated' if stock else '.dart_tool/build_runner_accelerator/cache')
@@ -109,34 +112,43 @@ def main():
         print(f'preparing {profile_name}', flush=True)
         settings = profiles[profile_name]
         roots = {}
-        for variant in ['stock', 'wave', 'ready']:
+        for variant in ['stock', 'baseline', 'candidate']:
             root = workspace / 'fixtures' / f'{profile_name}-{variant}'
             shutil.copytree(repo / 'fixtures/workspace_scheduler_app', root,
                             ignore=shutil.ignore_patterns('.dart_tool', '.cache'))
+            single = settings.get('single', False)
+            if single:
+                subprocess.run(['python3', str(repo / 'scripts/prepare_single_scheduler_fixture.py'), str(root)], check=True)
             if profile_name == 'skew':
                 (root / 'a/lib/second.seed').unlink()
             else:
-                for package in ['b', 'c']:
-                    (root / package / 'lib/input.seed').unlink()
-                for number in range(1, 11):
-                    (root / f'a/lib/input_{number:02}.seed').write_text(f'input {number}\n')
+                if not single:
+                    for package in ['b', 'c']:
+                        (root / package / 'lib/input.seed').unlink()
+                for number in range(1, settings.get('inputs', 12) - 1):
+                    (root / ('lib' if single else 'a/lib') / f'input_{number:02}.seed').write_text(f'input {number}\n')
             roots[variant] = root
-            run([dart, '--suppress-analytics', 'pub', 'get', '--enforce-lockfile'], root,
+            if single and variant != 'stock':
+                shutil.copy2(roots['stock'] / 'pubspec.lock', root / 'pubspec.lock')
+            pub_args = [] if single and variant == 'stock' else ['--enforce-lockfile']
+            run([dart, '--suppress-analytics', 'pub', 'get', *pub_args], root,
                 results / f'{profile_name}-{variant}-pub.log')
         locks = {(root / 'pubspec.lock').read_bytes() for root in roots.values()}
         assert len(locks) == 1, 'Dependency solutions differ'
         (results / f'{profile_name}.lock').write_bytes(next(iter(locks)))
-        stock_command = [dart, '--suppress-analytics', 'run', 'build_runner', 'build', '--workspace']
-        commands = {variant: [binary, 'build', '--root', roots[variant], '--dart', dart,
-                             '--workspace', '--force-jit', '--jobs', str(settings['jobs'])]
+        single = settings.get('single', False)
+        execution_roots = roots
+        stock_command = [dart, '--suppress-analytics', 'run', 'build_runner', 'build'] + ([] if single else ['--workspace'])
+        commands = {variant: [binary, 'build', '--root', execution_roots[variant], '--dart', dart,
+                             '--force-jit', '--jobs', str(settings['jobs'])] + ([] if single else ['--workspace'])
                     for variant, binary in binaries.items()}
         extra = {'SCHEDULER_DELAYS': json.dumps(settings['delays'])}
         print(f'warming {profile_name}', flush=True)
-        run(stock_command, roots['stock'], results / f'{profile_name}-stock-warm.log')
-        reference = inventory(roots['stock'], stock=True)
+        run(stock_command, execution_roots['stock'], results / f'{profile_name}-stock-warm.log')
+        reference = inventory(roots['stock'], stock=True, single=single)
         for variant in binaries:
             run(commands[variant], roots[variant], results / f'{profile_name}-{variant}-warm.log', extra)
-            assert inventory(roots[variant]) == reference, f'{profile_name}/{variant} warm bytes differ'
+            assert inventory(roots[variant], single=single) == reference, f'{profile_name}/{variant} warm bytes differ'
         for repeat in range(args.repeat):
             for case in ['clean', 'noop', 'one-file', 'broad']:
                 for root in roots.values():
@@ -144,18 +156,18 @@ def main():
                         for path in sorted(root.rglob('*.seed')):
                             path.write_text(f'{path.stem} repeat {repeat} case {case}\n')
                     elif case == 'one-file':
-                        (root / 'a/lib/input.seed').write_text(f'input repeat {repeat} case edit\n')
-                run(stock_command, roots['stock'], results / f'{profile_name}-{repeat}-{case}-stock.log')
-                reference = inventory(roots['stock'], stock=True)
-                order = ['wave', 'ready'] if repeat % 2 == 0 else ['ready', 'wave']
+                        (root / ('lib/input.seed' if single else 'a/lib/input.seed')).write_text(f'input repeat {repeat} case edit\n')
+                run(stock_command, execution_roots['stock'], results / f'{profile_name}-{repeat}-{case}-stock.log')
+                reference = inventory(roots['stock'], stock=True, single=single)
+                order = ['baseline', 'candidate'] if repeat % 2 == 0 else ['candidate', 'baseline']
                 for variant in order:
                     if case == 'clean':
-                        clean(roots[variant])
-                    graph = roots[variant] / '.dart_tool/build_runner_accelerator/graph-v3.bin'
+                        clean(execution_roots[variant])
+                    graph = execution_roots[variant] / '.dart_tool/build_runner_accelerator/graph-v3.bin'
                     before = graph.read_bytes() if case == 'noop' else None
                     log = results / f'{profile_name}-{repeat}-{case}-{variant}.log'
                     elapsed = run(commands[variant], roots[variant], log, extra)
-                    actual = inventory(roots[variant])
+                    actual = inventory(roots[variant], single=single)
                     assert actual == reference, f'{profile_name}/{variant}/{case} stock bytes differ'
                     if case == 'noop':
                         assert graph.read_bytes() == before, 'No-op changed graph'
@@ -175,7 +187,7 @@ def main():
                 values = [record['seconds'] for record in records
                           if record['profile'] == profile and record['case'] == case and record['variant'] == variant]
                 row[variant] = {'median': statistics.median(values), 'min': min(values), 'max': max(values)}
-            row['wave_over_ready'] = row['wave']['median'] / row['ready']['median']
+            row['baseline_over_candidate'] = row['baseline']['median'] / row['candidate']['median']
             summary.append(row)
     (results / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary, indent=2), flush=True)

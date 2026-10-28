@@ -661,7 +661,7 @@ impl WorkerPool {
         }
     }
 
-    /// Splits requests into contiguous balanced ranges, joins every dispatched
+    /// Dynamically leases small input batches, joins every dispatched
     /// worker, and combines results in range order. Worker errors and panics
     /// return an error; callers must not commit any staged output on that path.
     fn build_parallel_on_current_workers(
@@ -688,39 +688,106 @@ impl WorkerPool {
         }
 
         let worker_count = self.workers.len().min(requests.len()).min(worker_limit);
-        let ranges = balanced_request_ranges(requests.len(), worker_count);
-        let batches = ranges
-            .iter()
-            .map(|(start, end)| &requests[*start..*end])
-            .collect::<Vec<_>>();
-        let batch_results = thread::scope(|scope| {
-            let handles = self
-                .workers
-                .iter_mut()
-                .take(worker_count)
-                .zip(batches)
-                .map(|(worker, batch)| {
-                    scope.spawn(move || {
-                        worker.build_batch(workspace, batch, overlay, deleted_overlay, visibility)
+        use super::scheduling::InputQueue;
+        use std::sync::mpsc;
+        use std::time::Instant;
+        thread::scope(|scope| {
+            let (completed, completions) = mpsc::channel();
+            let mut senders = Vec::new();
+            let mut handles = Vec::new();
+            for (index, worker) in self.workers.iter_mut().take(worker_count).enumerate() {
+                let (sender, receiver) = mpsc::sync_channel::<std::ops::Range<usize>>(1);
+                senders.push(sender);
+                let completed = completed.clone();
+                handles.push(scope.spawn(move || {
+                    while let Ok(range) = receiver.recv() {
+                        let started = Instant::now();
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            worker.build_batch(
+                                workspace,
+                                &requests[range.clone()],
+                                overlay,
+                                deleted_overlay,
+                                visibility,
+                            )
+                        }))
+                        .unwrap_or_else(|_| Err(io::Error::other("worker thread panicked")));
+                        let failed = result.is_err();
+                        if completed
+                            .send((index, range, started.elapsed(), result))
+                            .is_err()
+                            || failed
+                        {
+                            break;
+                        }
+                    }
+                }));
+            }
+            drop(completed);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut inputs = InputQueue::new(requests.len());
+                let mut running = vec![None; worker_count];
+                let mut results = std::iter::repeat_with(|| None)
+                    .take(requests.len())
+                    .collect::<Vec<_>>();
+                let mut finished = 0;
+                while finished < requests.len() {
+                    for worker in 0..worker_count {
+                        if running[worker].is_none()
+                            && let Some(range) = inputs.take(worker_count)
+                        {
+                            senders[worker]
+                                .send(range.clone())
+                                .map_err(|_| io::Error::other("input worker disconnected"))?;
+                            running[worker] = Some(range);
+                        }
+                    }
+                    let (worker, range, elapsed, batch) = completions
+                        .recv()
+                        .map_err(|_| io::Error::other("input completion channel disconnected"))?;
+                    if running.get_mut(worker).and_then(Option::take) != Some(range.clone()) {
+                        return Err(io::Error::other(
+                            "input completion does not match its lease",
+                        ));
+                    }
+                    let batch = batch?;
+                    if batch.len() != range.len() {
+                        return Err(io::Error::other("input lease result count mismatch"));
+                    }
+                    for result in &batch {
+                        if result.status != "success" && result.status != "not_triggered" {
+                            return Err(io::Error::other(
+                                result
+                                    .error
+                                    .clone()
+                                    .unwrap_or_else(|| "Builder failed".into()),
+                            ));
+                        }
+                    }
+                    inputs.observe(elapsed, range.len());
+                    finished += range.len();
+                    for (index, result) in range.zip(batch) {
+                        results[index] = Some(result);
+                    }
+                }
+                results
+                    .into_iter()
+                    .map(|result| {
+                        result.ok_or_else(|| io::Error::other("input scheduler lost a result"))
                     })
-                })
-                .collect::<Vec<_>>();
-
-            handles
+                    .collect()
+            }))
+            .unwrap_or_else(|_| Err(io::Error::other("input controller panicked")));
+            drop(senders);
+            let joined = handles
                 .into_iter()
-                .map(|handle| {
-                    handle
-                        .join()
-                        .map_err(|_| io::Error::other("worker thread panicked"))?
-                })
-                .collect::<io::Result<Vec<_>>>()
-        })?;
-
-        let mut results = Vec::with_capacity(requests.len());
-        for batch in batch_results {
-            results.extend(batch);
-        }
-        Ok(results)
+                .map(|handle| handle.join())
+                .collect::<Vec<_>>();
+            if joined.into_iter().any(|join| join.is_err()) {
+                return Err(io::Error::other("worker thread panicked"));
+            }
+            result
+        })
     }
 
     /// Records only successful results; a later `resolver_used = true` keeps
@@ -1128,24 +1195,6 @@ fn resolver_worker_cap() -> Option<usize> {
 
 pub(super) fn target_worker_count(max_jobs: usize, request_count: usize) -> usize {
     max_jobs.max(1).min(request_count.max(1))
-}
-
-pub(super) fn balanced_request_ranges(
-    request_count: usize,
-    worker_count: usize,
-) -> Vec<(usize, usize)> {
-    let worker_count = worker_count.max(1).min(request_count.max(1));
-    let base_size = request_count / worker_count;
-    let remainder = request_count % worker_count;
-    let mut start = 0;
-    let mut ranges = Vec::with_capacity(worker_count);
-    for worker_index in 0..worker_count {
-        let size = base_size + if worker_index < remainder { 1 } else { 0 };
-        let end = start + size;
-        ranges.push((start, end));
-        start = end;
-    }
-    ranges
 }
 
 impl Drop for WorkerPool {

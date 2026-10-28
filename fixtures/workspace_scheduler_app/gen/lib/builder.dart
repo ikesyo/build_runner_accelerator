@@ -86,6 +86,21 @@ class SeedBuilder implements Builder {
       final value = (await step.readAsString(step.inputId)).trim();
       if (value.contains('FAIL')) throw StateError('scheduler fixture failure');
       final tag = options.config['tag'] ?? 'default';
+      if (value.startsWith('EMPTY')) {
+        final expected = step.inputId.path == 'lib/extra.seed'
+            ? 'extra-seed'
+            : 'a-seed';
+        if (tag != expected || !options.isRoot) {
+          throw StateError('reused application mixed builder options');
+        }
+        final library = await step.resolver.libraryFor(
+          AssetId(step.inputId.package, 'lib/marker.dart'),
+        );
+        if (library.topLevelVariables.single.computeConstantValue() == null) {
+          throw StateError('empty application could not resolve its input');
+        }
+        return;
+      }
       final dependent = step.inputId.package == 'schedule_c';
       final imports = dependent
           ? "import 'package:schedule_a/input.made.dart' as dependency;\n"

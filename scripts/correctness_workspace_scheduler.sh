@@ -155,7 +155,7 @@ for step in noop edit broad delete rename failure recovery helper target; do
 done
 grep -Fq 'helper input:helper-seed:false' "$native/.dart_tool/build_runner_accelerator/cache/schedule_helper/lib/input.made.dart" || fail 'non-output package options/isRoot differ'
 grep -Fq 'extra input:extra-seed:true' "$native/a/lib/extra.summary" || fail 'target-specific options differ'
-# A worker exiting during a concurrent wave must join its successful peer and
+# A worker exiting during concurrent execution must join its successful peer and
 # preserve the same publication boundary as an ordinary builder exception.
 cp "$native/.dart_tool/build_runner_accelerator/graph-v3.bin" "$temporary/crash.graph"
 cp -R "$native/.dart_tool/build_runner_accelerator/cache" "$temporary/crash-cache"
@@ -171,4 +171,6 @@ done
 for package in a b; do cp "$stock/$package/lib/"*.seed "$native/$package/lib/"; done
 run_native worker-recovery 2
 compare worker-recovery
-printf 'workspace-scheduler: PASS stock/native=yes jobs=1,2,3 overlap=yes dependency=yes resolver=yes options=yes rollback=yes lifecycle=yes\n'
+bash "$script_dir/correctness_single_package_scheduler.sh"
+bash "$script_dir/correctness_workspace_scheduler_reuse.sh"
+printf 'workspace-scheduler: PASS stock/native=yes jobs=1,2,3 overlap=yes dependency=yes resolver=yes options=yes rollback=yes lifecycle=yes single-package=yes\n'

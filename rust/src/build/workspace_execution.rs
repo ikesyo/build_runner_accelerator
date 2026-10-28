@@ -6,16 +6,17 @@ use super::part_directive::{
 use super::planning::PlannedActions;
 use super::results::{record_build_result, record_missing_primary_input};
 use super::transaction::PendingTransaction;
+use super::workspace_ready::ReadyApplications;
 use crate::builder::{BuilderKind, ConfiguredBuilder};
 use crate::frontend::worker_executable;
 use crate::graph::GraphState;
 use crate::plan::BuildSpec;
 use crate::worker::{
-    BuildRequest, WorkerPool, WorkspaceBaseline, WorkspaceDispatch, WorkspaceLease,
+    BuildRequest, InputQueue, WorkerPool, WorkspaceBaseline, WorkspaceDispatch, WorkspaceLease,
     shared_analysis_cache_enabled,
 };
 use crate::workspace::Workspace;
-use std::cmp::Reverse;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::sync::Arc;
 
@@ -85,11 +86,10 @@ struct PreparedApplication {
 #[derive(Default)]
 struct Application {
     prepared: Option<PreparedApplication>,
-    next: usize,
+    inputs: InputQueue,
     in_flight: usize,
     completed: usize,
     owner: Option<usize>,
-    done: bool,
 }
 
 struct Schedule<'a> {
@@ -103,14 +103,9 @@ struct Schedule<'a> {
 }
 
 impl Schedule<'_> {
-    fn prepare(&mut self, index: usize) -> io::Result<PreparedApplication> {
-        let configured = &self.builders[index];
+    fn prepare(&mut self, dirty: &[&BuildSpec]) -> io::Result<PreparedApplication> {
         let mut specs = Vec::new();
-        for spec in self.dirty.iter().filter(|spec| {
-            spec.instance.target == configured.target
-                && spec.instance.builder.id == configured.definition.id
-                && spec.instance.phase == configured.phase
-        }) {
+        for &spec in dirty {
             if let Some((build_to, _)) = self.plan.generated_output_locations.get(&spec.input)
                 && (self.transaction.deleted_overlay.contains(&spec.input)
                     || (!self.transaction.overlay.contains_key(&spec.input)
@@ -167,71 +162,89 @@ impl Schedule<'_> {
         let mut running = vec![None; dispatch.worker_count()];
         let mut packages: Vec<Option<String>> = vec![None; dispatch.worker_count()];
         let shared_analysis = shared_analysis_cache_enabled();
+        let mut dirty_by_application: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for spec in self.dirty {
+            dirty_by_application
+                .entry((
+                    spec.instance.target.as_str(),
+                    spec.instance.builder.id.as_str(),
+                    spec.instance.phase,
+                ))
+                .or_default()
+                .push(spec);
+        }
         for phase in execution_phases(self.builders) {
-            loop {
-                // Preparing a newly ready application observes complete earlier
-                // applications, including post-process deletions. Its inputs
-                // share one immutable baseline; same-phase outputs stay hidden.
-                for &index in &phase {
-                    if applications[index].prepared.is_none()
-                        && !applications[index].done
-                        && dependencies[index]
-                            .iter()
-                            .all(|&dependency| applications[dependency].done)
-                    {
-                        let prepared = self.prepare(index)?;
-                        applications[index].done = prepared.requests.is_empty();
+            let mut ready = ReadyApplications::new(&dependencies, &phase);
+            let first = &self.builders[phase[0]];
+            let hidden = self
+                .plan
+                .visibility
+                .blocked_assets(first.phase, first.definition.kind, &BTreeSet::new())
+                .into_iter()
+                .collect::<BTreeSet<_>>();
+            let mut baseline: Option<Arc<WorkspaceBaseline>> = None;
+            let mut remaining = phase.len();
+            while remaining > 0 {
+                while let Some(index) = ready.newly_ready.pop_front() {
+                    let builder = &self.builders[index];
+                    let dirty = dirty_by_application
+                        .get(&(
+                            builder.target.as_str(),
+                            builder.definition.id.as_str(),
+                            builder.phase,
+                        ))
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]);
+                    let prepared = self.prepare(dirty)?;
+                    if prepared.requests.is_empty() {
+                        remaining -= 1;
+                        ready.finish(index);
+                    } else {
+                        applications[index].inputs = InputQueue::new(prepared.requests.len());
                         applications[index].prepared = Some(prepared);
+                        ready.inputs.insert(
+                            index,
+                            &self.builders[index].package,
+                            applications[index].inputs.remaining(),
+                            0,
+                            None,
+                        );
                     }
                 }
-                if phase.iter().all(|&index| applications[index].done) {
+                if remaining == 0 {
                     break;
                 }
                 for worker in 0..running.len() {
                     if running[worker].is_some() {
                         continue;
                     }
-                    // Give an unserved ready package a participant first, then
-                    // prefer the resident package before widening other work.
-                    let selected = phase
-                        .iter()
-                        .copied()
-                        .filter(|&index| {
-                            let app = &applications[index];
-                            !app.done
-                                && app
-                                    .prepared
-                                    .as_ref()
-                                    .is_some_and(|prepared| app.next < prepared.requests.len())
-                                && (shared_analysis
-                                    || (app.in_flight == 0
-                                        && app.owner.is_none_or(|owner| owner == worker)))
-                        })
-                        .min_by_key(|&index| {
-                            let app = &applications[index];
-                            let remaining =
-                                app.prepared.as_ref().unwrap().requests.len() - app.next;
-                            (
-                                app.in_flight > 0,
-                                packages[worker].as_ref() != Some(&self.builders[index].package),
-                                Reverse(remaining),
-                                index,
-                            )
-                        });
-                    let Some(index) = selected else {
+                    let Some(index) = ready.inputs.choose(worker, packages[worker].as_deref())
+                    else {
                         continue;
                     };
+                    ready.inputs.remove(index);
                     let app = &mut applications[index];
                     let prepared = app.prepared.as_mut().unwrap();
                     if prepared.baseline.is_none() {
-                        prepared.baseline = Some(WorkspaceBaseline::new(
-                            self.workspace,
-                            &self.transaction.overlay,
-                            &self.transaction.deleted_overlay,
-                            &self.plan.visibility,
-                        )?);
+                        if !baseline.as_ref().is_some_and(|baseline| {
+                            baseline.matches(
+                                &self.transaction.overlay,
+                                &self.transaction.deleted_overlay,
+                                &hidden,
+                            )
+                        }) {
+                            baseline = Some(WorkspaceBaseline::new(
+                                self.workspace,
+                                &self.transaction.overlay,
+                                &self.transaction.deleted_overlay,
+                                &self.plan.visibility,
+                                &hidden,
+                            )?);
+                        }
+                        prepared.baseline = baseline.clone();
                     }
-                    let range = app.next..app.next + 1;
+                    let width = if shared_analysis { running.len() } else { 1 };
+                    let range = app.inputs.take(width).expect("ready input queue");
                     dispatch.send(
                         worker,
                         WorkspaceLease {
@@ -243,8 +256,14 @@ impl Schedule<'_> {
                         },
                     )?;
                     app.owner.get_or_insert(worker);
-                    app.next = range.end;
                     app.in_flight += 1;
+                    ready.inputs.insert(
+                        index,
+                        &self.builders[index].package,
+                        app.inputs.remaining(),
+                        app.in_flight,
+                        if shared_analysis { None } else { app.owner },
+                    );
                     packages[worker] = Some(self.builders[index].package.clone());
                     running[worker] = Some((index, range));
                 }
@@ -268,7 +287,9 @@ impl Schedule<'_> {
                     return Err(io::Error::other("workspace lease result count mismatch"));
                 }
                 self.state.resolver_dep_graph.extend(completed.dep_graph);
+                ready.inputs.remove(completed.application);
                 let app = &mut applications[completed.application];
+                app.inputs.observe(completed.elapsed, completed.range.len());
                 let prepared = app.prepared.as_ref().unwrap();
                 for (spec, result) in prepared.specs[completed.range.clone()].iter().zip(results) {
                     record_build_result(
@@ -281,9 +302,17 @@ impl Schedule<'_> {
                 }
                 app.completed += completed.range.len();
                 app.in_flight -= 1;
+                ready.inputs.insert(
+                    completed.application,
+                    &self.builders[completed.application].package,
+                    app.inputs.remaining(),
+                    app.in_flight,
+                    if shared_analysis { None } else { app.owner },
+                );
                 if app.completed == prepared.requests.len() {
-                    app.done = true;
                     app.prepared = None;
+                    remaining -= 1;
+                    ready.finish(completed.application);
                 }
             }
         }
@@ -407,6 +436,19 @@ mod tests {
         // restores a predecessor rather than assuming independence.
         builders[1].target_dependencies = None;
         assert_eq!(execution_dependencies(&builders)[2], vec![0, 1]);
+    }
+
+    #[test]
+    fn ready_queue_releases_each_successor_only_after_all_predecessors() {
+        let mut queue =
+            ReadyApplications::new(&[vec![], vec![], vec![0], vec![0, 1]], &[0, 1, 2, 3]);
+        assert_eq!(queue.newly_ready.drain(..).collect::<Vec<_>>(), vec![0, 1]);
+        queue.finish(0);
+        assert_eq!(queue.newly_ready.drain(..).collect::<Vec<_>>(), vec![2]);
+        queue.finish(2);
+        assert!(queue.newly_ready.is_empty());
+        queue.finish(1);
+        assert_eq!(queue.newly_ready.drain(..).collect::<Vec<_>>(), vec![3]);
     }
 
     #[test]

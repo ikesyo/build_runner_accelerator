@@ -15,3 +15,10 @@ clean/no-op/edit/delete/rename/failure/recovery. No timing speedup is claimed.
 `scripts/benchmark_workspace_scheduler.py` compares wave and ready-queue native
 binaries on controlled skew and balanced inputs, retaining stock byte checks,
 exact commands, SDK/cache conditions and repeated clean/no-op/edit samples.
+
+The correctness script also creates fresh ordinary single-package builds with
+48 inputs, checks real input overlap, failure admission and rollback, and compares
+clean/no-op/edit/broad/delete/rename/recovery bytes with stock. The paired
+benchmark accepts `--baseline-bin` and `--candidate-bin` (legacy argument aliases
+remain), plus `many`, `single-balanced` and `single-inputs` profiles. Generated
+JSON results belong in the chosen results directory, not the repository.

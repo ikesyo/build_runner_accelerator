@@ -12,10 +12,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::{Arc, OnceLock, mpsc};
+use std::sync::{Arc, OnceLock, Weak, mpsc};
+use std::time::{Duration, Instant};
 
-/// A complete baseline taken when an application becomes ready. Its own
-/// same-phase outputs remain hidden, so input leases can share it unchanged.
+/// A complete baseline of the phase-visible asset view. Assets already hidden
+/// by the phase guard need not be transported or invalidate a resident view.
 pub(crate) struct WorkspaceBaseline {
     overlay: BTreeMap<String, Arc<[u8]>>,
     deleted: BTreeSet<String>,
@@ -27,12 +28,46 @@ pub(crate) struct WorkspaceBaseline {
 }
 
 impl WorkspaceBaseline {
+    pub(crate) fn matches(
+        &self,
+        overlay: &BTreeMap<String, Arc<[u8]>>,
+        deleted: &BTreeSet<String>,
+        hidden: &BTreeSet<String>,
+    ) -> bool {
+        overlay
+            .iter()
+            .filter(|(asset, _)| !hidden.contains(*asset))
+            .eq(self.overlay.iter())
+            && deleted
+                .iter()
+                .filter(|asset| !hidden.contains(*asset))
+                .eq(self.deleted.iter())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.overlay.is_empty() && self.deleted.is_empty()
+    }
+
     pub(crate) fn new(
         workspace: &Workspace,
         overlay: &BTreeMap<String, Arc<[u8]>>,
         deleted: &BTreeSet<String>,
         visibility: &AssetVisibility,
+        hidden: &BTreeSet<String>,
     ) -> io::Result<Arc<Self>> {
+        // Rust and Dart still receive the full phase guard on each batch.
+        // Keep logical deletions not covered by it, including removed outputs
+        // absent from the current plan and visible post-process cleanup.
+        let overlay = overlay
+            .iter()
+            .filter(|(asset, _)| !hidden.contains(*asset))
+            .map(|(asset, bytes)| (asset.clone(), Arc::clone(bytes)))
+            .collect::<BTreeMap<_, _>>();
+        let deleted = deleted
+            .iter()
+            .filter(|asset| !hidden.contains(*asset))
+            .cloned()
+            .collect::<BTreeSet<_>>();
         let (sources, cache): (BTreeSet<_>, BTreeSet<_>) = overlay
             .keys()
             .cloned()
@@ -41,11 +76,14 @@ impl WorkspaceBaseline {
             .iter()
             .cloned()
             .partition(|asset| visibility.location(asset) != Some(BuildTo::Cache));
-        let blob =
-            OverlayBlob::create(&workspace.root, overlay, &overlay.keys().cloned().collect())?;
+        let blob = OverlayBlob::create(
+            &workspace.root,
+            &overlay,
+            &overlay.keys().cloned().collect(),
+        )?;
         Ok(Arc::new(Self {
-            overlay: overlay.clone(),
-            deleted: deleted.clone(),
+            overlay,
+            deleted,
             updated_sources: json!(sources),
             deleted_sources: json!(source_deletes),
             updated_cache: json!(cache),
@@ -69,6 +107,7 @@ pub(crate) struct WorkspaceCompletion {
     pub(crate) range: Range<usize>,
     pub(crate) results: io::Result<Vec<BuildResult>>,
     pub(crate) dep_graph: BTreeMap<String, Vec<String>>,
+    pub(crate) elapsed: Duration,
 }
 
 pub(crate) struct WorkspaceDispatch {
@@ -125,8 +164,9 @@ pub(super) fn run_worker(
 ) -> WorkspaceWorkerOutcome {
     let mut outcome = WorkspaceWorkerOutcome::default();
     let mut package = None;
-    let mut application = None;
+    let mut baseline: Option<Weak<WorkspaceBaseline>> = None;
     while let Ok(lease) = leases.recv() {
+        let mut elapsed = Duration::ZERO;
         let result = catch_unwind(AssertUnwindSafe(|| {
             if outcome.worker.is_none() {
                 let artifact = factory
@@ -150,7 +190,8 @@ pub(super) fn run_worker(
                 outcome.starts += 1;
             }
             let worker = outcome.worker.as_mut().expect("started worker");
-            if package.as_ref() != Some(&lease.package) {
+            let initializing = package.as_ref() != Some(&lease.package);
+            if initializing {
                 worker.initialize(
                     &factory.workspace.root,
                     &lease.package,
@@ -161,9 +202,13 @@ pub(super) fn run_worker(
                 )?;
                 outcome.initializes += 1;
                 package = Some(lease.package.clone());
-                application = None;
+                baseline = None;
             }
-            if application != Some(lease.application) {
+            let unchanged = baseline
+                .as_ref()
+                .and_then(Weak::upgrade)
+                .is_some_and(|previous| Arc::ptr_eq(&previous, &lease.baseline));
+            if !unchanged && !(initializing && lease.baseline.is_empty()) {
                 let baseline = &lease.baseline;
                 worker.reset_resolver(
                     &baseline.updated_sources,
@@ -174,15 +219,18 @@ pub(super) fn run_worker(
                     &baseline.blob.metadata,
                 )?;
                 outcome.resets += 1;
-                application = Some(lease.application);
             }
-            worker.build_batch(
+            baseline = Some(Arc::downgrade(&lease.baseline));
+            let started = Instant::now();
+            let result = worker.build_batch(
                 factory.workspace,
                 &lease.requests[lease.range.clone()],
                 &lease.baseline.overlay,
                 &lease.baseline.deleted,
                 factory.visibility,
-            )
+            );
+            elapsed = started.elapsed();
+            result
         }))
         .unwrap_or_else(|_| Err(io::Error::other("workspace worker thread panicked")));
         let failed = result.is_err();
@@ -198,6 +246,7 @@ pub(super) fn run_worker(
                 range: lease.range,
                 results: result,
                 dep_graph,
+                elapsed,
             })
             .is_err()
             || failed
@@ -206,4 +255,55 @@ pub(super) fn run_worker(
         }
     }
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reuse_compares_visible_bytes_and_keeps_deletions_outside_the_phase_guard() {
+        let visible = BTreeMap::from([(
+            "app|lib/previous.dart".into(),
+            Arc::<[u8]>::from(&b"old"[..]),
+        )]);
+        let deleted = BTreeSet::from(["app|lib/obsolete.dart".into()]);
+        let hidden = BTreeSet::from(["app|lib/current.dart".into()]);
+        let root = std::env::temp_dir().join(format!(
+            "accelerator-baseline-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let baseline = WorkspaceBaseline {
+            overlay: visible.clone(),
+            deleted: deleted.clone(),
+            updated_sources: Value::Null,
+            deleted_sources: Value::Null,
+            updated_cache: Value::Null,
+            deleted_cache: Value::Null,
+            blob: OverlayBlob::create(&root, &visible, &visible.keys().cloned().collect()).unwrap(),
+        };
+        let mut overlay = visible;
+        overlay.insert(
+            "app|lib/current.dart".into(),
+            Arc::from(&b"hidden output"[..]),
+        );
+        let mut changes = deleted;
+        changes.insert("app|lib/current.dart".into());
+        assert!(baseline.matches(&overlay, &changes, &hidden));
+        changes.insert("app|lib/new-deletion.dart".into());
+        assert!(!baseline.matches(&overlay, &changes, &hidden));
+        changes.remove("app|lib/new-deletion.dart");
+        overlay.insert(
+            "app|lib/previous.dart".into(),
+            Arc::from(&b"changed visible output"[..]),
+        );
+        assert!(!baseline.matches(&overlay, &changes, &hidden));
+        drop(baseline);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
