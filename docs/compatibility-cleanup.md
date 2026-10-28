@@ -111,9 +111,10 @@ created it, keeping the state directories in place:
 
 - For workspace build state at the Pub root (with the `workspace-mode` marker),
   restore the original workspace topology and retry
-  `dart run build_runner_accelerator build --workspace --force-jit`.
+  `dart run build_runner_accelerator build --workspace` using the original build
+  configuration.
 - For individual build state in a member, retry
-  `dart run build_runner_accelerator build --force-jit` from that member using
+  `dart run build_runner_accelerator build` from that member using
   its original build configuration. This also applies to individual builds of
   the Pub root when no `workspace-mode` marker exists.
 
@@ -129,8 +130,10 @@ before a subsequent build.
 1. Stop build/watch/prewarm processes for the workspace and shared cache.
 2. Check package and preinstalled frontend versions (`--version`); update the
    frontend to match the package. Remove internal artifact overrides.
-3. Retry `build --force-jit` for diagnostics without AOT. For workspace state,
-   retry `build --workspace --force-jit` with the original package topology.
+3. If diagnosing worker AOT compilation or cache problems, optionally retry
+   `build --force-jit`. For workspace state, use
+   `build --workspace --force-jit` with the original package topology.
+   JIT mode is not required for journal recovery.
    `BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0` uses memory-only analyzer storage;
    `BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0` parses directives without shared
    caching. A fresh `BUILD_RUNNER_ACCELERATOR_CACHE` directory isolates disk state.
