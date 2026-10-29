@@ -1,110 +1,33 @@
+# PR budget: 16 CI jobs + 4 reserved for CodeQL/other checks = 20.
+# Keep case parallelism inside jobs; see docs/ci.md for coverage and timings.
 name: CI
-
-on:
+'on':
   push:
     branches:
       - main
-  pull_request:
-  workflow_dispatch:
-
+  pull_request: null
+  workflow_dispatch: null
+  schedule:
+    - cron: 23 3 * * 1
 permissions:
   contents: read
-
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
 jobs:
-  release-signing-helpers:
-    name: Release signing helpers
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Test source gates, manifests, attestations, and Ed25519 normalization
-        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
-
-  byte-store-benchmark-helpers:
-    name: Byte-store benchmark helpers
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Test benchmark timeout and clean preparation
-        run: python3 -m unittest discover -s scripts -p 'test_benchmark_shared_byte_store.py'
-
-  dart-package:
-    name: Dart ${{ matrix.sdk }} (${{ matrix.resolution }})
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - sdk: '3.11.0'
-            resolution: downgrade
-          - sdk: '3.13.3'
-            resolution: upgrade
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-worker
-        with:
-          cache-scope: dart-package-${{ matrix.resolution }}
-          dart-version: ${{ matrix.sdk }}
-          dependency-resolution: ${{ matrix.resolution }}
-          setup-rust: 'true'
-          build-frontend: 'true'
-      - name: Check fixture lockfiles
-        if: matrix.resolution == 'upgrade'
-        run: python3 scripts/sync_release_metadata.py --check
-      # Keep package-test compilers separate from lifecycle compilers.
-      # AOT comparisons reuse the SDK and release binaries in native-build.
-      - name: Dart package checks (latest SDK)
-        if: matrix.resolution == 'upgrade'
-        run: |
-          dart format --output=none --set-exit-if-changed lib bin test tool
-          dart analyze --fatal-infos lib bin test tool
-          dart run build_runner --help
-          dart test --compiler=source
-      - name: Validate publish package
-        if: matrix.resolution == 'upgrade'
-        run: dart pub publish --dry-run
-      # The minimum SDK overlaps package checks with JIT lifecycle checks.
-      - parallel:
-          - name: SDK lifecycle and minimum SDK package checks
-            timeout-minutes: 20
-            shell: bash
-            run: |
-              if [[ '${{ matrix.resolution }}' == 'downgrade' ]]; then
-                dart analyze --fatal-infos lib bin test tool
-                dart run build_runner --help
-                dart test --compiler=source
-              fi
-              bash scripts/correctness_sdk.sh --resolution '${{ matrix.resolution }}' --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/baseline"
-          - name: Minimum SDK runner and shared-part lifecycles
-            if: matrix.resolution == 'downgrade'
-            timeout-minutes: 20
-            run: |
-              bash scripts/correctness_sdk.sh --resolution downgrade --runner 2.17.1 --worker-mode jit --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/runner-2.17.1"
-              bash scripts/correctness_shared_parts.sh --resolution downgrade --worker-mode jit --jobs 2 --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/shared-parts"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: failure()
-        with:
-          name: sdk-compatibility-${{ matrix.sdk }}
-          path: |
-            ${{ runner.temp }}/sdk-results/${{ matrix.sdk }}/**/*.log
-            ${{ runner.temp }}/sdk-results/${{ matrix.sdk }}/**/pubspec.lock
-            ${{ runner.temp }}/sdk-results/${{ matrix.sdk }}/**/stock-reference.json
-          if-no-files-found: ignore
-
   rust:
     name: Rust format, lint, and unit tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Release and benchmark helper tests
+        shell: bash
+        run: |
+          python3 -m pip install --quiet --disable-pip-version-check PyYAML==6.0.3
+          python3 .github/scripts/check_ci.py
+          python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+          python3 -m unittest discover -s scripts -p 'test_*.py'
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -124,790 +47,486 @@ jobs:
         run: cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
       - name: Rust unit tests
         run: cargo test --locked --manifest-path rust/Cargo.toml
-
-  integration-build-filter:
-    name: 'Integration: build-filter (${{ matrix.id }})'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 10
+  dart-package:
+    name: Dart ${{ matrix.sdk }} (${{ matrix.resolution }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
-          - id: selection
-            first: selection-source
-            nested-first: 'default-on'
-            second: selection-cache
-            nested-second: 'default-off'
-            third: selection-packages
-            nested-third: 'narrow'
-          - id: graph
-            first: glob
-            nested-first: 'recovery-state'
-            second: resolver
-            nested-second: ''
-            third: state
-            nested-third: ''
-          - id: unsupported
-            first: unsupported-optional-post
-            nested-first: 'explicit-cache,boundary'
-            second: unsupported-zero-trigger
-            nested-second: 'source,glob'
-            third: routing
-            nested-third: 'recovery-actions'
-          - id: watch
-            first: watch-source
-            nested-first: ''
-            second: watch-cache
-            nested-second: 'watch-native'
-            third: watch-classification
-            nested-third: 'watch-boundary'
+          - sdk: 3.11.0
+            resolution: downgrade
+          - sdk: 3.13.3
+            resolution: upgrade
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
         with:
-          cache-scope: integration-build-filter
-          cache-inputs: |
-            pubspec.lock
-            fixtures/build_filter_app/pubspec.lock
-            fixtures/optional_builder_app/pubspec.lock
-            fixtures/post_process_builder_app/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_build_filter.*
-            scripts/correctness_nested_packages.*
-            scripts/correctness_cli.py
+          cache-scope: dart-package-${{ matrix.resolution }}
+          dart-version: ${{ matrix.sdk }}
+          dependency-resolution: ${{ matrix.resolution }}
           setup-rust: 'true'
           build-frontend: 'true'
-      - name: Prime comparison fixture dependencies
+      - name: Check fixture lockfiles
+        if: matrix.resolution == 'upgrade'
+        run: python3 scripts/sync_release_metadata.py --check
+      - parallel:
+          - name: Dart analysis and package tests
+            run: |
+              if [[ '${{ matrix.resolution }}' == upgrade ]]; then
+                dart format --output=none --set-exit-if-changed lib bin test tool
+              fi
+              dart analyze --fatal-infos lib bin test tool
+              dart run build_runner --help
+              dart test --compiler=source
+              if [[ '${{ matrix.resolution }}' == upgrade ]]; then
+                dart pub publish --dry-run
+              fi
+          - name: SDK lifecycle
+            shell: bash
+            run: |
+              bash scripts/correctness_sdk.sh --resolution "${{ matrix.resolution }}" --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/baseline"
+          - name: Minimum SDK pinned runner lifecycle
+            shell: bash
+            run: |
+              bash scripts/correctness_sdk.sh --resolution downgrade --runner 2.17.1 --worker-mode jit --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/runner-2.17.1"
+            if: matrix.resolution == 'downgrade'
+          - name: Minimum SDK shared parts lifecycle
+            shell: bash
+            run: |
+              bash scripts/correctness_shared_parts.sh --resolution downgrade --worker-mode jit --jobs 2 --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/shared-parts"
+            if: matrix.resolution == 'downgrade'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: sdk-compatibility-${{ matrix.sdk }}
+          path: |
+            ${{ runner.temp }}/sdk-results/${{ matrix.sdk }}/**/*.log
+            ${{ runner.temp }}/sdk-results/${{ matrix.sdk }}/**/pubspec.lock
+            ${{ runner.temp }}/sdk-results/${{ matrix.sdk }}/**/stock-reference.json
+          if-no-files-found: ignore
+  integration-selection:
+    name: 'Integration: filter selection and graph'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: ${{ github.job }}
+          cache-inputs: |
+            fixtures/**/pubspec.lock
+          build-frontend: 'true'
+      - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          fixtures=(build_filter_app)
-          if [[ '${{ matrix.id }}' == unsupported ]]; then
-            fixtures+=(optional_builder_app post_process_builder_app)
-          fi
-          for fixture in "${fixtures[@]}"; do
+          for fixture in build_filter_app; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: 'Build-filter: ${{ matrix.first }}'
-            env:
-              BUILD_FILTER_CASE_GROUP: ${{ matrix.first }}
-              NESTED_PACKAGE_CASE_GROUP: ${{ matrix.nested-first }}
+          - name: Source selection, globs, and nested defaults
+            shell: bash
             run: |
-              bash scripts/correctness_build_filter.sh
-              if [[ -n "$NESTED_PACKAGE_CASE_GROUP" ]]; then
-                bash scripts/correctness_nested_packages.sh
-              fi
-          - name: 'Build-filter: ${{ matrix.second }}'
-            env:
-              BUILD_FILTER_CASE_GROUP: ${{ matrix.second }}
-              NESTED_PACKAGE_CASE_GROUP: ${{ matrix.nested-second }}
+              BUILD_FILTER_CASE_GROUP=selection-source bash scripts/correctness_build_filter.sh
+              BUILD_FILTER_CASE_GROUP=glob bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP=default-on,default-off bash scripts/correctness_nested_packages.sh
+          - name: Cache selection, resolver, and nested recovery
+            shell: bash
             run: |
-              bash scripts/correctness_build_filter.sh
-              if [[ -n "$NESTED_PACKAGE_CASE_GROUP" ]]; then
-                bash scripts/correctness_nested_packages.sh
-              fi
-          - name: 'Build-filter: ${{ matrix.third }}'
-            env:
-              BUILD_FILTER_CASE_GROUP: ${{ matrix.third }}
-              NESTED_PACKAGE_CASE_GROUP: ${{ matrix.nested-third }}
+              BUILD_FILTER_CASE_GROUP=selection-cache bash scripts/correctness_build_filter.sh
+              BUILD_FILTER_CASE_GROUP=resolver bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP=recovery-state,narrow bash scripts/correctness_nested_packages.sh
+          - name: Package selection and state transitions
+            shell: bash
             run: |
-              bash scripts/correctness_build_filter.sh
-              if [[ -n "$NESTED_PACKAGE_CASE_GROUP" ]]; then
-                bash scripts/correctness_nested_packages.sh
-              fi
-
-  integration-output-policies:
-    name: 'Integration: output policies (${{ matrix.id }})'
+              BUILD_FILTER_CASE_GROUP=selection-packages bash scripts/correctness_build_filter.sh
+              BUILD_FILTER_CASE_GROUP=state bash scripts/correctness_build_filter.sh
+          - name: Runner 2.15.3 dependency window
+            shell: bash
+            run: |
+              python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 13.3.0
+              python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 14.5.0
+  integration-boundaries:
+    name: 'Integration: filter watch and boundaries'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: lifecycle
-            first: source
-            second: cache
-            third: failure
-          - id: frontend
-            first: routing
-            second: modes
-            third: api
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-worker
-        with:
-          cache-scope: integration-output-policies
-          cache-inputs: |
-            pubspec.lock
-            fixtures/build_filter_app/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_output_policies.*
-            scripts/correctness_build_filter.py
-            scripts/correctness_cli.py
-            scripts/correctness_dependency_window.py
-          setup-rust: 'true'
-          build-frontend: 'true'
-      - name: Prime output-policy fixture dependencies
-        run: (cd fixtures/build_filter_app && dart --suppress-analytics pub get)
-      - parallel:
-          - name: 'Output policies: ${{ matrix.first }}'
-            env:
-              OUTPUT_POLICY_CASE_GROUP: ${{ matrix.first }}
-            run: bash scripts/correctness_output_policies.sh
-          - name: 'Output policies: ${{ matrix.second }}'
-            env:
-              OUTPUT_POLICY_CASE_GROUP: ${{ matrix.second }}
-            run: bash scripts/correctness_output_policies.sh
-          - name: 'Output policies: ${{ matrix.third }}'
-            env:
-              OUTPUT_POLICY_CASE_GROUP: ${{ matrix.third }}
-            run: bash scripts/correctness_output_policies.sh
-      # Run 849: baseline took 609s; this job took 139s, trigger 117s,
-      # arbitrary 121s. Distribute all five dependency cases across these
-      # existing jobs without adding parallel lanes or matrix entries.
-      - name: Runner 2.16.1 with Analyzer 14.5
-        if: matrix.id == 'frontend'
-        run: python3 scripts/correctness_dependency_window.py --runner 2.16.1 --analyzer 14.5.0
-
-  integration-baseline:
-    name: 'Integration: baseline smoke'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-worker
-        with:
-          cache-scope: integration-baseline
-          cache-inputs: |
-            pubspec.lock
-            fixtures/**/pubspec.lock
-            rust/Cargo.lock
-            scripts/smoke.sh
-            scripts/watch_smoke.sh
-            scripts/correctness_upgrade.sh
-            scripts/correctness_cli.*
-            scripts/sync_release_metadata.py
-          setup-rust: 'true'
-          build-frontend: 'true'
-      - name: Prime baseline fixture dependencies
-        shell: bash
-        run: |
-          (cd fixtures/json_serializable_app && dart --suppress-analytics pub get)
-          (cd fixtures/current_json_app && dart --suppress-analytics pub get)
-      - parallel:
-          - name: Run baseline smoke
-            env:
-              PUB_CACHE: ${{ github.workspace }}/.pub-cache
-              SMOKE_SKIP_RUST_TESTS: '1'
-            run: bash scripts/smoke.sh
-          - name: Run generic watch smoke
-            run: bash scripts/watch_smoke.sh
-          - name: Upgrade obsolete accelerator state
-            env:
-              PUB_CACHE: ${{ github.workspace }}/.pub-cache
-            run: bash scripts/correctness_upgrade.sh
-          - name: Run setup-time prewarm correctness
-            run: bash scripts/correctness_prewarm.sh
-      - name: Run CLI correctness
-        run: bash scripts/correctness_cli.sh
-
-  integration-settings:
-    name: 'Integration: native build settings (${{ matrix.id }})'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 8
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: options
-            first: values
-            second: compact
-            third: watch-default
-            fourth: watch-reserved
-          - id: paths
-            first: paths
-            second: files
-            third: watch-named
-            fourth: watch-dot
-          - id: configuration
-            first: errors
-            second: boundaries
-            third: watch-nested
-            fourth: watch-backslash
-          - id: lifecycle
-            first: precedence
-            second: compile
-            third: watch-package
-            fourth: watch-topology
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
         with:
-          cache-scope: integration-settings
+          cache-scope: ${{ github.job }}
           cache-inputs: |
-            pubspec.lock
-            fixtures/settings_builder_app/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_settings.*
-            scripts/worker.sh
-          setup-rust: 'true'
-          build-frontend: 'true'
-      - name: Prime settings fixture dependencies
-        shell: bash
-        run: (cd fixtures/settings_builder_app && dart --suppress-analytics pub get)
-      - parallel:
-          - name: 'Settings: ${{ matrix.first }}'
-            env:
-              SETTINGS_CASE_GROUP: ${{ matrix.first }}
-            run: bash scripts/correctness_settings.sh
-          - name: 'Settings: ${{ matrix.second }}'
-            env:
-              SETTINGS_CASE_GROUP: ${{ matrix.second }}
-            run: bash scripts/correctness_settings.sh
-          - name: 'Settings: ${{ matrix.third }}'
-            env:
-              SETTINGS_CASE_GROUP: ${{ matrix.third }}
-            run: bash scripts/correctness_settings.sh
-          - name: 'Settings: ${{ matrix.fourth }}'
-            env:
-              SETTINGS_CASE_GROUP: ${{ matrix.fourth }}
-            run: bash scripts/correctness_settings.sh
-
-  integration-trigger:
-    name: 'Integration: trigger builder'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    env:
-      PUB_CACHE: ${{ github.workspace }}/.pub-cache
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-worker
-        with:
-          cache-scope: integration-trigger
-          cache-inputs: |
-            pubspec.lock
             fixtures/**/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_trigger_builder.sh
-            scripts/correctness_dependency_window.py
-            scripts/worker.sh
-          setup-rust: 'true'
           build-frontend: 'true'
-      - name: Prime trigger-builder dependencies
+      - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          (cd fixtures/trigger_builder_app && dart --suppress-analytics pub get)
+          for fixture in build_filter_app optional_builder_app post_process_builder_app; do
+            (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
+          done
       - parallel:
-          - name: Trigger detection/chain and runner 2.15.3 with Analyzer 13.3
+          - name: Source watch and recovery actions
             shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-              TRIGGER_CASE_GROUP: core
             run: |
-              bash scripts/correctness_trigger_builder.sh
-              python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 13.3.0
-          - name: Trigger lifecycle and runner 2.15.3 with Analyzer 14.5
+              BUILD_FILTER_CASE_GROUP=watch-source bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP=recovery-actions bash scripts/correctness_nested_packages.sh
+          - name: Cache watch and classification
             shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-              TRIGGER_CASE_GROUP: lifecycle
             run: |
-              bash scripts/correctness_trigger_builder.sh
-              python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 14.5.0
-          - name: Trigger correctness (config and failure recovery)
+              BUILD_FILTER_CASE_GROUP=watch-cache bash scripts/correctness_build_filter.sh
+              BUILD_FILTER_CASE_GROUP=watch-classification bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP=watch-native,watch-boundary bash scripts/correctness_nested_packages.sh
+          - name: Unsupported builders and routing
             shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-              TRIGGER_CASE_GROUP: recovery
-            run: bash scripts/correctness_trigger_builder.sh
-
-  integration-arbitrary:
-    name: 'Integration: arbitrary builder'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    env:
-      PUB_CACHE: ${{ github.workspace }}/.pub-cache
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-worker
-        with:
-          cache-scope: integration-arbitrary
-          cache-inputs: |
-            pubspec.lock
-            fixtures/**/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_arbitrary_builder.sh
-            scripts/correctness_dependency_window.py
-            scripts/worker.sh
-          setup-rust: 'true'
-          build-frontend: 'true'
-      - name: Prime arbitrary-builder dependencies
-        shell: bash
-        run: |
-          (cd fixtures/arbitrary_builder_app && dart --suppress-analytics pub get)
-      - parallel:
-          - name: Arbitrary output lifecycle and runner 2.16.0 with Analyzer 13.3
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-              CASE_FILTER: generated-output-delete,input-delete,rename
             run: |
-              bash scripts/correctness_arbitrary_builder.sh
+              BUILD_FILTER_CASE_GROUP=unsupported-optional-post bash scripts/correctness_build_filter.sh
+              BUILD_FILTER_CASE_GROUP=unsupported-zero-trigger bash scripts/correctness_build_filter.sh
+              BUILD_FILTER_CASE_GROUP=routing bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP=explicit-cache,boundary,source,glob bash scripts/correctness_nested_packages.sh
+          - name: Runner 2.16.0 dependency window
+            shell: bash
+            run: |
               python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 13.3.0
-          - name: Arbitrary failure/dependencies and runner 2.16.0 with Analyzer 14.5
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-              CASE_FILTER: failure-recovery,affected-actions,output-conflict
-            run: |
-              bash scripts/correctness_arbitrary_builder.sh
               python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 14.5.0
-          - name: Arbitrary correctness (source filters)
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-              CASE_FILTER: exclude-glob,target-sources,exact-extension
-            run: bash scripts/correctness_arbitrary_builder.sh
-
-  integration-fixtures:
-    name: 'Integration: built_value, recovery, and package smoke'
+  integration-settings:
+    name: 'Integration: build configuration'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
         with:
-          cache-scope: integration-fixtures
+          cache-scope: ${{ github.job }}
           cache-inputs: |
-            pubspec.lock
             fixtures/**/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_built_value.sh
-            scripts/correctness_commit_recovery.*
-            scripts/correctness_drift.sh
-            scripts/package_smoke.sh
-            scripts/worker.sh
-          setup-rust: 'true'
           build-frontend: 'true'
-      - name: Prime recovery fixture dependencies
+      - name: Resolve fixture dependencies once before parallel checks
         shell: bash
-        run: (cd fixtures/post_process_builder_app && dart --suppress-analytics pub get)
-      # Run 836: existing lanes took 68/64s. Pair recovery with built_value
-      # and move Drift off mapping's 425s lane without adding parallel workers.
+        run: |
+          for fixture in settings_builder_app trigger_builder_app; do
+            (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
+          done
       - parallel:
-          - name: built_value and interrupted commit recovery
+          - name: Values and compact flags
             shell: bash
             run: |
-              bash scripts/correctness_built_value.sh
-              bash scripts/correctness_commit_recovery.sh
-          - name: Published package smoke and Drift
+              SETTINGS_CASE_GROUP=values bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=compact bash scripts/correctness_settings.sh
+          - name: Config paths and files
             shell: bash
             run: |
+              SETTINGS_CASE_GROUP=paths bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=files bash scripts/correctness_settings.sh
+          - name: Errors and boundaries
+            shell: bash
+            run: |
+              SETTINGS_CASE_GROUP=errors bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=boundaries bash scripts/correctness_settings.sh
+          - name: Precedence and trigger lifecycle
+            shell: bash
+            run: |
+              SETTINGS_CASE_GROUP=precedence bash scripts/correctness_settings.sh
+              bash scripts/correctness_trigger_builder.sh
+  integration-settings-watch:
+    name: 'Integration: configuration watch and AOT'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: ${{ github.job }}
+          cache-inputs: |
+            fixtures/**/pubspec.lock
+          build-frontend: 'true'
+      - name: Resolve fixture dependencies once before parallel checks
+        shell: bash
+        run: |
+          for fixture in settings_builder_app json_serializable_app arbitrary_builder_app; do
+            (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
+          done
+      - parallel:
+          - name: Default and reserved configs
+            shell: bash
+            run: |
+              SETTINGS_CASE_GROUP=watch-default bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=watch-reserved bash scripts/correctness_settings.sh
+              bash scripts/watch_smoke.sh
+          - name: Named and dot paths
+            shell: bash
+            run: |
+              SETTINGS_CASE_GROUP=watch-named bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=watch-dot bash scripts/correctness_settings.sh
+              PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_builder.sh
+          - name: Nested and backslash paths
+            shell: bash
+            run: |
+              SETTINGS_CASE_GROUP=watch-nested bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=watch-backslash bash scripts/correctness_settings.sh
+          - name: AOT and topology
+            shell: bash
+            run: |
+              SETTINGS_CASE_GROUP=compile bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=watch-package bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=watch-topology bash scripts/correctness_settings.sh
+  integration-output-policies:
+    name: 'Integration: output policies'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: ${{ github.job }}
+          cache-inputs: |
+            fixtures/**/pubspec.lock
+          build-frontend: 'true'
+      - name: Resolve fixture dependencies once before parallel checks
+        shell: bash
+        run: |
+          for fixture in build_filter_app; do
+            (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
+          done
+      - parallel:
+          - name: Source and routing
+            shell: bash
+            run: |
+              OUTPUT_POLICY_CASE_GROUP=source bash scripts/correctness_output_policies.sh
+              OUTPUT_POLICY_CASE_GROUP=routing bash scripts/correctness_output_policies.sh
+          - name: Cache and worker modes
+            shell: bash
+            run: |
+              OUTPUT_POLICY_CASE_GROUP=cache bash scripts/correctness_output_policies.sh
+              OUTPUT_POLICY_CASE_GROUP=modes bash scripts/correctness_output_policies.sh
+          - name: Failure recovery and API guards
+            shell: bash
+            run: |
+              OUTPUT_POLICY_CASE_GROUP=failure bash scripts/correctness_output_policies.sh
+              OUTPUT_POLICY_CASE_GROUP=api bash scripts/correctness_output_policies.sh
+          - name: Runner 2.16.1 dependency window
+            shell: bash
+            run: |
+              python3 scripts/correctness_dependency_window.py --runner 2.16.1 --analyzer 14.5.0
+  integration-core:
+    name: 'Integration: baseline, CLI, and workspace scheduler'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: ${{ github.job }}
+          cache-inputs: |
+            fixtures/**/pubspec.lock
+          build-frontend: 'true'
+      - name: Resolve fixture dependencies once before parallel checks
+        shell: bash
+        run: |
+          for fixture in json_serializable_app current_json_app arbitrary_builder_app; do
+            (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
+          done
+      - parallel:
+          - name: Baseline and package smoke
+            shell: bash
+            run: |
+              SMOKE_SKIP_RUST_TESTS=1 bash scripts/smoke.sh
               bash scripts/package_smoke.sh
-              bash scripts/correctness_drift.sh
-
-  integration-json-serializable:
-    name: 'Integration: JSON Serializable correctness'
+          - name: CLI and obsolete state
+            shell: bash
+            run: |
+              bash scripts/correctness_cli.sh
+              bash scripts/correctness_upgrade.sh
+          - name: Workspace scheduler
+            shell: bash
+            run: |
+              bash scripts/correctness_workspace_scheduler.sh
+          - name: Setup prewarm
+            shell: bash
+            run: |
+              bash scripts/correctness_prewarm.sh
+  integration-codegen:
+    name: 'Integration: code generators'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
         with:
-          cache-scope: compatibility-mapping
+          cache-scope: ${{ github.job }}
           cache-inputs: |
             fixtures/**/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_*.sh
-            scripts/watch_smoke_*.sh
-            scripts/worker.sh
-          setup-rust: 'true'
           build-frontend: 'true'
-      - name: Prime JSON Serializable dependencies
+      - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          (cd fixtures/json_serializable_app && dart --suppress-analytics pub get)
-      - name: Run JSON Serializable cases (shared baseline)
-        shell: bash
-        env:
-          PUB_GET_OFFLINE: '1'
-          CASE_FILTER: generated-output-delete,input-delete,rename,failure,affected-actions,generate-for,builder-options,glob-membership,empty-options,part-comment,empty-producer
-        run: bash scripts/correctness_json_serializable.sh
-
-  integration-json-conditional-dependency:
-    name: 'Integration: JSON Serializable conditional dependency'
+          for fixture in freezed_app riverpod_app json_serializable_app empty_input_mapping_app; do
+            (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
+          done
+      - parallel:
+          - name: Freezed with one shared baseline
+            shell: bash
+            run: |
+              bash scripts/correctness_freezed.sh
+            env:
+              PUB_GET_OFFLINE: '1'
+          - name: Riverpod lifecycle and watch
+            shell: bash
+            run: |
+              bash scripts/correctness_riverpod.sh
+              bash scripts/watch_smoke_riverpod.sh
+            env:
+              PUB_GET_OFFLINE: '1'
+          - name: JSON Serializable with one shared baseline
+            shell: bash
+            run: |
+              bash scripts/correctness_json_serializable.sh
+            env:
+              PUB_GET_OFFLINE: '1'
+          - name: Freezed watch and generic mappings
+            shell: bash
+            run: |
+              bash scripts/watch_smoke_freezed.sh
+              bash scripts/correctness_multi_mapping_builder.sh
+              bash scripts/correctness_capture_builder.sh
+              PUB_GET_OFFLINE=1 bash scripts/correctness_empty_input_mapping.sh
+              PUB_GET_OFFLINE=1 bash scripts/watch_smoke_empty_input_mapping.sh
+  integration-lifecycle:
+    name: 'Integration: lifecycle, publication, and workspace'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
         with:
-          cache-scope: compatibility-mapping
+          cache-scope: ${{ github.job }}
           cache-inputs: |
             fixtures/**/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_*.sh
-            scripts/watch_smoke_*.sh
-            scripts/worker.sh
-          setup-rust: 'true'
           build-frontend: 'true'
-      - name: Prime JSON Serializable dependencies
+      - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          (cd fixtures/json_serializable_app && dart --suppress-analytics pub get)
-      - name: Run JSON Serializable conditional dependency case
-        shell: bash
-        env:
-          PUB_GET_OFFLINE: '1'
-          CASE_FILTER: conditional-dependency
-        run: bash scripts/correctness_json_serializable.sh
-
-  current-codegen-compatibility:
-    name: Freezed compatibility (lifecycle)
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    env:
-      PUB_CACHE: ${{ github.workspace }}/.pub-cache
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-worker
-        with:
-          cache-scope: current-codegen-freezed-lifecycle
-          cache-inputs: |
-            fixtures/freezed_app/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_freezed.sh
-            scripts/watch_smoke_freezed.sh
-            scripts/worker.sh
-          setup-rust: 'true'
-          build-frontend: 'true'
-      - name: Prime current generator dependencies
-        shell: bash
-        run: |
-          (cd fixtures/freezed_app && dart --suppress-analytics pub get)
+          for fixture in optional_builder_app post_process_builder_app optional_cleanup_app; do
+            (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
+          done
       - parallel:
-          - name: Freezed correctness (inputs)
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: |
-              for case_name in generated-output-delete no-op; do
-                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
-              done
-          - name: Freezed correctness (rename path)
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: |
-              for case_name in input-delete rename; do
-                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
-              done
-          - name: Freezed correctness (lifecycle)
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: |
-              for case_name in failure affected-actions; do
-                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
-              done
-          - name: Freezed watch smoke
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: bash scripts/watch_smoke_freezed.sh
-
-  current-codegen-freezed-config:
-    name: Freezed compatibility (config)
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    env:
-      PUB_CACHE: ${{ github.workspace }}/.pub-cache
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-worker
-        with:
-          cache-scope: current-codegen-freezed-config
-          cache-inputs: |
-            fixtures/freezed_app/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_freezed.sh
-            scripts/worker.sh
-          setup-rust: 'true'
-          build-frontend: 'true'
-      - name: Prime current generator dependencies
-        shell: bash
-        run: |
-          (cd fixtures/freezed_app && dart --suppress-analytics pub get)
-      - parallel:
-          - name: Freezed correctness (dependencies)
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: |
-              for case_name in dependency annotation-removal; do
-                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
-              done
-          - name: Freezed correctness (combined and options)
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: |
-              for case_name in combined-output-removal builder-options; do
-                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
-              done
-          - name: Freezed correctness (globs and empty options)
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: |
-              for case_name in glob-membership empty-options; do
-                CASE_FILTER="$case_name" bash scripts/correctness_freezed.sh
-              done
-
-  current-codegen-riverpod:
-    name: Riverpod compatibility
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    env:
-      PUB_CACHE: ${{ github.workspace }}/.pub-cache
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-worker
-        with:
-          cache-scope: current-codegen-riverpod
-          cache-inputs: |
-            fixtures/riverpod_app/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_riverpod.sh
-            scripts/watch_smoke_riverpod.sh
-            scripts/worker.sh
-          setup-rust: 'true'
-          build-frontend: 'true'
-      - name: Prime current generator dependencies
-        shell: bash
-        run: |
-          cd fixtures/riverpod_app
-          dart --suppress-analytics pub get
-      - parallel:
-          - name: Riverpod correctness (no-op and source edit)
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: |
-              for case_name in no-op source-edit; do
-                CASE_FILTER="$case_name" bash scripts/correctness_riverpod.sh
-              done
-          - name: Riverpod correctness (output delete and failure)
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: |
-              for case_name in generated-output-delete failure; do
-                CASE_FILTER="$case_name" bash scripts/correctness_riverpod.sh
-              done
-          - name: Riverpod watch smoke
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-            run: bash scripts/watch_smoke_riverpod.sh
-
-  compatibility:
-    name: Compatibility suite (lifecycle)
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    env:
-      PUB_CACHE: ${{ github.workspace }}/.pub-cache
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-worker
-        with:
-          cache-scope: compatibility-lifecycle
-          cache-inputs: |
-            fixtures/**/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_*.sh
-            scripts/watch_smoke_*.sh
-            scripts/worker.sh
-          setup-rust: 'true'
-          build-frontend: 'true'
-      - parallel:
-          - name: "Compatibility: lifetime"
-            shell: bash
-            run: bash scripts/correctness_lifetime_compatibility.sh
-          - name: "Compatibility: optional Builder (demand)"
+          - name: Optional lifecycle, lifetime, and graph
             shell: bash
             run: |
-              for case_name in demand no-demand incremental; do
-                CASE_FILTER="$case_name" bash scripts/correctness_optional_builder.sh
-              done
-          - name: "Compatibility: optional Builder (lifecycle)"
-            shell: bash
-            run: |
-              for case_name in failure delete rename; do
-                CASE_FILTER="$case_name" bash scripts/correctness_optional_builder.sh
-              done
-          - name: "Compatibility: optional and trigger watch"
-            shell: bash
-            run: |
+              bash scripts/correctness_optional_builder.sh
+              bash scripts/correctness_lifetime_compatibility.sh
               bash scripts/watch_smoke_optional_builder.sh
               bash scripts/watch_smoke_trigger_builder.sh
-
-  compatibility-graph:
-    name: Compatibility suite (post-process, graph)
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    env:
-      PUB_CACHE: ${{ github.workspace }}/.pub-cache
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-worker
-        with:
-          cache-scope: compatibility-graph
-          cache-inputs: |
-            fixtures/**/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_*.sh
-            scripts/watch_smoke_*.sh
-            scripts/worker.sh
-          setup-rust: 'true'
-          build-frontend: 'true'
-      - parallel:
-          - name: "Compatibility: post-process Builder"
+              bash scripts/correctness_target_cycle.sh
+              bash scripts/correctness_arbitrary_dependency_target.sh
+              bash scripts/correctness_applies_builder.sh
+          - name: Post-process and cleanup
             shell: bash
             run: |
               bash scripts/correctness_post_process_builder.sh
               bash scripts/correctness_optional_cleanup.sh
-          - name: "Compatibility: post-process watch"
+          - name: Post-process watch
             shell: bash
             run: |
               bash scripts/watch_smoke_post_process_builder.sh
               bash scripts/watch_smoke_optional_cleanup.sh
-          - name: "Compatibility: graph"
-            shell: bash
-            run: |
-              bash scripts/correctness_target_cycle.sh
-              bash scripts/correctness_arbitrary_dependency_target.sh
-              bash scripts/correctness_applies_builder.sh
-          - name: "Compatibility: Pub workspace"
+          - name: Pub workspace
             shell: bash
             run: |
               bash scripts/correctness_workspace.sh
               bash scripts/correctness_workspace_json.sh
-              bash scripts/correctness_workspace_scheduler.sh
-
-  compatibility-mapping:
-    name: Compatibility suite (mapping and empty-input)
+  integration-compilers:
+    name: 'Integration: published web compilers'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
         with:
-          cache-scope: compatibility-mapping
+          cache-scope: ${{ github.job }}
           cache-inputs: |
             fixtures/**/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_*.sh
-            scripts/watch_smoke_*.sh
-            scripts/worker.sh
-          setup-rust: 'true'
           build-frontend: 'true'
-      - name: Prime empty-input mapping dependencies
-        shell: bash
-        run: |
-          (cd fixtures/empty_input_mapping_app && dart --suppress-analytics pub get)
-      # One compiler probe per lane, retaining the existing concurrency bound.
-      # Run 836 measured lanes at 408/414/358/425s. Move multiple mappings
-      # to lane 3; Drift now shares the shorter integration-fixtures job.
       - parallel:
-          - name: "Compatibility: dart2js correctness and empty-input correctness"
+          - name: dart2js lifecycle
             shell: bash
             run: |
               bash scripts/correctness_web_compilers.sh
-              PUB_GET_OFFLINE=1 bash scripts/correctness_empty_input_mapping.sh
-          - name: "Compatibility: dart2js watch and registry contracts"
+          - name: dart2js watch
             shell: bash
             run: |
               bash scripts/watch_smoke_web_compilers.sh
-              bash scripts/correctness_registry_override.sh
-              bash scripts/correctness_registry_builder.sh
-          - name: "Compatibility: DDC correctness, multiple mappings, capture, and empty-input watch"
+          - name: DDC lifecycle
             shell: bash
             run: |
               bash scripts/correctness_web_compilers_ddc.sh
-              bash scripts/correctness_multi_mapping_builder.sh
-              bash scripts/correctness_capture_builder.sh
-              PUB_GET_OFFLINE=1 bash scripts/watch_smoke_empty_input_mapping.sh
-          - name: "Compatibility: DDC watch and registry watch"
+          - name: DDC watch
             shell: bash
             run: |
               bash scripts/watch_smoke_web_compilers_ddc.sh
-              bash scripts/watch_smoke_registry_override.sh
-
-  compatibility-drift-analyzer:
-    name: Compatibility suite (Drift analyzer)
+  integration-builders:
+    name: 'Integration: Drift, registry, and recovery'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
         with:
-          cache-scope: compatibility-drift-analyzer
+          cache-scope: ${{ github.job }}
           cache-inputs: |
-            fixtures/drift_analyzer_app/pubspec.lock
-            rust/Cargo.lock
-            scripts/correctness_drift_analyzer.sh
-            scripts/correctness_drift_not_shared.sh
-            scripts/watch_smoke_drift_analyzer.sh
-            scripts/watch_smoke_drift_not_shared.sh
-            scripts/worker.sh
-          setup-rust: 'true'
+            fixtures/**/pubspec.lock
           build-frontend: 'true'
-      - name: Prime Drift analyzer dependencies
+      - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          (cd fixtures/drift_analyzer_app && dart --suppress-analytics pub get)
+          for fixture in drift_analyzer_app post_process_builder_app; do
+            (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
+          done
       - parallel:
-          - name: "Drift analyzer: core"
+          - name: Drift core, not-shared, and built_value
             shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-              CASE_FILTER: core
             run: |
-              bash scripts/correctness_drift_analyzer.sh
-              bash scripts/correctness_drift_not_shared.sh
-          - name: "Drift analyzer: rename and delete"
+              CASE_FILTER=core bash scripts/correctness_drift_analyzer.sh
+              CASE_FILTER=core bash scripts/correctness_drift_not_shared.sh
+              bash scripts/correctness_built_value.sh
+          - name: Drift rename, failure, and commit recovery
             shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-              CASE_FILTER: rename-delete
-            run: bash scripts/correctness_drift_analyzer.sh
-          - name: "Drift analyzer: failure and recovery"
+            run: |
+              CASE_FILTER=rename-delete bash scripts/correctness_drift_analyzer.sh
+              CASE_FILTER=failure bash scripts/correctness_drift_analyzer.sh
+          - name: Drift watches and conventional generator
             shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
-              CASE_FILTER: failure
-            run: bash scripts/correctness_drift_analyzer.sh
-          - name: "Drift analyzer: watch"
-            shell: bash
-            env:
-              PUB_GET_OFFLINE: '1'
             run: |
               bash scripts/watch_smoke_drift_analyzer.sh
               bash scripts/watch_smoke_drift_not_shared.sh
-
+              bash scripts/correctness_drift.sh
+          - name: Registry contracts and watch
+            shell: bash
+            run: |
+              bash scripts/correctness_registry_override.sh
+              bash scripts/correctness_registry_builder.sh
+              bash scripts/watch_smoke_registry_override.sh
+              bash scripts/correctness_commit_recovery.sh
   native-build:
     name: Native build (${{ matrix.target_id }})
     runs-on: ${{ matrix.runs_on }}
@@ -915,22 +534,50 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target_id: macos-arm64
-            runs_on: macos-14
-            rust_target: aarch64-apple-darwin
-          - target_id: linux-x64
-            runs_on: ubuntu-24.04
-            rust_target: x86_64-unknown-linux-gnu
-          - target_id: linux-arm64
-            runs_on: ubuntu-24.04-arm
-            rust_target: aarch64-unknown-linux-gnu
-          - target_id: windows-x64
-            runs_on: windows-2022
-            rust_target: x86_64-pc-windows-msvc
-          - target_id: windows-arm64
-            runs_on: windows-11-arm
-            rust_target: aarch64-pc-windows-msvc
+        include: >-
+          ${{ fromJSON(github.event_name == 'pull_request' && '[
+            {
+              "target_id": "macos-arm64",
+              "runs_on": "macos-14",
+              "rust_target": "aarch64-apple-darwin"
+            },
+            {
+              "target_id": "linux-x64",
+              "runs_on": "ubuntu-24.04",
+              "rust_target": "x86_64-unknown-linux-gnu"
+            },
+            {
+              "target_id": "windows-x64",
+              "runs_on": "windows-2022",
+              "rust_target": "x86_64-pc-windows-msvc"
+            }
+          ]' || '[
+            {
+              "target_id": "macos-arm64",
+              "runs_on": "macos-14",
+              "rust_target": "aarch64-apple-darwin"
+            },
+            {
+              "target_id": "linux-x64",
+              "runs_on": "ubuntu-24.04",
+              "rust_target": "x86_64-unknown-linux-gnu"
+            },
+            {
+              "target_id": "linux-arm64",
+              "runs_on": "ubuntu-24.04-arm",
+              "rust_target": "aarch64-unknown-linux-gnu"
+            },
+            {
+              "target_id": "windows-x64",
+              "runs_on": "windows-2022",
+              "rust_target": "x86_64-pc-windows-msvc"
+            },
+            {
+              "target_id": "windows-arm64",
+              "runs_on": "windows-11-arm",
+              "rust_target": "aarch64-pc-windows-msvc"
+            }
+          ]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -960,50 +607,54 @@ jobs:
           "$binary" --help
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
         with:
-          sdk: '3.13.3'
-      - name: Shared cache generation and pack lifecycle
+          sdk: 3.13.3
+      - name: Resolve package dependencies before parallel checks
         shell: bash
         run: |
           dart pub get
-          dart test --compiler=source --timeout 2m \
-            test/indexed_blob_generation_test.dart \
-            test/indexed_blob_store_test.dart \
-            test/packed_analysis_byte_store_test.dart
-      - name: Verify packaged distribution with a Dart-only consumer
-        shell: bash
-        run: |
-          binary="rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator"
-          extension=tar.gz
-          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; extension=zip; fi
-          python3 scripts/package_frontend.py --binary "$binary" --target '${{ matrix.target_id }}' --output dist \
-            --evidence 'distribution-results/${{ matrix.target_id }}'
-          python3 scripts/distribution_e2e.py --dart "$(command -v dart)" --target '${{ matrix.target_id }}' \
-            --archive "dist/build_runner_accelerator-${{ matrix.target_id }}.$extension" \
-            --results 'distribution-results/${{ matrix.target_id }}'
-      # Reuse the release binary and SDK on this shorter lane instead of
-      # adding another AOT compilation to the SDK package-check jobs.
-      - name: Runner 2.17.1 normal-builder AOT lifecycle
-        if: matrix.target_id == 'linux-x64'
-        shell: bash
-        run: |
-          BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
-            bash scripts/correctness_sdk.sh --resolution upgrade --runner 2.17.1 --worker-mode aot \
-            --results "$RUNNER_TEMP/runner-2.17.1-aot"
-      - name: Shared-part AOT lifecycle
-        if: matrix.target_id == 'linux-arm64'
-        shell: bash
-        run: |
-          BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
-            bash scripts/correctness_shared_parts.sh --resolution upgrade --worker-mode aot --jobs 2 \
-            --results "$RUNNER_TEMP/runner-2.17.1-aot"
+      - parallel:
+          - name: Shared cache generation and pack lifecycle
+            shell: bash
+            run: |
+              dart test --compiler=source --timeout 2m \
+                test/indexed_blob_generation_test.dart \
+                test/indexed_blob_store_test.dart \
+                test/packed_analysis_byte_store_test.dart
+          - name: Verify packaged distribution with a Dart-only consumer
+            shell: bash
+            run: |
+              binary="rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator"
+              extension=tar.gz
+              if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; extension=zip; fi
+              python3 scripts/package_frontend.py --binary "$binary" --target '${{ matrix.target_id }}' --output dist \
+                --evidence 'distribution-results/${{ matrix.target_id }}'
+              python3 scripts/distribution_e2e.py --dart "$(command -v dart)" --target '${{ matrix.target_id }}' \
+                --archive "dist/build_runner_accelerator-${{ matrix.target_id }}.$extension" \
+                --results 'distribution-results/${{ matrix.target_id }}'
+          - name: Runner 2.17.1 normal-builder AOT lifecycle
+            if: matrix.target_id == 'macos-arm64'
+            shell: bash
+            run: |
+              BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
+                bash scripts/correctness_sdk.sh --resolution upgrade --runner 2.17.1 --worker-mode aot \
+                --results "$RUNNER_TEMP/runner-2.17.1-aot"
+          - name: Shared-part AOT lifecycle
+            if: matrix.target_id == 'linux-x64'
+            shell: bash
+            run: |
+              BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
+                bash scripts/correctness_shared_parts.sh --resolution upgrade --worker-mode aot --jobs 2 \
+                --results "$RUNNER_TEMP/shared-parts-aot"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: failure() && (matrix.target_id == 'linux-x64' || matrix.target_id == 'linux-arm64')
+        if: failure() && (matrix.target_id == 'linux-x64' || matrix.target_id == 'macos-arm64')
         with:
           name: runner-2.17.1-aot-${{ matrix.target_id }}
-          path: |
+          path: |-
             ${{ runner.temp }}/runner-2.17.1-aot/**/*.log
             ${{ runner.temp }}/runner-2.17.1-aot/**/pubspec.lock
             ${{ runner.temp }}/runner-2.17.1-aot/**/stock-reference.json
+
+            ${{ runner.temp }}/shared-parts-aot/**
           if-no-files-found: ignore
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
