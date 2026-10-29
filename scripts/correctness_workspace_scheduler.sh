@@ -171,6 +171,6 @@ done
 for package in a b; do cp "$stock/$package/lib/"*.seed "$native/$package/lib/"; done
 run_native worker-recovery 2
 compare worker-recovery
-bash "$script_dir/correctness_single_package_scheduler.sh"
-bash "$script_dir/correctness_workspace_scheduler_reuse.sh"
+SINGLE_SCHEDULER_RESULTS_DIR="$temporary/single-package" bash "$script_dir/correctness_single_package_scheduler.sh"
+SCHEDULER_REUSE_RESULTS_DIR="$temporary/reuse" bash "$script_dir/correctness_workspace_scheduler_reuse.sh"
 printf 'workspace-scheduler: PASS stock/native=yes jobs=1,2,3 overlap=yes dependency=yes resolver=yes options=yes rollback=yes lifecycle=yes single-package=yes\n'

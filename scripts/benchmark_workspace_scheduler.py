@@ -257,6 +257,8 @@ def main():
                 starts = [json.loads(path.read_text()) for path in history.glob('*-start.json')]
                 if args.worker_mode == 'aot' and Path('/proc/self/exe').exists():
                     expected = metadata['aot_artifacts'][profile_name][variant]['path']
+                    builder_pids = {str(row['pid']) for row in starts}
+                    assert builder_pids and set(worker_executables) == builder_pids, 'AOT executable verification incomplete: missing builder PID observations'
                     assert worker_executables and all(path == expected for path in worker_executables.values()), 'Observed worker is not the warmed AOT executable'
                 diagnostics.append({'profile': profile_name, 'variant': variant,
                     'stock_byte_identical': True, 'actions': len(starts), 'jobs': settings['jobs'],

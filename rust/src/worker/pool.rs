@@ -691,7 +691,7 @@ impl WorkerPool {
         use super::scheduling::InputQueue;
         use std::sync::mpsc;
         use std::time::Instant;
-        thread::scope(|scope| {
+        let result = thread::scope(|scope| {
             let (completed, completions) = mpsc::channel();
             let mut senders = Vec::new();
             let mut handles = Vec::new();
@@ -787,7 +787,14 @@ impl WorkerPool {
                 return Err(io::Error::other("worker thread panicked"));
             }
             result
-        })
+        });
+        if result.is_err() {
+            // All dispatched workers have joined, so discard even dependency
+            // edges reported by peers after the controller observed failure.
+            // A resident watch pool must not leak them into the next build.
+            self.take_dep_graph();
+        }
+        result
     }
 
     /// Records only successful results; a later `resolver_used = true` keeps
@@ -1200,5 +1207,79 @@ pub(super) fn target_worker_count(max_jobs: usize, request_count: usize) -> usiz
 impl Drop for WorkerPool {
     fn drop(&mut self) {
         self.workers.clear();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_parallel_dispatch_discards_all_resident_dependency_edges() -> io::Result<()> {
+        struct TemporaryRoot(PathBuf);
+        impl Drop for TemporaryRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TemporaryRoot(std::env::temp_dir().join(format!(
+            "scheduler-failed-dependencies-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )));
+        std::fs::create_dir_all(root.0.join(".dart_tool"))?;
+        std::fs::write(root.0.join("pubspec.yaml"), "name: app\n")?;
+        std::fs::write(
+            root.0.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[{"name":"app","rootUri":"../"}]}"#,
+        )?;
+        let workspace = Workspace::load(root.0.clone())?;
+        let mut pool = WorkerPool::start_deferred(&workspace, "unused", "unused", 2, false)?;
+        for index in 0..2 {
+            // Echoing a request is a deterministic protocol failure. Seed edges
+            // as if earlier leases in this build had reported dependencies.
+            let mut worker = WorkerClient::start(
+                &workspace.root,
+                "unused",
+                "unused",
+                &WorkerArtifact::Aot(PathBuf::from("/bin/cat")),
+            )?;
+            worker.dep_graph.insert(
+                format!("app|lib/entry{index}.dart"),
+                vec!["app|lib/failed-only.dart".to_owned()],
+            );
+            pool.workers.push(worker);
+        }
+        let requests = (0..2)
+            .map(|index| BuildRequest {
+                part_phase_index: None,
+                builder: "app:builder".to_owned(),
+                input: format!("app|lib/entry{index}.dart"),
+                outputs: Vec::new(),
+                options: serde_json::Map::new(),
+                phase: 0,
+                instance_key: "app:default".to_owned(),
+                is_root: true,
+                post_process: false,
+                triggers: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let error = pool
+            .build_parallel_on_current_workers(
+                &workspace,
+                &requests,
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+                &AssetVisibility::default(),
+                2,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("unexpected worker message"));
+        assert_eq!(pool.workers.len(), 2);
+        assert!(pool.take_dep_graph().is_empty());
+        Ok(())
     }
 }

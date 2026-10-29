@@ -13,12 +13,14 @@ mkdir -p "$workspace/fixtures"
 worker_ensure_frontend
 worker_attach "$workspace"
 fail() { printf 'scheduler-reuse: FAIL: %s\n' "$*" >&2; exit 1; }
+pub_get_args=()
+if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then pub_get_args+=(--offline); fi
 for variant in stock native; do
   root="$workspace/fixtures/$variant"
   cp -R "$repo_root/fixtures/workspace_scheduler_app" "$root"
   rm "$root/b/lib/input.seed" "$root/c/lib/input.seed"
   for input in input second extra; do printf 'EMPTY\n' > "$root/a/lib/$input.seed"; done
-  worker_pub_get "$root"
+  worker_pub_get "$root" "${pub_get_args[@]}"
 done
 stock="$workspace/fixtures/stock"
 native="$workspace/fixtures/native"
