@@ -112,6 +112,11 @@ repeated source compilation from the tests' unchanged 30-second deadlines.
 Local runs without the helper-directory environment variable keep source mode.
 The readiness-marker test also publishes its JSON atomically, matching the
 real publisher rather than racing an asynchronous read against file truncation.
+Latest-resolution validation also caught Analyzer 14.7 removing
+`nonPackageFeatureSet`. The shared analysis-options adapter sets the legacy
+field only when present; 14.7 uses `contextFeatures` for package and non-package
+files. Focused feature tests cover 13.3, 14.6 and 14.7 without capping upgrade
+validation to an older Analyzer release.
 The older-runner/Analyzer 14.5 comparison reuses the Linux release frontend in
 the fourth native parallel lane, keeping it off the code-generator critical path.
 
