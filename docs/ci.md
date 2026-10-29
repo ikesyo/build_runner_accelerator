@@ -18,6 +18,13 @@ When changing a matrix expression, update its finite expansion check too.
 | Integration | 11 | Filter selection; filter resolver/state/unsupported; filter watch/boundaries; two configuration suites; output policies; baseline/CLI/scheduler; code generators; lifecycle/workspace; web compilers; Drift/registry/recovery |
 | Native distribution | 3 | Linux x64, macOS ARM64, Windows x64; package installation and shared-cache tests on each OS |
 
+Both SDK jobs and all eleven integration jobs use `ubuntu-24.04-arm`.
+The native Linux distribution job stays on `ubuntu-24.04` to build and execute
+the x64 release binary and its compatibility probes. Worker caches include
+`runner.arch`, so the SDK migration starts with separate ARM64 caches.
+Pinning the existing 24.04 image keeps the architecture comparison separate
+from an Ubuntu image upgrade; ARM speedups must be measured for each workload.
+
 Every integration scenario family remains on PRs. Freezed, Riverpod, optional builder
 and JSON Serializable run their complete case selection once per suite, using
 the scripts' existing baseline restoration instead of starting a fresh stock
