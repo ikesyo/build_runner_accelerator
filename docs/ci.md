@@ -82,9 +82,21 @@ work rather than hiding compilation behind extra runner slots.
 
 Nested-package recovery actions have two independent cases. CI assigns
 `NESTED_PACKAGE_RECOVERY_CASE=failure-cancel` and `builder-transition` to two
-existing filter lanes instead of appending both after a long compiler probe.
+short lanes in the filter-watch and current-SDK jobs, respectively.
 The default remains `all`; a unit test verifies that the split covers the
 original sequence exactly once and unknown selections fail explicitly.
+
+Filter selection and nested-package comparisons retain JIT. A controlled local
+source-selection comparison took 125.4s with JIT and 148.7s with AOT, so the
+broader AOT migration was not adopted. The CLI's conflict-flag comparisons reuse their
+prewarmed AOT catalog; its process, compiled-launcher and watch probes retain
+JIT. Output bytes, invocation history, deletion and no-op assertions are unchanged.
+
+Short independent probes fill existing lanes: the output-policy job also runs
+package smoke, scheduler reuse, obsolete-state recovery and named/backslash
+configuration watches. Current SDK lanes also run generic watch, nested builder
+transitions and the JSON workspace lifecycle. These assignments keep all
+scenarios on PRs without adding runners or splitting a scenario's state changes.
 
 The current SDK job shares its installed Rust toolchain and Cargo cache with
 the Rust/Python checks, freeing one runner slot for filter comparisons. Package
@@ -109,9 +121,9 @@ for the entire baseline parallel group. SDK package checks and lifecycle probes
 start together, and minimum shared-parts no longer waits for the pinned runner
 lifecycle. Distribution, cache tests and AOT lifecycle probes overlap after the
 release binary and root package dependencies are ready, with separate result
-directories. Normal-builder AOT runs on macOS ARM64 and shared-part AOT on Linux
-x64; this avoids two large AOT probes sharing the Linux runner.
-The macOS probe invokes the Python comparison directly with the already built
+directories. Normal-builder and shared-part AOT use separate parallel lanes on
+macOS ARM64; x64 distribution and its dependency-window probe remain on Linux
+x64. The macOS probes invoke the Python comparisons directly with the already built
 frontend; its shell wrapper requires Bash associative arrays, unavailable in
 macOS's system Bash 3.2.
 Fresh stock shared-part references use JIT to check bytes; the primary

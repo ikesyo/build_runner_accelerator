@@ -76,10 +76,14 @@ jobs:
               if [[ '${{ matrix.resolution }}' == upgrade ]]; then
                 dart pub publish --dry-run
               fi
-          - name: SDK lifecycle
+          - name: SDK lifecycle and current-SDK workspace probes
             shell: bash
             run: |
               bash scripts/correctness_sdk.sh --resolution "${{ matrix.resolution }}" --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/baseline"
+              if [[ '${{ matrix.resolution }}' == upgrade ]]; then
+                NESTED_PACKAGE_CASE_GROUP=recovery-actions NESTED_PACKAGE_RECOVERY_CASE=builder-transition bash scripts/correctness_nested_packages.sh
+                bash scripts/correctness_workspace_json.sh
+              fi
           - name: Pinned runner lifecycle or publication recovery
             shell: bash
             run: |
@@ -89,13 +93,14 @@ jobs:
                 (cd fixtures/post_process_builder_app && dart --suppress-analytics pub get)
                 bash scripts/correctness_commit_recovery.sh
               fi
-          - name: Shared parts or runner 2.16.0 / Analyzer 13.3
+          - name: Shared parts or dependency window and generic watch
             shell: bash
             run: |
               if [[ '${{ matrix.resolution }}' == downgrade ]]; then
                 bash scripts/correctness_shared_parts.sh --resolution downgrade --worker-mode jit --jobs 2 --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/shared-parts"
               else
                 python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 13.3.0
+                bash scripts/watch_smoke.sh
               fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
@@ -227,11 +232,10 @@ jobs:
               BUILD_FILTER_CASE_GROUP=watch-classification bash scripts/correctness_build_filter.sh
               NESTED_PACKAGE_CASE_GROUP=watch-boundary bash scripts/correctness_nested_packages.sh
               python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 14.5.0
-          - name: Routing and nested builder transitions
+          - name: Routing
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=routing bash scripts/correctness_build_filter.sh
-              NESTED_PACKAGE_CASE_GROUP=recovery-actions NESTED_PACKAGE_RECOVERY_CASE=builder-transition bash scripts/correctness_nested_packages.sh
 
   integration-settings:
     name: 'Integration: build configuration'
@@ -261,26 +265,23 @@ jobs:
               SETTINGS_CASE_GROUP=values bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-default bash scripts/correctness_settings.sh
               PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_builder.sh
-          - name: Compact flags, reserved/topology watch, and scheduler reuse
+          - name: Compact flags and reserved/topology watch
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=compact bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-reserved bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-topology bash scripts/correctness_settings.sh
-              bash scripts/correctness_workspace_scheduler_reuse.sh
           - name: Config paths and normalized dot/ancestor watch
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=paths bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-dot bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-package bash scripts/correctness_settings.sh
-          - name: Config files, nested/generic watch, and package smoke
+          - name: Config files and nested watch
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=files bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-nested bash scripts/correctness_settings.sh
-              bash scripts/watch_smoke.sh
-              bash scripts/package_smoke.sh
 
   integration-settings-watch:
     name: 'Integration: configuration watch and AOT'
@@ -309,22 +310,19 @@ jobs:
             run: |
               SETTINGS_CASE_GROUP=errors bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=boundaries bash scripts/correctness_settings.sh
-          - name: Precedence, post-process lifecycle, and JSON workspace
+          - name: Precedence and post-process lifecycle
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=precedence bash scripts/correctness_settings.sh
               bash scripts/correctness_post_process_builder.sh
-              bash scripts/correctness_workspace_json.sh
           - name: JIT/AOT compile and publication recovery
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=compile bash scripts/correctness_settings.sh
-          - name: Trigger lifecycle and named/backslash watch
+          - name: Trigger lifecycle
             shell: bash
             run: |
               bash scripts/correctness_trigger_builder.sh
-              SETTINGS_CASE_GROUP=watch-backslash bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-named bash scripts/correctness_settings.sh
 
   integration-output-policies:
     name: 'Integration: output policies'
@@ -348,23 +346,28 @@ jobs:
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Source output policies
+          - name: Source output policies and package smoke
             shell: bash
             run: |
               OUTPUT_POLICY_CASE_GROUP=source bash scripts/correctness_output_policies.sh
-          - name: Cache output policies
+              bash scripts/package_smoke.sh
+          - name: Cache output policies and scheduler reuse
             shell: bash
             run: |
               OUTPUT_POLICY_CASE_GROUP=cache bash scripts/correctness_output_policies.sh
-          - name: Failure recovery and routing
+              bash scripts/correctness_workspace_scheduler_reuse.sh
+          - name: Failure recovery, routing, and obsolete state
             shell: bash
             run: |
               OUTPUT_POLICY_CASE_GROUP=failure bash scripts/correctness_output_policies.sh
               OUTPUT_POLICY_CASE_GROUP=routing bash scripts/correctness_output_policies.sh
-          - name: Runner 2.16.1 / Analyzer 14.5
+              bash scripts/correctness_upgrade.sh
+          - name: Runner 2.16.1 / Analyzer 14.5 and config watches
             shell: bash
             run: |
               python3 scripts/correctness_dependency_window.py --runner 2.16.1 --analyzer 14.5.0
+              SETTINGS_CASE_GROUP=watch-backslash bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=watch-named bash scripts/correctness_settings.sh
 
   integration-core:
     name: 'Integration: baseline, CLI, and workspace scheduler'
@@ -392,11 +395,10 @@ jobs:
             run: |
               SMOKE_SKIP_RUST_TESTS=1 bash scripts/smoke.sh
               bash scripts/correctness_single_package_scheduler.sh
-          - name: CLI and obsolete state
+          - name: CLI
             shell: bash
             run: |
               bash scripts/correctness_cli.sh
-              bash scripts/correctness_upgrade.sh
           - name: Workspace scheduler
             shell: bash
             run: |
@@ -704,11 +706,12 @@ jobs:
                   --runner 2.15.3 --analyzer 14.5.0
               fi
           - name: Shared-part AOT lifecycle
-            if: matrix.target_id == 'linux-x64'
+            if: matrix.target_id == 'macos-arm64'
             shell: bash
             run: |
               BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
-                bash scripts/correctness_shared_parts.sh --resolution upgrade --worker-mode aot --jobs 2 \
+                DART_BIN="$(command -v dart)" \
+                python3 scripts/correctness_shared_parts.py --resolution upgrade --worker-mode aot --jobs 2 \
                 --results "$RUNNER_TEMP/shared-parts-aot"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure() && (matrix.target_id == 'linux-x64' || matrix.target_id == 'macos-arm64')
