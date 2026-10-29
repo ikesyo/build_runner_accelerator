@@ -1,5 +1,5 @@
 # PR budget: 16 CI jobs + 4 reserved for CodeQL/other checks = 20.
-# Keep case parallelism inside jobs; see docs/ci.md for coverage and timings.
+# Keep case parallelism inside jobs; see docs/ci.md for coverage and timing rules.
 name: CI
 
 on:
@@ -48,18 +48,6 @@ jobs:
       - name: Check fixture lockfiles
         if: matrix.resolution == 'upgrade'
         run: python3 scripts/sync_release_metadata.py --check
-      - name: Rust format, lint, unit tests, and Python helpers
-        shell: bash
-        run: |
-          rustup component add rustfmt clippy
-          python3 -m pip install --quiet --disable-pip-version-check PyYAML==6.0.3
-          python3 .github/scripts/check_ci.py
-          python3 -m unittest discover -s .github/scripts -p 'test_*.py'
-          python3 -m unittest discover -s scripts -p 'test_*.py'
-          cargo fmt --all --manifest-path rust/Cargo.toml -- --check
-          cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
-          cargo test --locked --manifest-path rust/Cargo.toml
-        if: matrix.resolution == 'upgrade'
       - name: Resolve nested-package fixture before parallel checks
         shell: bash
         run: |
@@ -83,13 +71,22 @@ jobs:
                 dart pub publish --dry-run
                 python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 13.3.0
               fi
-          - name: SDK lifecycle and current-SDK workspace probes
+          - name: Rust/Python checks, SDK lifecycle, and builder transitions
             shell: bash
             run: |
+              if [[ '${{ matrix.resolution }}' == upgrade ]]; then
+                rustup component add rustfmt clippy
+                python3 -m pip install --quiet --disable-pip-version-check PyYAML==6.0.3
+                python3 .github/scripts/check_ci.py
+                python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+                python3 -m unittest discover -s scripts -p 'test_*.py'
+                cargo fmt --all --manifest-path rust/Cargo.toml -- --check
+                cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
+                cargo test --locked --manifest-path rust/Cargo.toml
+              fi
               bash scripts/correctness_sdk.sh --resolution "${{ matrix.resolution }}" --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/baseline"
               if [[ '${{ matrix.resolution }}' == upgrade ]]; then
                 NESTED_PACKAGE_CASE_GROUP=recovery-actions NESTED_PACKAGE_RECOVERY_CASE=builder-transition bash scripts/correctness_nested_packages.sh
-                bash scripts/correctness_workspace_json.sh
               fi
           - name: Pinned runner lifecycle or publication recovery
             shell: bash
@@ -401,10 +398,11 @@ jobs:
             run: |
               SMOKE_SKIP_RUST_TESTS=1 bash scripts/smoke.sh
               bash scripts/correctness_single_package_scheduler.sh
-          - name: CLI
+          - name: CLI and JSON workspace
             shell: bash
             run: |
               bash scripts/correctness_cli.sh
+              bash scripts/correctness_workspace_json.sh
           - name: Workspace scheduler
             shell: bash
             run: |

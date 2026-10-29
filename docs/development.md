@@ -94,8 +94,8 @@ Watch logs and builder histories must stay outside watched workspaces.
 
 PR CI has a 16-job budget, reserving four runner slots for CodeQL and other
 checks. The integration suites retain their cases within eleven jobs, with at
-most four parallel lanes per job. See [CI layout and timing evidence](ci.md)
-for coverage placement and the main/scheduled architecture checks.
+most four parallel lanes per job. See [CI principles](ci.md)
+for coverage and scheduling rules, including the main/scheduled architecture checks.
 
 ## SDK lifecycle comparison
 
