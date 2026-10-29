@@ -442,19 +442,19 @@ jobs:
               bash scripts/watch_smoke_empty_input_mapping.sh
             env:
               PUB_GET_OFFLINE: '1'
-          - name: Riverpod lifecycle and watch
+          - name: Riverpod lifecycle, watch, and multiple mappings
             shell: bash
             run: |
               bash scripts/correctness_riverpod.sh
               bash scripts/watch_smoke_riverpod.sh
               bash scripts/correctness_multi_mapping_builder.sh
-              bash scripts/correctness_capture_builder.sh
             env:
               PUB_GET_OFFLINE: '1'
-          - name: JSON Serializable with one shared baseline
+          - name: JSON Serializable shared baseline and capture mapping
             shell: bash
             run: |
-              bash scripts/correctness_json_serializable.sh
+              CASE_FILTER=shared-baseline bash scripts/correctness_json_serializable.sh
+              bash scripts/correctness_capture_builder.sh
             env:
               PUB_GET_OFFLINE: '1'
           - name: Freezed watch and generic mappings
@@ -711,14 +711,19 @@ jobs:
                   --frontend "$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
                   --runner 2.15.3 --analyzer 14.5.0
               fi
-          - name: Shared-part AOT lifecycle
-            if: matrix.target_id == 'macos-arm64'
+          - name: Shared-part AOT or conditional dependency lifecycle
+            if: matrix.target_id == 'macos-arm64' || matrix.target_id == 'linux-x64'
             shell: bash
             run: |
-              BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
-                DART_BIN="$(command -v dart)" \
-                python3 scripts/correctness_shared_parts.py --resolution upgrade --worker-mode aot --jobs 2 \
-                --results "$RUNNER_TEMP/shared-parts-aot"
+              if [[ '${{ matrix.target_id }}' == macos-arm64 ]]; then
+                BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
+                  DART_BIN="$(command -v dart)" \
+                  python3 scripts/correctness_shared_parts.py --resolution upgrade --worker-mode aot --jobs 2 \
+                  --results "$RUNNER_TEMP/shared-parts-aot"
+              else
+                BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
+                  CASE_FILTER=conditional-dependency bash scripts/correctness_json_serializable.sh
+              fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure() && (matrix.target_id == 'linux-x64' || matrix.target_id == 'macos-arm64')
         with:
