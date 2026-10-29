@@ -33,9 +33,9 @@ remaining input count.
 Share an adaptive input queue with ordinary single-package parallel execution.
 Start with one-input probes, then target 100ms batches using observed time per
 input (excluding initialization/reset), capped at sixteen inputs. This amortizes
-worker/IPC latency that can itself approach the former 20ms target. Leave at least
-two waves of work across eligible workers; expensive work and the tail use single
-inputs. Costs are learned within the current application, not across packages or
+worker/IPC latency that can itself approach the former 20ms target. Also cap each
+lease at `max(1, floor(unassigned inputs / (2 * eligible workers)))`; expensive
+work and the tail use single inputs. Costs are learned within the current application, not across packages or
 builders. A sudden cost increase immediately reduces subsequent batches; cheaper
 samples rapidly decay warm-up costs. Unexpected expensive inputs within a batch
 can still cause stragglers. Preserve request/result order for ordinary execution,
@@ -98,8 +98,12 @@ real overlap, clean/no-op/edit/broad/delete/rename, failure admission, worker ex
 rollback and recovery. A separate no-output resolver fixture checks same-phase
 baseline reuse across targets, options/isRoot, and resolver dependency edits.
 
-`benchmark_workspace_scheduler.py` compares native wave and ready-queue binaries
+`benchmark_workspace_scheduler.py` compares retained native scheduler binaries
 under matched SDK/cache conditions, with stock as an untimed byte reference.
+Support JIT and strict AOT worker modes. Complete compilation before timing;
+record prepared AOT executable hashes and verify that timed builds do not replace
+them. Separate diagnostic observations of builder process executables confirm
+the selected mode on Linux.
 Record clean/no-op/one-file/broad edits, repeated samples, input-delay profiles,
 worker counts and exact output equality. Separate diagnostic histories from timed
 runs. Synthetic skew measurements do not establish real-project speedups.

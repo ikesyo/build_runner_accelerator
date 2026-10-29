@@ -60,11 +60,15 @@ Exact validated versions, configurations and blockers are maintained in the
 - [ ] Re-evaluate indexed/lazy graph persistence and automatic worker counts
   using reproducible benchmarks.
 - [x] Share bounded adaptive input batching across ordinary and workspace builds.
-  Stock-identical synthetic comparisons cover uniform and uneven inputs;
-  standalone uneven-input clean/broad medians improved by 22.5%/27.7% in three
-  trials, while other cases remain mixed. See the
-  [conditions and limits](benchmarks/workspace-scheduler-2026-10/adaptive.md).
+  Stock-identical JIT and AOT comparisons cover uniform and uneven inputs.
+  Synthetic uneven inputs benefit relative to static partitions, while uniform
+  results and further batch tuning remain mixed. See the
+  [conditions and limits](benchmarks/workspace-scheduler-2026-10/overhead.md).
 - [ ] Validate resolver-aware batching in larger mixed-builder workspaces.
+- [ ] Profile workspace startup outside the recorded native build, including
+  the official discovery helpers. Evaluate compiled-helper reuse while still
+  rerunning discovery after acquiring the full lock set; see the measured
+  [startup gap](benchmarks/workspace-scheduler-2026-10/overhead.md#separate-ipc-diagnostics).
 - [ ] Evaluate a bounded cache of parked worker contexts if package switching
   remains a material cost. Measure reinitialization time and retained memory;
   consider separate budgets for running builders and idle resident processes,

@@ -1,7 +1,8 @@
 # Workspace scheduler comparison, 2026-10-28
 
-The subsequent [adaptive input dispatch comparison](adaptive.md) covers the
-current scheduler, including ordinary single-package execution.
+The [JIT and AOT overhead comparison](overhead.md) covers the current scheduler,
+including ordinary single-package execution. The preceding
+[adaptive input dispatch comparison](adaptive.md) measures the 20ms/8-input policy.
 
 Compare the bounded wave scheduler at `f19ad209a0a8b18188c3fae24524326d494d99c2`
 with dependency-ready scheduling and single-input leases at

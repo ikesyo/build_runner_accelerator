@@ -1,5 +1,9 @@
 # Adaptive input dispatch and visible-baseline reuse
 
+This historical comparison measures the 20ms/8-input policy. See the subsequent
+[JIT and AOT measurements](overhead.md) for the current 100ms/16-input policy,
+its IPC reductions and mixed end-to-end results.
+
 Compare the preceding ready-queue implementation at
 `b0e659a1bd75d30aec4bdd6a80b75bbcfc34dfa0` against adaptive batching,
 indexed readiness and phase-visible baseline reuse at
