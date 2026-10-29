@@ -14,9 +14,8 @@ When changing a matrix expression, update its finite expansion check too.
 
 | Jobs on each PR | Count | Coverage |
 | --- | ---: | --- |
-| Rust and Python helpers | 1 | Formatting, Clippy, Rust unit tests, release/distribution helpers and benchmark helper tests |
-| Dart package and SDK | 2 | Minimum/downgrade and current/upgrade package tests, analysis and SDK lifecycle; minimum shared parts and pinned runner |
-| Integration | 10 | Filter selection/graph; filter watch/boundaries; configuration; configuration watch/AOT; output policies; baseline/CLI/scheduler; code generators; lifecycle/workspace; web compilers; Drift/registry/recovery |
+| Dart package, SDK, Rust and Python helpers | 2 | Minimum/downgrade and current/upgrade package tests, analysis and SDK lifecycle; minimum shared parts and pinned runner; current SDK also runs Rust formatting/Clippy/unit tests and Python helpers |
+| Integration | 11 | Filter selection; filter resolver/state/unsupported; filter watch/boundaries; two configuration suites; output policies; baseline/CLI/scheduler; code generators; lifecycle/workspace; web compilers; Drift/registry/recovery |
 | Native distribution | 3 | Linux x64, macOS ARM64, Windows x64; package installation and shared-cache tests on each OS |
 
 All existing integration cases remain on PRs. Freezed, Riverpod, optional builder
@@ -31,6 +30,12 @@ temporary workspace. State transitions within a scenario stay sequential.
 Watch, failure/rollback, dependency windows, workspace scheduler and stock byte
 comparisons remain covered. Benchmarks stay outside PR correctness checks.
 
+The current SDK job shares its installed Rust toolchain and Cargo cache with
+the Rust/Python checks, freeing one runner slot for filter comparisons. Package
+tests use the SDK's kernel compiler; integration workers still exercise real
+JIT/AOT modes. Native distribution's cross-platform cache probes retain source
+compilation.
+
 Long compiler lanes contain only their compiler probe; mapping and registry
 checks use other lanes. CLI checks overlap baseline work instead of waiting
 for the entire baseline parallel group. SDK package checks and lifecycle probes
@@ -39,6 +44,11 @@ lifecycle. Distribution, cache tests and AOT lifecycle probes overlap after the
 release binary and root package dependencies are ready, with separate result
 directories. Normal-builder AOT runs on macOS ARM64 and shared-part AOT on Linux
 x64; this avoids two large AOT probes sharing the Linux runner.
+Fresh stock shared-part references use JIT to check bytes; the primary
+stock/native lifecycle retains the requested JIT/AOT mode. This removes
+repeated AOT compilation of disposable reference workspaces. The workspace
+scheduler's single-package and resolver-reuse subprobes run in spare lanes;
+the standalone scheduler script still includes them by default.
 
 Linux ARM64 integration continues on every PR. Native **distribution** E2E for
 Linux ARM64 and Windows ARM64 runs on main pushes, manual dispatch and the weekly

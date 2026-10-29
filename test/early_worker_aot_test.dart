@@ -28,7 +28,13 @@ void main() {
       final timer = Timer(const Duration(milliseconds: 10), ready);
       try {
         expect(
-          await waitForEarlyWorkerAot(marker.path, source.path),
+          await waitForEarlyWorkerAot(
+            marker.path,
+            source.path,
+            // This is the readiness test, not a wall-clock deadline test.
+            // Allow the event loop to resume under concurrent CI compilers.
+            timeout: const Duration(seconds: 5),
+          ),
           executable.path,
         );
       } finally {

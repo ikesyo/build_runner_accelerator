@@ -5,7 +5,6 @@ Requires PyYAML. Matrix expressions must declare finite JSON alternatives so
 both the PR and main/scheduled expansion can be audited without executing code.
 """
 
-import itertools
 import json
 from pathlib import Path
 import re
@@ -20,28 +19,31 @@ RESERVED_JOBS = 4
 RUNNER_LIMIT = 20
 
 
-def matrix_sizes(matrix):
+def matrix_size(matrix, event):
     if not matrix:
-        return {1}
+        return 1
     if set(matrix) == {'include'}:
         include = matrix['include']
         if isinstance(include, list):
-            return {len(include)}
+            return len(include)
         # Accept only the finite event-dependent expression used by native-build.
         match = re.fullmatch(
             r"\$\{\{ fromJSON\(github.event_name == 'pull_request' && '(\[.*?\])' \|\| '(\[.*?\])'\) \}\}",
             include, re.S)
         if not match:
             raise ValueError('unrecognized matrix expression; declare finite JSON alternatives')
-        return {len(json.loads(value)) for value in match.groups()}
+        value = match.group(1 if event == 'pull_request' else 2)
+        return len(json.loads(value))
     raise ValueError('new matrix shape needs a runner-budget review')
 
 
 def check(workflow):
-    totals = {0}
+    pr_jobs = 0
+    full_jobs = 0
     for name, job in workflow['jobs'].items():
-        sizes = matrix_sizes(job.get('strategy', {}).get('matrix'))
-        totals = {total + size for total, size in itertools.product(totals, sizes)}
+        matrix = job.get('strategy', {}).get('matrix')
+        pr_jobs += matrix_size(matrix, 'pull_request')
+        full_jobs += matrix_size(matrix, 'push')
         for step in job['steps']:
             lanes = step.get('parallel', [step])
             if not 1 <= len(lanes) <= 4:
@@ -53,12 +55,10 @@ def check(workflow):
                     # Check shell syntax without interpreting GitHub expressions.
                     script = re.sub(r'\$\{\{.*?\}\}', 'ci-value', lane['run'], flags=re.S)
                     subprocess.run(['bash', '-n'], input=script, text=True, check=True)
-    # PR selects the smaller native target set; main/schedule retain all five.
-    pr_jobs = min(totals)
     if pr_jobs > CI_BUDGET or pr_jobs + RESERVED_JOBS > RUNNER_LIMIT:
         raise ValueError(f'PR expands to {pr_jobs} CI jobs + {RESERVED_JOBS} reserved; '
                          f'budget is {CI_BUDGET} + {RESERVED_JOBS} <= {RUNNER_LIMIT}')
-    print(f'CI runner budget: PR={pr_jobs}, main/schedule={max(totals)}, '
+    print(f'CI runner budget: PR={pr_jobs}, main/schedule={full_jobs}, '
           f'reserved={RESERVED_JOBS}, limit={RUNNER_LIMIT}')
 
 

@@ -87,7 +87,11 @@ def main():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
         run([dart, 'pub', 'get', '--enforce-lockfile'], clean)
-        run([dart, 'run', 'build_runner', 'build', f'--force-{args.worker_mode}', *experiment_args], clean)
+        # These disposable references check fresh stock output bytes, not AOT
+        # startup. The primary stock/native lifecycle still uses the requested
+        # mode. Recompiling an AOT executable in every clean reference repeats
+        # the same compilation without exercising another native transition.
+        run([dart, 'run', 'build_runner', 'build', '--force-jit', *experiment_args], clean)
         assert inventory(clean) == inventory(roots[1]), f'{label}: native differs from unmodified clean stock'
         print(f'shared-parts: {label}: unmodified clean stock matches', flush=True)
 

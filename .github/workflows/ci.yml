@@ -1,52 +1,24 @@
 # PR budget: 16 CI jobs + 4 reserved for CodeQL/other checks = 20.
 # Keep case parallelism inside jobs; see docs/ci.md for coverage and timings.
 name: CI
-'on':
+
+on:
   push:
     branches:
       - main
-  pull_request: null
-  workflow_dispatch: null
+  pull_request:
+  workflow_dispatch:
   schedule:
     - cron: 23 3 * * 1
+
 permissions:
   contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
 jobs:
-  rust:
-    name: Rust format, lint, and unit tests
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Release and benchmark helper tests
-        shell: bash
-        run: |
-          python3 -m pip install --quiet --disable-pip-version-check PyYAML==6.0.3
-          python3 .github/scripts/check_ci.py
-          python3 -m unittest discover -s .github/scripts -p 'test_*.py'
-          python3 -m unittest discover -s scripts -p 'test_*.py'
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.toml', 'rust/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ runner.arch }}-
-      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # 1.98.1
-        with:
-          toolchain: 1.98.1
-          components: rustfmt, clippy
-      - name: Rust formatting
-        run: cargo fmt --all --manifest-path rust/Cargo.toml -- --check
-      - name: Rust lint
-        run: cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
-      - name: Rust unit tests
-        run: cargo test --locked --manifest-path rust/Cargo.toml
   dart-package:
     name: Dart ${{ matrix.sdk }} (${{ matrix.resolution }})
     runs-on: ubuntu-24.04
@@ -71,6 +43,18 @@ jobs:
       - name: Check fixture lockfiles
         if: matrix.resolution == 'upgrade'
         run: python3 scripts/sync_release_metadata.py --check
+      - name: Rust format, lint, unit tests, and Python helpers
+        shell: bash
+        run: |
+          rustup component add rustfmt clippy
+          python3 -m pip install --quiet --disable-pip-version-check PyYAML==6.0.3
+          python3 .github/scripts/check_ci.py
+          python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          cargo fmt --all --manifest-path rust/Cargo.toml -- --check
+          cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
+          cargo test --locked --manifest-path rust/Cargo.toml
+        if: matrix.resolution == 'upgrade'
       - parallel:
           - name: Dart analysis and package tests
             run: |
@@ -79,7 +63,7 @@ jobs:
               fi
               dart analyze --fatal-infos lib bin test tool
               dart run build_runner --help
-              dart test --compiler=source
+              dart test --compiler=kernel
               if [[ '${{ matrix.resolution }}' == upgrade ]]; then
                 dart pub publish --dry-run
               fi
@@ -106,6 +90,7 @@ jobs:
             ${{ runner.temp }}/sdk-results/${{ matrix.sdk }}/**/pubspec.lock
             ${{ runner.temp }}/sdk-results/${{ matrix.sdk }}/**/stock-reference.json
           if-no-files-found: ignore
+
   integration-selection:
     name: 'Integration: filter selection and graph'
     runs-on: ubuntu-24.04-arm
@@ -127,28 +112,70 @@ jobs:
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Source selection, globs, and nested defaults
+          - name: Source selection and nested defaults
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=selection-source bash scripts/correctness_build_filter.sh
-              BUILD_FILTER_CASE_GROUP=glob bash scripts/correctness_build_filter.sh
-              NESTED_PACKAGE_CASE_GROUP=default-on,default-off bash scripts/correctness_nested_packages.sh
-          - name: Cache selection, resolver, and nested recovery
+              NESTED_PACKAGE_CASE_GROUP=default-on bash scripts/correctness_nested_packages.sh
+          - name: Cache selection and nested defaults
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=selection-cache bash scripts/correctness_build_filter.sh
-              BUILD_FILTER_CASE_GROUP=resolver bash scripts/correctness_build_filter.sh
-              NESTED_PACKAGE_CASE_GROUP=recovery-state,narrow bash scripts/correctness_nested_packages.sh
-          - name: Package selection and state transitions
+              NESTED_PACKAGE_CASE_GROUP=default-off bash scripts/correctness_nested_packages.sh
+          - name: Package selection, narrow scope, and runner 2.15.3 / Analyzer 13.3
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=selection-packages bash scripts/correctness_build_filter.sh
-              BUILD_FILTER_CASE_GROUP=state bash scripts/correctness_build_filter.sh
-          - name: Runner 2.15.3 dependency window
+              NESTED_PACKAGE_CASE_GROUP=narrow bash scripts/correctness_nested_packages.sh
+              python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 13.3.0
+          - name: Globs and nested state recovery
             shell: bash
             run: |
-              python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 13.3.0
+              BUILD_FILTER_CASE_GROUP=glob bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP=recovery-state bash scripts/correctness_nested_packages.sh
+
+  integration-filter-graph:
+    name: 'Integration: filter resolver, state, and unsupported builders'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-worker
+        with:
+          cache-scope: ${{ github.job }}
+          cache-inputs: |
+            fixtures/**/pubspec.lock
+          build-frontend: 'true'
+      - name: Resolve fixture dependencies once before parallel checks
+        shell: bash
+        run: |
+          for fixture in build_filter_app optional_builder_app post_process_builder_app; do
+            (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
+          done
+      - parallel:
+          - name: Resolver and runner 2.15.3 / Analyzer 14.5
+            shell: bash
+            run: |
+              BUILD_FILTER_CASE_GROUP=resolver bash scripts/correctness_build_filter.sh
               python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 14.5.0
+          - name: State and runner 2.16.0 / Analyzer 13.3
+            shell: bash
+            run: |
+              BUILD_FILTER_CASE_GROUP=state bash scripts/correctness_build_filter.sh
+              python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 13.3.0
+          - name: Unsupported optional/post-process and nested boundaries
+            shell: bash
+            run: |
+              BUILD_FILTER_CASE_GROUP=unsupported-optional-post bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP=explicit-cache,boundary bash scripts/correctness_nested_packages.sh
+          - name: Unsupported zero/trigger and nested sources/globs
+            shell: bash
+            run: |
+              BUILD_FILTER_CASE_GROUP=unsupported-zero-trigger bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP=source,glob bash scripts/correctness_nested_packages.sh
+
   integration-boundaries:
     name: 'Integration: filter watch and boundaries'
     runs-on: ubuntu-24.04-arm
@@ -170,29 +197,27 @@ jobs:
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Source watch and recovery actions
+          - name: Source watch
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=watch-source bash scripts/correctness_build_filter.sh
-              NESTED_PACKAGE_CASE_GROUP=recovery-actions bash scripts/correctness_nested_packages.sh
-          - name: Cache watch and classification
+          - name: Cache watch and nested native watch
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=watch-cache bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP=watch-native bash scripts/correctness_nested_packages.sh
+          - name: Classification, watch boundary, and runner 2.16.0 / Analyzer 14.5
+            shell: bash
+            run: |
               BUILD_FILTER_CASE_GROUP=watch-classification bash scripts/correctness_build_filter.sh
-              NESTED_PACKAGE_CASE_GROUP=watch-native,watch-boundary bash scripts/correctness_nested_packages.sh
-          - name: Unsupported builders and routing
-            shell: bash
-            run: |
-              BUILD_FILTER_CASE_GROUP=unsupported-optional-post bash scripts/correctness_build_filter.sh
-              BUILD_FILTER_CASE_GROUP=unsupported-zero-trigger bash scripts/correctness_build_filter.sh
-              BUILD_FILTER_CASE_GROUP=routing bash scripts/correctness_build_filter.sh
-              NESTED_PACKAGE_CASE_GROUP=explicit-cache,boundary,source,glob bash scripts/correctness_nested_packages.sh
-          - name: Runner 2.16.0 dependency window
-            shell: bash
-            run: |
-              python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 13.3.0
+              NESTED_PACKAGE_CASE_GROUP=watch-boundary bash scripts/correctness_nested_packages.sh
               python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 14.5.0
+          - name: Routing and nested recovery actions
+            shell: bash
+            run: |
+              BUILD_FILTER_CASE_GROUP=routing bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP=recovery-actions bash scripts/correctness_nested_packages.sh
+
   integration-settings:
     name: 'Integration: build configuration'
     runs-on: ubuntu-24.04-arm
@@ -210,30 +235,33 @@ jobs:
       - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          for fixture in settings_builder_app trigger_builder_app; do
+          for fixture in settings_builder_app trigger_builder_app json_serializable_app arbitrary_builder_app; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Values and compact flags
+          - name: Values and default watch
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=values bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=watch-default bash scripts/correctness_settings.sh
+          - name: Compact flags and reserved/topology watch
+            shell: bash
+            run: |
               SETTINGS_CASE_GROUP=compact bash scripts/correctness_settings.sh
-          - name: Config paths and files
+              SETTINGS_CASE_GROUP=watch-reserved bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=watch-topology bash scripts/correctness_settings.sh
+          - name: Config paths and normalized dot watch
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=paths bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=watch-dot bash scripts/correctness_settings.sh
+          - name: Config files, nested watch, and generic watch
+            shell: bash
+            run: |
               SETTINGS_CASE_GROUP=files bash scripts/correctness_settings.sh
-          - name: Errors and boundaries
-            shell: bash
-            run: |
-              SETTINGS_CASE_GROUP=errors bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=boundaries bash scripts/correctness_settings.sh
-          - name: Precedence and trigger lifecycle
-            shell: bash
-            run: |
-              SETTINGS_CASE_GROUP=precedence bash scripts/correctness_settings.sh
-              bash scripts/correctness_trigger_builder.sh
+              SETTINGS_CASE_GROUP=watch-nested bash scripts/correctness_settings.sh
+              bash scripts/watch_smoke.sh
+
   integration-settings-watch:
     name: 'Integration: configuration watch and AOT'
     runs-on: ubuntu-24.04-arm
@@ -251,33 +279,32 @@ jobs:
       - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          for fixture in settings_builder_app json_serializable_app arbitrary_builder_app; do
+          for fixture in settings_builder_app trigger_builder_app json_serializable_app arbitrary_builder_app; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Default and reserved configs
+          - name: Configuration errors and boundaries
             shell: bash
             run: |
-              SETTINGS_CASE_GROUP=watch-default bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-reserved bash scripts/correctness_settings.sh
-              bash scripts/watch_smoke.sh
-          - name: Named and dot paths
+              SETTINGS_CASE_GROUP=errors bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=boundaries bash scripts/correctness_settings.sh
+          - name: Precedence and named AOT watch
             shell: bash
             run: |
+              SETTINGS_CASE_GROUP=precedence bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-named bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-dot bash scripts/correctness_settings.sh
-              PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_builder.sh
-          - name: Nested and backslash paths
-            shell: bash
-            run: |
-              SETTINGS_CASE_GROUP=watch-nested bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-backslash bash scripts/correctness_settings.sh
-          - name: AOT and topology
+          - name: AOT compile and ancestor package watch
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=compile bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-package bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-topology bash scripts/correctness_settings.sh
+          - name: Trigger/arbitrary lifecycle and backslash watch
+            shell: bash
+            run: |
+              bash scripts/correctness_trigger_builder.sh
+              PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_builder.sh
+              SETTINGS_CASE_GROUP=watch-backslash bash scripts/correctness_settings.sh
+
   integration-output-policies:
     name: 'Integration: output policies'
     runs-on: ubuntu-24.04-arm
@@ -299,25 +326,26 @@ jobs:
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Source and routing
+          - name: Source output policies
             shell: bash
             run: |
               OUTPUT_POLICY_CASE_GROUP=source bash scripts/correctness_output_policies.sh
-              OUTPUT_POLICY_CASE_GROUP=routing bash scripts/correctness_output_policies.sh
-          - name: Cache and worker modes
+          - name: Cache output policies
             shell: bash
             run: |
               OUTPUT_POLICY_CASE_GROUP=cache bash scripts/correctness_output_policies.sh
-              OUTPUT_POLICY_CASE_GROUP=modes bash scripts/correctness_output_policies.sh
-          - name: Failure recovery and API guards
+          - name: Failure recovery and routing
             shell: bash
             run: |
               OUTPUT_POLICY_CASE_GROUP=failure bash scripts/correctness_output_policies.sh
-              OUTPUT_POLICY_CASE_GROUP=api bash scripts/correctness_output_policies.sh
-          - name: Runner 2.16.1 dependency window
+              OUTPUT_POLICY_CASE_GROUP=routing bash scripts/correctness_output_policies.sh
+          - name: API, worker modes, and runner 2.16.1 / Analyzer 14.5
             shell: bash
             run: |
+              OUTPUT_POLICY_CASE_GROUP=api bash scripts/correctness_output_policies.sh
+              OUTPUT_POLICY_CASE_GROUP=modes bash scripts/correctness_output_policies.sh
               python3 scripts/correctness_dependency_window.py --runner 2.16.1 --analyzer 14.5.0
+
   integration-core:
     name: 'Integration: baseline, CLI, and workspace scheduler'
     runs-on: ubuntu-24.04-arm
@@ -344,6 +372,7 @@ jobs:
             run: |
               SMOKE_SKIP_RUST_TESTS=1 bash scripts/smoke.sh
               bash scripts/package_smoke.sh
+              bash scripts/correctness_single_package_scheduler.sh
           - name: CLI and obsolete state
             shell: bash
             run: |
@@ -352,11 +381,13 @@ jobs:
           - name: Workspace scheduler
             shell: bash
             run: |
-              bash scripts/correctness_workspace_scheduler.sh
+              SCHEDULER_SUBPROBES=0 bash scripts/correctness_workspace_scheduler.sh
           - name: Setup prewarm
             shell: bash
             run: |
               bash scripts/correctness_prewarm.sh
+              bash scripts/correctness_workspace_scheduler_reuse.sh
+
   integration-codegen:
     name: 'Integration: code generators'
     runs-on: ubuntu-24.04-arm
@@ -405,6 +436,7 @@ jobs:
               bash scripts/correctness_capture_builder.sh
               PUB_GET_OFFLINE=1 bash scripts/correctness_empty_input_mapping.sh
               PUB_GET_OFFLINE=1 bash scripts/watch_smoke_empty_input_mapping.sh
+
   integration-lifecycle:
     name: 'Integration: lifecycle, publication, and workspace'
     runs-on: ubuntu-24.04-arm
@@ -451,6 +483,7 @@ jobs:
             run: |
               bash scripts/correctness_workspace.sh
               bash scripts/correctness_workspace_json.sh
+
   integration-compilers:
     name: 'Integration: published web compilers'
     runs-on: ubuntu-24.04-arm
@@ -482,6 +515,7 @@ jobs:
             shell: bash
             run: |
               bash scripts/watch_smoke_web_compilers_ddc.sh
+
   integration-builders:
     name: 'Integration: Drift, registry, and recovery'
     runs-on: ubuntu-24.04-arm
@@ -514,6 +548,7 @@ jobs:
             run: |
               CASE_FILTER=rename-delete bash scripts/correctness_drift_analyzer.sh
               CASE_FILTER=failure bash scripts/correctness_drift_analyzer.sh
+              bash scripts/correctness_commit_recovery.sh
           - name: Drift watches and conventional generator
             shell: bash
             run: |
@@ -526,7 +561,7 @@ jobs:
               bash scripts/correctness_registry_override.sh
               bash scripts/correctness_registry_builder.sh
               bash scripts/watch_smoke_registry_override.sh
-              bash scripts/correctness_commit_recovery.sh
+
   native-build:
     name: Native build (${{ matrix.target_id }})
     runs-on: ${{ matrix.runs_on }}

@@ -8,6 +8,11 @@ source "$script_dir/verification_support.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 temporary=${SCHEDULER_RESULTS_DIR:-$(mktemp -d)}
+subprobes=${SCHEDULER_SUBPROBES:-1}
+case "$subprobes" in
+  0|1) ;;
+  *) printf 'workspace-scheduler: invalid SCHEDULER_SUBPROBES=%s\n' "$subprobes" >&2; exit 2 ;;
+esac
 mkdir -p "$temporary"
 workspace="$temporary/workspace"
 stock="$workspace/fixtures/stock"
@@ -171,6 +176,8 @@ done
 for package in a b; do cp "$stock/$package/lib/"*.seed "$native/$package/lib/"; done
 run_native worker-recovery 2
 compare worker-recovery
-SINGLE_SCHEDULER_RESULTS_DIR="$temporary/single-package" bash "$script_dir/correctness_single_package_scheduler.sh"
-SCHEDULER_REUSE_RESULTS_DIR="$temporary/reuse" bash "$script_dir/correctness_workspace_scheduler_reuse.sh"
-printf 'workspace-scheduler: PASS stock/native=yes jobs=1,2,3 overlap=yes dependency=yes resolver=yes options=yes rollback=yes lifecycle=yes single-package=yes\n'
+if [[ "$subprobes" == 1 ]]; then
+  SINGLE_SCHEDULER_RESULTS_DIR="$temporary/single-package" bash "$script_dir/correctness_single_package_scheduler.sh"
+  SCHEDULER_REUSE_RESULTS_DIR="$temporary/reuse" bash "$script_dir/correctness_workspace_scheduler_reuse.sh"
+fi
+printf 'workspace-scheduler: PASS stock/native=yes jobs=1,2,3 overlap=yes dependency=yes resolver=yes options=yes rollback=yes lifecycle=yes subprobes=%s\n' "$subprobes"
