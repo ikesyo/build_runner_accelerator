@@ -48,6 +48,31 @@ temporary workspace. State transitions within a scenario stay sequential.
 Watch, failure/rollback, dependency windows, workspace scheduler and stock byte
 comparisons remain covered. Benchmarks stay outside PR correctness checks.
 
+Ordinary settings, argument-spelling, config-file and validation-error
+comparisons use AOT on every CI event and by default locally. These cases
+exercise option resolution rather than worker compilation mode. AOT reuses
+the unchanged compiled catalog across option-only changes, while the JIT
+kernel is invalidated when manifest regeneration rewrites its entrypoint.
+The existing compile, publication-recovery and watch probes keep their
+explicit JIT/AOT choices and transitions; neither their cases nor assertions
+are removed. An exhaustive second pass of every option spelling in JIT adds
+no separate settings boundary, so it is not scheduled. For diagnostics,
+`SETTINGS_COMPARISON_MODE=jit` still selects the complete ordinary comparisons.
+
+The `values` group was compared locally with the same Dart 3.13.3, Rust 1.98.1
+frontend and warm dependency cache, fresh stock/native roots and a fresh worker
+cache per run, one native worker, and all byte comparisons enabled:
+
+| Command prefix (followed by `bash scripts/correctness_settings.sh`) | Group time |
+| --- | ---: |
+| `SETTINGS_CASE_GROUP=values SETTINGS_COMPARISON_MODE=jit` | 169.8s |
+| `SETTINGS_CASE_GROUP=values SETTINGS_COMPARISON_MODE=aot` | 63.2s |
+
+Individual option-only transitions fell from about 20s to 2s in that probe.
+The cold build and a catalog-changing named config still compile normally.
+Case logs include mode and elapsed time so lane balancing can follow actual
+work rather than hiding compilation behind extra runner slots.
+
 The current SDK job shares its installed Rust toolchain and Cargo cache with
 the Rust/Python checks, freeing one runner slot for filter comparisons. Package
 tests use the SDK's kernel compiler on the current resolution. The minimum

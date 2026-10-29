@@ -72,7 +72,7 @@ def stock(root, flags=(), command='build'):
     return [DART, 'run', 'build_runner', command, *flags]
 
 
-def check(stock_root, native_root, flags, compile_flag='--force-jit'):
+def check(stock_root, native_root, flags, compile_flag='--force-aot'):
     flags = [*flags, compile_flag]
     reference = ok(stock(stock_root, flags), stock_root)
     actual = ok(launcher(native_root, flags=flags), native_root)
@@ -248,7 +248,7 @@ def watch_nested_reserved_directory(temporary):
     prepare(reference)
     prepare(native)
     flags = ['-cdir/target/name', '--force-jit']
-    check(reference, native, flags[:-1])
+    check(reference, native, flags[:-1], compile_flag='--force-jit')
     path = 'build.dir/target/name.yaml'
     before = (reference / path).read_text()
     after = before.replace('named-dev', 'nested-watch-new')
@@ -357,22 +357,26 @@ GROUPS = (*CASE_GROUPS, 'files', 'errors', 'boundaries', 'compile',
           *WATCH_CONFIGS, 'watch-reserved', *NORMALIZED_WATCH, 'watch-topology')
 
 
-def configuration_cases(reference, native, indices):
+def configuration_cases(reference, native, indices, compile_flag='--force-aot'):
     # A sequence owns one pair of workspaces. Never parallelize transitions
     # within a lane: manifests, graph state and output ownership must persist.
+    # Options and spelling do not require repeated JIT compilation of an
+    # identical catalog. Mode transitions are covered explicitly below.
     for index in indices:
+        started = time.monotonic()
         flags = SETTINGS_CASES[index]
-        output = check(reference, native, flags)
+        output = check(reference, native, flags, compile_flag=compile_flag)
         if index in (1, 26, 28, len(SETTINGS_CASES) - 1):
             assert 'No work to do (Rust frontend)' in output, output
         if index in (27, 28):
             assert outputs(reference) == outputs(native) == {}, (flags, output)
         if index == 29:
             assert outputs(native), output
-        print(f'settings case {index}: PASS {flags}', flush=True)
+        print(f'settings case {index}: PASS {flags} mode={compile_flag} '
+              f'elapsed={time.monotonic() - started:.1f}s', flush=True)
 
 
-def configuration_inactive_factories(reference, native):
+def configuration_inactive_factories(reference, native, compile_flag='--force-aot'):
     # Stock does not instantiate disabled factories. Keep this regression on
     # the same workspaces so the old per-factory action outputs really exist.
     for root in (reference, native):
@@ -400,84 +404,84 @@ def configuration_inactive_factories(reference, native):
                      "build_extensions: {'.txt': ['.out', '.marker']}")
             .replace('    auto_apply: root_package\n    build_to: source\nglobal_options:',
                      '    auto_apply: none\n    build_to: source\nglobal_options:'))
-    check(reference, native, [])
-    check(reference, native, ['--config=partial'])
+    check(reference, native, [], compile_flag=compile_flag)
+    check(reference, native, ['--config=partial'], compile_flag=compile_flag)
     assert set(outputs(native)) == {'lib/a.marker', 'lib/b.marker'}
-    check(reference, native, ['--config=off'])
+    check(reference, native, ['--config=off'], compile_flag=compile_flag)
     assert outputs(reference) == outputs(native) == {}
-    output = check(reference, native, ['--config=off'])
+    output = check(reference, native, ['--config=off'], compile_flag=compile_flag)
     assert 'No work to do (Rust frontend)' in output, output
-    check(reference, native, [])
+    check(reference, native, [], compile_flag=compile_flag)
     assert outputs(native)
-    output = check(reference, native, [])
+    output = check(reference, native, [], compile_flag=compile_flag)
     assert 'No work to do (Rust frontend)' in output, output
     print('settings inactive multi-factory lifecycle: PASS', flush=True)
 
 
-def configuration_files(reference, native):
+def configuration_files(reference, native, compile_flag='--force-aot'):
     # Edit and restore build.yaml without touching primary inputs.
     base = (reference / 'build.yaml').read_text()
     for yaml in (base.replace('global-dev', 'edited'), base):
         for root in (reference, native):
             (root / 'build.yaml').write_text(yaml)
-        check(reference, native, [])
+        check(reference, native, [], compile_flag=compile_flag)
     # Root-level package overrides also replace configs and definitions.
     for root in (reference, native):
         (root / 'settings_builder_app.build.yaml').write_text(base.replace('global-dev', 'override'))
-    check(reference, native, [])
+    check(reference, native, [], compile_flag=compile_flag)
     for root in (reference, native):
         (root / 'settings_builder_app.build.yaml').unlink()
-    check(reference, native, [])
+    check(reference, native, [], compile_flag=compile_flag)
 
     # Only files are package config overrides, not similarly named dirs.
     for root in (reference, native):
         (root / 'ignored.build.yaml').mkdir()
-    check(reference, native, [])
+    check(reference, native, [], compile_flag=compile_flag)
     for root in (reference, native):
         (root / 'ignored.build.yaml').rmdir()
 
 
-def configuration_errors(reference, native):
+def configuration_errors(reference, native, compile_flag='--force-aot'):
     # Invalid settings fail without changing committed native outputs.
     bad_cases = [['--define'], ['--define=x=y'], ['--release=true'], ['--config'],
                  ['--config=missing'], ['-cdir/missing'], ['--config=x/../../outside'],
                  ['-rcnamed'], ['-rd=1'], ['--define=:settings=x=1',
                    '--define=settings_builder_app|settings=x=2']]
     for flags in bad_cases:
-        code, _ = execute(stock(reference, [*flags, '--force-jit']), reference)
+        code, _ = execute(stock(reference, [*flags, compile_flag]), reference)
         assert code != 0, flags
-        actual, _ = execute(launcher(native, flags=[*flags, '--force-jit']), native)
+        actual, _ = execute(launcher(native, flags=[*flags, compile_flag]), native)
         assert actual != 0, flags
     # Unknown builder is a stock warning, not an enabling switch.
-    output = check(reference, native, ['--define=absent=x=42'])
+    output = check(reference, native, ['--define=absent=x=42'], compile_flag=compile_flag)
     assert 'Ignoring options overrides for unknown builder' in output, output
     # Non-JSON values are exact strings, invalid builder option types fail
     # as a whole when the probe refuses the mapping.
     flags = ['-cdir/name', '-rr', '--define=:settings=value=forwarded']
-    check(reference, native, flags)
+    check(reference, native, flags, compile_flag=compile_flag)
     for flags in (['--define=:settings=suffix=42'],):
-        code, _ = execute(stock(reference, [*flags, '--force-jit']), reference)
-        actual, output = execute(launcher(native, flags=[*flags, '--force-jit']), native)
+        code, _ = execute(stock(reference, [*flags, compile_flag]), reference)
+        actual, output = execute(launcher(native, flags=[*flags, compile_flag]), native)
         assert actual != 0 and code != 0, output
         assert outputs(reference) == outputs(native)
 
     # Missing/invalid configuration never partially applies options.
     for root in (reference, native):
         (root / 'build.invalid.yaml').write_text('targets: [invalid yaml')
-    flags = ['--config=invalid', '--release', '--force-jit']
+    flags = ['--config=invalid', '--release', compile_flag]
     code, _ = execute(stock(reference, flags), reference)
     actual, output = execute(launcher(native, flags=flags), native)
     assert actual != 0 and code != 0, output
     assert outputs(reference) == outputs(native)
 
 
-def configuration_boundaries(temporary):
+def configuration_boundaries(temporary, compile_flag='--force-aot'):
     # Unsupported filters fail before binary acquisition.
     early, early_stock = temporary / 'early', temporary / 'early-stock'
     prepare(early)
     prepare(early_stock)
     flags = ['-cdir/name', '-rr', '--define=:settings=value=early',
-             '--build-filter=lib/[a].alternate', '--force-jit']
+             '--build-filter=lib/[a].alternate', compile_flag]
     expected_code, _ = execute(stock(early_stock, flags), early_stock)
     code, output = execute(launcher(early, flags=flags), early,
                            {**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/missing-native-frontend'})
@@ -488,7 +492,7 @@ def configuration_boundaries(temporary):
     # A missing selected file is known before acquisition or generation.
     missing = temporary / 'missing'
     prepare(missing)
-    flags = [r'-cdir\missing', '-rr', '--define=:settings=value=missing', '--force-jit']
+    flags = [r'-cdir\missing', '-rr', '--define=:settings=value=missing', compile_flag]
     expected_code, _ = execute(stock(missing, flags), missing)
     code, output = execute(launcher(missing, flags=flags), missing,
                            {**ENV, 'BUILD_RUNNER_ACCELERATOR_BIN': '/missing-native-frontend'})
@@ -520,12 +524,12 @@ def configuration_boundaries(temporary):
             '      settings_builder_app:settings: {enabled: false}\n'
             '      settings_builder_app:marker: {enabled: false}\n')
     flags = ['-cdir/empty', '-rr', '--define=:settings=value=empty']
-    check(empty_stock, empty, flags)
+    check(empty_stock, empty, flags, compile_flag=compile_flag)
     manifest = json.loads((empty / '.dart_tool/build_runner_accelerator/builder-manifest.json').read_text())
     assert manifest['builders'] == []
-    check(empty_stock, empty, flags)
+    check(empty_stock, empty, flags, compile_flag=compile_flag)
     assert outputs(empty) == {}
-    configuration_inactive_factories(empty_stock, empty)
+    configuration_inactive_factories(empty_stock, empty, compile_flag)
 
 
 def configuration_publication_recovery(reference, native, compile_flag):
@@ -571,7 +575,7 @@ def configuration_compile(temporary, reference):
     check(reference, warmed, ['-cdir/../name'], compile_flag='--force-aot')
     check(reference, warmed, [], compile_flag='--force-aot')
     configuration_publication_recovery(reference, warmed, '--force-aot')
-    check(reference, warmed, flags)
+    check(reference, warmed, flags, compile_flag='--force-jit')
     ok(launcher(warmed, command='prewarm', flags=[*flags, '--background']), warmed)
     deadline = time.monotonic() + 180
     prewarm_log = warmed / '.dart_tool/build_runner_accelerator/prewarm.log'
@@ -587,7 +591,7 @@ def configuration_compile(temporary, reference):
     assert outputs(warmed) == retained
     check(reference, warmed, ['--config=off'], compile_flag='--force-aot')
     assert outputs(reference) == outputs(warmed) == {}
-    check(reference, warmed, [])
+    check(reference, warmed, [], compile_flag='--force-jit')
     assert outputs(warmed)
     configuration_publication_recovery(reference, warmed, '--force-jit')
 
@@ -612,7 +616,7 @@ def configuration_watch(reference, native, selected, compile_flag='--force-aot')
     for root in (reference, native):
         (root / path).write_text(before)
         (root / 'lib/a.txt').write_text('a\n')
-    check(reference, native, flags)
+    check(reference, native, flags, compile_flag='--force-jit')
 
 
 def watch_parent_dependency(temporary, compile_flag='--force-jit'):
@@ -642,13 +646,13 @@ def workspace_pair(temporary):
     return reference, native
 
 
-def run_group(group, temporary):
+def run_group(group, temporary, compile_flag='--force-aot'):
     if group == 'all':
         reference, native = workspace_pair(temporary)
-        configuration_cases(reference, native, range(len(SETTINGS_CASES)))
-        configuration_files(reference, native)
-        configuration_errors(reference, native)
-        configuration_boundaries(temporary)
+        configuration_cases(reference, native, range(len(SETTINGS_CASES)), compile_flag)
+        configuration_files(reference, native, compile_flag)
+        configuration_errors(reference, native, compile_flag)
+        configuration_boundaries(temporary, compile_flag)
         configuration_compile(temporary, reference)
         for selected in WATCH_CONFIGS.values():
             configuration_watch(reference, native, selected)
@@ -658,22 +662,22 @@ def run_group(group, temporary):
         watch_topology_boundary(temporary)
     elif group in CASE_GROUPS:
         reference, native = workspace_pair(temporary)
-        configuration_cases(reference, native, CASE_GROUPS[group])
+        configuration_cases(reference, native, CASE_GROUPS[group], compile_flag)
         # Also restore the default and prove a no-op within every CI sequence.
         if SETTINGS_CASES[CASE_GROUPS[group][-1]]:
-            check(reference, native, [])
-        output = check(reference, native, [])
+            check(reference, native, [], compile_flag=compile_flag)
+        output = check(reference, native, [], compile_flag=compile_flag)
         assert 'No work to do (Rust frontend)' in output, output
     elif group in ('files', 'errors'):
         reference, native = workspace_pair(temporary)
         # Error retention must compare real existing outputs, not empty sets.
-        check(reference, native, [])
+        check(reference, native, [], compile_flag=compile_flag)
         if group == 'files':
-            configuration_files(reference, native)
+            configuration_files(reference, native, compile_flag)
         else:
-            configuration_errors(reference, native)
+            configuration_errors(reference, native, compile_flag)
     elif group == 'boundaries':
-        configuration_boundaries(temporary)
+        configuration_boundaries(temporary, compile_flag)
     elif group == 'compile':
         reference = temporary / 'stock'
         prepare(reference)
@@ -697,15 +701,18 @@ def run_group(group, temporary):
 
 
 def main():
+    mode = os.environ.get('SETTINGS_COMPARISON_MODE', 'aot')
+    if mode not in ('jit', 'aot'):
+        raise ValueError(f'Unknown SETTINGS_COMPARISON_MODE: {mode}; expected jit or aot')
     group = os.environ.get('SETTINGS_CASE_GROUP', 'all')
     if group != 'all' and group not in GROUPS:
         raise ValueError(f'Unknown SETTINGS_CASE_GROUP: {group}; expected all or {GROUPS}')
     temporary = Path(tempfile.mkdtemp(prefix=f'settings-{group}-'))
     ENV.setdefault('BUILD_RUNNER_ACCELERATOR_CACHE', str(temporary / 'accelerator-cache'))
-    print(f'settings group={group} workspaces: {temporary}', flush=True)
+    print(f'settings group={group} comparison-mode={mode} workspaces: {temporary}', flush=True)
     started = time.monotonic()
     try:
-        run_group(group, temporary)
+        run_group(group, temporary, f'--force-{mode}')
         print(f'settings-compatibility: PASS group={group} elapsed={time.monotonic() - started:.1f}s', flush=True)
     except BaseException:
         print(f'retained failing settings workspaces: {temporary}', flush=True)

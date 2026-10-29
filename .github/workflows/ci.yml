@@ -226,11 +226,10 @@ jobs:
               BUILD_FILTER_CASE_GROUP=watch-classification bash scripts/correctness_build_filter.sh
               NESTED_PACKAGE_CASE_GROUP=watch-boundary bash scripts/correctness_nested_packages.sh
               python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 14.5.0
-          - name: Routing and nested recovery actions
+          - name: Routing
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=routing bash scripts/correctness_build_filter.sh
-              NESTED_PACKAGE_CASE_GROUP=recovery-actions bash scripts/correctness_nested_packages.sh
 
   integration-settings:
     name: 'Integration: build configuration'
@@ -238,6 +237,7 @@ jobs:
     timeout-minutes: 15
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
+      SETTINGS_COMPARISON_MODE: aot
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
@@ -249,26 +249,29 @@ jobs:
       - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          for fixture in settings_builder_app trigger_builder_app json_serializable_app arbitrary_builder_app; do
+          for fixture in settings_builder_app build_filter_app json_serializable_app arbitrary_builder_app; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Values and default watch
+          - name: Values, default watch, and arbitrary builder
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=values bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-default bash scripts/correctness_settings.sh
-          - name: Compact flags and reserved/topology watch
+              PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_builder.sh
+          - name: Compact flags, reserved/topology watch, and nested recovery
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=compact bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-reserved bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-topology bash scripts/correctness_settings.sh
-          - name: Config paths and normalized dot watch
+              NESTED_PACKAGE_CASE_GROUP=recovery-actions bash scripts/correctness_nested_packages.sh
+          - name: Config paths and normalized dot/ancestor watch
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=paths bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-dot bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=watch-package bash scripts/correctness_settings.sh
           - name: Config files, nested watch, and generic watch
             shell: bash
             run: |
@@ -282,6 +285,7 @@ jobs:
     timeout-minutes: 15
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
+      SETTINGS_COMPARISON_MODE: aot
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
@@ -293,31 +297,31 @@ jobs:
       - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          for fixture in settings_builder_app trigger_builder_app json_serializable_app arbitrary_builder_app; do
+          for fixture in settings_builder_app trigger_builder_app post_process_builder_app; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Configuration errors and boundaries
+          - name: Configuration errors, boundaries, and JSON workspace
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=errors bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=boundaries bash scripts/correctness_settings.sh
-          - name: Precedence and named AOT watch
+              bash scripts/correctness_workspace_json.sh
+          - name: Precedence and post-process lifecycle
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=precedence bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-named bash scripts/correctness_settings.sh
-          - name: AOT compile and ancestor package watch
+              bash scripts/correctness_post_process_builder.sh
+          - name: JIT/AOT compile and publication recovery
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=compile bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-package bash scripts/correctness_settings.sh
-          - name: Trigger/arbitrary lifecycle and backslash watch
+          - name: Trigger lifecycle and named/backslash watch
             shell: bash
             run: |
               bash scripts/correctness_trigger_builder.sh
-              PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_builder.sh
               SETTINGS_CASE_GROUP=watch-backslash bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=watch-named bash scripts/correctness_settings.sh
 
   integration-output-policies:
     name: 'Integration: output policies'
@@ -478,10 +482,9 @@ jobs:
               bash scripts/correctness_lifetime_compatibility.sh
               bash scripts/watch_smoke_optional_builder.sh
               bash scripts/watch_smoke_trigger_builder.sh
-          - name: Post-process and cleanup
+          - name: Optional cleanup lifecycle
             shell: bash
             run: |
-              bash scripts/correctness_post_process_builder.sh
               bash scripts/correctness_optional_cleanup.sh
           - name: Post-process watch and graph
             shell: bash
@@ -495,7 +498,6 @@ jobs:
             shell: bash
             run: |
               bash scripts/correctness_workspace.sh
-              bash scripts/correctness_workspace_json.sh
 
   integration-compilers:
     name: 'Integration: published web compilers'
