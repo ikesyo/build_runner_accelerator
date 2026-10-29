@@ -1,5 +1,16 @@
 # Changelog
 
+## [v0.17.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.16.1...v0.17.0) - 2026-10-29
+
+- Support build_runner 2.17.1 dependency resolutions by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/140
+- Support native shared-library parts across incremental input changes by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/141
+- fix: retry release cache locks only on contention by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/144
+- perf: skip undo backups and repeat reads for unchanged outputs by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/145
+- perf: reuse prepared workspaces for worker AOT setup by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/146
+- Bound shared blob caches with leased generations by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/147
+- Support native Pub workspace builds and JSON post-process cleanup by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/148
+- feat: schedule ready workspace actions with adaptive input batches by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/149
+
 ## [v0.16.1](https://github.com/ikesyo/build_runner_accelerator/compare/v0.16.0...v0.16.1) - 2026-10-24
 
 - ci: attest release artifacts and verify provenance before pub.dev by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/136
