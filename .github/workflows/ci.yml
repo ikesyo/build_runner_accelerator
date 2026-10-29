@@ -23,6 +23,8 @@ jobs:
     name: Dart ${{ matrix.sdk }} (${{ matrix.resolution }})
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 25
+    env:
+      PUB_CACHE: ${{ github.workspace }}/.pub-cache
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +60,10 @@ jobs:
           cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
           cargo test --locked --manifest-path rust/Cargo.toml
         if: matrix.resolution == 'upgrade'
+      - name: Resolve nested-package fixture before parallel checks
+        shell: bash
+        run: |
+          (cd fixtures/build_filter_app && dart --suppress-analytics pub get)
       - parallel:
           - name: Dart analysis and package tests
             run: |
@@ -75,6 +81,7 @@ jobs:
                 dart test --compiler='${{ matrix.compiler }}'
               if [[ '${{ matrix.resolution }}' == upgrade ]]; then
                 dart pub publish --dry-run
+                python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 13.3.0
               fi
           - name: SDK lifecycle and current-SDK workspace probes
             shell: bash
@@ -89,6 +96,7 @@ jobs:
             run: |
               if [[ '${{ matrix.resolution }}' == downgrade ]]; then
                 bash scripts/correctness_sdk.sh --resolution downgrade --runner 2.17.1 --worker-mode jit --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/runner-2.17.1"
+                NESTED_PACKAGE_CASE_GROUP=default-off bash scripts/correctness_nested_packages.sh
               else
                 (cd fixtures/post_process_builder_app && dart --suppress-analytics pub get)
                 bash scripts/correctness_commit_recovery.sh
@@ -138,17 +146,15 @@ jobs:
             run: |
               BUILD_FILTER_CASE_GROUP=selection-source bash scripts/correctness_build_filter.sh
               NESTED_PACKAGE_CASE_GROUP=default-on bash scripts/correctness_nested_packages.sh
-          - name: Cache selection and nested defaults
+          - name: Cache selection
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=selection-cache bash scripts/correctness_build_filter.sh
-              NESTED_PACKAGE_CASE_GROUP=default-off bash scripts/correctness_nested_packages.sh
-          - name: Package selection, narrow scope, and runner 2.15.3 / Analyzer 13.3
+          - name: Package selection and narrow scope
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=selection-packages bash scripts/correctness_build_filter.sh
               NESTED_PACKAGE_CASE_GROUP=narrow bash scripts/correctness_nested_packages.sh
-              python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 13.3.0
           - name: Globs and nested state recovery
             shell: bash
             run: |
@@ -277,11 +283,12 @@ jobs:
               SETTINGS_CASE_GROUP=paths bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-dot bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-package bash scripts/correctness_settings.sh
-          - name: Config files and nested watch
+          - name: Config files, nested watch, and obsolete state
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=files bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-nested bash scripts/correctness_settings.sh
+              bash scripts/correctness_upgrade.sh
 
   integration-settings-watch:
     name: 'Integration: configuration watch and AOT'
@@ -356,12 +363,11 @@ jobs:
             run: |
               OUTPUT_POLICY_CASE_GROUP=cache bash scripts/correctness_output_policies.sh
               bash scripts/correctness_workspace_scheduler_reuse.sh
-          - name: Failure recovery, routing, and obsolete state
+          - name: Failure recovery and routing
             shell: bash
             run: |
               OUTPUT_POLICY_CASE_GROUP=failure bash scripts/correctness_output_policies.sh
               OUTPUT_POLICY_CASE_GROUP=routing bash scripts/correctness_output_policies.sh
-              bash scripts/correctness_upgrade.sh
           - name: Runner 2.16.1 / Analyzer 14.5 and config watches
             shell: bash
             run: |

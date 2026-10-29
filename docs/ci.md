@@ -22,6 +22,8 @@ Both SDK jobs and all eleven integration jobs use `ubuntu-24.04-arm`.
 The native Linux distribution job stays on `ubuntu-24.04` to build and execute
 the x64 release binary and its compatibility probes. Worker caches include
 `runner.arch`, so the SDK migration starts with separate ARM64 caches.
+The SDK job also declares `PUB_CACHE` at job scope, matching the cached
+workspace directory despite setup-dart exporting a home-directory default.
 Pinning the existing 24.04 image keeps the architecture comparison separate
 from an Ubuntu image upgrade; ARM speedups must be measured for each workload.
 
@@ -94,9 +96,13 @@ comparisons. Output bytes, invocation history, deletion and no-op assertions
 are unchanged.
 
 Short independent probes fill existing lanes: the output-policy job also runs
-package smoke, scheduler reuse, obsolete-state recovery and named/backslash
-configuration watches. Current SDK lanes also run generic watch, nested builder
-transitions and the JSON workspace lifecycle. These assignments keep all
+package smoke, scheduler reuse and named/backslash configuration watches.
+Obsolete-state recovery shares the short config-files/nested-watch lane.
+Current SDK lanes also run generic watch, nested builder transitions, the JSON
+workspace lifecycle and runner 2.15.3 / Analyzer 13.3. The minimum SDK adds the
+nested dependency-disabled lifecycle; its fixture declares Dart 3.11 support.
+Both SDK jobs resolve that fixture before parallel checks so its offline
+stock/native copies have all pinned dependencies available. These assignments keep all
 scenarios on PRs without adding runners or splitting a scenario's state changes.
 
 The current SDK job shares its installed Rust toolchain and Cargo cache with
