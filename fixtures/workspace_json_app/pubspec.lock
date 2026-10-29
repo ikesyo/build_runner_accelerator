@@ -76,10 +76,10 @@ packages:
   build_runner_accelerator:
     dependency: "direct dev"
     description:
-      path: "../../.."
-      relative: false
+      path: "../.."
+      relative: true
     source: path
-    version: "0.16.1"
+    version: "0.17.0"
   built_collection:
     dependency: transitive
     description:
