@@ -29,8 +29,11 @@ jobs:
         include:
           - sdk: 3.11.0
             resolution: downgrade
+            # The minimum frontend_server_client expects a removed SDK snapshot.
+            compiler: source
           - sdk: 3.13.3
             resolution: upgrade
+            compiler: kernel
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
@@ -63,7 +66,7 @@ jobs:
               fi
               dart analyze --fatal-infos lib bin test tool
               dart run build_runner --help
-              dart test --compiler=kernel
+              dart test --compiler='${{ matrix.compiler }}'
               if [[ '${{ matrix.resolution }}' == upgrade ]]; then
                 dart pub publish --dry-run
               fi
@@ -71,16 +74,23 @@ jobs:
             shell: bash
             run: |
               bash scripts/correctness_sdk.sh --resolution "${{ matrix.resolution }}" --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/baseline"
-          - name: Minimum SDK pinned runner lifecycle
+          - name: Pinned runner lifecycle or publication recovery
             shell: bash
             run: |
-              bash scripts/correctness_sdk.sh --resolution downgrade --runner 2.17.1 --worker-mode jit --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/runner-2.17.1"
-            if: matrix.resolution == 'downgrade'
-          - name: Minimum SDK shared parts lifecycle
+              if [[ '${{ matrix.resolution }}' == downgrade ]]; then
+                bash scripts/correctness_sdk.sh --resolution downgrade --runner 2.17.1 --worker-mode jit --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/runner-2.17.1"
+              else
+                (cd fixtures/post_process_builder_app && dart --suppress-analytics pub get)
+                bash scripts/correctness_commit_recovery.sh
+              fi
+          - name: Shared parts or runner 2.16.0 / Analyzer 13.3
             shell: bash
             run: |
-              bash scripts/correctness_shared_parts.sh --resolution downgrade --worker-mode jit --jobs 2 --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/shared-parts"
-            if: matrix.resolution == 'downgrade'
+              if [[ '${{ matrix.resolution }}' == downgrade ]]; then
+                bash scripts/correctness_shared_parts.sh --resolution downgrade --worker-mode jit --jobs 2 --results "$RUNNER_TEMP/sdk-results/${{ matrix.sdk }}/shared-parts"
+              else
+                python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 13.3.0
+              fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
@@ -155,16 +165,14 @@ jobs:
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Resolver and runner 2.15.3 / Analyzer 14.5
+          - name: Resolver
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=resolver bash scripts/correctness_build_filter.sh
-              python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 14.5.0
-          - name: State and runner 2.16.0 / Analyzer 13.3
+          - name: State
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=state bash scripts/correctness_build_filter.sh
-              python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 13.3.0
           - name: Unsupported optional/post-process and nested boundaries
             shell: bash
             run: |
@@ -311,6 +319,7 @@ jobs:
     timeout-minutes: 15
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
+      OUTPUT_POLICY_COVERAGE: ${{ github.event_name == 'pull_request' && 'pairwise' || 'full' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-worker
@@ -339,11 +348,9 @@ jobs:
             run: |
               OUTPUT_POLICY_CASE_GROUP=failure bash scripts/correctness_output_policies.sh
               OUTPUT_POLICY_CASE_GROUP=routing bash scripts/correctness_output_policies.sh
-          - name: API, worker modes, and runner 2.16.1 / Analyzer 14.5
+          - name: Runner 2.16.1 / Analyzer 14.5
             shell: bash
             run: |
-              OUTPUT_POLICY_CASE_GROUP=api bash scripts/correctness_output_policies.sh
-              OUTPUT_POLICY_CASE_GROUP=modes bash scripts/correctness_output_policies.sh
               python3 scripts/correctness_dependency_window.py --runner 2.16.1 --analyzer 14.5.0
 
   integration-core:
@@ -382,11 +389,11 @@ jobs:
             shell: bash
             run: |
               SCHEDULER_SUBPROBES=0 bash scripts/correctness_workspace_scheduler.sh
+              bash scripts/correctness_workspace_scheduler_reuse.sh
           - name: Setup prewarm
             shell: bash
             run: |
               bash scripts/correctness_prewarm.sh
-              bash scripts/correctness_workspace_scheduler_reuse.sh
 
   integration-codegen:
     name: 'Integration: code generators'
@@ -413,6 +420,7 @@ jobs:
             shell: bash
             run: |
               bash scripts/correctness_freezed.sh
+              bash scripts/watch_smoke_empty_input_mapping.sh
             env:
               PUB_GET_OFFLINE: '1'
           - name: Riverpod lifecycle and watch
@@ -420,6 +428,8 @@ jobs:
             run: |
               bash scripts/correctness_riverpod.sh
               bash scripts/watch_smoke_riverpod.sh
+              bash scripts/correctness_multi_mapping_builder.sh
+              bash scripts/correctness_capture_builder.sh
             env:
               PUB_GET_OFFLINE: '1'
           - name: JSON Serializable with one shared baseline
@@ -432,10 +442,8 @@ jobs:
             shell: bash
             run: |
               bash scripts/watch_smoke_freezed.sh
-              bash scripts/correctness_multi_mapping_builder.sh
-              bash scripts/correctness_capture_builder.sh
               PUB_GET_OFFLINE=1 bash scripts/correctness_empty_input_mapping.sh
-              PUB_GET_OFFLINE=1 bash scripts/watch_smoke_empty_input_mapping.sh
+              python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 14.5.0
 
   integration-lifecycle:
     name: 'Integration: lifecycle, publication, and workspace'
@@ -458,26 +466,26 @@ jobs:
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Optional lifecycle, lifetime, and graph
+          - name: Optional lifecycle and lifetime
             shell: bash
             run: |
               bash scripts/correctness_optional_builder.sh
               bash scripts/correctness_lifetime_compatibility.sh
               bash scripts/watch_smoke_optional_builder.sh
               bash scripts/watch_smoke_trigger_builder.sh
-              bash scripts/correctness_target_cycle.sh
-              bash scripts/correctness_arbitrary_dependency_target.sh
-              bash scripts/correctness_applies_builder.sh
           - name: Post-process and cleanup
             shell: bash
             run: |
               bash scripts/correctness_post_process_builder.sh
               bash scripts/correctness_optional_cleanup.sh
-          - name: Post-process watch
+          - name: Post-process watch and graph
             shell: bash
             run: |
               bash scripts/watch_smoke_post_process_builder.sh
               bash scripts/watch_smoke_optional_cleanup.sh
+              bash scripts/correctness_target_cycle.sh
+              bash scripts/correctness_arbitrary_dependency_target.sh
+              bash scripts/correctness_applies_builder.sh
           - name: Pub workspace
             shell: bash
             run: |
@@ -498,6 +506,12 @@ jobs:
           cache-inputs: |
             fixtures/**/pubspec.lock
           build-frontend: 'true'
+      - name: Resolve shared output-policy and built_value dependencies
+        shell: bash
+        run: |
+          for fixture in build_filter_app built_value_app; do
+            (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
+          done
       - parallel:
           - name: dart2js lifecycle
             shell: bash
@@ -507,14 +521,17 @@ jobs:
             shell: bash
             run: |
               bash scripts/watch_smoke_web_compilers.sh
+              OUTPUT_POLICY_CASE_GROUP=api bash scripts/correctness_output_policies.sh
           - name: DDC lifecycle
             shell: bash
             run: |
               bash scripts/correctness_web_compilers_ddc.sh
+              bash scripts/correctness_built_value.sh
           - name: DDC watch
             shell: bash
             run: |
               bash scripts/watch_smoke_web_compilers_ddc.sh
+              OUTPUT_POLICY_CASE_GROUP=modes bash scripts/correctness_output_policies.sh
 
   integration-builders:
     name: 'Integration: Drift, registry, and recovery'
@@ -537,18 +554,16 @@ jobs:
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Drift core, not-shared, and built_value
+          - name: Drift core and not-shared
             shell: bash
             run: |
               CASE_FILTER=core bash scripts/correctness_drift_analyzer.sh
               CASE_FILTER=core bash scripts/correctness_drift_not_shared.sh
-              bash scripts/correctness_built_value.sh
-          - name: Drift rename, failure, and commit recovery
+          - name: Drift rename and failure
             shell: bash
             run: |
               CASE_FILTER=rename-delete bash scripts/correctness_drift_analyzer.sh
               CASE_FILTER=failure bash scripts/correctness_drift_analyzer.sh
-              bash scripts/correctness_commit_recovery.sh
           - name: Drift watches and conventional generator
             shell: bash
             run: |
@@ -671,7 +686,8 @@ jobs:
             shell: bash
             run: |
               BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
-                bash scripts/correctness_sdk.sh --resolution upgrade --runner 2.17.1 --worker-mode aot \
+                DART_BIN="$(command -v dart)" \
+                python3 scripts/correctness_sdk.py --resolution upgrade --runner 2.17.1 --worker-mode aot \
                 --results "$RUNNER_TEMP/runner-2.17.1-aot"
           - name: Shared-part AOT lifecycle
             if: matrix.target_id == 'linux-x64'

@@ -14,15 +14,33 @@ When changing a matrix expression, update its finite expansion check too.
 
 | Jobs on each PR | Count | Coverage |
 | --- | ---: | --- |
-| Dart package, SDK, Rust and Python helpers | 2 | Minimum/downgrade and current/upgrade package tests, analysis and SDK lifecycle; minimum shared parts and pinned runner; current SDK also runs Rust formatting/Clippy/unit tests and Python helpers |
+| Dart package, SDK, Rust and Python helpers | 2 | Minimum/downgrade and current/upgrade package tests, analysis and SDK lifecycle; minimum shared parts and pinned runner; current SDK also runs Rust/Python checks, publication recovery and one dependency-window pair |
 | Integration | 11 | Filter selection; filter resolver/state/unsupported; filter watch/boundaries; two configuration suites; output policies; baseline/CLI/scheduler; code generators; lifecycle/workspace; web compilers; Drift/registry/recovery |
 | Native distribution | 3 | Linux x64, macOS ARM64, Windows x64; package installation and shared-cache tests on each OS |
 
-All existing integration cases remain on PRs. Freezed, Riverpod, optional builder
+Every integration scenario family remains on PRs. Freezed, Riverpod, optional builder
 and JSON Serializable run their complete case selection once per suite, using
 the scripts' existing baseline restoration instead of starting a fresh stock
 and native pair for each case. Case state is restored at the same active paths,
 preserving timestamps and SDK links. Failures still stop the lane.
+
+Output policy lifecycle validation has three binary axes: verify/keep policy,
+source/cache layout, and filtered/unfiltered build. PRs run a four-row pairwise
+covering array instead of repeating the complete lifecycle for all eight rows:
+
+| Layout | Policy | Filter |
+| --- | --- | --- |
+| source | verify | off |
+| source | keep | on |
+| cache | verify | on |
+| cache | keep | off |
+
+Every pair of axis settings is covered, and each row retains all existing
+lifecycle, byte-equality, no-op and publication assertions. Main, manual and
+scheduled runs keep the full eight-row cross product, as do local runs by
+default. This defers regressions unique to an omitted three-way interaction
+until full validation. `test_output_policy_matrix.py` checks the pairwise
+coverage against the complete product and rejects unknown coverage modes.
 
 Each integration job sets up Dart, the debug frontend and fixture dependencies
 once, then runs up to four parallel lanes. Each comparison creates its own
@@ -32,23 +50,30 @@ comparisons remain covered. Benchmarks stay outside PR correctness checks.
 
 The current SDK job shares its installed Rust toolchain and Cargo cache with
 the Rust/Python checks, freeing one runner slot for filter comparisons. Package
-tests use the SDK's kernel compiler; integration workers still exercise real
-JIT/AOT modes. Native distribution's cross-platform cache probes retain source
-compilation.
+tests use the SDK's kernel compiler on the current resolution. The minimum
+resolution retains source compilation: its frontend_server_client 3.2 expects
+`frontend_server.dart.snapshot`, which Dart 3.11 no longer ships. Integration
+workers still exercise real JIT/AOT modes. Native distribution's cross-platform
+cache probes retain source compilation.
 
-Long compiler lanes contain only their compiler probe; mapping and registry
-checks use other lanes. CLI checks overlap baseline work instead of waiting
+Compiler lanes have at most one compiler probe; shorter watch lanes also host
+output-policy API/mode checks, and built_value follows DDC lifecycle. Mapping
+and registry checks use other lanes. CLI checks overlap baseline work instead of waiting
 for the entire baseline parallel group. SDK package checks and lifecycle probes
 start together, and minimum shared-parts no longer waits for the pinned runner
 lifecycle. Distribution, cache tests and AOT lifecycle probes overlap after the
 release binary and root package dependencies are ready, with separate result
 directories. Normal-builder AOT runs on macOS ARM64 and shared-part AOT on Linux
 x64; this avoids two large AOT probes sharing the Linux runner.
+The macOS probe invokes the Python comparison directly with the already built
+frontend; its shell wrapper requires Bash associative arrays, unavailable in
+macOS's system Bash 3.2.
 Fresh stock shared-part references use JIT to check bytes; the primary
 stock/native lifecycle retains the requested JIT/AOT mode. This removes
 repeated AOT compilation of disposable reference workspaces. The workspace
-scheduler's single-package and resolver-reuse subprobes run in spare lanes;
-the standalone scheduler script still includes them by default.
+scheduler's single-package subprobe uses a spare lane and resolver reuse follows
+the shorter workspace-only probe. The standalone scheduler script still
+includes both subprobes by default.
 
 Linux ARM64 integration continues on every PR. Native **distribution** E2E for
 Linux ARM64 and Windows ARM64 runs on main pushes, manual dispatch and the weekly

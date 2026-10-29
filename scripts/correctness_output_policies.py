@@ -16,6 +16,21 @@ VERIFY = '--only-check'
 KEEP = '--keep-modified-outputs'
 
 
+def lifecycle_matrix(coverage):
+    """Cover every pair of policy/layout/filter settings on PRs.
+
+    Full local/main validation retains the complete three-axis cross product.
+    Each selected row still executes the entire lifecycle and its assertions.
+    """
+    if coverage not in ('full', 'pairwise'):
+        raise ValueError(f'unknown output-policy coverage: {coverage}')
+    return [(cache, filtered, policy)
+            for cache in (False, True)
+            for filtered in (False, True)
+            for policy in ('verify', 'keep')
+            if coverage == 'full' or filtered == (cache == (policy == 'verify'))]
+
+
 def snapshot(root):
     """Source outputs, intermediate bytes and incremental graph, excluding setup caches."""
     result = {}
@@ -338,6 +353,7 @@ def modes(tmp):
 
 
 def main():
+    matrix = lifecycle_matrix(os.environ.get('OUTPUT_POLICY_COVERAGE', 'full'))
     with tempfile.TemporaryDirectory(prefix='output-policies-') as directory:
         tmp = Path(directory)
         ENV.setdefault('BUILD_RUNNER_ACCELERATOR_CACHE', str(tmp / 'accelerator-cache'))
@@ -345,10 +361,8 @@ def main():
             'routing': lambda: routing(tmp),
             'modes': lambda: modes(tmp),
             'api': lambda: retained_api_cases(tmp),
-            'source': lambda: [(verify_cases(tmp, False, filters), keep_cases(tmp, False, filters))
-                               for filters in ((), ('--build-filter=lib/*.final',))],
-            'cache': lambda: [(verify_cases(tmp, True, filters), keep_cases(tmp, True, filters))
-                              for filters in ((), ('--build-filter=lib/*.final',))],
+            'source': lambda: run_lifecycle_matrix(tmp, matrix, False),
+            'cache': lambda: run_lifecycle_matrix(tmp, matrix, True),
             'failure': lambda: [failure_and_interrupt(tmp, policy) for policy in (VERIFY, KEEP)],
         }
         selected = os.environ.get('OUTPUT_POLICY_CASE_GROUP', 'all')
@@ -360,6 +374,14 @@ def main():
                 run_group()
                 print(f'output-policies: PASS group={name}', flush=True)
     print('output-policies stock/native comparisons passed', flush=True)
+
+
+def run_lifecycle_matrix(tmp, matrix, cache):
+    for selected_cache, filtered, policy in matrix:
+        if selected_cache == cache:
+            print(f'output-policies: lifecycle cache={cache} filtered={filtered} policy={policy}', flush=True)
+            run = verify_cases if policy == 'verify' else keep_cases
+            run(tmp, cache, ('--build-filter=lib/*.final',) if filtered else ())
 
 
 if __name__ == '__main__':
