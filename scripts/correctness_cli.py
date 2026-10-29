@@ -214,8 +214,6 @@ def main():
         assert not (native / '.dart_tool/build_runner_accelerator/graph-v3.bin').exists()
         # The obsolete -d/long flag must have exactly the same output effect as
         # omission, including conflicts whose builder emits no output.
-        # These comparisons reuse the prewarmed AOT catalog; watch, process
-        # shutdown and the compiled launcher below retain explicit JIT coverage.
         for case_index, flags in enumerate(((), ('-d',), ('--delete-conflicting-outputs',))):
             for root in (stock, native):
                 (root / '.dart_tool/build/asset_graph.json').unlink(missing_ok=True)
@@ -223,16 +221,16 @@ def main():
                 for name in ('a', 'b', 'empty'):
                     for ext in ('copy', 'final'):
                         (root / f'lib/{name}.{ext}').write_text('conflict\n')
-            run([DART, '--suppress-analytics', 'run', 'build_runner', 'build', '--force-aot', *flags], stock)
-            run(launcher(native, flags=['--force-aot', *flags]), native)
+            run([DART, '--suppress-analytics', 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
+            run(launcher(native, flags=['--force-jit', *flags]), native)
             assert files(stock) == files(native)
             assert not (native / 'lib/empty.copy').exists()
             for root in (stock, native):
                 (root / 'lib/a.txt').write_text(f'edited {case_index}\n')
-            run([DART, '--suppress-analytics', 'run', 'build_runner', 'build', '--force-aot', *flags], stock)
-            run(launcher(native, flags=['--force-aot', *flags]), native)
+            run([DART, '--suppress-analytics', 'run', 'build_runner', 'build', '--force-jit', *flags], stock)
+            run(launcher(native, flags=['--force-jit', *flags]), native)
             assert files(stock) == files(native)
-            run(launcher(native, flags=['--force-aot', *flags]), native)
+            run(launcher(native, flags=['--force-jit', *flags]), native)
             assert files(stock) == files(native)
         print('cli-compatibility: conflict flags/no-op/incremental/dependency chain passed', flush=True)
         # Unsupported requests fail before binary acquisition and preserve files.

@@ -88,9 +88,10 @@ original sequence exactly once and unknown selections fail explicitly.
 
 Filter selection and nested-package comparisons retain JIT. A controlled local
 source-selection comparison took 125.4s with JIT and 148.7s with AOT, so the
-broader AOT migration was not adopted. The CLI's conflict-flag comparisons reuse their
-prewarmed AOT catalog; its process, compiled-launcher and watch probes retain
-JIT. Output bytes, invocation history, deletion and no-op assertions are unchanged.
+broader AOT migration was not adopted. CLI comparisons also retain JIT: their
+complete local probe took 112.5s with JIT and 118.8s with AOT conflict-flag
+comparisons. Output bytes, invocation history, deletion and no-op assertions
+are unchanged.
 
 Short independent probes fill existing lanes: the output-policy job also runs
 package smoke, scheduler reuse, obsolete-state recovery and named/backslash
