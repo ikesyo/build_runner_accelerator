@@ -73,6 +73,12 @@ The cold build and a catalog-changing named config still compile normally.
 Case logs include mode and elapsed time so lane balancing can follow actual
 work rather than hiding compilation behind extra runner slots.
 
+Nested-package recovery actions have two independent cases. CI assigns
+`NESTED_PACKAGE_RECOVERY_CASE=failure-cancel` and `builder-transition` to two
+existing filter lanes instead of appending both after a long compiler probe.
+The default remains `all`; a unit test verifies that the split covers the
+original sequence exactly once and unknown selections fail explicitly.
+
 The current SDK job shares its installed Rust toolchain and Cargo cache with
 the Rust/Python checks, freeing one runner slot for filter comparisons. Package
 tests use the SDK's kernel compiler on the current resolution. The minimum
@@ -104,9 +110,8 @@ macOS's system Bash 3.2.
 Fresh stock shared-part references use JIT to check bytes; the primary
 stock/native lifecycle retains the requested JIT/AOT mode. This removes
 repeated AOT compilation of disposable reference workspaces. The workspace
-scheduler's single-package subprobe uses a spare lane and resolver reuse follows
-the shorter workspace-only probe. The standalone scheduler script still
-includes both subprobes by default.
+scheduler's independent single-package and resolver-reuse subprobes use spare
+lanes. The standalone scheduler script still includes both by default.
 
 Linux ARM64 integration continues on every PR. Native **distribution** E2E for
 Linux ARM64 and Windows ARM64 runs on main pushes, manual dispatch and the weekly

@@ -215,21 +215,23 @@ jobs:
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=watch-source bash scripts/correctness_build_filter.sh
-          - name: Cache watch and nested native watch
+          - name: Cache watch, nested native watch, and failure/cancel recovery
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=watch-cache bash scripts/correctness_build_filter.sh
               NESTED_PACKAGE_CASE_GROUP=watch-native bash scripts/correctness_nested_packages.sh
+              NESTED_PACKAGE_CASE_GROUP=recovery-actions NESTED_PACKAGE_RECOVERY_CASE=failure-cancel bash scripts/correctness_nested_packages.sh
           - name: Classification, watch boundary, and runner 2.16.0 / Analyzer 14.5
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=watch-classification bash scripts/correctness_build_filter.sh
               NESTED_PACKAGE_CASE_GROUP=watch-boundary bash scripts/correctness_nested_packages.sh
               python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 14.5.0
-          - name: Routing
+          - name: Routing and nested builder transitions
             shell: bash
             run: |
               BUILD_FILTER_CASE_GROUP=routing bash scripts/correctness_build_filter.sh
+              NESTED_PACKAGE_CASE_GROUP=recovery-actions NESTED_PACKAGE_RECOVERY_CASE=builder-transition bash scripts/correctness_nested_packages.sh
 
   integration-settings:
     name: 'Integration: build configuration'
@@ -259,24 +261,26 @@ jobs:
               SETTINGS_CASE_GROUP=values bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-default bash scripts/correctness_settings.sh
               PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_builder.sh
-          - name: Compact flags and reserved/topology watch
+          - name: Compact flags, reserved/topology watch, and scheduler reuse
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=compact bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-reserved bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-topology bash scripts/correctness_settings.sh
+              bash scripts/correctness_workspace_scheduler_reuse.sh
           - name: Config paths and normalized dot/ancestor watch
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=paths bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-dot bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-package bash scripts/correctness_settings.sh
-          - name: Config files, nested watch, and generic watch
+          - name: Config files, nested/generic watch, and package smoke
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=files bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-nested bash scripts/correctness_settings.sh
               bash scripts/watch_smoke.sh
+              bash scripts/package_smoke.sh
 
   integration-settings-watch:
     name: 'Integration: configuration watch and AOT'
@@ -296,26 +300,25 @@ jobs:
       - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          for fixture in settings_builder_app trigger_builder_app post_process_builder_app build_filter_app; do
+          for fixture in settings_builder_app trigger_builder_app post_process_builder_app; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Configuration errors, boundaries, and JSON workspace
+          - name: Configuration errors and boundaries
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=errors bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=boundaries bash scripts/correctness_settings.sh
-              bash scripts/correctness_workspace_json.sh
-          - name: Precedence and post-process lifecycle
+          - name: Precedence, post-process lifecycle, and JSON workspace
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=precedence bash scripts/correctness_settings.sh
               bash scripts/correctness_post_process_builder.sh
-          - name: JIT/AOT compile, publication, and nested recovery
+              bash scripts/correctness_workspace_json.sh
+          - name: JIT/AOT compile and publication recovery
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=compile bash scripts/correctness_settings.sh
-              NESTED_PACKAGE_CASE_GROUP=recovery-actions bash scripts/correctness_nested_packages.sh
           - name: Trigger lifecycle and named/backslash watch
             shell: bash
             run: |
@@ -384,11 +387,10 @@ jobs:
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Baseline and package smoke
+          - name: Baseline smoke and single-package scheduler
             shell: bash
             run: |
               SMOKE_SKIP_RUST_TESTS=1 bash scripts/smoke.sh
-              bash scripts/package_smoke.sh
               bash scripts/correctness_single_package_scheduler.sh
           - name: CLI and obsolete state
             shell: bash
@@ -399,7 +401,6 @@ jobs:
             shell: bash
             run: |
               SCHEDULER_SUBPROBES=0 bash scripts/correctness_workspace_scheduler.sh
-              bash scripts/correctness_workspace_scheduler_reuse.sh
           - name: Setup prewarm
             shell: bash
             run: |
