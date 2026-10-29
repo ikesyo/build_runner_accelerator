@@ -223,6 +223,7 @@ def main():
                     if args.worker_mode == 'aot':
                         artifact = metadata['aot_artifacts'][profile_name][variant]
                         assert Path(artifact['path']).stat().st_mtime_ns == artifact['mtime_ns'], 'Timed run rebuilt AOT worker'
+                        assert digest(Path(artifact['path']).read_bytes()) == artifact['sha256'], 'Timed run replaced AOT worker'
                     actual = inventory(roots[variant], single=single)
                     assert actual == reference, f'{profile_name}/{variant}/{case} stock bytes differ'
                     if case == 'noop':

@@ -679,13 +679,17 @@ impl WorkerPool {
         }
         let worker_count = self.workers.len().min(requests.len()).min(worker_limit);
         if worker_count == 1 {
-            return self.workers[0].build_batch(
+            let result = self.workers[0].build_batch(
                 workspace,
                 requests,
                 overlay,
                 deleted_overlay,
                 visibility,
             );
+            if result.is_err() {
+                self.take_dep_graph();
+            }
+            return result;
         }
 
         use super::scheduling::InputQueue;
@@ -1216,6 +1220,17 @@ mod tests {
 
     #[test]
     fn failed_parallel_dispatch_discards_all_resident_dependency_edges() -> io::Result<()> {
+        failed_dispatch_discards_all_resident_dependency_edges(2)
+    }
+
+    #[test]
+    fn failed_direct_dispatch_discards_all_resident_dependency_edges() -> io::Result<()> {
+        failed_dispatch_discards_all_resident_dependency_edges(1)
+    }
+
+    fn failed_dispatch_discards_all_resident_dependency_edges(
+        worker_limit: usize,
+    ) -> io::Result<()> {
         struct TemporaryRoot(PathBuf);
         impl Drop for TemporaryRoot {
             fn drop(&mut self) {
@@ -1274,7 +1289,7 @@ mod tests {
                 &BTreeMap::new(),
                 &BTreeSet::new(),
                 &AssetVisibility::default(),
-                2,
+                worker_limit,
             )
             .unwrap_err();
         assert!(error.to_string().contains("unexpected worker message"));
