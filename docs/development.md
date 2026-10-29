@@ -105,10 +105,12 @@ does not initialize the native worker or resolve a Dart input library.
 Both SDKs overlap package checks with normal-builder lifecycle comparisons.
 The minimum SDK also runs pinned-runner and shared-part JIT comparisons in
 separate lanes. AOT comparisons reuse the installed SDK and release frontend
-in the native-build jobs: pinned runner 2.17.1 on macOS ARM64 and shared parts
-on Linux x64. Each probe uses a separate
-workspace under `RUNNER_TEMP`, keeping comparison files outside the publish
-package and AOT compilation off the package-test runner.
+in the macOS ARM64 native-build job: pinned runner 2.17.1 and shared parts.
+Each probe uses a separate workspace under `RUNNER_TEMP`, keeping comparison
+files outside the publish package and AOT compilation off the package-test runner.
+
+The Linux x64 native-build job runs the runner 2.15.3 / Analyzer 14.5
+dependency-window and JSON conditional-dependency checks.
 
 Run the same comparison locally with an installed SDK:
 
