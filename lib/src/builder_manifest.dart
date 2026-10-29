@@ -353,6 +353,16 @@ _NormalizedManifest _normalizeManifest(
   _RuntimeMappings runtime,
 ) {
   final activeEntries = <Map<String, dynamic>>[];
+  final dependencies = targetDependencyClosure({
+    for (final target in resolved.orderedTargets)
+      target.target.key: target.target.dependencies,
+  });
+  final packageDependencies = targetDependencyClosure({
+    for (final target in resolved.orderedTargets)
+      target.package.name: target.package.dependencies.map(
+        (package) => package.name,
+      ),
+  });
   final selectedDefinitions = <String>{};
   final allOutputSuffixes = <String>{
     for (final definitions in runtime.compatibleDefinitions.values)
@@ -539,6 +549,8 @@ _NormalizedManifest _normalizeManifest(
             target: target.target.key,
             package: target.package.name,
             targetOrder: componentIndex,
+            targetDependencies: dependencies[target.target.key],
+            packageDependencies: packageDependencies[target.package.name],
             excludedInputSuffixes: excludedInputSuffixes,
           ),
         );

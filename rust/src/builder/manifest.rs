@@ -74,6 +74,10 @@ pub(crate) struct BuilderManifestDefinition {
     pub(crate) is_root: Option<bool>,
     #[serde(default)]
     pub(crate) target_order: Option<u32>,
+    #[serde(default)]
+    pub(crate) target_dependencies: Option<std::collections::BTreeSet<String>>,
+    #[serde(default)]
+    pub(crate) package_dependencies: Option<std::collections::BTreeSet<String>>,
     pub(crate) triggers: Vec<BuilderTrigger>,
     #[serde(default)]
     pub(crate) part_directive_suffix: Option<String>,
@@ -176,6 +180,8 @@ pub(crate) fn rust_build_config_from_manifest(
             }
         }
         builders.push(ConfiguredBuilder {
+            target_dependencies: entry.target_dependencies,
+            package_dependencies: entry.package_dependencies,
             definition,
             target: entry.target,
             package: entry.package,

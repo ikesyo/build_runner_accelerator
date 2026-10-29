@@ -213,6 +213,8 @@ class ManifestDefinition {
     required String? target,
     required String? package,
     required int targetOrder,
+    List<String>? targetDependencies,
+    List<String>? packageDependencies,
     required List<String> excludedInputSuffixes,
   }) => <String, dynamic>{
     'id': id,
@@ -225,6 +227,9 @@ class ManifestDefinition {
     if (target != null) 'target': target,
     if (package != null) 'package': package,
     if (target != null) 'target_order': targetOrder,
+    if (targetDependencies != null) 'target_dependencies': targetDependencies,
+    if (packageDependencies != null)
+      'package_dependencies': packageDependencies,
     'is_optional': isOptional,
     'adds_to_library': addsToLibrary,
     'output_is_optional': outputIsOptional,

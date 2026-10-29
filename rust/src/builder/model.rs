@@ -59,6 +59,10 @@ pub(crate) struct ConfiguredBuilder {
     /// part of BuilderOptions and can affect the runtime output mapping.
     pub(crate) is_root: bool,
     pub(crate) target_order: u32,
+    /// Transitive target reachability, including unselected targets. Absent
+    /// metadata keeps older manifests on the conservative serial schedule.
+    pub(crate) target_dependencies: Option<std::collections::BTreeSet<String>>,
+    pub(crate) package_dependencies: Option<std::collections::BTreeSet<String>>,
     pub(crate) phase: u32,
     pub(crate) excluded_input_suffixes: Vec<String>,
     pub(crate) generate_for: Vec<String>,

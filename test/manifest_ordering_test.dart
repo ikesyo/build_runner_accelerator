@@ -9,6 +9,22 @@ class _TargetNode {
 }
 
 void main() {
+  test('dependency closure retains unselected bridges and cycles', () {
+    expect(
+      targetDependencyClosure({
+        'a:a': ['bridge:bridge'],
+        'bridge:bridge': ['b:b'],
+        'b:b': ['bridge:bridge'],
+        'independent:independent': <String>[],
+      }),
+      {
+        'a:a': ['b:b', 'bridge:bridge'],
+        'bridge:bridge': ['b:b', 'bridge:bridge'],
+        'b:b': ['b:b', 'bridge:bridge'],
+        'independent:independent': <String>[],
+      },
+    );
+  });
   test('orders target dependencies first and preserves SCC metadata', () {
     final result = orderTargets<_TargetNode>(
       const <_TargetNode>[

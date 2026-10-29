@@ -1,0 +1,9 @@
+targets:
+  $default:
+    builders:
+      schedule_gen:seed:
+        options:
+          tag: b-seed
+      schedule_gen:summary:
+        options:
+          tag: b-summary

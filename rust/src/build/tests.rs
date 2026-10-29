@@ -12,7 +12,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn configured_builder(id: &str, target: &str, target_order: u32, phase: u32) -> ConfiguredBuilder {
+pub(super) fn configured_builder(
+    id: &str,
+    target: &str,
+    target_order: u32,
+    phase: u32,
+) -> ConfiguredBuilder {
     ConfiguredBuilder {
         definition: Arc::new(BuilderDefinition {
             adds_to_library: false,
@@ -33,6 +38,8 @@ fn configured_builder(id: &str, target: &str, target_order: u32, phase: u32) -> 
         package: "app".to_owned(),
         is_root: true,
         target_order,
+        target_dependencies: None,
+        package_dependencies: Some(BTreeSet::new()),
         phase,
         excluded_input_suffixes: Vec::new(),
         generate_for: vec!["**".to_owned()],

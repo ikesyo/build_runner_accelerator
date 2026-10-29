@@ -1,5 +1,22 @@
 import 'model.dart';
 
+/// Includes paths through targets with no selected builders, and terminates
+/// for cycles. The scheduler needs reachability, not just the SCC ordinal.
+Map<String, List<String>> targetDependencyClosure(
+  Map<String, Iterable<String>> dependencies,
+) => {
+  for (final target in dependencies.keys)
+    target: (() {
+      final seen = <String>{};
+      final pending = [...dependencies[target]!];
+      while (pending.isNotEmpty) {
+        final next = pending.removeLast();
+        if (seen.add(next)) pending.addAll(dependencies[next] ?? const []);
+      }
+      return seen.toList()..sort();
+    })(),
+};
+
 /// Orders graph nodes with the same stable SCC semantics used by the
 /// manifest generator. The callbacks keep this algorithm independent from
 /// build_config, which makes the ordering rules directly testable.

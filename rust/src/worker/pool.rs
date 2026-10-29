@@ -578,7 +578,90 @@ impl WorkerPool {
         Ok(results)
     }
 
-    /// Splits requests into contiguous balanced ranges, joins every dispatched
+    /// Runs a bounded set of lease consumers. Dropping the controller closes
+    /// all input queues, then every running worker is joined before returning,
+    /// including on a failed build or a controller panic.
+    pub(crate) fn with_workspace_dispatch<R>(
+        &mut self,
+        workspace: &Workspace,
+        phase_count: usize,
+        width: usize,
+        visibility: &AssetVisibility,
+        run: impl FnOnce(&super::workspace::WorkspaceDispatch) -> io::Result<R>,
+    ) -> io::Result<R> {
+        use super::workspace::{WorkspaceDispatch, WorkspaceWorkerFactory, run_worker};
+        use std::sync::{OnceLock, mpsc};
+        if self.initialized.is_some() || !self.workers.is_empty() {
+            return Err(io::Error::other(
+                "workspace dispatch requires a deferred pool",
+            ));
+        }
+        let factory = WorkspaceWorkerFactory {
+            workspace,
+            dart_binary: &self.dart_binary,
+            worker_executable: &self.worker_executable,
+            auto_worker_artifact: self.auto_worker_artifact,
+            artifact: OnceLock::new(),
+            phase_count,
+            restrictions: workspace.input_restrictions(),
+            retained_output_guard: self.retained_output_guard,
+            visibility,
+        };
+        let (result, outcomes) = thread::scope(|scope| {
+            let (completed, completions) = mpsc::channel();
+            let mut senders = Vec::new();
+            let mut handles = Vec::new();
+            for index in 0..width.max(1).min(self.max_jobs) {
+                let (sender, receiver) = mpsc::sync_channel(1);
+                senders.push(sender);
+                let completed = completed.clone();
+                let factory = &factory;
+                handles.push(scope.spawn(move || run_worker(index, factory, receiver, completed)));
+            }
+            drop(completed);
+            let dispatch = WorkspaceDispatch {
+                leases: senders,
+                completions,
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&dispatch)))
+                .unwrap_or_else(|_| Err(io::Error::other("workspace controller panicked")));
+            // Closed queues stop idle workers; running leases keep ownership of
+            // their baseline/blob until completion. No new work is admitted.
+            drop(dispatch);
+            let outcomes = handles
+                .into_iter()
+                .map(|handle| handle.join())
+                .collect::<Vec<_>>();
+            (result, outcomes)
+        });
+        if let Some(Ok(artifact)) = factory.artifact.get() {
+            self.worker_artifact = Some(artifact.clone());
+        }
+        let mut worker_error = None;
+        for outcome in outcomes {
+            match outcome {
+                Ok(outcome) => {
+                    self.worker_starts += outcome.starts;
+                    self.worker_initializes += outcome.initializes;
+                    self.resolver_resets += outcome.resets;
+                    if let Some(worker) = outcome.worker {
+                        self.workers.push(worker);
+                    }
+                }
+                Err(_) => {
+                    worker_error.get_or_insert_with(|| {
+                        io::Error::other("workspace worker thread panicked")
+                    });
+                }
+            }
+        }
+        match (result, worker_error) {
+            (Err(error), _) | (_, Some(error)) => Err(error),
+            (Ok(value), None) => Ok(value),
+        }
+    }
+
+    /// Dynamically leases small input batches, joins every dispatched
     /// worker, and combines results in range order. Worker errors and panics
     /// return an error; callers must not commit any staged output on that path.
     fn build_parallel_on_current_workers(
@@ -594,50 +677,128 @@ impl WorkerPool {
         if requests.is_empty() {
             return Ok(Vec::new());
         }
-        if self.workers.len() == 1 || worker_limit == 1 {
-            return self.workers[0].build_batch(
+        let worker_count = self.workers.len().min(requests.len()).min(worker_limit);
+        if worker_count == 1 {
+            let result = self.workers[0].build_batch(
                 workspace,
                 requests,
                 overlay,
                 deleted_overlay,
                 visibility,
             );
+            if result.is_err() {
+                self.take_dep_graph();
+            }
+            return result;
         }
 
-        let worker_count = self.workers.len().min(requests.len()).min(worker_limit);
-        let ranges = balanced_request_ranges(requests.len(), worker_count);
-        let batches = ranges
-            .iter()
-            .map(|(start, end)| &requests[*start..*end])
-            .collect::<Vec<_>>();
-        let batch_results = thread::scope(|scope| {
-            let handles = self
-                .workers
-                .iter_mut()
-                .take(worker_count)
-                .zip(batches)
-                .map(|(worker, batch)| {
-                    scope.spawn(move || {
-                        worker.build_batch(workspace, batch, overlay, deleted_overlay, visibility)
+        use super::scheduling::InputQueue;
+        use std::sync::mpsc;
+        use std::time::Instant;
+        let result = thread::scope(|scope| {
+            let (completed, completions) = mpsc::channel();
+            let mut senders = Vec::new();
+            let mut handles = Vec::new();
+            for (index, worker) in self.workers.iter_mut().take(worker_count).enumerate() {
+                let (sender, receiver) = mpsc::sync_channel::<std::ops::Range<usize>>(1);
+                senders.push(sender);
+                let completed = completed.clone();
+                handles.push(scope.spawn(move || {
+                    while let Ok(range) = receiver.recv() {
+                        let started = Instant::now();
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            worker.build_batch(
+                                workspace,
+                                &requests[range.clone()],
+                                overlay,
+                                deleted_overlay,
+                                visibility,
+                            )
+                        }))
+                        .unwrap_or_else(|_| Err(io::Error::other("worker thread panicked")));
+                        let failed = result.is_err();
+                        if completed
+                            .send((index, range, started.elapsed(), result))
+                            .is_err()
+                            || failed
+                        {
+                            break;
+                        }
+                    }
+                }));
+            }
+            drop(completed);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut inputs = InputQueue::new(requests.len());
+                let mut running = vec![None; worker_count];
+                let mut results = std::iter::repeat_with(|| None)
+                    .take(requests.len())
+                    .collect::<Vec<_>>();
+                let mut finished = 0;
+                while finished < requests.len() {
+                    for worker in 0..worker_count {
+                        if running[worker].is_none()
+                            && let Some(range) = inputs.take(worker_count)
+                        {
+                            senders[worker]
+                                .send(range.clone())
+                                .map_err(|_| io::Error::other("input worker disconnected"))?;
+                            running[worker] = Some(range);
+                        }
+                    }
+                    let (worker, range, elapsed, batch) = completions
+                        .recv()
+                        .map_err(|_| io::Error::other("input completion channel disconnected"))?;
+                    if running.get_mut(worker).and_then(Option::take) != Some(range.clone()) {
+                        return Err(io::Error::other(
+                            "input completion does not match its lease",
+                        ));
+                    }
+                    let batch = batch?;
+                    if batch.len() != range.len() {
+                        return Err(io::Error::other("input lease result count mismatch"));
+                    }
+                    for result in &batch {
+                        if result.status != "success" && result.status != "not_triggered" {
+                            return Err(io::Error::other(
+                                result
+                                    .error
+                                    .clone()
+                                    .unwrap_or_else(|| "Builder failed".into()),
+                            ));
+                        }
+                    }
+                    inputs.observe(elapsed, range.len());
+                    finished += range.len();
+                    for (index, result) in range.zip(batch) {
+                        results[index] = Some(result);
+                    }
+                }
+                results
+                    .into_iter()
+                    .map(|result| {
+                        result.ok_or_else(|| io::Error::other("input scheduler lost a result"))
                     })
-                })
-                .collect::<Vec<_>>();
-
-            handles
+                    .collect()
+            }))
+            .unwrap_or_else(|_| Err(io::Error::other("input controller panicked")));
+            drop(senders);
+            let joined = handles
                 .into_iter()
-                .map(|handle| {
-                    handle
-                        .join()
-                        .map_err(|_| io::Error::other("worker thread panicked"))?
-                })
-                .collect::<io::Result<Vec<_>>>()
-        })?;
-
-        let mut results = Vec::with_capacity(requests.len());
-        for batch in batch_results {
-            results.extend(batch);
+                .map(|handle| handle.join())
+                .collect::<Vec<_>>();
+            if joined.into_iter().any(|join| join.is_err()) {
+                return Err(io::Error::other("worker thread panicked"));
+            }
+            result
+        });
+        if result.is_err() {
+            // All dispatched workers have joined, so discard even dependency
+            // edges reported by peers after the controller observed failure.
+            // A resident watch pool must not leak them into the next build.
+            self.take_dep_graph();
         }
-        Ok(results)
+        result
     }
 
     /// Records only successful results; a later `resolver_used = true` keeps
@@ -1047,26 +1208,93 @@ pub(super) fn target_worker_count(max_jobs: usize, request_count: usize) -> usiz
     max_jobs.max(1).min(request_count.max(1))
 }
 
-pub(super) fn balanced_request_ranges(
-    request_count: usize,
-    worker_count: usize,
-) -> Vec<(usize, usize)> {
-    let worker_count = worker_count.max(1).min(request_count.max(1));
-    let base_size = request_count / worker_count;
-    let remainder = request_count % worker_count;
-    let mut start = 0;
-    let mut ranges = Vec::with_capacity(worker_count);
-    for worker_index in 0..worker_count {
-        let size = base_size + if worker_index < remainder { 1 } else { 0 };
-        let end = start + size;
-        ranges.push((start, end));
-        start = end;
-    }
-    ranges
-}
-
 impl Drop for WorkerPool {
     fn drop(&mut self) {
         self.workers.clear();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_parallel_dispatch_discards_all_resident_dependency_edges() -> io::Result<()> {
+        failed_dispatch_discards_all_resident_dependency_edges(2)
+    }
+
+    #[test]
+    fn failed_direct_dispatch_discards_all_resident_dependency_edges() -> io::Result<()> {
+        failed_dispatch_discards_all_resident_dependency_edges(1)
+    }
+
+    fn failed_dispatch_discards_all_resident_dependency_edges(
+        worker_limit: usize,
+    ) -> io::Result<()> {
+        struct TemporaryRoot(PathBuf);
+        impl Drop for TemporaryRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = TemporaryRoot(std::env::temp_dir().join(format!(
+            "scheduler-failed-dependencies-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )));
+        std::fs::create_dir_all(root.0.join(".dart_tool"))?;
+        std::fs::write(root.0.join("pubspec.yaml"), "name: app\n")?;
+        std::fs::write(
+            root.0.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[{"name":"app","rootUri":"../"}]}"#,
+        )?;
+        let workspace = Workspace::load(root.0.clone())?;
+        let mut pool = WorkerPool::start_deferred(&workspace, "unused", "unused", 2, false)?;
+        for index in 0..2 {
+            // Echoing a request is a deterministic protocol failure. Seed edges
+            // as if earlier leases in this build had reported dependencies.
+            let mut worker = WorkerClient::start(
+                &workspace.root,
+                "unused",
+                "unused",
+                &WorkerArtifact::Aot(PathBuf::from("/bin/cat")),
+            )?;
+            worker.dep_graph.insert(
+                format!("app|lib/entry{index}.dart"),
+                vec!["app|lib/failed-only.dart".to_owned()],
+            );
+            pool.workers.push(worker);
+        }
+        let requests = (0..2)
+            .map(|index| BuildRequest {
+                part_phase_index: None,
+                builder: "app:builder".to_owned(),
+                input: format!("app|lib/entry{index}.dart"),
+                outputs: Vec::new(),
+                options: serde_json::Map::new(),
+                phase: 0,
+                instance_key: "app:default".to_owned(),
+                is_root: true,
+                post_process: false,
+                triggers: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let error = pool
+            .build_parallel_on_current_workers(
+                &workspace,
+                &requests,
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+                &AssetVisibility::default(),
+                worker_limit,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("unexpected worker message"));
+        assert_eq!(pool.workers.len(), 2);
+        assert!(pool.take_dep_graph().is_empty());
+        Ok(())
     }
 }

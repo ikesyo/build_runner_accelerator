@@ -1,0 +1,12 @@
+name: schedule_c
+publish_to: none
+resolution: workspace
+environment:
+  sdk: ">=3.11.0 <4.0.0"
+dependencies:
+  schedule_gen:
+    path: ../gen
+  schedule_a:
+    path: ../a
+  schedule_helper:
+    path: ../helper

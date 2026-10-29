@@ -42,6 +42,9 @@ pub(super) fn run(
     pool: Option<&mut WorkerPool>,
     inputs: ExecutionInputs<'_>,
 ) -> io::Result<ExecutionResult> {
+    if !inputs.options.workspace_output_packages.is_empty() {
+        return super::workspace_execution::run(inputs);
+    }
     let ExecutionInputs {
         options,
         workspace,

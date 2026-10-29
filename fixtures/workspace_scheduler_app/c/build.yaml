@@ -1,0 +1,10 @@
+targets:
+  $default:
+    builders:
+      schedule_gen:seed:
+        options:
+          tag: c-seed
+      schedule_gen:summary:
+        options:
+          tag: c-summary
+          dependency: schedule_a
