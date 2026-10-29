@@ -151,7 +151,7 @@ claim that the unmodified older stock runner works on that Analyzer.
 The comparison checks generation, incremental reuse, failure/recovery, AOT and
 watch behavior, including legacy retention and upgrading to the repair default.
 Application configuration and upstream resolver sources must remain unchanged.
-Cases share existing SDK, filter, code-generator and output-policy CI jobs.
+Cases share existing SDK, filter, native-build and output-policy CI jobs.
 See [ADR 0042](adr/0042-runner-resolver-compatibility.md) for the design and the
 [compatibility contract](launcher-and-release.md#supported-dependencies) for
 current ranges and limits.

@@ -17,9 +17,19 @@ void main() {
   });
   tearDown(() => temporary.deleteSync(recursive: true));
 
-  void ready() => marker.writeAsStringSync(
-    jsonEncode({'state': 'ready', 'source': 'worker', 'path': executable.path}),
-  );
+  void ready() {
+    // Match the real publisher: readers must see complete pending/ready JSON,
+    // never a truncated file while an asynchronous read is in flight.
+    final next = File('${marker.path}.tmp')
+      ..writeAsStringSync(
+        jsonEncode({
+          'state': 'ready',
+          'source': 'worker',
+          'path': executable.path,
+        }),
+      );
+    next.renameSync(marker.path);
+  }
 
   test(
     'waits for the invocation marker then checks exact source contents',
@@ -28,13 +38,7 @@ void main() {
       final timer = Timer(const Duration(milliseconds: 10), ready);
       try {
         expect(
-          await waitForEarlyWorkerAot(
-            marker.path,
-            source.path,
-            // This is the readiness test, not a wall-clock deadline test.
-            // Allow the event loop to resume under concurrent CI compilers.
-            timeout: const Duration(seconds: 5),
-          ),
+          await waitForEarlyWorkerAot(marker.path, source.path),
           executable.path,
         );
       } finally {

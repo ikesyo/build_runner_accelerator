@@ -8,6 +8,11 @@ import 'package:build_runner_accelerator/src/frontend_binary_resolver.dart'
     show buildRunnerAcceleratorVersion;
 
 void main() {
+  final kernelDirectory =
+      Platform.environment['BUILD_RUNNER_ACCELERATOR_TEST_KERNEL_DIR'];
+  final helper = kernelDirectory == null
+      ? File('test/reset_directives_worker.dart').absolute.path
+      : '$kernelDirectory/reset_directives_worker.dill';
   test(
     'phase reset compares pre-build and committed versions through delete/recreate and next build',
     () async {
@@ -20,7 +25,7 @@ void main() {
         Platform.resolvedExecutable,
         [
           '--packages=${File('.dart_tool/package_config.json').absolute.path}',
-          File('test/reset_directives_worker.dart').absolute.path,
+          helper,
         ],
         environment: {
           'BUILD_RUNNER_ACCELERATOR_WALL_TRACE': '1',

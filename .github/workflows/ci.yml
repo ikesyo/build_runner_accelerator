@@ -66,7 +66,13 @@ jobs:
               fi
               dart analyze --fatal-infos lib bin test tool
               dart run build_runner --help
-              dart test --compiler='${{ matrix.compiler }}'
+              test_kernel_dir="$RUNNER_TEMP/test-kernels"
+              mkdir -p "$test_kernel_dir"
+              for helper in asset_deps_cache_process reset_directives_worker; do
+                dart compile kernel "test/$helper.dart" -o "$test_kernel_dir/$helper.dill"
+              done
+              BUILD_RUNNER_ACCELERATOR_TEST_KERNEL_DIR="$test_kernel_dir" \
+                dart test --compiler='${{ matrix.compiler }}'
               if [[ '${{ matrix.resolution }}' == upgrade ]]; then
                 dart pub publish --dry-run
               fi
@@ -443,7 +449,6 @@ jobs:
             run: |
               bash scripts/watch_smoke_freezed.sh
               PUB_GET_OFFLINE=1 bash scripts/correctness_empty_input_mapping.sh
-              python3 scripts/correctness_dependency_window.py --runner 2.15.3 --analyzer 14.5.0
 
   integration-lifecycle:
     name: 'Integration: lifecycle, publication, and workspace'
@@ -681,14 +686,20 @@ jobs:
               python3 scripts/distribution_e2e.py --dart "$(command -v dart)" --target '${{ matrix.target_id }}' \
                 --archive "dist/build_runner_accelerator-${{ matrix.target_id }}.$extension" \
                 --results 'distribution-results/${{ matrix.target_id }}'
-          - name: Runner 2.17.1 normal-builder AOT lifecycle
-            if: matrix.target_id == 'macos-arm64'
+          - name: Normal-builder AOT lifecycle or runner 2.15.3 / Analyzer 14.5
+            if: matrix.target_id == 'macos-arm64' || matrix.target_id == 'linux-x64'
             shell: bash
             run: |
-              BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
-                DART_BIN="$(command -v dart)" \
-                python3 scripts/correctness_sdk.py --resolution upgrade --runner 2.17.1 --worker-mode aot \
-                --results "$RUNNER_TEMP/runner-2.17.1-aot"
+              if [[ '${{ matrix.target_id }}' == macos-arm64 ]]; then
+                BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
+                  DART_BIN="$(command -v dart)" \
+                  python3 scripts/correctness_sdk.py --resolution upgrade --runner 2.17.1 --worker-mode aot \
+                  --results "$RUNNER_TEMP/runner-2.17.1-aot"
+              else
+                python3 scripts/correctness_dependency_window.py \
+                  --frontend "$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
+                  --runner 2.15.3 --analyzer 14.5.0
+              fi
           - name: Shared-part AOT lifecycle
             if: matrix.target_id == 'linux-x64'
             shell: bash

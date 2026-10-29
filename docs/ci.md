@@ -55,6 +55,14 @@ resolution retains source compilation: its frontend_server_client 3.2 expects
 `frontend_server.dart.snapshot`, which Dart 3.11 no longer ships. Integration
 workers still exercise real JIT/AOT modes. Native distribution's cross-platform
 cache probes retain source compilation.
+The two Analyzer-heavy subprocess helpers are compiled to SDK-local kernel
+files once per package job and reused by their process tests. This removes
+repeated source compilation from the tests' unchanged 30-second deadlines.
+Local runs without the helper-directory environment variable keep source mode.
+The readiness-marker test also publishes its JSON atomically, matching the
+real publisher rather than racing an asynchronous read against file truncation.
+The older-runner/Analyzer 14.5 comparison reuses the Linux release frontend in
+the fourth native parallel lane, keeping it off the code-generator critical path.
 
 Compiler lanes have at most one compiler probe; shorter watch lanes also host
 output-policy API/mode checks, and built_value follows DDC lifecycle. Mapping
