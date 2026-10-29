@@ -249,7 +249,7 @@ jobs:
       - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          for fixture in settings_builder_app build_filter_app json_serializable_app arbitrary_builder_app; do
+          for fixture in settings_builder_app json_serializable_app arbitrary_builder_app; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
@@ -259,13 +259,12 @@ jobs:
               SETTINGS_CASE_GROUP=values bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-default bash scripts/correctness_settings.sh
               PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_builder.sh
-          - name: Compact flags, reserved/topology watch, and nested recovery
+          - name: Compact flags and reserved/topology watch
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=compact bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-reserved bash scripts/correctness_settings.sh
               SETTINGS_CASE_GROUP=watch-topology bash scripts/correctness_settings.sh
-              NESTED_PACKAGE_CASE_GROUP=recovery-actions bash scripts/correctness_nested_packages.sh
           - name: Config paths and normalized dot/ancestor watch
             shell: bash
             run: |
@@ -297,7 +296,7 @@ jobs:
       - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          for fixture in settings_builder_app trigger_builder_app post_process_builder_app; do
+          for fixture in settings_builder_app trigger_builder_app post_process_builder_app build_filter_app; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
@@ -312,10 +311,11 @@ jobs:
             run: |
               SETTINGS_CASE_GROUP=precedence bash scripts/correctness_settings.sh
               bash scripts/correctness_post_process_builder.sh
-          - name: JIT/AOT compile and publication recovery
+          - name: JIT/AOT compile, publication, and nested recovery
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=compile bash scripts/correctness_settings.sh
+              NESTED_PACKAGE_CASE_GROUP=recovery-actions bash scripts/correctness_nested_packages.sh
           - name: Trigger lifecycle and named/backslash watch
             shell: bash
             run: |

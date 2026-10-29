@@ -448,9 +448,11 @@ def configuration_errors(reference, native, compile_flag='--force-aot'):
                  ['-rcnamed'], ['-rd=1'], ['--define=:settings=x=1',
                    '--define=settings_builder_app|settings=x=2']]
     for flags in bad_cases:
-        code, _ = execute(stock(reference, [*flags, compile_flag]), reference)
+        # A trailing option must remain missing its value. Appending the mode
+        # turns `--config` into a valid request for build.--force-aot.yaml.
+        code, _ = execute(stock(reference, [compile_flag, *flags]), reference)
         assert code != 0, flags
-        actual, _ = execute(launcher(native, flags=[*flags, compile_flag]), native)
+        actual, _ = execute(launcher(native, flags=[compile_flag, *flags]), native)
         assert actual != 0, flags
     # Unknown builder is a stock warning, not an enabling switch.
     output = check(reference, native, ['--define=absent=x=42'], compile_flag=compile_flag)
