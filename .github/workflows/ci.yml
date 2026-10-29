@@ -573,7 +573,7 @@ jobs:
           ${{ fromJSON(github.event_name == 'pull_request' && '[
             {
               "target_id": "macos-arm64",
-              "runs_on": "macos-14",
+              "runs_on": "macos-15",
               "rust_target": "aarch64-apple-darwin"
             },
             {
@@ -589,7 +589,7 @@ jobs:
           ]' || '[
             {
               "target_id": "macos-arm64",
-              "runs_on": "macos-14",
+              "runs_on": "macos-15",
               "rust_target": "aarch64-apple-darwin"
             },
             {

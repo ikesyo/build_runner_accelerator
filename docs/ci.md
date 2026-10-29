@@ -56,6 +56,9 @@ Monday 03:23 UTC schedule. Those events expand to 18 CI jobs and exercise all
 five release targets. The release workflow retains its five-target gate.
 This deliberately defers architecture-specific packaging regressions on those
 two targets until main; OS-specific packaging remains a PR check.
+macOS uses the pinned `macos-15` image in CI and release builds. The former
+`macos-14` image is in its October 29 brownout and retires November 2, 2026;
+see the [runner image announcement](https://github.com/actions/runner-images/issues/13518).
 
 ## Timing evidence
 

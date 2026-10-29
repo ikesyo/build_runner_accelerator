@@ -99,7 +99,7 @@ jobs:
       matrix:
         include:
           - target_id: macos-arm64
-            runs_on: macos-14
+            runs_on: macos-15
             rust_target: aarch64-apple-darwin
             archive: tar.gz
           - target_id: linux-x64
