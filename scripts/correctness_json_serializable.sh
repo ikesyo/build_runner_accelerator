@@ -78,8 +78,14 @@ is_known_case() {
   return 1
 }
 
-if [[ "$case_filter" == all ]]; then
-  selected_case_names=("${known_case_names[@]}")
+if [[ "$case_filter" == all || "$case_filter" == shared-baseline ]]; then
+  for known_case in "${known_case_names[@]}"; do
+    # This case creates its own clean roots and never uses the shared snapshot.
+    if [[ "$case_filter" == shared-baseline && "$known_case" == conditional-dependency ]]; then
+      continue
+    fi
+    selected_case_names+=("$known_case")
+  done
 else
   requested_case_names=()
   [[ "$case_filter" != *, ]] || fail 'CASE_FILTER contains an empty case'

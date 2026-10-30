@@ -104,6 +104,11 @@ runs:
         # it is not present when setup-dart is nested in this local action.
         problem-matcher: false
 
+    - name: Restore the shared Pub cache after SDK setup
+      shell: bash
+      run: |
+        printf 'PUB_CACHE=%s/.pub-cache\n' "$GITHUB_WORKSPACE" >>"$GITHUB_ENV"
+
     - name: Resolve Dart worker dependencies
       shell: bash
       env:

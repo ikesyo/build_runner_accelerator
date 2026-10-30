@@ -17,9 +17,19 @@ void main() {
   });
   tearDown(() => temporary.deleteSync(recursive: true));
 
-  void ready() => marker.writeAsStringSync(
-    jsonEncode({'state': 'ready', 'source': 'worker', 'path': executable.path}),
-  );
+  void ready() {
+    // Match the real publisher: readers must see complete pending/ready JSON,
+    // never a truncated file while an asynchronous read is in flight.
+    final next = File('${marker.path}.tmp')
+      ..writeAsStringSync(
+        jsonEncode({
+          'state': 'ready',
+          'source': 'worker',
+          'path': executable.path,
+        }),
+      );
+    next.renameSync(marker.path);
+  }
 
   test(
     'waits for the invocation marker then checks exact source contents',

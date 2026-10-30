@@ -414,6 +414,18 @@ def implementation_sources_boundary(tmp):
     print('nested-packages: PASS implementation-directory input boundary', flush=True)
 
 
+def recovery_cases(tmp, selected='all'):
+    cases = {
+        'failure-cancel': partial(failure_and_cancel, tmp),
+        'builder-transition': partial(builder_transition, tmp),
+    }
+    if selected == 'all':
+        return tuple(cases.values())
+    if selected not in cases:
+        raise ValueError(f'unknown NESTED_PACKAGE_RECOVERY_CASE: {selected}')
+    return (cases[selected],)
+
+
 def case_groups(tmp):
     return {
         'default-on': (partial(lifecycle, tmp, 'default', True, 'cache'),),
@@ -424,7 +436,7 @@ def case_groups(tmp):
         'glob': (partial(dependency_glob, tmp),),
         'boundary': (partial(implementation_sources_boundary, tmp),),
         'recovery-state': tuple(partial(obsolete_state, tmp, location) for location in ('cache', 'source')),
-        'recovery-actions': (partial(failure_and_cancel, tmp), partial(builder_transition, tmp)),
+        'recovery-actions': recovery_cases(tmp, os.environ.get('NESTED_PACKAGE_RECOVERY_CASE', 'all')),
         'watch-native': (partial(watch_lifecycle, tmp, input_path='dep/lib/build/.new.txt'),
                          partial(watch_lifecycle, tmp, 'lib/**')),
         'watch-boundary': (partial(watch_lifecycle, tmp, 'overlap', overlap=True),

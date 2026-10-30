@@ -8,9 +8,15 @@ import 'package:analyzer/src/clients/build_resolvers/build_resolvers.dart'
 import 'package:analyzer/src/generated/engine.dart' show AnalysisOptionsBuilder;
 
 /// Creates identical feature configuration for worker and prewarm analysis.
-AnalysisOptionsImpl workerAnalysisOptions(FeatureSet features) =>
-    (AnalysisOptionsBuilder()
-          ..contextFeatures = features as ExperimentStatus
-          // Older builders do not synchronize this with contextFeatures.
-          ..nonPackageFeatureSet = features)
-        .build();
+AnalysisOptionsImpl workerAnalysisOptions(FeatureSet features) {
+  final builder = AnalysisOptionsBuilder()
+    ..contextFeatures = features as ExperimentStatus;
+  try {
+    // Older builders need both fields. Analyzer 14.7 removed this field and
+    // uses contextFeatures for files outside packages as well.
+    (builder as dynamic).nonPackageFeatureSet = features;
+  } on NoSuchMethodError {
+    // contextFeatures above is the sole feature set on Analyzer 14.7+.
+  }
+  return builder.build();
+}

@@ -3,6 +3,11 @@ import 'dart:io';
 import 'package:test/test.dart';
 
 void main() {
+  final kernelDirectory =
+      Platform.environment['BUILD_RUNNER_ACCELERATOR_TEST_KERNEL_DIR'];
+  final helper = kernelDirectory == null
+      ? 'test/asset_deps_cache_process.dart'
+      : '$kernelDirectory/asset_deps_cache_process.dill';
   for (final packed in ['0', '1']) {
     test(
       'directive cache is packed despite retired PACKED_STORE=$packed',
@@ -13,7 +18,7 @@ void main() {
           Platform.resolvedExecutable,
           [
             '--packages=${File('.dart_tool/package_config.json').absolute.path}',
-            'test/asset_deps_cache_process.dart',
+            helper,
           ],
           environment: {
             'BUILD_RUNNER_ACCELERATOR_CACHE': dir.path,
@@ -47,7 +52,7 @@ void main() {
       Platform.resolvedExecutable,
       [
         '--packages=${File('.dart_tool/package_config.json').absolute.path}',
-        'test/asset_deps_cache_process.dart',
+        helper,
         'disabled',
       ],
       environment: {
@@ -71,7 +76,7 @@ void main() {
         Platform.resolvedExecutable,
         [
           '--packages=${File('.dart_tool/package_config.json').absolute.path}',
-          'test/asset_deps_cache_process.dart',
+          helper,
           'unavailable',
         ],
         environment: {

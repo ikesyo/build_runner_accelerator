@@ -92,18 +92,25 @@ separate from behavioral expectations. CI configuration is maintained in
 [ci.yml](../.github/workflows/ci.yml); prefer parallel steps within existing jobs.
 Watch logs and builder histories must stay outside watched workspaces.
 
+PR CI has a 16-job budget, reserving four runner slots for CodeQL and other
+checks. The integration suites retain their cases within eleven jobs, with at
+most four parallel lanes per job. See [CI principles](ci.md)
+for coverage and scheduling rules, including the main/scheduled architecture checks.
+
 ## SDK lifecycle comparison
 
 The existing SDK/dependency jobs run both package analysis/tests and a real
 worker comparison. These cover different boundaries: `build_runner --help`
 does not initialize the native worker or resolve a Dart input library.
-The minimum SDK overlaps package checks with the pinned-runner/shared-part
-JIT comparisons. The latest SDK runs package checks followed by its
-normal-builder lifecycle comparison. AOT comparisons reuse the installed SDK
-and release frontend in the existing native-build jobs: pinned runner 2.17.1
-on Linux x64 and shared parts on Linux ARM64. Each probe uses a separate
-workspace under `RUNNER_TEMP`, keeping comparison files outside the publish
-package and AOT compilation off the package-test runner.
+Both SDKs overlap package checks with normal-builder lifecycle comparisons.
+The minimum SDK also runs pinned-runner and shared-part JIT comparisons in
+separate lanes. AOT comparisons reuse the installed SDK and release frontend
+in the macOS ARM64 native-build job: pinned runner 2.17.1 and shared parts.
+Each probe uses a separate workspace under `RUNNER_TEMP`, keeping comparison
+files outside the publish package and AOT compilation off the package-test runner.
+
+The Linux x64 native-build job runs the runner 2.15.3 / Analyzer 14.5
+dependency-window and JSON conditional-dependency checks.
 
 Run the same comparison locally with an installed SDK:
 
@@ -146,7 +153,7 @@ claim that the unmodified older stock runner works on that Analyzer.
 The comparison checks generation, incremental reuse, failure/recovery, AOT and
 watch behavior, including legacy retention and upgrading to the repair default.
 Application configuration and upstream resolver sources must remain unchanged.
-Cases share the existing trigger, arbitrary-builder and output-policy CI jobs.
+Cases share existing SDK, filter, native-build and output-policy CI jobs.
 See [ADR 0042](adr/0042-runner-resolver-compatibility.md) for the design and the
 [compatibility contract](launcher-and-release.md#supported-dependencies) for
 current ranges and limits.
