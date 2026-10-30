@@ -80,8 +80,11 @@ to select the version used by CI. Commit the generated lockfile with the workflo
 never edit it by hand. `gh actions-lock --verify-local` checks coverage offline,
 while CI uses `--verify` to check upstream provenance as well. Verification runs
 once in the current-SDK package job without adding runners to the CI budget.
-Dependabot checks Actions weekly and maintains existing lockfile entries with
-version updates; new workflows still need to be onboarded with the CLI.
+Dependabot checks workflow files and composite actions under `.github/actions/*`
+weekly and maintains existing lockfile entries with version updates. If an
+update leaves the lockfile stale, run `gh actions-lock` and commit the regenerated
+file; the CI verification step checks it without writing changes. New workflows
+still need to be onboarded with the CLI.
 
 Review changed commits as dependency updates. Investigate changes to `owner_id`
 or `repo_id`, which indicate a different source repository identity. Advancing a
