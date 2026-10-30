@@ -86,7 +86,7 @@ runs:
         )
         printf 'digest=%s\n' "$digest" >>"$GITHUB_OUTPUT"
 
-    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    - uses: actions/cache@v6.1.0
       with:
         path: |
           .pub-cache
@@ -97,7 +97,7 @@ runs:
         restore-keys: |
           worker-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ steps.versions.outputs.rust }}-
 
-    - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+    - uses: dart-lang/setup-dart@v1.8.1
       with:
         sdk: ${{ steps.versions.outputs.dart }}
         # The matcher file is relative to setup-dart's own action directory;

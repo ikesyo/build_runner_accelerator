@@ -40,11 +40,11 @@ jobs:
           - sdk: '3.13.3'
             resolution: upgrade
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+      - uses: dart-lang/setup-dart@v1.8.1
         with:
           sdk: ${{ matrix.sdk }}
       - name: Dart package checks
@@ -71,7 +71,7 @@ jobs:
     name: Rust unit tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -123,7 +123,7 @@ jobs:
       RUST_TARGET: ${{ matrix.rust_target }}
       TARGET_ID: ${{ matrix.target_id }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -156,7 +156,7 @@ jobs:
           if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
           "$binary" --version
           "$binary" --help
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+      - uses: dart-lang/setup-dart@v1.8.1
         with:
           sdk: '3.13.3'
       - name: Package archive and verify Dart-only consumer
@@ -169,7 +169,7 @@ jobs:
           python3 scripts/distribution_e2e.py --dart "$(command -v dart)" --target "$TARGET_ID" \
             --archive "build_runner_accelerator-$TARGET_ID.${{ matrix.archive }}" \
             --results "distribution-results/$TARGET_ID"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: distribution-release-${{ matrix.target_id }}
@@ -178,11 +178,11 @@ jobs:
       # Attest the final archive in its producer job, before lossless job transfer.
       # No step after this may rewrite/repack the archive.
       - name: Attest native archive
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        uses: actions/attest@v4.2.2
         with:
           subject-path: build_runner_accelerator-${{ matrix.target_id }}.${{ matrix.archive }}
           create-storage-record: false
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: release-${{ matrix.target_id }}
           path: build_runner_accelerator-${{ matrix.target_id }}.${{ matrix.archive }}
@@ -199,11 +199,11 @@ jobs:
       attestations: write
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@v8.0.1
         with:
           pattern: release-*
           path: dist
@@ -216,7 +216,7 @@ jobs:
         run: |
           python3 .github/scripts/check_release_source.py
           cp release-source.json dist/release-source.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: release-source
           path: release-source.json
@@ -266,7 +266,7 @@ jobs:
           openssl pkeyutl -sign -rawin -inkey signing-key.pem \
             -in dist/SHA256SUMS -out dist/SHA256SUMS.sig
           rm -f signing-key.pem
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+      - uses: dart-lang/setup-dart@v1.8.1
         with:
           sdk: '3.13.3'
       - name: Verify all final signed artifacts before publication
@@ -278,13 +278,13 @@ jobs:
           python3 scripts/distribution_e2e.py "${test_key_args[@]}" --dart "$(command -v dart)" --target linux-x64 \
             --archive dist/build_runner_accelerator-linux-x64.tar.gz --signed-dist dist --verify-install-only \
             --results distribution-results/production
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: distribution-production
           path: distribution-results/production
           if-no-files-found: warn
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v7.0.1
         if: env.RELEASE_DRY_RUN == 'true'
         with:
           name: dry-run-signed-distribution
@@ -292,7 +292,7 @@ jobs:
           if-no-files-found: error
       # Signing and final consumer checks above leave these subject bytes unchanged.
       - name: Attest release manifest
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        uses: actions/attest@v4.2.2
         with:
           subject-path: dist/release-manifest.json
           create-storage-record: false
@@ -340,7 +340,7 @@ jobs:
             --results attestation-results/after-publication
       - name: Retain attestation verification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: release-attestation-verification
           path: attestation-results
@@ -352,6 +352,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
     permissions:
       id-token: write
-    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    # Reusable workflow calls are not covered by actions.lock.
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
     with:
       environment: pub.dev
