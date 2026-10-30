@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.17.1](https://github.com/ikesyo/build_runner_accelerator/compare/v0.17.0...v0.17.1) - 2026-10-30
+
+- Fix compatibility with Analyzer 14.7.0 by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/150
+- Cut PR CI from 32 to 16 jobs and reduce repeated validation by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/150
+
 ## [v0.17.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.16.1...v0.17.0) - 2026-10-29
 
 - Support build_runner 2.17.1 dependency resolutions by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/140
