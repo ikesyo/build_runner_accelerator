@@ -9,8 +9,8 @@ pub(crate) struct WorkspaceLock {
     _files: Vec<LockedFile>,
 }
 
-/// Coordinates workspace builds with prewarm/cache-key commands without
-/// preventing those commands from overlapping ordinary single-package builds.
+/// Coordinates workspace builds with prewarm while allowing prewarm to overlap
+/// ordinary single-package builds.
 pub(crate) struct WorkspaceCoordination {
     _file: LockedFile,
 }
@@ -47,9 +47,9 @@ impl WorkspaceCoordination {
             std::fs::TryLockError::WouldBlock => io::Error::new(
                 io::ErrorKind::WouldBlock,
                 if exclusive {
-                    "workspace build conflicts with a running prewarm or cache-key command"
+                    "workspace build conflicts with a running prewarm"
                 } else {
-                    "prewarm or cache-key command conflicts with a running workspace build"
+                    "prewarm conflicts with a running workspace build"
                 },
             ),
             std::fs::TryLockError::Error(error) => error,

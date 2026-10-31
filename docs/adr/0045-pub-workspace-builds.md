@@ -21,11 +21,11 @@ locks. Use the same lock files as individual native builds; failure to acquire
 any lock releases all acquired locks. Stock processes still require external
 serialization as in ADR 0040.
 
-Workspace execution also holds an exclusive coordination lock against prewarm
-and cache-key commands, which take a shared coordination lock. Those commands
-can still overlap ordinary individual-package builds. After workspace state
-exists, individual prewarm and cache-key commands require the same scope reset
-as an individual build, so they cannot replace the workspace worker catalog.
+Workspace execution also holds an exclusive coordination lock against prewarm,
+which takes a shared coordination lock and can still overlap ordinary
+individual-package builds. After workspace state exists, individual prewarm
+requires the same scope reset as an individual build, so it cannot replace
+the workspace worker catalog.
 
 Keep the workspace graph and undo journal at the Pub workspace root. Before
 workspace execution, reject existing individual native graphs or unfinished

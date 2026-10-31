@@ -101,7 +101,7 @@ PY
   if [[ "$scope" == member ]]; then
     grep -Fq 'native workspace writer lock is already held for ' "$temporary/native-locked-member.log" || fail 'wrong member-lock rejection'
   else
-    grep -Fq 'workspace build conflicts with a running prewarm or cache-key command' "$temporary/native-locked-coordination.log" || fail 'wrong coordination-lock rejection'
+    grep -Fq 'workspace build conflicts with a running prewarm' "$temporary/native-locked-coordination.log" || fail 'wrong coordination-lock rejection'
   fi
   cmp "$temporary/locked.graph" "$native/.dart_tool/build_runner_accelerator/graph-v3.bin" || fail "$scope lock conflict changed graph"
   touch "$release"

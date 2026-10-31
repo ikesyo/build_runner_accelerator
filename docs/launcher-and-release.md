@@ -55,13 +55,6 @@ real Resolver-based generation and incremental/watch behavior in addition to
 package analysis/tests. Distribution and interrupted-publication tests remain
 separate gates, so SDK coverage does not imply all platform/SDK combinations.
 
-The former `aot-cache-key` command was removed before 1.0. Use `prewarm` to
-prepare caches. For CI, restore the cache directory selected by
-`BUILD_RUNNER_ACCELERATOR_CACHE` using a provider-managed key that includes
-OS/architecture, SDK, resolved dependencies and relevant source changes.
-Build and prewarm validate restored artifacts and regenerate stale entries;
-the internal AOT key and metadata are not public APIs.
-
 ## Supported dependencies
 
 The release line supports Dart >=3.11.0 <4.0.0. CI checks a minimum solution
@@ -271,6 +264,16 @@ prevents duplicate worker AOT compiles. Prewarm runs no build actions. It fails
 explicitly when native execution is unavailable or unsupported. Filters and other
 build-only arguments are rejected. Set `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` to
 skip its analysis sweep.
+
+### CI caches
+
+Restore the cache directory selected by `BUILD_RUNNER_ACCELERATOR_CACHE`
+before running foreground `prewarm` or `build`, then save it using your CI
+provider. Include OS/architecture, package version, SDK, resolved dependencies
+and relevant source changes in the provider's cache key. The cache holds both
+worker AOT artifacts and analyzer entries; no accelerator key command is needed.
+Build and prewarm validate restored artifacts and regenerate stale entries.
+Internal keys, metadata and cache layouts are not public persistence APIs.
 
 ## Binary selection and integrity
 
