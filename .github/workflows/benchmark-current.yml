@@ -169,7 +169,7 @@ jobs:
               with open(summary_path, "a", encoding="utf-8") as stream:
                   stream.write(summary)
           PY
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         if: ${{ always() }}
         with:
           name: benchmark-current-${{ matrix.id }}
@@ -254,7 +254,7 @@ jobs:
           print(report)
           PY
           cat benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: benchmark-current-report
           path: benchmark-report.md
