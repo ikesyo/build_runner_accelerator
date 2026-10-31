@@ -58,7 +58,8 @@ options likewise remain on stock. The README table is the public scope.
 Leading help/version describe the accelerator. Command-level help/version are
 stock requests. Accelerator parsing stops at `--`. Prewarm and its alias retain
 their no-op Dart/unavailable-auto contract but reject stock-only arguments.
-Aot-cache-key remains a native-only utility, never a fabricated stock command.
+At the time, `aot-cache-key` was a native-only utility. It was removed before
+1.0; see [ADR 0012](0012-machine-wide-cache.md#consequences).
 
 Direct stock execution on Unix uses a small source/AOT launcher re-entry that
 creates a session and execs the selected Dart command. This preserves its PID,

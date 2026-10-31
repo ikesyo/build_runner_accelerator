@@ -150,26 +150,6 @@ pub(crate) fn resolve_worker_artifact(
     }
 }
 
-pub(crate) fn worker_aot_cache_key(
-    workspace: &Workspace,
-    dart_binary: &str,
-    worker_executable: &str,
-) -> io::Result<String> {
-    let root = &workspace.root;
-    let worker_path = absolute_worker_path(root, Path::new(worker_executable))?;
-    if !is_dart_source(worker_executable) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "AOT prewarm requires a Dart worker source: {}",
-                worker_path.display()
-            ),
-        ));
-    }
-    let sdk_root = dart_sdk_root(dart_binary)?;
-    aot_cache_key(workspace, &worker_path, &sdk_root)
-}
-
 pub(crate) fn prewarm_worker_aot(
     workspace: &Workspace,
     dart_binary: &str,
@@ -940,7 +920,11 @@ fn background_aot_lock_is_stale(path: &Path) -> bool {
         .is_ok_and(|age| age > BACKGROUND_AOT_LOCK_MAX_AGE)
 }
 
-fn aot_cache_key(workspace: &Workspace, worker_path: &Path, sdk_root: &Path) -> io::Result<String> {
+pub(crate) fn aot_cache_key(
+    workspace: &Workspace,
+    worker_path: &Path,
+    sdk_root: &Path,
+) -> io::Result<String> {
     let (sdk_version, allowed_experiments) = aot_sdk_identity(sdk_root)?;
     let manifest = workspace.builder_manifest_fingerprint()?;
     let lock = digest_optional_file(&workspace.root.join("pubspec.lock"))?;

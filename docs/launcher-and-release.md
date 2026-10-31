@@ -105,7 +105,7 @@ accelerator and do not require a native binary.
 
 `help`, `--help` and `-h` show the command overview. Use `help build` or
 `build --help` (also `-h`) for command-specific options; the same forms work
-for `watch`, `prewarm` and `aot-cache-key`. Help is handled by the Dart launcher
+for `watch` and `prewarm`. Help is handled by the Dart launcher
 without downloading a frontend, starting a worker or creating build state.
 Omitting the command still runs `build`.
 
@@ -123,7 +123,6 @@ The launcher recognizes these options:
 | `--enable-experiment NAME` | Enable Dart language experiments in generated workers; repeat or comma-separate. Shared-part imports require `enhanced-parts`. |
 | `--delete-conflicting-outputs`, `-d` | Accepted retired flags throughout the supported runner window; they have no effect and are never added automatically. |
 | `prewarm [--background]` | Prepare caches without running builders. |
-| `aot-cache-key` | Print a native worker cache key; no stock equivalent. |
 
 Unsupported commands and options fail before native download or workspace
 setup. Configuration values retain their token boundaries, even when they
@@ -168,7 +167,7 @@ dependencies and phase barriers are preserved, and outputs plus graph are
 published only after all actions succeed. See [ADR 0046](adr/0046-workspace-action-scheduler.md).
 Switching between workspace and individual-package builds, or changing the set
 of output packages, requires the [state reset](compatibility-cleanup.md#safe-recovery).
-Individual-package prewarm and cache-key commands also require that reset after
+Individual-package prewarm also requires that reset after
 a workspace build.
 If a background worker compilation lock exists in an output package, the
 workspace build fails; wait for compilation to finish before retrying.
@@ -265,6 +264,16 @@ prevents duplicate worker AOT compiles. Prewarm runs no build actions. It fails
 explicitly when native execution is unavailable or unsupported. Filters and other
 build-only arguments are rejected. Set `BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM=0` to
 skip its analysis sweep.
+
+### CI caches
+
+Restore the cache directory selected by `BUILD_RUNNER_ACCELERATOR_CACHE`
+before running foreground `prewarm` or `build`, then save it using your CI
+provider. Include OS/architecture, package version, SDK, resolved dependencies
+and relevant source changes in the provider's cache key. The cache holds both
+worker AOT artifacts and analyzer entries; no accelerator key command is needed.
+Build and prewarm validate restored artifacts and regenerate stale entries.
+Internal keys, metadata and cache layouts are not public persistence APIs.
 
 ## Binary selection and integrity
 

@@ -33,6 +33,7 @@ stock execution, especially when keeping manually modified outputs.
 
 | Retired behavior | Update |
 | --- | --- |
+| `aot-cache-key` command and `scripts/aot_cache_key.sh` | Removed before 1.0. Use `prewarm` to prepare caches and provider-managed keys for [CI cache restore/save](launcher-and-release.md#ci-caches). Internal AOT key calculation and validation remain automatic. |
 | `aot-prewarm` alias | Use `prewarm`. The alias is rejected; it is not forwarded to stock. |
 | `BUILD_RUNNER_ACCELERATOR_PACKED_STORE` | Remove it. All values, including `0`, are ignored; both shared stores are packed-only. Use `BYTE_STORE=0`, `DEP_CACHE=0`, or a fresh `CACHE` directory for diagnosis. These names have the `BUILD_RUNNER_ACCELERATOR_` prefix. |
 | Older internal worker artifacts/messages | Update the preinstalled frontend with the package and remove internal `--worker` or artifact overrides. The package regenerates its worker as needed. Required IPC fields and matching versions are checked as specified in [protocol/v1.md](../protocol/v1.md). |

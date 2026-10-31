@@ -41,10 +41,6 @@ Prepares caches without running builders. Build filters, output policies and
 workspace builds are unsupported.
 ''',
       );
-    case 'aot-cache-key':
-      buffer.writeln(
-        '\nPrints the native worker cache key without running builders.',
-      );
   }
   buffer.write('''
 Unsupported requests fail; stock build_runner is never started.
@@ -61,7 +57,6 @@ const _descriptions = {
       'Builds the current package with the native frontend and a Dart worker.',
   'watch': 'Continuously builds the current package.',
   'prewarm': 'Prepares worker and analysis caches without running builders.',
-  'aot-cache-key': 'Prints the native worker cache key.',
 };
 
 const _globalOptions = '''  -h, --help             Print this usage information
@@ -99,7 +94,6 @@ Available commands:
   build          Builds the current package (default when omitted)
   watch          Continuously builds the current package
   prewarm        Prepares worker and analysis caches
-  aot-cache-key  Prints the native worker cache key
   help           Prints help for the accelerator or a command
 
 Run "build_runner_accelerator help <command>" for more information about a command.

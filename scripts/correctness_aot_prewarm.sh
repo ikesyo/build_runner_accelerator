@@ -110,9 +110,6 @@ fi
 setup_workspace "$workspace_a"
 setup_workspace "$workspace_b"
 
-key_a=$(DART_BIN="$dart_bin" BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" \
-  "$script_dir/aot_cache_key.sh" "$workspace_a") || fail 'cache key generation failed'
-[[ "$key_a" == build-runner-accelerator-aot-* ]] || fail 'cache key helper returned no key'
 run_runner "$workspace_a" "$prewarm_log" prewarm || fail 'AOT prewarm failed'
 
 generated_dir="$workspace_a/.dart_tool/build_runner_accelerator"
@@ -124,26 +121,6 @@ fi
 [[ -x "$aot_path" ]] || fail 'prewarm did not publish an executable'
 [[ -f "$aot_path.d" ]] || fail 'prewarm did not publish a depfile'
 [[ -f "$aot_path.sdk" ]] || fail 'prewarm did not publish SDK metadata'
-
-key_b=$(DART_BIN="$dart_bin" BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" \
-  "$script_dir/aot_cache_key.sh" "$workspace_b") || fail 'second cache key generation failed'
-[[ "$key_a" == "$key_b" ]] || fail 'relocated workspaces produced different cache keys'
-
-sdk_probe="$temporary_dir/sdk-probe"
-sdk_dir=$(resolve_toolchain_dart_sdk)
-[[ -n "$sdk_dir" ]] || fail 'could not resolve the Dart SDK root'
-mkdir -p "$sdk_probe/lib/_internal"
-cp "$sdk_dir/lib/_internal/allowed_experiments.json" \
-  "$sdk_probe/lib/_internal/allowed_experiments.json"
-cp "$sdk_dir/version" "$sdk_probe/version"
-sdk_key_a=$(DART_SDK="$sdk_probe" DART_BIN="$dart_bin" \
-  BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" "$script_dir/aot_cache_key.sh" "$workspace_a") || \
-  fail 'SDK identity probe key generation failed'
-printf '\nSDK identity probe\n' >>"$sdk_probe/version"
-sdk_key_b=$(DART_SDK="$sdk_probe" DART_BIN="$dart_bin" \
-  BUILD_RUNNER_ACCELERATOR_BIN="$fast_bin" "$script_dir/aot_cache_key.sh" "$workspace_a") || \
-  fail 'changed SDK identity probe key generation failed'
-[[ "$sdk_key_a" != "$sdk_key_b" ]] || fail 'SDK change did not change cache key'
 
 mkdir -p "$workspace_b/.dart_tool/build_runner_accelerator"
 cp -a "$workspace_a/.dart_tool/build_runner_accelerator/aot-sdk" \
@@ -168,6 +145,17 @@ run_runner "$workspace_b" "$build_log" build || fail 'cached AOT build failed'
 if grep -Fq 'Generated:' "$build_log"; then
   fail 'cached AOT build compiled the worker again'
 fi
+
+# Compare internal metadata after the relocated build has reused the artifact.
+# Cache identity is an implementation detail, not a public CLI command.
+python3 - "$aot_path.sdk" "$workspace_b/.dart_tool/build_runner_accelerator/aot-sdk/bin/$(basename "$aot_path").sdk" <<'PYKEY'
+import json
+import sys
+from pathlib import Path
+first = json.loads(Path(sys.argv[1]).read_text())["cache_key"]
+second = json.loads(Path(sys.argv[2]).read_text())["cache_key"]
+assert first == second, "relocated workspaces produced different cache keys"
+PYKEY
 
 printf '\n// AOT prewarm relocation probe\n' \
   >>"$workspace_b/.dart_tool/build_runner_accelerator/dynamic_worker.dart"
@@ -198,4 +186,4 @@ cmp "$temporary_dir/expected-worker.dart" \
   fail 'invalidation input was replaced before AOT validation'
 grep -Fq 'Generated:' "$build_log" || fail 'changed worker did not invalidate AOT cache'
 
-printf 'aot-prewarm: build-sync-compile=yes output-delete-recovery=yes compile-wait=yes cache-key-portable=yes cache-reuse=yes sdk-key-invalidation=yes invalidation=yes\n'
+printf 'aot-prewarm: build-sync-compile=yes output-delete-recovery=yes compile-wait=yes cache-key-portable=yes cache-reuse=yes invalidation=yes\n'

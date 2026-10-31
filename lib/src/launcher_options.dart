@@ -148,14 +148,12 @@ class LauncherOptions {
     }
 
     String? helpCommand;
-    const commands = {'build', 'watch', 'prewarm', 'aot-cache-key'};
+    const commands = {'build', 'watch', 'prewarm'};
     if (command == 'help') {
       showHelp = true;
       if (passthrough.length > 1 ||
           (passthrough.isNotEmpty && !commands.contains(passthrough.single))) {
-        throw const FormatException(
-          'Usage: help [build|watch|prewarm|aot-cache-key]',
-        );
+        throw const FormatException('Usage: help [build|watch|prewarm]');
       }
       helpCommand = passthrough.isEmpty ? null : passthrough.single;
     } else if (showHelp && commandSeen) {
