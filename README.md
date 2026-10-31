@@ -51,6 +51,14 @@ dart run build_runner_accelerator build
 dart run build_runner_accelerator watch
 ```
 
+List commands and inspect command-specific options with:
+
+```bash
+dart run build_runner_accelerator --help
+dart run build_runner_accelerator help build
+# Equivalent: dart run build_runner_accelerator build --help
+```
+
 To warm the worker before the first build, run this after pub get:
 
 ```bash
