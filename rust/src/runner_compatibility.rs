@@ -352,19 +352,15 @@ mod tests {
 
     #[test]
     fn aot_keys_reuse_only_the_supplied_prepared_workspace() {
-        use crate::worker_kernel::worker_aot_cache_key;
+        use crate::worker_kernel::aot_cache_key;
         use crate::workspace::Workspace;
 
         let first = Fixture::new();
         let second = Fixture::new();
         let sdk = first.0.join("sdk");
-        fs::create_dir_all(sdk.join("bin")).unwrap();
         fs::create_dir_all(sdk.join("lib/_internal")).unwrap();
-        fs::write(sdk.join("bin/dart"), "").unwrap();
         fs::write(sdk.join("version"), "test sdk").unwrap();
         fs::write(sdk.join("lib/_internal/allowed_experiments.json"), "{}").unwrap();
-        let dart = sdk.join("bin/dart");
-        let dart = dart.to_str().unwrap();
         for fixture in [&first, &second] {
             fs::write(fixture.0.join("worker.dart"), "void main() {}\n").unwrap();
         }
@@ -378,14 +374,26 @@ mod tests {
         let before = PREPARE_CALLS.get();
         let a = Workspace::load(first.0.clone()).unwrap();
         let b = Workspace::load(second.0.clone()).unwrap();
-        let key = worker_aot_cache_key(&a, dart, "worker.dart").unwrap();
-        assert_eq!(worker_aot_cache_key(&a, dart, "worker.dart").unwrap(), key);
-        assert_ne!(worker_aot_cache_key(&b, dart, "worker.dart").unwrap(), key);
+        let key = aot_cache_key(&a, &first.0.join("worker.dart"), &sdk).unwrap();
+        assert_eq!(
+            aot_cache_key(&a, &first.0.join("worker.dart"), &sdk).unwrap(),
+            key
+        );
+        assert_ne!(
+            aot_cache_key(&b, &second.0.join("worker.dart"), &sdk).unwrap(),
+            key
+        );
         fs::write(sdk.join("version"), "changed sdk").unwrap();
-        assert_ne!(worker_aot_cache_key(&a, dart, "worker.dart").unwrap(), key);
+        assert_ne!(
+            aot_cache_key(&a, &first.0.join("worker.dart"), &sdk).unwrap(),
+            key
+        );
         fs::write(sdk.join("version"), "test sdk").unwrap();
         fs::write(sdk.join("lib/_internal/allowed_experiments.json"), "[]").unwrap();
-        assert_ne!(worker_aot_cache_key(&a, dart, "worker.dart").unwrap(), key);
+        assert_ne!(
+            aot_cache_key(&a, &first.0.join("worker.dart"), &sdk).unwrap(),
+            key
+        );
         assert_eq!(PREPARE_CALLS.get(), before + 2);
         let dependency = format!("package:build_runner:{RESOLVER}");
         let original_copy = a.resolve_logical_dependency(&dependency).unwrap();
