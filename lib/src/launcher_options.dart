@@ -13,6 +13,7 @@ class LauncherOptions {
     required this.config,
     required this.showHelp,
     required this.showVersion,
+    required this.helpCommand,
   });
 
   factory LauncherOptions.parse(List<String> arguments) {
@@ -146,6 +147,24 @@ class LauncherOptions {
       }
     }
 
+    String? helpCommand;
+    const commands = {'build', 'watch', 'prewarm', 'aot-cache-key'};
+    if (command == 'help') {
+      showHelp = true;
+      if (passthrough.length > 1 ||
+          (passthrough.isNotEmpty && !commands.contains(passthrough.single))) {
+        throw const FormatException(
+          'Usage: help [build|watch|prewarm|aot-cache-key]',
+        );
+      }
+      helpCommand = passthrough.isEmpty ? null : passthrough.single;
+    } else if (showHelp && commandSeen) {
+      if (!commands.contains(command)) {
+        throw FormatException('Unsupported command: $command');
+      }
+      helpCommand = command;
+    }
+
     if (rustArguments.contains('--background') && command != 'prewarm') {
       throw FormatException('--background is only supported with prewarm');
     }
@@ -166,12 +185,7 @@ class LauncherOptions {
     rustArguments.addAll(['--root', root, '--dart', dartBinary]);
     String? config;
     if (!showHelp && !showVersion) {
-      if (!const {
-        'build',
-        'watch',
-        'prewarm',
-        'aot-cache-key',
-      }.contains(command)) {
+      if (!commands.contains(command)) {
         throw FormatException(
           'Unsupported command: $command; run dart run build_runner directly if needed',
         );
@@ -209,6 +223,7 @@ class LauncherOptions {
       config: config,
       showHelp: showHelp,
       showVersion: showVersion,
+      helpCommand: helpCommand,
     );
   }
 
@@ -219,6 +234,7 @@ class LauncherOptions {
   final String? config;
   final bool showHelp;
   final bool showVersion;
+  final String? helpCommand;
 }
 
 /// The Dart SDK executable to default to.

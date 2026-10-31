@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'frontend_binary_resolver.dart';
 import 'launcher_options.dart';
+import 'launcher_help.dart';
 import 'manifest/settings.dart';
 import 'launcher_process.dart';
 
@@ -12,7 +13,7 @@ export 'launcher_options.dart' show LauncherOptions;
 Future<int> runLauncher(List<String> arguments) async {
   final options = LauncherOptions.parse(arguments);
   if (options.showHelp) {
-    stdout.write(launcherHelp);
+    stdout.write(launcherHelpFor(options.helpCommand));
     return 0;
   }
   if (options.showVersion) {
@@ -52,50 +53,3 @@ Future<int> runLauncher(List<String> arguments) async {
     options.root,
   );
 }
-
-const launcherHelp =
-    r'''build_runner_accelerator <build|watch|prewarm|aot-cache-key> [options]
-
-Run supported builders with the native frontend and a Dart worker.
-Unsupported requests and unavailable native binaries fail; stock build_runner
-is never started. Run dart run build_runner directly when stock is needed.
---mode was removed in 0.14.0; remove it from scripts and CI.
-
-  --root PATH            Workspace directory
-  --dart PATH            Dart SDK executable used by the worker
-  --jobs N               Worker count (positive integer)
-  --interval-ms N        Watch debounce interval (positive integer)
-  --force-aot            Force the AOT worker
-  --force-jit            Force the non-AOT worker
-  --release, --no-release, -r
-                         Select builder release settings
-  --config NAME, -c NAME Select build.<name>.yaml
-  --define BUILDER=OPTION=VALUE
-                         Override a builder option
-  --enable-experiment NAME Enable Dart language experiments; comma-separate
-  --build-filter PATTERN Select build/watch outputs; repeat or comma-separate
-  --only-check           Build-only verification; report I/M/U, exit 1 on differences
-  --keep-modified-outputs Build-only retention until the producer reruns
-  --workspace            Build all Pub workspace packages (supported subset)
-  --delete-conflicting-outputs, -d
-                         Accepted retired stock flags; no effect
-  --background           Detach prewarm (prewarm only)
-  --help, -h             Show accelerator help
-  --version              Show accelerator version
-
-Output policies are mutually exclusive and support the normal-builder demand
-subset. Watch after retained output history and retained digest/resolver API use
-are unsupported. Filter syntax, builder shapes and state transitions outside the
-validated subset fail before publishing outputs. Watch topology changes fail.
-Legacy stock output-policy history requires explicit recovery; see
-https://github.com/ikesyo/build_runner_accelerator/blob/main/docs/compatibility-cleanup.md#safe-recovery
-
-Workspace builds support non-optional normal and post-process builders without
-shared parts or trigger-only builders. Watch, filters, output policies, named
-configs and --define are unsupported with --workspace. Switching build scopes
-requires a state reset; see the recovery guide above.
-
---output, logging options, positional build directories and stock
-commands such as clean/serve/run/test/stop are unsupported. Use stock directly.
---worker is an internal test/diagnostic override, not a third-party extension API.
-''';

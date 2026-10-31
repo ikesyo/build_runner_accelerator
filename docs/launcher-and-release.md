@@ -103,6 +103,12 @@ arguments fail with migration guidance. Use `dart run build_runner` directly
 when stock is needed. Command-level and leading help/version describe the
 accelerator and do not require a native binary.
 
+`help`, `--help` and `-h` show the command overview. Use `help build` or
+`build --help` (also `-h`) for command-specific options; the same forms work
+for `watch`, `prewarm` and `aot-cache-key`. Help is handled by the Dart launcher
+without downloading a frontend, starting a worker or creating build state.
+Omitting the command still runs `build`.
+
 The launcher recognizes these options:
 
 | Option | Purpose |

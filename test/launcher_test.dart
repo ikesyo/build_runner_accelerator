@@ -7,6 +7,94 @@ import 'package:build_runner_accelerator/src/launcher_options.dart'
 import 'package:test/test.dart';
 
 void main() {
+  test('help forms select the overview or a command', () {
+    for (final args in [
+      <String>['help'],
+      ['--help'],
+      ['-h'],
+    ]) {
+      final options = LauncherOptions.parse(args);
+      expect(options.showHelp, isTrue);
+      expect(options.helpCommand, isNull);
+    }
+    for (final command in ['build', 'watch', 'prewarm', 'aot-cache-key']) {
+      for (final args in [
+        ['help', command],
+        [command, '--help'],
+        [command, '-h'],
+        ['--help', command],
+      ]) {
+        final options = LauncherOptions.parse(args);
+        expect(options.showHelp, isTrue);
+        expect(options.helpCommand, command);
+      }
+    }
+    expect(LauncherOptions.parse([]).command, 'build');
+    expect(LauncherOptions.parse([]).showHelp, isFalse);
+    for (final args in [
+      ['help', 'unknown'],
+      ['help', 'build', 'watch'],
+      ['unknown', '--help'],
+      ['help', '--', 'build'],
+    ]) {
+      expect(() => LauncherOptions.parse(args), throwsFormatException);
+    }
+  });
+
+  test(
+    'help works without a project or native binary and leaves no state',
+    () async {
+      final root = await Directory.systemTemp.createTemp('accelerator-help-');
+      addTearDown(() => root.delete(recursive: true));
+      final launcher = File('bin/build_runner_accelerator.dart').absolute.path;
+      final packages = File('.dart_tool/package_config.json').absolute.path;
+      Future<ProcessResult> help(List<String> arguments) => Process.run(
+        Platform.resolvedExecutable,
+        ['--packages=$packages', launcher, ...arguments],
+        workingDirectory: root.path,
+        environment: {
+          'BUILD_RUNNER_ACCELERATOR_BIN': '${root.path}/missing-native',
+        },
+      );
+      final overview = await help(['help']);
+      expect(overview.exitCode, 0, reason: '${overview.stderr}');
+      expect(overview.stdout, contains('Available commands:'));
+      expect(overview.stdout, isNot(contains('--build-filter')));
+      expect((await help(['--help'])).stdout, overview.stdout);
+      for (final command in ['build', 'watch', 'prewarm', 'aot-cache-key']) {
+        final result = await help(['help', command]);
+        expect(result.exitCode, 0, reason: '${result.stderr}');
+        expect(result.stderr, isEmpty);
+        expect(
+          result.stdout,
+          contains('Usage: build_runner_accelerator $command'),
+        );
+        expect((await help([command, '--help'])).stdout, result.stdout);
+        expect((await help([command, '-h'])).stdout, result.stdout);
+        expect(
+          result.stdout.toString().contains('--build-filter'),
+          command == 'build' || command == 'watch',
+        );
+        expect(
+          result.stdout.toString().contains('--only-check'),
+          command == 'build',
+        );
+        expect(
+          result.stdout.toString().contains('--background'),
+          command == 'prewarm',
+        );
+        expect(
+          result.stdout.toString().contains('--interval-ms'),
+          command == 'watch',
+        );
+      }
+      final invalid = await help(['help', 'unknown']);
+      expect(invalid.exitCode, 1);
+      expect(invalid.stderr, contains('Usage: help'));
+      expect(await root.list().toList(), isEmpty);
+    },
+  );
+
   test('launcher compilation excludes YAML configuration parsers', () async {
     final packageLibrary = (await Isolate.resolvePackageUri(
       Uri.parse('package:build_runner_accelerator/'),
@@ -79,9 +167,7 @@ void main() {
       expect(result.exitCode, 0, reason: '${result.stderr}');
       expect(
         result.stdout,
-        contains(
-          'build_runner_accelerator <build|watch|prewarm|aot-cache-key>',
-        ),
+        contains('Usage: build_runner_accelerator <command>'),
       );
       expect(lookupMarker.existsSync(), isFalse);
     } finally {
