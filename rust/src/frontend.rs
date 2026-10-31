@@ -4,7 +4,7 @@ use crate::worker_kernel::{
     AOT_COMPILE_LOCK_NAME, BACKGROUND_AOT_LOCK_ENV, acquire_background_aot_lock,
     analysis_prewarm_enabled, early_worker_aot_compile, early_worker_aot_enabled,
     manifest_prewarm_enabled, prewarm_worker_aot, start_analysis_prewarm,
-    start_manifest_analysis_prewarm, take_background_aot_lock, worker_aot_cache_key,
+    start_manifest_analysis_prewarm, take_background_aot_lock,
 };
 use crate::workspace::Workspace;
 use std::fs;
@@ -658,20 +658,6 @@ pub(crate) fn worker_executable(options: &Options, config: &RustBuildConfig) -> 
         .ok_or_else(|| io::Error::other("builder manifest has no worker entrypoint"))
 }
 
-pub(crate) fn run_aot_cache_key(options: &Options) -> io::Result<()> {
-    let workspace = Workspace::load(options.root.clone())?;
-    let build_config =
-        prepare_native_frontend(options, &workspace, &crate::graph::GraphState::default())?;
-    let build_config = build_config.config;
-    let worker = worker_executable(options, &build_config)?;
-    let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
-    println!(
-        "{}",
-        worker_aot_cache_key(&workspace, dart_binary, &worker)?
-    );
-    Ok(())
-}
-
 pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
     if options.background {
         return run_prewarm_detached(options);
@@ -694,9 +680,7 @@ pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
     if let Some(analysis_prewarm) = analysis_prewarm {
         analysis_prewarm.wait_for_children();
     }
-    let cache_key = worker_aot_cache_key(&workspace, dart_binary, &worker)?;
     println!("AOT prewarm ready: {}", artifact.display());
-    println!("AOT cache key: {cache_key}");
     Ok(())
 }
 

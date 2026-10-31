@@ -14,9 +14,6 @@ workspace_root=${1:-"$PWD"}
 
 worker_require_frontend
 
-cache_key=$(DART_BIN="$dart_bin" \
-  "$script_dir/aot_cache_key.sh" "$workspace_root")
-
 worker_run_frontend \
   prewarm --root "$workspace_root" --dart "$dart_bin"
 
@@ -31,14 +28,12 @@ fi
 }
 
 printf 'AOT prewarm complete\n'
-printf 'AOT cache key: %s\n' "$cache_key"
 printf 'AOT cache root: %s\n' '.dart_tool/build_runner_accelerator/aot-sdk'
 printf 'Generated worker: %s\n' '.dart_tool/build_runner_accelerator/dynamic_worker.dart'
 printf 'Builder manifest: %s\n' '.dart_tool/build_runner_accelerator/builder-manifest.json'
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   {
-    printf 'aot_cache_key=%s\n' "$cache_key"
     printf 'aot_cache_root=%s\n' '.dart_tool/build_runner_accelerator/aot-sdk'
     printf 'generated_worker=.dart_tool/build_runner_accelerator/dynamic_worker.dart\n'
     printf 'builder_manifest=.dart_tool/build_runner_accelerator/builder-manifest.json\n'

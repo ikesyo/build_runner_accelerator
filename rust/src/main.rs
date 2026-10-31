@@ -75,7 +75,7 @@ fn main() -> io::Result<()> {
             &options.root,
             true,
         )?)
-    } else if matches!(options.command.as_str(), "prewarm" | "aot-cache-key") {
+    } else if options.command == "prewarm" {
         let root = workspace_mode::coordination_root(&options.root)?;
         Some(workspace_lock::WorkspaceCoordination::acquire(
             &root, false,
@@ -137,7 +137,7 @@ fn main() -> io::Result<()> {
             );
         }
     }
-    if matches!(options.command.as_str(), "prewarm" | "aot-cache-key") {
+    if options.command == "prewarm" {
         workspace_mode::reject_individual_after_workspace(&options.root)?;
     }
     if matches!(options.command.as_str(), "build" | "watch") && !options.settings.only_check {
@@ -165,7 +165,6 @@ fn main() -> io::Result<()> {
             worker_kernel::apply_default_worker_aot_policy(&options.command);
             watch::run(&options)
         }
-        "aot-cache-key" => frontend::run_aot_cache_key(&options),
         "prewarm" => frontend::run_aot_prewarm(&options),
         command => {
             print_usage();
@@ -179,7 +178,7 @@ fn main() -> io::Result<()> {
 
 fn print_usage() {
     print!(
-        r#"build_runner_accelerator <build|watch|prewarm|aot-cache-key> [options]
+        r#"build_runner_accelerator <build|watch|prewarm> [options]
 Native execution only. Unsupported requests fail; run dart run build_runner directly if needed.
 --mode was removed in 0.14.0; remove it from scripts and CI.
 Options: --root PATH --dart PATH --jobs N --interval-ms N --worker PACKAGE:EXECUTABLE

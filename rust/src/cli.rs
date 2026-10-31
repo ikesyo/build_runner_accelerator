@@ -181,7 +181,7 @@ impl Options {
         let settings = &self.settings;
         matches!(
             self.command.as_str(),
-            "build" | "watch" | "prewarm" | "aot-cache-key" | "--help" | "-h" | "--version"
+            "build" | "watch" | "prewarm" | "--help" | "-h" | "--version"
         ) && (self.command == "build" || (!settings.only_check && !settings.keep_modified_outputs))
             && (matches!(self.command.as_str(), "build" | "watch")
                 || (!settings.deletion_flag && settings.build_filters.is_empty()))

@@ -150,6 +150,7 @@ pub(crate) fn resolve_worker_artifact(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn worker_aot_cache_key(
     workspace: &Workspace,
     dart_binary: &str,

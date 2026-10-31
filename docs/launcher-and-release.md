@@ -55,6 +55,13 @@ real Resolver-based generation and incremental/watch behavior in addition to
 package analysis/tests. Distribution and interrupted-publication tests remain
 separate gates, so SDK coverage does not imply all platform/SDK combinations.
 
+The former `aot-cache-key` command was removed before 1.0. Use `prewarm` to
+prepare caches. For CI, restore the cache directory selected by
+`BUILD_RUNNER_ACCELERATOR_CACHE` using a provider-managed key that includes
+OS/architecture, SDK, resolved dependencies and relevant source changes.
+Build and prewarm validate restored artifacts and regenerate stale entries;
+the internal AOT key and metadata are not public APIs.
+
 ## Supported dependencies
 
 The release line supports Dart >=3.11.0 <4.0.0. CI checks a minimum solution
@@ -105,7 +112,7 @@ accelerator and do not require a native binary.
 
 `help`, `--help` and `-h` show the command overview. Use `help build` or
 `build --help` (also `-h`) for command-specific options; the same forms work
-for `watch`, `prewarm` and `aot-cache-key`. Help is handled by the Dart launcher
+for `watch` and `prewarm`. Help is handled by the Dart launcher
 without downloading a frontend, starting a worker or creating build state.
 Omitting the command still runs `build`.
 
@@ -123,7 +130,6 @@ The launcher recognizes these options:
 | `--enable-experiment NAME` | Enable Dart language experiments in generated workers; repeat or comma-separate. Shared-part imports require `enhanced-parts`. |
 | `--delete-conflicting-outputs`, `-d` | Accepted retired flags throughout the supported runner window; they have no effect and are never added automatically. |
 | `prewarm [--background]` | Prepare caches without running builders. |
-| `aot-cache-key` | Print a native worker cache key; no stock equivalent. |
 
 Unsupported commands and options fail before native download or workspace
 setup. Configuration values retain their token boundaries, even when they
@@ -168,7 +174,7 @@ dependencies and phase barriers are preserved, and outputs plus graph are
 published only after all actions succeed. See [ADR 0046](adr/0046-workspace-action-scheduler.md).
 Switching between workspace and individual-package builds, or changing the set
 of output packages, requires the [state reset](compatibility-cleanup.md#safe-recovery).
-Individual-package prewarm and cache-key commands also require that reset after
+Individual-package prewarm also requires that reset after
 a workspace build.
 If a background worker compilation lock exists in an output package, the
 workspace build fails; wait for compilation to finish before retrying.

@@ -128,7 +128,7 @@ void main() {
       () => LauncherOptions.parse(['build', '--only-check', 'false']),
       throwsFormatException,
     );
-    for (final command in ['watch', 'prewarm', 'aot-cache-key']) {
+    for (final command in ['watch', 'prewarm']) {
       for (final policy in ['--only-check', '--keep-modified-outputs']) {
         expect(
           () => LauncherOptions.parse([command, policy]),
@@ -180,7 +180,7 @@ void main() {
   });
 
   test('launcher forwards native settings without reconstructing them', () {
-    for (final command in ['build', 'watch', 'prewarm', 'aot-cache-key']) {
+    for (final command in ['build', 'watch', 'prewarm']) {
       final flags = ['-cdir/named', '-rr', '--define=:b=x=a=b,c'];
       expect(
         LauncherOptions.parse([command, ...flags]).rustArguments.skip(5),

@@ -381,6 +381,11 @@ mod tests {
         let key = worker_aot_cache_key(&a, dart, "worker.dart").unwrap();
         assert_eq!(worker_aot_cache_key(&a, dart, "worker.dart").unwrap(), key);
         assert_ne!(worker_aot_cache_key(&b, dart, "worker.dart").unwrap(), key);
+        fs::write(sdk.join("version"), "changed sdk").unwrap();
+        assert_ne!(worker_aot_cache_key(&a, dart, "worker.dart").unwrap(), key);
+        fs::write(sdk.join("version"), "test sdk").unwrap();
+        fs::write(sdk.join("lib/_internal/allowed_experiments.json"), "[]").unwrap();
+        assert_ne!(worker_aot_cache_key(&a, dart, "worker.dart").unwrap(), key);
         assert_eq!(PREPARE_CALLS.get(), before + 2);
         let dependency = format!("package:build_runner:{RESOLVER}");
         let original_copy = a.resolve_logical_dependency(&dependency).unwrap();

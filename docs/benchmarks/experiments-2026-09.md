@@ -157,6 +157,10 @@ means that the launcher itself was AOT-compiled.
 
 ### CI AOT prewarm
 
+Historical workflow: `aot-cache-key` and its helper were removed before 1.0.
+For current CI cache guidance, see the [release contract](../launcher-and-release.md).
+
+
 The CI lane is intentionally split into key computation, cache restore,
 synchronous prewarm, and cache save:
 

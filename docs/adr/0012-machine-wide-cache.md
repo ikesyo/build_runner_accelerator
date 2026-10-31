@@ -77,8 +77,7 @@ The byte store and the worker AOT store simply needed to join it.
   and retry behavior stay hermetic.
 - The shared byte store accumulates one directory per toolchain
   fingerprint; stale fingerprints are not garbage-collected yet.
-- Test harness note without functional impact: `$(aot_cache_key.sh)` reads
-  the runner's payload log rather than stdout under the verification
-  harness, so `correctness_aot_prewarm.sh` cannot observe keys when invoked
-  standalone. The script was updated to resolve the SDK root through
-  `resolve_toolchain_dart_sdk` instead of a hardcoded `.toolchains` path.
+- Before 1.0, the public `aot-cache-key` command and its shell helper were
+  removed. Internal key calculation, artifact validation and automatic reuse
+  remain unchanged. CI providers choose their own restore/save keys; users
+  prepare caches with `prewarm` instead of depending on an internal identity.

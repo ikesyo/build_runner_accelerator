@@ -17,7 +17,7 @@ void main() {
       expect(options.showHelp, isTrue);
       expect(options.helpCommand, isNull);
     }
-    for (final command in ['build', 'watch', 'prewarm', 'aot-cache-key']) {
+    for (final command in ['build', 'watch', 'prewarm']) {
       for (final args in [
         ['help', command],
         [command, '--help'],
@@ -33,6 +33,9 @@ void main() {
     expect(LauncherOptions.parse([]).showHelp, isFalse);
     for (final args in [
       ['help', 'unknown'],
+      ['help', 'aot-cache-key'],
+      ['aot-cache-key', '--help'],
+      ['--help', 'aot-cache-key'],
       ['help', 'build', 'watch'],
       ['unknown', '--help'],
       ['help', '--', 'build'],
@@ -59,9 +62,10 @@ void main() {
       final overview = await help(['help']);
       expect(overview.exitCode, 0, reason: '${overview.stderr}');
       expect(overview.stdout, contains('Available commands:'));
+      expect(overview.stdout, isNot(contains('aot-cache-key')));
       expect(overview.stdout, isNot(contains('--build-filter')));
       expect((await help(['--help'])).stdout, overview.stdout);
-      for (final command in ['build', 'watch', 'prewarm', 'aot-cache-key']) {
+      for (final command in ['build', 'watch', 'prewarm']) {
         final result = await help(['help', command]);
         expect(result.exitCode, 0, reason: '${result.stderr}');
         expect(result.stderr, isEmpty);
