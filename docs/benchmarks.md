@@ -1,5 +1,8 @@
 # Benchmarks
 
+For warm worker startup, see [AOT validation digest reuse](benchmarks/aot-validation-digests-2026-10.md).
+This optimization is independent of compiler dependency isolation.
+
 For native-to-native scheduling comparisons in JIT and AOT modes, see
 [workspace and single-package scheduler benchmarks](benchmarks/workspace-scheduler-2026-10/README.md).
 The stock-versus-native application comparison below measures a separate workload.
