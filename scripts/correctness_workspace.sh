@@ -101,7 +101,7 @@ PY
   if [[ "$scope" == member ]]; then
     grep -Fq 'native workspace writer lock is already held for ' "$temporary/native-locked-member.log" || fail 'wrong member-lock rejection'
   else
-    grep -Fq 'workspace build conflicts with a running prewarm or cache-key command' "$temporary/native-locked-coordination.log" || fail 'wrong coordination-lock rejection'
+    grep -Fq 'workspace build conflicts with a running prewarm' "$temporary/native-locked-coordination.log" || fail 'wrong coordination-lock rejection'
   fi
   cmp "$temporary/locked.graph" "$native/.dart_tool/build_runner_accelerator/graph-v3.bin" || fail "$scope lock conflict changed graph"
   touch "$release"
@@ -148,11 +148,9 @@ compare recovery
 if VERIFY_COMMAND_LOG="$temporary/single.log" VERIFY_WORKSPACE="$native/a" worker_run_frontend build --root "$native/a" --dart "$dart_bin" --force-jit --jobs 1; then
   fail 'individual build reused workspace outputs'
 fi
-for command in prewarm aot-cache-key; do
-  if VERIFY_COMMAND_LOG="$temporary/$command.log" VERIFY_WORKSPACE="$native/a" worker_run_frontend "$command" --root "$native/a" --dart "$dart_bin"; then
-    fail "$command reused workspace state"
-  fi
-done
+if VERIFY_COMMAND_LOG="$temporary/prewarm.log" VERIFY_WORKSPACE="$native/a" worker_run_frontend prewarm --root "$native/a" --dart "$dart_bin"; then
+  fail 'prewarm reused workspace state'
+fi
 cmp "$temporary/before.graph" "$native/.dart_tool/build_runner_accelerator/graph-v3.bin" >/dev/null && fail 'recovery did not update graph'
 cp "$native/.dart_tool/build_runner_accelerator/graph-v3.bin" "$temporary/recovered.graph"
 manifest="$native/.dart_tool/build_runner_accelerator/builder-manifest.json"

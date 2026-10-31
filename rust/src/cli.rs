@@ -21,15 +21,9 @@ pub(crate) struct Options {
 
 impl Options {
     pub(crate) fn parse(args: impl Iterator<Item = String>) -> io::Result<Self> {
-        let mut args = args.peekable();
+        let mut args = args;
         let mut command = "build".to_owned();
         let mut command_seen = false;
-        if args.peek().is_some_and(|arg| {
-            !arg.starts_with('-') || matches!(arg.as_str(), "--help" | "-h" | "--version")
-        }) {
-            command = args.next().unwrap();
-            command_seen = true;
-        }
         let mut root = env::current_dir()?;
         let mut dart_binary = None;
         let mut worker = None;
@@ -89,10 +83,7 @@ impl Options {
                 }
                 continue;
             }
-            if !command_seen
-                && (!argument.starts_with('-')
-                    || matches!(argument.as_str(), "--help" | "-h" | "--version"))
-            {
+            if !command_seen && !argument.starts_with('-') {
                 if !build_arguments.is_empty() {
                     return Err(io::Error::other("Build arguments must follow the command"));
                 }
@@ -128,8 +119,9 @@ impl Options {
                 format!("--background is only supported with prewarm: {command}"),
             ));
         }
-        let show_help = show_help || matches!(command.as_str(), "--help" | "-h");
-        let show_version = show_version || command == "--version";
+        if show_help && !matches!(command.as_str(), "build" | "watch" | "prewarm") {
+            return Err(io::Error::other(format!("Unsupported command: {command}")));
+        }
         let settings = match BuildSettings::parse(&build_arguments) {
             Ok(settings) => settings,
             // Help/version do not execute a build and tolerate build arguments.
@@ -181,7 +173,7 @@ impl Options {
         let settings = &self.settings;
         matches!(
             self.command.as_str(),
-            "build" | "watch" | "prewarm" | "aot-cache-key" | "--help" | "-h" | "--version"
+            "build" | "watch" | "prewarm" | "--help" | "-h" | "--version"
         ) && (self.command == "build" || (!settings.only_check && !settings.keep_modified_outputs))
             && (matches!(self.command.as_str(), "build" | "watch")
                 || (!settings.deletion_flag && settings.build_filters.is_empty()))

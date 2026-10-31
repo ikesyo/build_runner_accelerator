@@ -17,7 +17,8 @@ Neither artifact is workspace-local in identity:
 - The worker AOT cache key (`aot_cache_key`) is composed entirely of content
   digests — SDK identity, allowed experiments, builder manifest, lockfile,
   worker source, and package-config identity. Two checkouts of the same
-  workspace produce the same key, so the compiled artifact is identical.
+  workspace produce the same key. Reuse additionally requires matching compiler
+  dependency content digests; equal keys alone do not establish freshness.
 - The byte store is content-addressed and already namespaced by a
   toolchain fingerprint, so entries are valid for any workspace on the same
   machine and toolchain.
@@ -61,7 +62,7 @@ The byte store and the worker AOT store simply needed to join it.
   Restore materializes into it, so SDK facade symlinks, scripts, and
   per-workspace cleanup semantics are unchanged. The shared store only
   answers "has any checkout already compiled this exact key".
-- Both stores are populated by `build` and by `aot-prewarm`. No user action
+- Both stores are populated by `build` and by `prewarm`. No user action
   is required beyond the first build on a machine.
 
 ## Consequences
@@ -77,8 +78,7 @@ The byte store and the worker AOT store simply needed to join it.
   and retry behavior stay hermetic.
 - The shared byte store accumulates one directory per toolchain
   fingerprint; stale fingerprints are not garbage-collected yet.
-- Test harness note without functional impact: `$(aot_cache_key.sh)` reads
-  the runner's payload log rather than stdout under the verification
-  harness, so `correctness_aot_prewarm.sh` cannot observe keys when invoked
-  standalone. The script was updated to resolve the SDK root through
-  `resolve_toolchain_dart_sdk` instead of a hardcoded `.toolchains` path.
+- Before 1.0, the public `aot-cache-key` command and its shell helper were
+  removed to keep internal cache identity outside the stable CLI contract.
+  Internal key calculation, artifact validation and automatic reuse remain.
+  CI providers manage restore/save keys; see the [CI cache guide](../launcher-and-release.md#ci-caches).
