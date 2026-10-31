@@ -55,6 +55,45 @@ hide scheduling or setup problems.
 
 ## Verification and measurement
 
+### Workflow dependencies
+
+All four workflows are onboarded to `.github/workflows/actions.lock`, generated
+by the official `github/gh-actions-lock` CLI extension. Version tags stay readable
+in YAML while the lockfile records the exact commits and repository identities,
+including dependencies of the shared `$/` setup action. Unlike `./`, `$/` runs
+the action at the workflow's own commit and lets the generator follow its
+dependencies. Reusable workflow calls are outside lockfile coverage and must
+remain pinned to full commit SHAs.
+
+After adding a workflow or changing an action dependency, run from the repository
+root with an authenticated GitHub CLI:
+
+```bash
+gh extension install github/gh-actions-lock --pin v0.4.0
+gh actions-lock
+gh actions-lock --verify
+```
+
+If another extension version is already installed, run
+`gh extension remove gh-actions-lock` and install it again with the command above
+to select the version used by CI. Commit the generated lockfile with the workflow and action changes;
+never edit it by hand. `gh actions-lock --verify-local` checks coverage offline,
+while CI uses `--verify` to check upstream provenance as well. Verification runs
+once in the current-SDK package job without adding runners to the CI budget.
+Dependabot checks workflow files and composite actions under `.github/actions/*`
+weekly and maintains existing lockfile entries with version updates. If an
+update leaves the lockfile stale, run `gh actions-lock` and commit the regenerated
+file; the CI verification step checks it without writing changes. New workflows
+still need to be onboarded with the CLI.
+
+Review changed commits as dependency updates. Investigate changes to `owner_id`
+or `repo_id`, which indicate a different source repository identity. Advancing a
+moved branch or partial tag requires reviewing upstream changes before running
+`gh actions-lock --relock`; do not use `--accept-moved` in automation. See the
+[official lockfile guide](https://docs.github.com/en/actions/how-tos/secure-your-work/lock-workflow-dependencies).
+
+### Checks and timing
+
 Run `python3 .github/scripts/check_ci.py` with PyYAML 6.0.3 after workflow changes.
 It checks matrix expansion, the PR runner budget, the four-lane limit and
 embedded Bash syntax. Update its finite expansion logic when adding a matrix
