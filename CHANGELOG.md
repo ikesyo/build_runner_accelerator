@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.18.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.17.1...v0.18.0) - 2026-10-31
+
+- ci: adopt GitHub Actions workflow lockfile by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/152
+- build(deps): bump actions/download-artifact from 8.0.1 to 8.0.2 by @dependabot[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/154
+- build(deps): bump Songmu/tagpr from 1.20.1 to 1.21.4 by @dependabot[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/155
+- build(deps): bump dtolnay/rust-toolchain from d1031067263f94b142dd6c0ce24c5eb9d02d52a0 to 683b588c487a69d01f6c6ddf40f036ff682cc2c8 in /.github/actions/setup-worker by @dependabot[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/156
+- build(deps): bump dtolnay/rust-toolchain from d1031067263f94b142dd6c0ce24c5eb9d02d52a0 to 683b588c487a69d01f6c6ddf40f036ff682cc2c8 by @dependabot[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/157
+- build(deps): bump actions/upload-artifact from 7.0.1 to 7.0.2 by @dependabot[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/158
+- feat: add stock-style command help to the launcher by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/159
+
 ## [v0.17.1](https://github.com/ikesyo/build_runner_accelerator/compare/v0.17.0...v0.17.1) - 2026-10-30
 
 - Fix compatibility with Analyzer 14.7.0 by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/150
