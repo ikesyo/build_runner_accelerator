@@ -186,4 +186,4 @@ cmp "$temporary_dir/expected-worker.dart" \
   fail 'invalidation input was replaced before AOT validation'
 grep -Fq 'Generated:' "$build_log" || fail 'changed worker did not invalidate AOT cache'
 
-printf 'aot-prewarm: build-sync-compile=yes output-delete-recovery=yes compile-wait=yes cache-key-portable=yes cache-reuse=yes sdk-key-invalidation=yes invalidation=yes\n'
+printf 'aot-prewarm: build-sync-compile=yes output-delete-recovery=yes compile-wait=yes cache-key-portable=yes cache-reuse=yes invalidation=yes\n'
