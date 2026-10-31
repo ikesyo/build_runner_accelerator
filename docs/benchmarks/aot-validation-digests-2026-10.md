@@ -4,8 +4,7 @@ Warm builds rehashed a roughly 20 MB AOT executable and around a thousand
 compiler dependencies whenever selecting a worker. Unix now reuses locally
 validated digests when device/inode/mode/size and nanosecond mtime/ctime match,
 along with the expected digest from AOT metadata. Other platforms retain full
-hashing. This is independent of compiler dependency isolation and has no
-experimental flag. See [ADR 0005](../adr/0005-performance-and-validation-policy.md).
+hashing. See [ADR 0005](../adr/0005-performance-and-validation-policy.md).
 
 Missing/malformed receipts, changed files and changed expected digests require
 full reads/hashing; observed edits during hashing reject reuse. Worker,
@@ -18,11 +17,10 @@ changes; launcher release-binary verification retains its existing policy.
 
 ## Warm results
 
-Both lanes disable compiler isolation. The new release frontend is built from
-main `5069081` plus this standalone change. Previous frontend: `0195296` with
-isolation disabled. Both use identical Dart/worker sources and an existing
-workspace/AOT artifact from `json_serializable_10_app`. The prior frontend's
-compiler-view experiment is inactive. No dependency transformations are used.
+The new release frontend is built from main `5069081` plus digest reuse.
+Previous frontend: `0195296` using full hashing. Both use identical Dart/worker
+sources, standard package resolution and an existing workspace/AOT artifact
+from `json_serializable_10_app`.
 
 Linux x64, two-CPU quota, 8 GiB memory limit, Dart 3.13.3, Rust/Cargo 1.98.1;
 build_runner 2.16.2, Analyzer 14.5.0, dart_style 3.1.13, json_serializable 6.14.1,
@@ -43,7 +41,7 @@ not select an AOT worker and shows no useful improvement claim. These are
 small, startup-heavy ten-model workloads with comment-only edits and three
 observations; percentages do not predict larger or CPU-heavy builders.
 Cold performance was not remeasured: first-use hashing/cache publication costs
-remain. Historical compiler-isolation cold timings are a separate experiment.
+remain.
 
 Each lane first performs one unmeasured one-file build to warm validation.
 Three rounds alternate old/new order in the same workspace. Each measured
@@ -55,9 +53,8 @@ confirming reuse without compilation or replacement.
 
 ## Reproduction and validation
 
-Use a prepared ten-model workspace with published AOT artifacts. With
-BUILD_RUNNER_ACCELERATOR_EXPERIMENTAL_COMPILE_ISOLATION absent, alternate the
-previous/new release frontend through BUILD_RUNNER_ACCELERATOR_BIN:
+Use a prepared ten-model workspace with published AOT artifacts. Alternate
+the previous/new release frontend through BUILD_RUNNER_ACCELERATOR_BIN:
 
 ```bash
 dart --suppress-analytics run build_runner_accelerator build \
@@ -71,7 +68,7 @@ and unchanged AOT artifacts. Raw harness/samples/logs stay outside Git:
 `/tmp/bra-runtime-default-warm.py`, `/tmp/bra-runtime-default-warm/` and
 `/tmp/bra-runtime-default-warm.log`. No raw benchmark JSON is committed.
 
-Standalone Rust: 205 passed, 1 ignored; fmt, Clippy with warnings denied and
+Rust: 205 passed, 1 ignored; fmt, Clippy with warnings denied and
 release build passed. Regression tests cover cached validation, same-size
 writes with restored mtime, file replacement, artifact truncation, and missing/
 malformed receipts, including the full AOT validation entrypoint. Broader
