@@ -114,7 +114,7 @@ jobs:
                 python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 13.3.0
                 bash scripts/watch_smoke.sh
               fi
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         if: failure()
         with:
           name: sdk-compatibility-${{ matrix.sdk }}
@@ -729,7 +729,7 @@ jobs:
                 BUILD_RUNNER_ACCELERATOR_BIN="$PWD/rust/target/${{ matrix.rust_target }}/release/build_runner_accelerator" \
                   CASE_FILTER=conditional-dependency bash scripts/correctness_json_serializable.sh
               fi
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         if: failure() && (matrix.target_id == 'linux-x64' || matrix.target_id == 'macos-arm64')
         with:
           name: runner-2.17.1-aot-${{ matrix.target_id }}
@@ -740,7 +740,7 @@ jobs:
 
             ${{ runner.temp }}/shared-parts-aot/**
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: distribution-ci-${{ matrix.target_id }}

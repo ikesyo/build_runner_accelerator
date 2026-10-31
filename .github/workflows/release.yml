@@ -169,7 +169,7 @@ jobs:
           python3 scripts/distribution_e2e.py --dart "$(command -v dart)" --target "$TARGET_ID" \
             --archive "build_runner_accelerator-$TARGET_ID.${{ matrix.archive }}" \
             --results "distribution-results/$TARGET_ID"
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: distribution-release-${{ matrix.target_id }}
@@ -182,7 +182,7 @@ jobs:
         with:
           subject-path: build_runner_accelerator-${{ matrix.target_id }}.${{ matrix.archive }}
           create-storage-record: false
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: release-${{ matrix.target_id }}
           path: build_runner_accelerator-${{ matrix.target_id }}.${{ matrix.archive }}
@@ -216,7 +216,7 @@ jobs:
         run: |
           python3 .github/scripts/check_release_source.py
           cp release-source.json dist/release-source.json
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: release-source
           path: release-source.json
@@ -278,13 +278,13 @@ jobs:
           python3 scripts/distribution_e2e.py "${test_key_args[@]}" --dart "$(command -v dart)" --target linux-x64 \
             --archive dist/build_runner_accelerator-linux-x64.tar.gz --signed-dist dist --verify-install-only \
             --results distribution-results/production
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: distribution-production
           path: distribution-results/production
           if-no-files-found: warn
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         if: env.RELEASE_DRY_RUN == 'true'
         with:
           name: dry-run-signed-distribution
@@ -340,7 +340,7 @@ jobs:
             --results attestation-results/after-publication
       - name: Retain attestation verification evidence
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: release-attestation-verification
           path: attestation-results
