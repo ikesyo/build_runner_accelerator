@@ -26,6 +26,7 @@ import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
 import 'package:build_runner/src/build_plan/build_inputs.dart' show BuildInputs;
 
 import 'asset_read_cache.dart';
+import 'compiler_package_config.dart';
 import 'frontend_binary_resolver.dart' show buildRunnerAcceleratorVersion;
 import 'overlay_blob.dart';
 import 'reset_directives.dart';
@@ -738,9 +739,7 @@ Future<PackageConfig> _loadPackageConfig() async {
   // A compiled executable can omit the isolate's package-config URI (notably
   // on Windows). Workers always run in the workspace root, which is checked
   // against the initialize request before any build action is accepted.
-  final hasCompatibilityConfig = File(
-    '.dart_tool/build_runner_accelerator/runner-package_config.json',
-  ).existsSync();
+  final hasCompatibilityConfig = hasCompilerPackageConfig('.');
   var packageConfigUri = hasCompatibilityConfig
       ? File('.dart_tool/package_config.json').absolute.uri
       : await Isolate.packageConfig;

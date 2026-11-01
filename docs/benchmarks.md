@@ -2,6 +2,12 @@
 
 For warm worker startup, see [AOT validation digest reuse](benchmarks/aot-validation-digests-2026-10.md).
 
+For the experimental worker dependency splits and their limited AOT compile
+measurements, see [AOT dependency isolation](benchmarks/aot-cold-parse-isolation-2026-10.md).
+The three-pair runtime follow-up observes a small Clean median improvement
+and a no-op cost on a ten-model fixture. The experiment remains default-off;
+these results do not establish a cross-project speedup.
+
 For native-to-native scheduling comparisons in JIT and AOT modes, see
 [workspace and single-package scheduler benchmarks](benchmarks/workspace-scheduler-2026-10/README.md).
 The stock-versus-native application comparison below measures a separate workload.

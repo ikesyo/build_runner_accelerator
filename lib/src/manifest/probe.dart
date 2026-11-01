@@ -10,6 +10,7 @@ import 'package:yaml/yaml.dart';
 
 import 'mapping.dart';
 import '../cache_directory.dart';
+import '../compiler_package_config.dart';
 import 'model.dart';
 import 'source.dart';
 
@@ -1163,13 +1164,7 @@ String? _findPackageConfigPath(String root) {
       'package_config.json',
     );
     if (File(candidate).existsSync()) {
-      final compatible = p.join(
-        packageConfigRoot,
-        '.dart_tool',
-        'build_runner_accelerator',
-        'runner-package_config.json',
-      );
-      return File(compatible).existsSync() ? compatible : candidate;
+      return compilerPackageConfigPath(packageConfigRoot);
     }
     final parent = p.dirname(packageConfigRoot);
     if (parent == packageConfigRoot) return null;

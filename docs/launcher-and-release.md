@@ -239,6 +239,7 @@ ignored. Public compatibility intent applies only to the Public row.
 | --- | --- | --- |
 | Public | `BIN`, `CACHE`, `RELEASE_BASE_URL`, `WORKER_AOT` | Select a preinstalled binary, cache root, HTTPS release mirror, or worker compilation policy. |
 | Diagnostics | `DEBUG`, `METRICS`, `ANALYSIS_TRACE`, `WALL_TRACE`, `PLAN_ONLY` | Error details, worker metrics, analysis/timing traces, and plan inspection. `ANALYSIS_TRACE` needs `METRICS`; `WALL_TRACE` is independent. `PLAN_ONLY` exits before actions. Output schemas are not stable. |
+| Experimental | `EXPERIMENTAL_COMPILE_ISOLATION` | `1` enables compiler-only dependency copies for the bounded dependency window in [ADR 0047](adr/0047-experimental-compile-isolation.md). Disabled by default; not a public compatibility guarantee. |
 | Cache recovery | `BYTE_STORE`, `DEP_CACHE`, `DEP_PREFETCH`, `MANIFEST_SNAPSHOT`, `EARLY_CATALOG`, `PART_FILTER`, `SDK_SUMMARY_PREWARM`, `ANALYSIS_PREWARM` | Set the named optimization to `0` for diagnosis. `BYTE_STORE` and `DEP_CACHE` disable their shared caches; `BYTE_STORE` also accepts `false`/`off`. |
 | Experimental | `ANALYSIS_SINGLE_FLIGHT`, `COMPILE_PREWARM`, `MANIFEST_PREWARM` | Opt-in experiments; disabled by default and subject to change. |
 | Tuning | `ANALYSIS_PREWARM_JOBS`, `ANALYSIS_PREWARM_DIRS`, `RESOLVER_CAP` | Prewarm and resolver limits; no performance guarantee. |
