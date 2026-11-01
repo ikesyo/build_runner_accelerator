@@ -998,6 +998,8 @@ fn build_aot_metadata(
     })
 }
 
+/// Validate portable AOT metadata against current identities and file digests.
+/// Local receipts accelerate content checks without changing expected digests.
 fn aot_metadata_is_current(
     artifact: &Path,
     metadata_path: &Path,
@@ -1027,27 +1029,25 @@ fn aot_metadata_is_current(
     if metadata.sdk_version != sdk_version || metadata.allowed_experiments != allowed_experiments {
         return false;
     }
-    let Ok(worker_digest) = digest_file(worker_path) else {
-        return false;
-    };
-    if metadata.worker != worker_digest {
+    let mut digests = crate::validated_digest::Cache::load(&workspace.root);
+    if !digests.matches(worker_path, &metadata.worker) {
         return false;
     }
-    // The digest ties the metadata to the exact executable that produced it,
-    // so a staged restore cannot pair a truncated file with an older
-    // machine-wide generation.
-    let Ok(executable_digest) = digest_file(artifact) else {
-        return false;
-    };
-    if metadata.executable != executable_digest {
+    // Bind metadata to the exact executable, including staged restores. On
+    // Unix, matching change stamps may reuse a digest from
+    // a previous full validation; edits/truncation still force byte validation.
+    if !digests.matches(artifact, &metadata.executable) {
         return false;
     }
-    metadata.dependencies.iter().all(|(key, expected)| {
+    let current = metadata.dependencies.iter().all(|(key, expected)| {
         workspace
             .resolve_logical_dependency(key)
-            .and_then(|path| digest_file(&path).ok())
-            .is_some_and(|actual| actual == *expected)
-    })
+            .is_some_and(|path| digests.matches(&path, expected))
+    });
+    if current {
+        digests.save(&workspace.root);
+    }
+    current
 }
 
 fn digest_file(path: &Path) -> io::Result<String> {
@@ -1790,6 +1790,97 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Barrier};
     use std::thread;
+
+    #[cfg(unix)]
+    #[test]
+    fn cached_aot_validation_rejects_source_and_artifact_edits() {
+        let root =
+            std::env::temp_dir().join(format!("aot-digest-validation-{}", std::process::id()));
+        fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        fs::create_dir_all(root.join("sdk/lib/_internal")).unwrap();
+        fs::write(root.join("pubspec.yaml"), "name: validation_test\n").unwrap();
+        fs::write(
+            root.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[]}"#,
+        )
+        .unwrap();
+        fs::write(root.join("sdk/version"), "3.13.3").unwrap();
+        fs::write(
+            root.join("sdk/lib/_internal/allowed_experiments.json"),
+            "{}",
+        )
+        .unwrap();
+        let workspace = crate::workspace::Workspace::load(root.clone()).unwrap();
+        let worker = root.join("worker.dart");
+        let artifact = root.join("worker");
+        let dep = root.join("dep.dart");
+        let metadata_path = root.join("worker.sdk");
+        for path in [&worker, &artifact, &dep] {
+            fs::write(path, "before").unwrap();
+        }
+        let (sdk_version, allowed_experiments) =
+            super::aot_sdk_identity(&root.join("sdk")).unwrap();
+        let digest = crate::digest::digest_bytes(b"before");
+        let metadata = super::AotMetadata {
+            format: super::AOT_METADATA_VERSION,
+            cache_key: "test".into(),
+            sdk_version,
+            allowed_experiments,
+            package_config: workspace.package_config_identity().to_owned(),
+            worker: digest.clone(),
+            executable: digest.clone(),
+            dependencies: [("workspace:dep.dart".into(), digest)]
+                .into_iter()
+                .collect(),
+        };
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        let current = || {
+            super::aot_metadata_is_current(
+                &artifact,
+                &metadata_path,
+                &workspace,
+                &root.join("sdk"),
+                &worker,
+                "test",
+            )
+        };
+        // Let initial stamps settle before testing the actual reuse path.
+        thread::sleep(crate::file_stamp::STAMP_SETTLE + std::time::Duration::from_millis(100));
+        assert!(current()); // Full validation creates local digest evidence.
+        assert!(current()); // Reuses that evidence.
+        let eligible = crate::file_stamp::reusable_devices(&root).is_some_and(|devices| {
+            [&worker, &artifact, &dep].iter().any(|path| {
+                devices.contains(&crate::file_stamp::stamp(path).unwrap()[0])
+                    && crate::file_stamp::is_settled(
+                        &crate::file_stamp::stamp(path).unwrap(),
+                        std::time::SystemTime::now(),
+                    )
+            })
+        });
+        assert_eq!(
+            root.join(".dart_tool/build_runner_accelerator/aot-validation-digests.json")
+                .is_file(),
+            eligible
+        );
+        let mtime = fs::metadata(&dep).unwrap().modified().unwrap();
+        // Separate the rewrite from the cached stamp even on coarse clocks.
+        thread::sleep(std::time::Duration::from_millis(1100));
+        fs::write(&dep, "after!").unwrap();
+        OpenOptions::new()
+            .write(true)
+            .open(&dep)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(mtime))
+            .unwrap();
+        assert!(!current());
+        fs::write(&dep, "before").unwrap();
+        assert!(current());
+        fs::write(&artifact, "cut").unwrap();
+        assert!(!current());
+        fs::write(&artifact, "before").unwrap();
+        assert!(current());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn early_worker_aot_panics_are_caught() {
