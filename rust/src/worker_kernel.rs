@@ -998,6 +998,8 @@ fn build_aot_metadata(
     })
 }
 
+/// Validate portable AOT metadata against current identities and file digests.
+/// Local receipts accelerate content checks without changing expected digests.
 fn aot_metadata_is_current(
     artifact: &Path,
     metadata_path: &Path,
@@ -1842,13 +1844,27 @@ mod tests {
                 "test",
             )
         };
+        // Let initial stamps settle before testing the actual reuse path.
+        thread::sleep(crate::file_stamp::STAMP_SETTLE + std::time::Duration::from_millis(100));
         assert!(current()); // Full validation creates local digest evidence.
         assert!(current()); // Reuses that evidence.
-        assert!(
+        let eligible = crate::file_stamp::reusable_devices(&root).is_some_and(|devices| {
+            [&worker, &artifact, &dep].iter().any(|path| {
+                devices.contains(&crate::file_stamp::stamp(path).unwrap()[0])
+                    && crate::file_stamp::is_settled(
+                        &crate::file_stamp::stamp(path).unwrap(),
+                        std::time::SystemTime::now(),
+                    )
+            })
+        });
+        assert_eq!(
             root.join(".dart_tool/build_runner_accelerator/aot-validation-digests.json")
-                .is_file()
+                .is_file(),
+            eligible
         );
         let mtime = fs::metadata(&dep).unwrap().modified().unwrap();
+        // Separate the rewrite from the cached stamp even on coarse clocks.
+        thread::sleep(std::time::Duration::from_millis(1100));
         fs::write(&dep, "after!").unwrap();
         OpenOptions::new()
             .write(true)
