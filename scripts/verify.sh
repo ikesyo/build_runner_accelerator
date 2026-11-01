@@ -211,7 +211,9 @@ run_script_probe() {
   local log="$results_dir/$probe_name.log"
   local timeout_seconds
   timeout_seconds=$(verification_timeout_seconds VERIFY_CASE_TIMEOUT_SECONDS 1200) || return 2
-  if verification_run_command_in_dir "$repo_root" "case/$probe_name" "$log" "$timeout_seconds" bash "$script_dir/$script_name"; then
+  local interpreter=bash
+  [[ "$script_name" != *.py ]] || interpreter=python3
+  if verification_run_command_in_dir "$repo_root" "case/$probe_name" "$log" "$timeout_seconds" "$interpreter" "$script_dir/$script_name"; then
     grep -F -- "$output_prefix" "$log" || {
       printf 'missing expected output: %s\n' "$output_prefix" >&2
       return 1
@@ -265,6 +267,7 @@ run_output_policies_suite() {
 
 run_core_suite() {
   VERIFY_WATCH=0 run_quick
+  run_script_probe compile-isolation correctness_compile_isolation.py 'compile-isolation: PASS'
   run_script_probe cli correctness_cli.sh 'cli-compatibility: PASS'
   run_script_probe settings correctness_settings.sh 'settings-compatibility: PASS'
   run_script_probe build-filter correctness_build_filter.sh 'build-filter stock/native comparisons passed'
