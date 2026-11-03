@@ -45,8 +45,8 @@ BUILD_RUNNER_ACCELERATOR_EXPERIMENTAL_COMPILE_ISOLATION=1 \
   dart run build_runner_accelerator build
 ```
 
-The experiment is off by default and initially accepts only build_runner
-2.16.1/2.16.2, Analyzer 14.5.0/14.6.0 and dart_style 3.1.13/3.1.14. Other versions
+The experiment is off by default and accepts only build_runner
+2.16.1/2.16.2, Analyzer 14.5.0/14.6.0/14.7.0 and dart_style 3.1.13/3.1.14. Other versions
 or unexpected source shapes fail explicitly. Unset the variable to return to
 normal compilation. Original packages, application configuration and builder
 asset paths are preserved. Nested stock ChildProcess.run calls fail the worker
@@ -62,6 +62,8 @@ Run the focused stock comparison with a built frontend and resolved cache:
 ```bash
 python3 scripts/correctness_compile_isolation.py
 python3 scripts/correctness_compile_isolation.py --worker-mode aot
+# Pin a supported Analyzer version instead of the fixture lockfile:
+python3 scripts/correctness_compile_isolation.py --analyzer 14.7.0
 ```
 
 After pub get, run formatting, analysis, tests, and Rust checks:

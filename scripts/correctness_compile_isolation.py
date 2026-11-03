@@ -32,6 +32,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--results', type=Path)
     parser.add_argument('--worker-mode', choices=['jit', 'aot'], default='jit')
+    parser.add_argument('--analyzer', choices=['14.5.0', '14.6.0', '14.7.0'],
+                        help='Pin Analyzer for this isolated correctness run')
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
     results = (args.results.resolve() if args.results else
@@ -69,7 +71,12 @@ def main():
             p.unlink()
         for name in ['pubspec.yaml', 'pubspec.lock']:
             (root / name).write_text((fixture / name).read_text().replace('../..', str(repo)))
-        command = [dart, '--suppress-analytics', 'pub', 'get', '--enforce-lockfile']
+        if args.analyzer:
+            spec = root / 'pubspec.yaml'
+            spec.write_text(spec.read_text() + f'\n  analyzer: {args.analyzer}\n')
+        command = [dart, '--suppress-analytics', 'pub', 'get']
+        if not args.analyzer:
+            command.append('--enforce-lockfile')
         if os.environ.get('PUB_GET_OFFLINE', '1') == '1':
             command.append('--offline')
         run(root, lane + '-pub', command)

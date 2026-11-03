@@ -9,7 +9,7 @@ are never edited.
 | Patch | Selected upstream versions | Purpose |
 | --- | --- | --- |
 | `build_runner-resolver-options.patch` | build_runner 2.15.3, 2.16.0, 2.16.1 | Existing dart-lang/build#5197 backport using the worker analysis-options factory |
-| `analyzer-compile-isolation.patch` | Analyzer 14.5.0, 14.6.0 | Separate parsing utilities from resolution imports |
+| `analyzer-compile-isolation.patch` | Analyzer 14.5.0, 14.6.0, 14.7.0 | Separate parsing utilities from resolution imports |
 | `build_runner-compile-isolation.patch` | build_runner 2.16.1, 2.16.2 | Redirect parsing imports and reject unsupported nested CLI execution |
 | `dart_style-compile-isolation.patch` | dart_style 3.1.13, 3.1.14 | Redirect the parsing import |
 | `build_runner_accelerator-compile-isolation.patch` | This checkout | Redirect worker parsing imports |
@@ -41,6 +41,11 @@ copies and compiler artifacts. Unchanged warm preparation reuses the metadata
 receipt without applying or parsing patches.
 
 This extraction was checked against the former transforms for all eight
-combinations of the selected Analyzer/build_runner/dart_style versions: generated
+combinations of Analyzer 14.5.0/14.6.0, build_runner 2.16.1/2.16.2 and
+dart_style 3.1.13/3.1.14: generated
 sources were byte-identical, including the separate 2.16.1 resolver backport.
 The refactor changes patch management, not Dart runtime behavior.
+
+Analyzer 14.7.0 also accepts the unchanged patch; its separated parsing utilities
+match the original transformation byte-for-byte. Use the correctness script
+with `--analyzer 14.7.0` to validate this resolution against stock.

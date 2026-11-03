@@ -51,7 +51,7 @@ pub(crate) fn prepare(root: &Path, mut config: Value) -> io::Result<PathBuf> {
         }
     }
     let selections: &[(&str, &[&str])] = &[
-        ("analyzer", &["14.5.0", "14.6.0"]),
+        ("analyzer", &["14.5.0", "14.6.0", "14.7.0"]),
         ("build_runner", &["2.16.1", "2.16.2"]),
         ("dart_style", &["3.1.13", "3.1.14"]),
         ("build_runner_accelerator", &[]),
@@ -283,7 +283,7 @@ mod tests {
             let mut entries =
                 vec![serde_json::json!({"name":"app","rootUri":"../","packageUri":"lib/"})];
             for (name, version) in [
-                ("analyzer", "14.6.0"),
+                ("analyzer", "14.7.0"),
                 ("build_runner", "2.16.2"),
                 ("dart_style", "3.1.14"),
                 ("build_runner_accelerator", "0.17.1"),
