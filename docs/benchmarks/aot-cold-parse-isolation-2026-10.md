@@ -15,9 +15,10 @@ BUILD_RUNNER_ACCELERATOR_EXPERIMENTAL_COMPILE_ISOLATION=1 \
   dart run build_runner_accelerator build
 ```
 
-[ADR 0047](../adr/0047-experimental-compile-isolation.md) defines the bounded
-version window: build_runner 2.16.1/2.16.2, Analyzer 14.5.0/14.6.0 and dart_style
-3.1.13/3.1.14. Unexpected versions/source shapes fail before native actions.
+The current supported version window is listed in the
+[development guide](../development.md#local-checks); the measurements below use
+the resolutions stated for each experiment. [ADR 0047](../adr/0047-experimental-compile-isolation.md)
+defines the isolation boundary. Unexpected versions/source shapes fail before native actions.
 Original package sources and the application's config/lockfile stay unchanged.
 
 The compiler view copies four packages, including the accelerator itself:
@@ -175,7 +176,7 @@ On Unix, unchanged source and copy metadata permits reusing the existing
 selector without reading source contents, transforming or hashing them again.
 
 The receipt binds the complete incoming package config, canonical package roots
-and transformation revision. Each file/directory records device, inode, mode,
+and the embedded patch digest. Each file/directory records device, inode, mode,
 size, nanosecond mtime and ctime. Directory metadata detects additions/deletions;
 ctime also detects same-size writes with restored mtime. The selector is checked
 too. Missing/malformed receipts or metadata changes take the original full

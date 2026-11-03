@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Prepare the isolated CLI/parse dependency experiment; optionally compile once.
+"""Reproduce the historical CLI/parse dependency probe; optionally compile once.
 
+This frozen probe preserves the sources used for the historical report, including
+a catchable ChildProcess.run stub. Current production transformations live in
+rust/patches; use correctness_compile_isolation.py to validate those patches.
 This research probe deliberately disables ChildProcess.run in copied sources.
 Its executable is not a production worker. Original packages/workspace are read
 only. A workspace with an already generated worker and effective runner config

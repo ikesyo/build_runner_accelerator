@@ -40,12 +40,13 @@ once per frontend process. Existing content hashes still identify generated
 copies and compiler artifacts. Unchanged warm preparation reuses the metadata
 receipt without applying or parsing patches.
 
-This extraction was checked against the former transforms for all eight
-combinations of Analyzer 14.5.0/14.6.0, build_runner 2.16.1/2.16.2 and
-dart_style 3.1.13/3.1.14: generated
-sources were byte-identical, including the separate 2.16.1 resolver backport.
-The refactor changes patch management, not Dart runtime behavior.
+Validate against actual upstream sources and stock outputs with the focused
+correctness script (Dart 3.13+ for Analyzer 14.7.0):
 
-Analyzer 14.7.0 also accepts the unchanged patch; its separated parsing utilities
-match the original transformation byte-for-byte. Use the correctness script
-with `--analyzer 14.7.0` to validate this resolution against stock.
+```bash
+python3 scripts/correctness_compile_isolation.py --analyzer 14.7.0
+python3 scripts/correctness_compile_isolation.py --analyzer 14.7.0 --worker-mode aot
+```
+
+`scripts/probe_worker_dependencies.py` is the frozen historical measurement
+probe; its prototype transforms are not the production patch source of truth.

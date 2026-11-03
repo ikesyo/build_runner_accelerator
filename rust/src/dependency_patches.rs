@@ -262,4 +262,17 @@ mod tests {
             assert!(apply(&mut files, patch).is_err());
         }
     }
+    #[test]
+    fn overlapping_context_is_ambiguous() {
+        let mut files = Sources::from([(PathBuf::from("a"), b"x\nx\nx\n".to_vec())]);
+        let before = files.clone();
+        let patch = "--- a/a\n+++ b/a\n@@ -1,2 +1 @@\n-x\n-x\n+y\n";
+        assert!(
+            apply(&mut files, patch)
+                .unwrap_err()
+                .to_string()
+                .contains("ambiguous")
+        );
+        assert_eq!(files, before);
+    }
 }

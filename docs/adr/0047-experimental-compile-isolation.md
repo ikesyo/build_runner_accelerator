@@ -10,8 +10,9 @@ four compiler packages into content-addressed workspace setup state. The
 default remains disabled. This is an internal experiment, not a public 1.x
 configuration guarantee.
 
-The initial window is build_runner 2.16.1/2.16.2, Analyzer 14.5.0/14.6.0 and
-dart_style 3.1.13/3.1.14 in a consumer workspace. Reject other versions and
+The supported version window is documented in the
+[development guide](../development.md#local-checks) and enforced during package
+selection in a consumer workspace. Reject other versions and
 unexpected source shapes before native actions; never silently ignore a failed
 requested transformation. The accelerator's own package is copied too. Retain
 each package's pubspec and license and never edit original packages or the
@@ -51,7 +52,7 @@ current copied packages after workspace relocation. Damaged setup state fails
 validation; disabling the variable restores the normal selector/backport path.
 On Unix, a disposable validation receipt avoids rereading, transforming and
 hashing source/copy contents when all recorded metadata is unchanged. Bind it
-to the incoming resolution, canonical roots and transformation revision; check
+to the incoming resolution, canonical roots and embedded patch digest; check
 files and directories using device/inode/mode/size plus nanosecond mtime/ctime,
 including the selected config. Any change or missing/malformed receipt returns
 to full validation. Capture metadata before validation and recheck it before

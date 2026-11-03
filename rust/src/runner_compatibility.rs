@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const CONFIG: &str = ".dart_tool/build_runner_accelerator/runner-package_config.json";
+#[cfg(test)]
 const RESOLVER: &str = "lib/src/build/resolver/resolvers_impl.dart";
 #[cfg(test)]
 const BEFORE: &str = "AnalysisOptionsImpl()\n          // ignore: deprecated_member_use\n          ..contextFeatures = _featureSet(\n            enableExperiments: enabledExperiments,\n          ),";
@@ -96,11 +97,7 @@ pub(crate) fn prepare(root: &Path) -> io::Result<PathBuf> {
     for name in ["pubspec.yaml", "LICENSE"] {
         files.insert(PathBuf::from(name), fs::read(runner_root.join(name))?);
     }
-    let resolver = files
-        .get_mut(Path::new(RESOLVER))
-        .ok_or_else(|| io::Error::other("legacy build_runner resolver is missing"))?;
-    *resolver =
-        patch_resolver(std::str::from_utf8(resolver).map_err(io::Error::other)?)?.into_bytes();
+    crate::dependency_patches::apply(&mut files, crate::dependency_patches::RESOLVER)?;
     let identity = digest_bytes(&serde_json::to_vec(
         &files
             .iter()
@@ -162,13 +159,6 @@ pub(crate) fn publish_config_at(
         }
     }
     Ok(destination)
-}
-
-fn patch_resolver(source: &str) -> io::Result<String> {
-    let path = PathBuf::from(RESOLVER);
-    let mut files = BTreeMap::from([(path.clone(), source.as_bytes().to_vec())]);
-    crate::dependency_patches::apply(&mut files, crate::dependency_patches::RESOLVER)?;
-    String::from_utf8(files.remove(&path).unwrap()).map_err(io::Error::other)
 }
 
 pub(crate) fn collect(
