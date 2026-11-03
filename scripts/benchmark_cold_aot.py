@@ -31,7 +31,7 @@ def require(condition, message):
 def main():
     """Stage fresh workspaces, measure each lane, and validate comparable outputs."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--baseline-root', type=Path, required=True)
+    parser.add_argument('--baseline-root', type=Path)
     parser.add_argument('--candidate-root', type=Path,
                         default=Path(__file__).resolve().parents[1])
     parser.add_argument('--native', type=Path, required=True,
@@ -47,6 +47,8 @@ def main():
     args = parser.parse_args()
     if args.experimental_compile_isolation:
         args.baseline_root = args.candidate_root
+    elif args.baseline_root is None:
+        parser.error('--baseline-root is required without --experimental-compile-isolation')
     if args.jobs < 1 or args.repeats < 1:
         parser.error('jobs and repeats must be positive')
     repo = args.candidate_root.resolve()

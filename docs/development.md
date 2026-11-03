@@ -63,6 +63,7 @@ Run the focused stock comparison with a built frontend and resolved cache:
 python3 scripts/correctness_compile_isolation.py
 python3 scripts/correctness_compile_isolation.py --worker-mode aot
 # Pin a supported Analyzer version instead of the fixture lockfile:
+# Analyzer 14.7.0 requires Dart 3.13+; select it with DART_BIN if needed.
 python3 scripts/correctness_compile_isolation.py --analyzer 14.7.0
 ```
 

@@ -1383,6 +1383,13 @@ fn prepare_worker_kernel(
 
     // Publish the dependency list before the kernel. If the second rename is
     // interrupted, the old kernel is conservatively treated as stale.
+    // An interrupted replacement must not leave the new kernel paired with
+    // the previous compilation's stamp either.
+    match fs::remove_file(&config_stamp) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     replace_file(&temp_depfile, &depfile_path)?;
     replace_file(&temp_kernel, &kernel_path)?;
     replace_file(&temp_config, &config_stamp)?;
@@ -1390,16 +1397,11 @@ fn prepare_worker_kernel(
 }
 
 fn kernel_config_is_current(root: &Path, kernel: &Path) -> bool {
-    match fs::read_to_string(kernel.with_extension("dill.config")) {
-        Ok(expected) => digest_file(&crate::runner_compatibility::package_config(root))
-            .is_ok_and(|actual| actual == expected),
-        // Preserve existing default caches, but an experimental selection may
-        // never reuse an unstamped pre-experiment kernel.
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            !crate::compile_isolation::enabled()
-        }
-        Err(_) => false,
-    }
+    // Missing evidence invalidates this disposable cache in either mode.
+    fs::read_to_string(kernel.with_extension("dill.config")).is_ok_and(|expected| {
+        digest_file(&crate::runner_compatibility::package_config(root))
+            .is_ok_and(|actual| actual == expected)
+    })
 }
 
 fn absolute_worker_path(root: &Path, worker_path: &Path) -> io::Result<PathBuf> {
@@ -1919,6 +1921,7 @@ mod tests {
         fs::create_dir_all(root.join(".dart_tool")).unwrap();
         let config = root.join(".dart_tool/package_config.json");
         let kernel = root.join("worker.dill");
+        assert!(!super::kernel_config_is_current(&root, &kernel));
         fs::write(&config, "original configuration").unwrap();
         fs::write(
             kernel.with_extension("dill.config"),
@@ -1926,6 +1929,13 @@ mod tests {
         )
         .unwrap();
         assert!(super::kernel_config_is_current(&root, &kernel));
+        fs::remove_file(kernel.with_extension("dill.config")).unwrap();
+        assert!(!super::kernel_config_is_current(&root, &kernel));
+        fs::write(
+            kernel.with_extension("dill.config"),
+            super::digest_file(&config).unwrap(),
+        )
+        .unwrap();
         fs::write(&config, "experimental configuration").unwrap();
         assert!(!super::kernel_config_is_current(&root, &kernel));
         fs::remove_dir_all(root).unwrap();

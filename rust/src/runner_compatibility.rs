@@ -202,15 +202,40 @@ pub(crate) fn publish(slot: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> io::Re
         let _ = fs::remove_dir_all(&temporary);
         result?;
     }
-    // Fail before compilation on incomplete or altered disposable state.
-    for (path, bytes) in files {
-        if fs::read(slot.join(path))? != *bytes {
-            return Err(io::Error::other(
-                "invalid runner-compat cache; remove it and retry",
-            ));
+    // Validate the file set and bytes in one pass, without retaining a second
+    // copy of every source. Compile-isolation receipt reuse skips this cold path.
+    fn validate(
+        slot: &Path,
+        relative: &Path,
+        files: &BTreeMap<PathBuf, Vec<u8>>,
+    ) -> io::Result<usize> {
+        let mut count = 0;
+        for entry in fs::read_dir(slot.join(relative))? {
+            let entry = entry?;
+            let path = relative.join(entry.file_name());
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                count += validate(slot, &path, files)?;
+            } else if kind.is_file()
+                && files.get(&path).is_some_and(|expected| {
+                    fs::read(entry.path()).is_ok_and(|actual| actual == *expected)
+                })
+            {
+                count += 1;
+            } else {
+                return Err(invalid_copy());
+            }
         }
+        Ok(count)
+    }
+    if validate(slot, Path::new(""), files)? != files.len() {
+        return Err(invalid_copy());
     }
     Ok(())
+}
+
+fn invalid_copy() -> io::Error {
+    io::Error::other("invalid runner-compat cache; remove it and retry")
 }
 
 fn temporary_path(path: &Path) -> PathBuf {
@@ -506,5 +531,22 @@ mod tests {
                 .to_string()
                 .contains("source context differs")
         );
+    }
+    #[test]
+    fn published_copy_rejects_extra_missing_and_changed_files() {
+        let fixture = Fixture::new();
+        let slot = fixture.0.join("copy");
+        let path = PathBuf::from("lib/source.dart");
+        let files = BTreeMap::from([(path.clone(), b"expected".to_vec())]);
+        publish(&slot, &files).unwrap();
+        let extra = slot.join("lib/injected.dart");
+        fs::write(&extra, "unexpected").unwrap();
+        assert!(publish(&slot, &files).is_err());
+        fs::remove_file(extra).unwrap();
+        publish(&slot, &files).unwrap();
+        fs::write(slot.join(&path), "changed").unwrap();
+        assert!(publish(&slot, &files).is_err());
+        fs::remove_file(slot.join(path)).unwrap();
+        assert!(publish(&slot, &files).is_err());
     }
 }
