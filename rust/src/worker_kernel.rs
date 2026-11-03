@@ -607,7 +607,9 @@ pub(crate) fn pinned_worker_artifact_is_current(
             let worker_path = absolute_worker_path(root, Path::new(worker_executable))?;
             let kernel_path = worker_path.with_extension("dill");
             let depfile_path = PathBuf::from(format!("{}.d", kernel_path.display()));
-            if !worker_artifact_is_current(&kernel_path, &depfile_path, &worker_path) {
+            if !worker_artifact_is_current(&kernel_path, &depfile_path, &worker_path)
+                || !kernel_config_is_current(root, &kernel_path)
+            {
                 return Ok(false);
             }
             Ok(canonicalize(kernel_path)?.as_path() == path.as_path())
@@ -1341,7 +1343,9 @@ fn prepare_worker_kernel(
     let worker_path = absolute_worker_path(root, Path::new(worker_executable))?;
     let kernel_path = worker_path.with_extension("dill");
     let depfile_path = PathBuf::from(format!("{}.d", kernel_path.display()));
-    if worker_artifact_is_current(&kernel_path, &depfile_path, &worker_path) {
+    if worker_artifact_is_current(&kernel_path, &depfile_path, &worker_path)
+        && kernel_config_is_current(root, &kernel_path)
+    {
         return canonicalize(kernel_path);
     }
 
@@ -1349,6 +1353,7 @@ fn prepare_worker_kernel(
     let temp_kernel = temporary_sibling(&kernel_path, process_id, "dill");
     let temp_depfile = temporary_sibling(&depfile_path, process_id, "d");
     let package_config = crate::runner_compatibility::package_config(root);
+    let config_key = digest_file(&package_config)?;
     let status = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "kernel"])
         .arg("--no-embed-sources")
@@ -1365,12 +1370,36 @@ fn prepare_worker_kernel(
         remove_if_present(&temp_depfile);
         return Err(kernel_compile_status_error(&worker_path, status));
     }
+    if digest_file(&package_config)? != config_key {
+        remove_if_present(&temp_kernel);
+        remove_if_present(&temp_depfile);
+        return Err(io::Error::other(
+            "kernel package configuration changed during compilation",
+        ));
+    }
+    let config_stamp = kernel_path.with_extension("dill.config");
+    let temp_config = temporary_sibling(&config_stamp, process_id, "config");
+    fs::write(&temp_config, config_key)?;
 
     // Publish the dependency list before the kernel. If the second rename is
     // interrupted, the old kernel is conservatively treated as stale.
     replace_file(&temp_depfile, &depfile_path)?;
     replace_file(&temp_kernel, &kernel_path)?;
+    replace_file(&temp_config, &config_stamp)?;
     canonicalize(kernel_path)
+}
+
+fn kernel_config_is_current(root: &Path, kernel: &Path) -> bool {
+    match fs::read_to_string(kernel.with_extension("dill.config")) {
+        Ok(expected) => digest_file(&crate::runner_compatibility::package_config(root))
+            .is_ok_and(|actual| actual == expected),
+        // Preserve existing default caches, but an experimental selection may
+        // never reuse an unstamped pre-experiment kernel.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            !crate::compile_isolation::enabled()
+        }
+        Err(_) => false,
+    }
 }
 
 fn absolute_worker_path(root: &Path, worker_path: &Path) -> io::Result<PathBuf> {
@@ -1632,7 +1661,9 @@ fn prewarm_jobs() -> usize {
 }
 
 fn prewarm_script_path(root: &Path) -> Option<PathBuf> {
-    let config_path = crate::runner_compatibility::package_config(root);
+    // The compiler view may copy only lib/. Locate the orchestration helper
+    // in the original package, then compile it with the effective config.
+    let config_path = root.join(".dart_tool/package_config.json");
     let text = fs::read_to_string(&config_path).ok()?;
     let config: serde_json::Value = serde_json::from_str(&text).ok()?;
     let package = config.get("packages")?.as_array()?.iter().find(|package| {
@@ -1879,6 +1910,43 @@ mod tests {
         assert!(!current());
         fs::write(&artifact, "before").unwrap();
         assert!(current());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn kernel_stamp_rejects_changed_effective_configuration() {
+        let root = std::env::temp_dir().join(format!("kernel-config-stamp-{}", std::process::id()));
+        fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        let config = root.join(".dart_tool/package_config.json");
+        let kernel = root.join("worker.dill");
+        fs::write(&config, "original configuration").unwrap();
+        fs::write(
+            kernel.with_extension("dill.config"),
+            super::digest_file(&config).unwrap(),
+        )
+        .unwrap();
+        assert!(super::kernel_config_is_current(&root, &kernel));
+        fs::write(&config, "experimental configuration").unwrap();
+        assert!(!super::kernel_config_is_current(&root, &kernel));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn prewarm_helper_uses_original_package_even_when_compiler_copies_only_lib() {
+        let root =
+            std::env::temp_dir().join(format!("prewarm-original-package-{}", std::process::id()));
+        let original = root.join("original");
+        fs::create_dir_all(root.join(".dart_tool/build_runner_accelerator")).unwrap();
+        fs::create_dir_all(original.join("bin")).unwrap();
+        let helper = original.join("bin/prewarm_analysis.dart");
+        fs::write(&helper, "void main() {}\n").unwrap();
+        fs::write(root.join(".dart_tool/package_config.json"), serde_json::to_vec(&serde_json::json!({"packages":[{"name":"build_runner_accelerator","rootUri":crate::runner_compatibility::file_uri(&original)}]})).unwrap()).unwrap();
+        fs::write(
+            root.join(".dart_tool/build_runner_accelerator/runner-package_config.json"),
+            r#"{"packages":[{"name":"build_runner_accelerator","rootUri":"missing-copy/"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(super::prewarm_script_path(&root), Some(helper));
         fs::remove_dir_all(root).unwrap();
     }
 

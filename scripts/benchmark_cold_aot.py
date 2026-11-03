@@ -3,6 +3,8 @@
 
 The SDK, resolved pub packages and OS page cache are warm. Each sample gets
 empty workspace, accelerator and analyzer caches. No manual prewarm runs are used.
+With --experimental-compile-isolation, baseline/candidate mean OFF/ON in this
+checkout and stock runs once to establish byte-identical output expectations.
 """
 
 import argparse
@@ -33,14 +35,18 @@ def main():
     parser.add_argument('--candidate-root', type=Path,
                         default=Path(__file__).resolve().parents[1])
     parser.add_argument('--native', type=Path, required=True,
-                        help='Release frontend; this experiment changes Dart only')
+                        help='Release frontend built from the candidate checkout')
     parser.add_argument('--dart', type=Path, required=True)
     parser.add_argument('--pub-cache', type=Path, required=True)
     parser.add_argument('--results', type=Path, required=True)
     parser.add_argument('--fixture', default='json_serializable_10_app')
     parser.add_argument('--jobs', type=int, default=1)
     parser.add_argument('--repeats', type=int, default=3)
+    parser.add_argument('--experimental-compile-isolation', action='store_true',
+                        help='Compare this checkout with isolation OFF/ON; stock runs once')
     args = parser.parse_args()
+    if args.experimental_compile_isolation:
+        args.baseline_root = args.candidate_root
     if args.jobs < 1 or args.repeats < 1:
         parser.error('jobs and repeats must be positive')
     repo = args.candidate_root.resolve()
@@ -69,6 +75,7 @@ def main():
         baseline_sources_sha256=source_digest(baseline),
         candidate_sources_sha256=source_digest(repo),
         jobs=args.jobs, repeats=args.repeats,
+        experimental_compile_isolation=args.experimental_compile_isolation,
         scope=__doc__, worker_policy='synchronous AOT',
     )
     (results / 'metadata.json').write_text(json.dumps(metadata, indent=2))
@@ -92,6 +99,8 @@ def main():
         lanes = ['stock', 'baseline', 'candidate']
         if index % 2:
             lanes.reverse()
+        if args.experimental_compile_isolation and index > 0:
+            lanes.remove('stock')
         for lane in lanes:
             sample = results / f'{index}-{lane}'
             root = sample / 'fixture'
@@ -116,7 +125,10 @@ def main():
                        ANALYZER_STATE_LOCATION_OVERRIDE=str(sample / 'analyzer'),
                        BUILD_RUNNER_ACCELERATOR_BIN=native,
                        BUILD_RUNNER_ACCELERATOR_WORKER_AOT='1')
-            run([dart, '--suppress-analytics', 'pub', 'get', '--offline'],
+            if args.experimental_compile_isolation and lane == 'candidate':
+                env['BUILD_RUNNER_ACCELERATOR_EXPERIMENTAL_COMPILE_ISOLATION'] = '1'
+            run([dart, '--suppress-analytics', 'pub', 'get', '--offline',
+                 '--enforce-lockfile'],
                 root, env, sample / 'pub-get.log')
             command = [dart, '--suppress-analytics', 'run']
             if lane == 'stock':
@@ -147,6 +159,10 @@ def main():
                             'No work to do (Rust frontend)' in log,
                             'Native build did not report success')
                     state = root / '.dart_tool/build_runner_accelerator'
+                    if args.experimental_compile_isolation and lane == 'candidate':
+                        config = json.loads((state / 'compile-isolation-package_config.json').read_text())
+                        require('buildRunnerAcceleratorCompileIsolation' in config,
+                                'Experimental compiler config missing')
                     manifest = json.loads((state / 'builder-manifest.json').read_text())
                     for field in ['fingerprint', 'worker_entrypoint']:
                         manifest.pop(field)

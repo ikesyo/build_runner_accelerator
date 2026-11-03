@@ -36,6 +36,32 @@ when its wider feature set is needed.
 
 ## Local checks
 
+To try compiler dependency isolation from this checkout, build the release
+frontend and use a consumer application that depends on this checkout:
+
+```bash
+BUILD_RUNNER_ACCELERATOR_BIN=/path/to/checkout/rust/target/release/build_runner_accelerator \
+BUILD_RUNNER_ACCELERATOR_EXPERIMENTAL_COMPILE_ISOLATION=1 \
+  dart run build_runner_accelerator build
+```
+
+The experiment is off by default and initially accepts only build_runner
+2.16.1/2.16.2, Analyzer 14.5.0/14.6.0 and dart_style 3.1.13/3.1.14. Other versions
+or unexpected source shapes fail explicitly. Unset the variable to return to
+normal compilation. Original packages, application configuration and builder
+asset paths are preserved. Nested stock ChildProcess.run calls fail the worker
+and cannot publish outputs. See [ADR 0047](adr/0047-experimental-compile-isolation.md)
+for cache separation and the [investigation](benchmarks/aot-cold-parse-isolation-2026-10.md)
+for the measurement limits. Published binaries predating this implementation
+ignore the variable; use the checkout's rebuilt frontend for this experiment.
+
+Run the focused stock comparison with a built frontend and resolved cache:
+
+```bash
+python3 scripts/correctness_compile_isolation.py
+python3 scripts/correctness_compile_isolation.py --worker-mode aot
+```
+
 After pub get, run formatting, analysis, tests, and Rust checks:
 
 ```bash

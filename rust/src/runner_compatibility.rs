@@ -15,6 +15,10 @@ const BEFORE: &str = "AnalysisOptionsImpl()\n          // ignore: deprecated_mem
 const AFTER: &str = "workerAnalysisOptions(_featureSet(\n            enableExperiments: enabledExperiments,\n          )),";
 
 pub(crate) fn package_config(root: &Path) -> PathBuf {
+    let isolated = root.join(crate::compile_isolation::CONFIG);
+    if crate::compile_isolation::enabled() && isolated.is_file() {
+        return isolated;
+    }
     let compatible = root.join(CONFIG);
     if compatible.is_file() {
         compatible
@@ -78,7 +82,11 @@ pub(crate) fn prepare(root: &Path) -> io::Result<PathBuf> {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
-        return Ok(original);
+        return if crate::compile_isolation::enabled() {
+            crate::compile_isolation::prepare(root, config)
+        } else {
+            Ok(original)
+        };
     }
     let runner_root = runner_root.unwrap();
     let mut files = BTreeMap::new();
@@ -112,8 +120,25 @@ pub(crate) fn prepare(root: &Path) -> io::Result<PathBuf> {
         };
         entry["rootUri"] = Value::String(file_uri(&path));
     }
-    let destination = root.join(CONFIG);
-    let bytes = serde_json::to_vec(&config)?;
+    let destination = publish_config(root, &config)?;
+    if crate::compile_isolation::enabled() {
+        return crate::compile_isolation::prepare(root, config);
+    }
+    Ok(destination)
+}
+
+pub(crate) fn publish_config(root: &Path, config: &Value) -> io::Result<PathBuf> {
+    publish_config_at(root, CONFIG, config)
+}
+
+pub(crate) fn publish_config_at(
+    root: &Path,
+    relative: &str,
+    config: &Value,
+) -> io::Result<PathBuf> {
+    let destination = root.join(relative);
+    fs::create_dir_all(destination.parent().unwrap())?;
+    let bytes = serde_json::to_vec(config)?;
     if fs::read(&destination).ok().as_deref() != Some(&bytes) {
         let temporary = temporary_path(&destination);
         fs::write(&temporary, &bytes)?;
@@ -153,7 +178,11 @@ fn patch_resolver(source: &str) -> io::Result<String> {
     ))
 }
 
-fn collect(root: &Path, relative: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) -> io::Result<()> {
+pub(crate) fn collect(
+    root: &Path,
+    relative: &Path,
+    files: &mut BTreeMap<PathBuf, Vec<u8>>,
+) -> io::Result<()> {
     for entry in fs::read_dir(root.join(relative))? {
         let entry = entry?;
         let name = relative.join(entry.file_name());
@@ -170,7 +199,7 @@ fn collect(root: &Path, relative: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>)
     Ok(())
 }
 
-fn publish(slot: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> io::Result<()> {
+pub(crate) fn publish(slot: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> io::Result<()> {
     if !slot.exists() {
         fs::create_dir_all(slot.parent().unwrap())?;
         let temporary = temporary_path(slot);
@@ -210,7 +239,7 @@ fn temporary_path(path: &Path) -> PathBuf {
     ))
 }
 
-fn file_uri(path: &Path) -> String {
+pub(crate) fn file_uri(path: &Path) -> String {
     let normalized = path.to_string_lossy().replace('\\', "/");
     let mut uri = if normalized.starts_with('/') {
         "file://"
