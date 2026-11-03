@@ -23,8 +23,9 @@ pub(crate) fn stamp(path: &Path) -> io::Result<Stamp> {
     ])
 }
 
-/// Snapshot kernel mount types once per validation. Only kernel-local timestamp
-/// providers are eligible; remote, FUSE, overlay and unknown mounts rehash.
+/// Snapshot kernel mount types once per validation. Supported local and overlay
+/// mounts may reuse coherent timestamps; direct remote, FUSE and unknown mounts
+/// rehash. Overlay backing layers must follow the documented local contract.
 /// Mount-table reads are local and do not issue remote statfs RPCs.
 pub(crate) fn reusable_devices(root: &Path) -> Option<std::collections::BTreeSet<u64>> {
     let _wall = crate::wall::Span::new("aot_filesystem_policy");
@@ -47,10 +48,10 @@ fn local_devices(mounts: &str) -> Option<std::collections::BTreeSet<u64>> {
         let (fields, filesystem) = line.split_once(" - ")?;
         let (major, minor) = fields.split_whitespace().nth(2)?.split_once(':')?;
         let device = libc::makedev(major.parse().ok()?, minor.parse().ok()?);
-        // These kernel filesystems generate change times from the local clock.
+        // Supported metadata contracts; ordinary OverlayFS uses local backing.
         let local = matches!(
             filesystem.split_whitespace().next()?,
-            "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "tmpfs"
+            "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "tmpfs" | "overlay"
         );
         // Ambiguous device identities never enable reuse.
         devices
@@ -98,7 +99,7 @@ mod tests {
         let devices = local_devices(mounts).unwrap();
         assert_eq!(
             devices,
-            [1, 6, 7]
+            [1, 3, 6, 7]
                 .into_iter()
                 .map(|minor| libc::makedev(0, minor))
                 .collect()

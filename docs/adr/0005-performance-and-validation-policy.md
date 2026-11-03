@@ -48,7 +48,8 @@ Use the following policy:
   opt-out. The
   launcher also accepts stock-compatible `--force-aot` and `--force-jit`
   flags, with explicit flags taking precedence over the environment variable.
-- On known local Linux filesystems (ext2/3/4, XFS, Btrfs and tmpfs), worker
+- On supported Linux filesystems (ext2/3/4, XFS, Btrfs, tmpfs and ordinary
+  OverlayFS with local backing), worker
   AOT validation may reuse a locally validated file digest when its device,
   inode, mode, size, nanosecond mtime/ctime and the expected
   AOT-metadata digest still match. Require both timestamps to be more than two
@@ -56,13 +57,16 @@ Use the following policy:
   full hashing. Fresh files are rehashed without sleeping. Resolve current
   dependency paths on every lookup. Read the kernel mount table once per
   validation and match existing device stamps against it; do not issue per-file
-  filesystem queries. Remote, FUSE, overlay and unknown filesystems use full
+  filesystem queries. Direct remote, FUSE and unknown filesystems use full
   hashing, as do other platforms. Missing/malformed receipts and changed
   metadata require full hashing;
   observed changes during hashing reject reuse. Validate worker, executable,
   SDK/config/cache identity and all depfile inputs before using the artifact.
   Publish receipts atomically after complete validation and prune obsolete
-  entries on updates. This assumes coherent filesystem change-time semantics;
+  entries on updates. Assume coherent change times and local backing for
+  OverlayFS; do not infer remote clocks from the overlay type or inspect hidden
+  backing-layer topology. Mutating underlying overlay layers out of band is
+  outside OverlayFS's own contract. This assumes coherent filesystem metadata;
   receipts are disposable local cache evidence, not an adversarial integrity
   mechanism. The optimization applies to worker artifacts; launcher release-binary verification keeps its policy below.
 - Keep release artifact verification off the steady-state launcher startup
