@@ -11,7 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const CONFIG: &str = ".dart_tool/build_runner_accelerator/runner-package_config.json";
 const RESOLVER: &str = "lib/src/build/resolver/resolvers_impl.dart";
+#[cfg(test)]
 const BEFORE: &str = "AnalysisOptionsImpl()\n          // ignore: deprecated_member_use\n          ..contextFeatures = _featureSet(\n            enableExperiments: enabledExperiments,\n          ),";
+#[cfg(test)]
 const AFTER: &str = "workerAnalysisOptions(_featureSet(\n            enableExperiments: enabledExperiments,\n          )),";
 
 pub(crate) fn package_config(root: &Path) -> PathBuf {
@@ -163,19 +165,10 @@ pub(crate) fn publish_config_at(
 }
 
 fn patch_resolver(source: &str) -> io::Result<String> {
-    if source.matches(BEFORE).count() != 1 {
-        return Err(io::Error::other(
-            "build_runner 2.16 resolver differs from the supported #5197 backport",
-        ));
-    }
-    // Share the worker factory: it handles Analyzer 13.3's ExperimentStatus
-    // cast as well as the newer immutable analysis options.
-    Ok(format!(
-        "// Accelerator compatibility backport: dart-lang/build#5197.\n\
-         // ignore: implementation_imports\n\
-         import 'package:build_runner_accelerator/src/worker_analysis_options.dart' show workerAnalysisOptions;\n{}",
-        source.replacen(BEFORE, AFTER, 1)
-    ))
+    let path = PathBuf::from(RESOLVER);
+    let mut files = BTreeMap::from([(path.clone(), source.as_bytes().to_vec())]);
+    crate::dependency_patches::apply(&mut files, crate::dependency_patches::RESOLVER)?;
+    String::from_utf8(files.remove(&path).unwrap()).map_err(io::Error::other)
 }
 
 pub(crate) fn collect(
@@ -278,7 +271,12 @@ mod tests {
             )
             .unwrap();
             fs::write(runner.join("LICENSE"), "upstream BSD license").unwrap();
-            fs::write(runner.join(RESOLVER), format!("// upstream\n{BEFORE}\n")).unwrap();
+            fs::write(
+                runner.join(RESOLVER),
+                &crate::dependency_patches::preimages(&[crate::dependency_patches::RESOLVER])
+                    [Path::new(RESOLVER)],
+            )
+            .unwrap();
             fs::write(root.join(".dart_tool/package_config.json"), serde_json::to_vec(&serde_json::json!({
                 "configVersion": 2,
                 "packages": [
@@ -516,7 +514,7 @@ mod tests {
             prepare(root)
                 .unwrap_err()
                 .to_string()
-                .contains("differs from the supported")
+                .contains("source context differs")
         );
     }
 }

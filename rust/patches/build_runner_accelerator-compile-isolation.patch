@@ -1,0 +1,28 @@
+--- a/build_runner_accelerator/lib/src/resolver_directives.dart
++++ b/build_runner_accelerator/lib/src/resolver_directives.dart
+@@ -1,5 +1,5 @@
+ import 'package:analyzer/dart/analysis/features.dart';
+-import 'package:analyzer/dart/analysis/utilities.dart';
++import 'package:analyzer/src/clients/build_resolvers/parse_utilities.dart';
+ import 'package:analyzer/dart/ast/ast.dart';
+ import 'package:analyzer/dart/ast/token.dart';
+ import 'package:analyzer/dart/element/element.dart';
+--- a/build_runner_accelerator/lib/src/trigger_evaluator.dart
++++ b/build_runner_accelerator/lib/src/trigger_evaluator.dart
+@@ -1,4 +1,4 @@
+-import 'package:analyzer/dart/analysis/utilities.dart';
++import 'package:analyzer/src/clients/build_resolvers/parse_utilities.dart';
+ import 'package:analyzer/dart/ast/ast.dart';
+ import 'package:build/build.dart';
+ import 'package:build_runner/src/build/builder_filesystem.dart'
+--- a/build_runner_accelerator/lib/src/worker_analysis_driver_model.dart
++++ b/build_runner_accelerator/lib/src/worker_analysis_driver_model.dart
+@@ -2,7 +2,7 @@
+ import 'dart:convert';
+ import 'package:crypto/crypto.dart';
+ 
+-import 'package:analyzer/dart/analysis/utilities.dart';
++import 'package:analyzer/src/clients/build_resolvers/parse_utilities.dart';
+ import 'package:analyzer/dart/ast/ast.dart';
+ // ignore: implementation_imports
+ import 'package:analyzer/src/clients/build_resolvers/build_resolvers.dart';

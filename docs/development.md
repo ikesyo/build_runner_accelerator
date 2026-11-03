@@ -55,6 +55,8 @@ for cache separation and the [investigation](benchmarks/aot-cold-parse-isolation
 for the measurement limits. Published binaries predating this implementation
 ignore the variable; use the checkout's rebuilt frontend for this experiment.
 
+Compiler source edits are maintained as [embedded dependency patches](../rust/patches/README.md).
+
 Run the focused stock comparison with a built frontend and resolved cache:
 
 ```bash

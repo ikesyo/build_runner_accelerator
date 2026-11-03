@@ -4,6 +4,7 @@ mod build_filter;
 mod builder;
 mod cli;
 mod compile_isolation;
+mod dependency_patches;
 mod digest;
 mod file_stamp;
 mod frontend;

@@ -11,9 +11,6 @@ use std::path::{Path, PathBuf};
 pub(crate) const ENV: &str = "BUILD_RUNNER_ACCELERATOR_EXPERIMENTAL_COMPILE_ISOLATION";
 pub(crate) const CONFIG: &str =
     ".dart_tool/build_runner_accelerator/compile-isolation-package_config.json";
-const PARSE_URI: &str = "package:analyzer/src/clients/build_resolvers/parse_utilities.dart";
-const PUBLIC_URI: &str = "package:analyzer/dart/analysis/utilities.dart";
-const COLLECTION: &str = "package:analyzer/dart/analysis/analysis_context_collection.dart";
 type Sources = BTreeMap<PathBuf, Vec<u8>>;
 
 pub(crate) fn enabled() -> bool {
@@ -60,9 +57,8 @@ pub(crate) fn prepare(root: &Path, mut config: Value) -> io::Result<PathBuf> {
         ("build_runner_accelerator", &[]),
     ];
     // Bind reuse to the complete incoming resolution and canonical package roots.
-    // Bump this version if the transformation or receipt contract changes.
     let input = digest_bytes(&serde_json::to_vec(&(
-        "compile-isolation-validation-v1",
+        crate::dependency_patches::isolation_identity(),
         &incoming,
         &roots,
     ))?);
@@ -257,106 +253,10 @@ mod validation {
     pub(super) fn save(_: &Path, _: String, _: Option<()>, _: &Path, _: &Sources, _: &Value) {}
 }
 
-fn source(files: &Sources, path: &str) -> io::Result<String> {
-    let bytes = files
-        .get(Path::new(path))
-        .ok_or_else(|| error(format!("missing {path}")))?;
-    String::from_utf8(bytes.clone()).map_err(error)
-}
-
-fn replace_once(text: &str, before: &str, after: &str) -> io::Result<String> {
-    if text.matches(before).count() != 1 {
-        return Err(error(format!("unsupported source shape near {before:?}")));
-    }
-    Ok(text.replacen(before, after, 1))
-}
-
 fn patch(files: &mut Sources) -> io::Result<()> {
-    let utilities = "analyzer/lib/dart/analysis/utilities.dart";
-    let text = source(files, utilities)?;
-    let parse_begin = "/// Return the result of parsing the file";
-    let resolve_begin = "/// Return the result of resolving the file at the given [path].";
-    if text.matches(parse_begin).count() != 1 || text.matches(resolve_begin).count() != 1 {
-        return Err(error("unsupported Analyzer utility declarations"));
+    for patch in crate::dependency_patches::ISOLATION {
+        crate::dependency_patches::apply(files, patch).map_err(error)?;
     }
-    let first = text.find(parse_begin).unwrap();
-    let split = text.find(resolve_begin).unwrap();
-    if first >= split {
-        return Err(error("unsupported Analyzer utility ordering"));
-    }
-    let mut light = text[..split].to_owned();
-    for name in ["analysis_context.dart", "analysis_context_collection.dart"] {
-        light = replace_once(
-            &light,
-            &format!("import 'package:analyzer/dart/analysis/{name}';\n"),
-            "",
-        )?;
-    }
-    files.insert(
-        PathBuf::from("analyzer/lib/src/clients/build_resolvers/parse_utilities.dart"),
-        light.into_bytes(),
-    );
-    files.insert(
-        PathBuf::from(utilities),
-        format!(
-            "{}export '{PARSE_URI}' show parseFile, parseString;\n\n{}",
-            &text[..first],
-            &text[split..]
-        )
-        .into_bytes(),
-    );
-    let barrel = "analyzer/lib/src/clients/build_resolvers/build_resolvers.dart";
-    let text = replace_once(
-        &source(files, barrel)?,
-        &format!("import '{COLLECTION}';\n"),
-        "",
-    )?;
-    let text = replace_once(
-        &text,
-        "import 'dart:typed_data';",
-        &format!("/// @docImport '{COLLECTION}';\nlibrary;\n\nimport 'dart:typed_data';"),
-    )?;
-    files.insert(PathBuf::from(barrel), text.into_bytes());
-    for path in [
-        "build_runner_accelerator/lib/src/trigger_evaluator.dart",
-        "build_runner_accelerator/lib/src/worker_analysis_driver_model.dart",
-        "build_runner_accelerator/lib/src/resolver_directives.dart",
-        "dart_style/lib/src/dart_formatter.dart",
-        "analyzer/lib/src/dart/sdk/sdk.dart",
-        "build_runner/lib/src/build/library_cycle_graph/asset_deps_loader.dart",
-        "build_runner/lib/src/build/build.dart",
-    ] {
-        let text = replace_once(
-            &source(files, path)?,
-            &format!("'{PUBLIC_URI}'"),
-            &format!("'{PARSE_URI}'"),
-        )?;
-        files.insert(PathBuf::from(path), text.into_bytes());
-    }
-    let processes = "build_runner/lib/src/bootstrap/processes.dart";
-    let text = replace_once(
-        &source(files, processes)?,
-        "import '../build_runner.dart';\n",
-        "",
-    )?;
-    let first = "    _isRunning = true;";
-    let last = "  /// Receives the message sent from the parent process.";
-    if text.matches(first).count() != 1 || text.matches(last).count() != 1 {
-        return Err(error("unsupported ChildProcess.run source"));
-    }
-    let first = text.find(first).unwrap();
-    let last = text.find(last).unwrap();
-    if first >= last || !text[..first].contains("static Future<Never> run(") {
-        return Err(error("unsupported ChildProcess.run declaration"));
-    }
-    // Do not let a builder catch this unsupported request and then publish
-    // success. EOF fails the native transaction; diagnostics stay off stdout.
-    let text = format!(
-        "{}    stderr.writeln('Experimental compile isolation does not support ChildProcess.run; unset {ENV}');\n    exit(64);\n  }}\n\n{}",
-        &text[..first],
-        &text[last..]
-    );
-    files.insert(PathBuf::from(processes), text.into_bytes());
     Ok(())
 }
 
@@ -400,27 +300,7 @@ mod tests {
                     serde_json::json!({"name":name,"rootUri":file_uri(&dir),"packageUri":"lib/"}),
                 );
             }
-            let mut files = Sources::new();
-            files.insert(PathBuf::from("analyzer/lib/dart/analysis/utilities.dart"), format!("import 'package:analyzer/dart/analysis/analysis_context.dart';\nimport '{COLLECTION}';\n/// Return the result of parsing the file\nString parseFile() => 'original parse';\nString parseString() => 'original string';\n/// Return the result of resolving the file at the given [path].\nString resolveFile() => 'original resolve';\n").into_bytes());
-            files.insert(
-                PathBuf::from("analyzer/lib/src/clients/build_resolvers/build_resolvers.dart"),
-                format!("import 'dart:typed_data';\nimport '{COLLECTION}';\n").into_bytes(),
-            );
-            for path in [
-                "build_runner_accelerator/lib/src/trigger_evaluator.dart",
-                "build_runner_accelerator/lib/src/worker_analysis_driver_model.dart",
-                "build_runner_accelerator/lib/src/resolver_directives.dart",
-                "dart_style/lib/src/dart_formatter.dart",
-                "analyzer/lib/src/dart/sdk/sdk.dart",
-                "build_runner/lib/src/build/library_cycle_graph/asset_deps_loader.dart",
-                "build_runner/lib/src/build/build.dart",
-            ] {
-                files.insert(
-                    PathBuf::from(path),
-                    format!("import '{PUBLIC_URI}';\n").into_bytes(),
-                );
-            }
-            files.insert(PathBuf::from("build_runner/lib/src/bootstrap/processes.dart"), b"import '../build_runner.dart';\nclass ChildProcess {\n  static Future<Never> run() async {\n    _isRunning = true;\n    await originalCli();\n  }\n\n  /// Receives the message sent from the parent process.\n  static receive() {}\n}\n".to_vec());
+            let files = crate::dependency_patches::preimages(&crate::dependency_patches::ISOLATION);
             for (path, bytes) in files {
                 let path = root.join(path);
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -484,14 +364,14 @@ mod tests {
         assert!(
             fs::read_to_string(analyzer.join("lib/dart/analysis/utilities.dart"))
                 .unwrap()
-                .contains("original resolve")
+                .contains("Return the result of resolving")
         );
         assert!(
             fs::read_to_string(
                 analyzer.join("lib/src/clients/build_resolvers/parse_utilities.dart")
             )
             .unwrap()
-            .contains("original parse")
+            .contains("parseFile")
         );
         prepare(&fixture.0, original.clone()).unwrap();
         assert_eq!(
