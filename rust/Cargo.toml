@@ -10,3 +10,6 @@ notify = "8.2"
 serde = { version = "1.0", features = ["derive", "rc"] }
 # BuilderOptions exposes Dart Map insertion order, including nested JSON.
 serde_json = { version = "1.0", features = ["preserve_order"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
