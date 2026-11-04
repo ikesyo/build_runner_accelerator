@@ -1,0 +1,8 @@
+--- a/scripts/benchmark_current_baseline.sh
++++ b/scripts/benchmark_current_baseline.sh
+@@ -8 +8 @@
+-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
++script_dir=/workspace/build_runner_accelerator/scripts
+@@ -97 +97 @@
+-  remove_tree "$work_root"
++  : # retain disposable workspaces for paired follow-up

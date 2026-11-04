@@ -246,6 +246,14 @@ impl GraphState {
                 changed.insert(asset.as_str());
             }
         }
+        // The reverse closure of an empty change set is empty. In particular,
+        // no-op builds need no reverse-edge map or per-node Vec allocations.
+        if changed.is_empty() {
+            return DirtyContext {
+                changed,
+                tainted: std::collections::HashSet::new(),
+            };
+        }
         let mut parents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
         for (node, deps) in &self.resolver_dep_graph {
             for dep in deps {
@@ -715,7 +723,71 @@ impl<'a> Decoder<'a> {
 }
 
 #[cfg(test)]
+#[path = "graph_bench.rs"]
+mod bench;
+
+#[cfg(test)]
 mod tests {
+    #[test]
+    fn dirty_context_handles_unchanged_cycles_and_snapshot_changes() {
+        let mut state = super::GraphState::default();
+        for asset in ["a", "b", "c"] {
+            state.assets.insert(
+                asset.to_owned(),
+                crate::snapshot::AssetSnapshot {
+                    exists: true,
+                    digest: "original".to_owned(),
+                    size: 1,
+                },
+            );
+        }
+        state.resolver_dep_graph = std::collections::BTreeMap::from([
+            ("a".to_owned(), vec!["b".to_owned()]),
+            (
+                "b".to_owned(),
+                vec!["a".to_owned(), "c".to_owned(), "missing".to_owned()],
+            ),
+        ]);
+        let mut current = state.assets.clone();
+        // Size is not dirty evidence: keep the presence/digest contract.
+        current.get_mut("a").unwrap().size = 99;
+        let context = state.dirty_context(&current);
+        assert!(context.changed.is_empty());
+        assert!(context.tainted.is_empty());
+        for case in ["digest", "exists", "removed", "added"] {
+            let mut current = state.assets.clone();
+            let changed = match case {
+                "digest" => {
+                    current.get_mut("c").unwrap().digest.push('!');
+                    "c"
+                }
+                "exists" => {
+                    current.get_mut("c").unwrap().exists = false;
+                    "c"
+                }
+                "removed" => {
+                    current.remove("c");
+                    "c"
+                }
+                _ => {
+                    current.insert("missing".to_owned(), state.assets["c"].clone());
+                    "missing"
+                }
+            };
+            let context = state.dirty_context(&current);
+            assert_eq!(
+                context.changed,
+                std::collections::HashSet::from([changed]),
+                "{case}"
+            );
+            assert_eq!(
+                context.tainted,
+                std::collections::HashSet::from([changed, "a", "b"]),
+                "{case}"
+            );
+        }
+    }
+
     #[test]
     fn resolver_cycle_detection_handles_shared_children_and_missing_leaves() {
         let mut state = super::GraphState {

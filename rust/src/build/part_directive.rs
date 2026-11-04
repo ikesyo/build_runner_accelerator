@@ -2,7 +2,7 @@ use crate::plan::BuildSpec;
 use crate::protocol::BuildResult;
 use crate::workspace::Workspace;
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 pub(super) fn part_directive_filter_disabled() -> bool {
     std::env::var("BUILD_RUNNER_ACCELERATOR_PART_FILTER").is_ok_and(|value| value == "0")
@@ -55,14 +55,22 @@ pub(super) fn part_directive_skips(
 }
 
 pub(super) fn declares_part_directive(source: &str, expected: &str) -> bool {
+    static PART_FINDER: OnceLock<memchr::memmem::Finder<'static>> = OnceLock::new();
     let bytes = source.as_bytes();
     let len = bytes.len();
     let mut i = 0usize;
     while i + 4 <= len {
-        if &bytes[i..i + 4] != b"part"
-            || (i > 0 && is_ident_byte(bytes[i - 1]))
-            || (i + 4 < len && is_ident_byte(bytes[i + 4]))
-        {
+        // Reuse the fixed-needle searcher, including its SIMD prefilter where
+        // available. Searching the whole keyword also skips dense runs of `p`
+        // without returning each byte as a potential candidate.
+        if &bytes[i..i + 4] != b"part" {
+            let finder = PART_FINDER.get_or_init(|| memchr::memmem::Finder::new(b"part"));
+            let Some(offset) = finder.find(&bytes[i..]) else {
+                break;
+            };
+            i += offset;
+        }
+        if (i > 0 && is_ident_byte(bytes[i - 1])) || (i + 4 < len && is_ident_byte(bytes[i + 4])) {
             i += 1;
             continue;
         }
@@ -154,6 +162,10 @@ pub(super) fn declares_part_directive(source: &str, expected: &str) -> bool {
 fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
 }
+
+#[cfg(test)]
+#[path = "part_directive_bench.rs"]
+mod bench;
 
 pub(super) fn empty_build_result(spec: &BuildSpec) -> BuildResult {
     BuildResult {
