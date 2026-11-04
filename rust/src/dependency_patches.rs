@@ -4,11 +4,62 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 type Sources = BTreeMap<PathBuf, Vec<u8>>;
-pub(crate) const ISOLATION: [&str; 4] = [
-    include_str!("../patches/analyzer-compile-isolation.patch"),
-    include_str!("../patches/build_runner-compile-isolation.patch"),
-    include_str!("../patches/dart_style-compile-isolation.patch"),
-    include_str!("../patches/build_runner_accelerator-compile-isolation.patch"),
+#[derive(serde::Serialize)]
+pub(crate) struct PatchVariant {
+    versions: &'static [&'static str],
+    patch: &'static str,
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct PackagePatches {
+    pub(crate) name: &'static str,
+    // Oldest to newest. The last variant is also tried for unknown versions.
+    variants: &'static [PatchVariant],
+}
+
+impl PackagePatches {
+    pub(crate) fn select(&self, version: &str) -> &'static str {
+        self.variants
+            .iter()
+            .find(|variant| variant.versions.contains(&version))
+            .unwrap_or_else(|| {
+                self.variants
+                    .last()
+                    .expect("embedded patch catalog is nonempty")
+            })
+            .patch
+    }
+}
+
+pub(crate) const ISOLATION: [PackagePatches; 4] = [
+    PackagePatches {
+        name: "analyzer",
+        variants: &[PatchVariant {
+            versions: &["14.5.0", "14.6.0", "14.7.0"],
+            patch: include_str!("../patches/analyzer-compile-isolation.patch"),
+        }],
+    },
+    PackagePatches {
+        name: "build_runner",
+        variants: &[PatchVariant {
+            versions: &["2.16.1", "2.16.2"],
+            patch: include_str!("../patches/build_runner-compile-isolation.patch"),
+        }],
+    },
+    PackagePatches {
+        name: "dart_style",
+        variants: &[PatchVariant {
+            versions: &["3.1.13", "3.1.14"],
+            patch: include_str!("../patches/dart_style-compile-isolation.patch"),
+        }],
+    },
+    PackagePatches {
+        name: "build_runner_accelerator",
+        variants: &[PatchVariant {
+            versions: &[],
+            patch: include_str!("../patches/build_runner_accelerator-compile-isolation.patch"),
+        }],
+    },
 ];
 pub(crate) const RESOLVER: &str = include_str!("../patches/build_runner-resolver-options.patch");
 
@@ -236,6 +287,27 @@ pub(crate) fn preimages(patches: &[&str]) -> Sources {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn known_versions_select_their_variant_and_unknown_uses_latest() {
+        let package = PackagePatches {
+            name: "example",
+            variants: &[
+                PatchVariant {
+                    versions: &["1.0.0", "1.1.0"],
+                    patch: "old",
+                },
+                PatchVariant {
+                    versions: &["2.0.0"],
+                    patch: "new",
+                },
+            ],
+        };
+        assert_eq!(package.select("1.0.0"), "old");
+        assert_eq!(package.select("1.1.0"), "old");
+        assert_eq!(package.select("2.0.0"), "new");
+        assert_eq!(package.select("3.0.0"), "new");
+    }
+
     #[test]
     fn offsets_creation_and_atomic_failure() {
         let mut files =

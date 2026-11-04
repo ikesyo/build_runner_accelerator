@@ -15,10 +15,10 @@ BUILD_RUNNER_ACCELERATOR_EXPERIMENTAL_COMPILE_ISOLATION=1 \
   dart run build_runner_accelerator build
 ```
 
-The current supported version window is listed in the
+The current patch-selection policy and tested versions are listed in the
 [development guide](../development.md#local-checks); the measurements below use
 the resolutions stated for each experiment. [ADR 0047](../adr/0047-experimental-compile-isolation.md)
-defines the isolation boundary. Unexpected versions/source shapes fail before native actions.
+defines the isolation boundary. Unexpected source contexts fail before native actions.
 Original package sources and the application's config/lockfile stay unchanged.
 
 The compiler view copies four packages, including the accelerator itself:

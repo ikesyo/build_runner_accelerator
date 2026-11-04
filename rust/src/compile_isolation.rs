@@ -50,12 +50,7 @@ pub(crate) fn prepare(root: &Path, mut config: Value) -> io::Result<PathBuf> {
             return Err(error(format!("duplicate package {name}")));
         }
     }
-    let selections: &[(&str, &[&str])] = &[
-        ("analyzer", &["14.5.0", "14.6.0", "14.7.0"]),
-        ("build_runner", &["2.16.1", "2.16.2"]),
-        ("dart_style", &["3.1.13", "3.1.14"]),
-        ("build_runner_accelerator", &[]),
-    ];
+    let selections = &crate::dependency_patches::ISOLATION;
     // Bind reuse to the complete incoming resolution and canonical package roots.
     let input = digest_bytes(&serde_json::to_vec(&(
         crate::dependency_patches::isolation_identity(),
@@ -67,14 +62,15 @@ pub(crate) fn prepare(root: &Path, mut config: Value) -> io::Result<PathBuf> {
     }
     let watched = selections
         .iter()
-        .filter_map(|(name, _)| roots.get(*name))
+        .filter_map(|package| roots.get(package.name))
         .cloned()
         .collect::<Vec<_>>();
     let before = validation::sources(&watched);
     let mut files = Sources::new();
-    for (name, versions) in selections {
+    for package in selections {
+        let name = package.name;
         let source = roots
-            .get(*name)
+            .get(name)
             .ok_or_else(|| error(format!("missing {name}")))?;
         if source == root {
             return Err(error(
@@ -88,12 +84,7 @@ pub(crate) fn prepare(root: &Path, mut config: Value) -> io::Result<PathBuf> {
             .find_map(|line| line.strip_prefix("version: "))
             .map(str::trim)
             .unwrap_or("");
-        if !versions.is_empty() && !versions.contains(&version) {
-            return Err(error(format!(
-                "unsupported {name} {version}; expected {}",
-                versions.join("/")
-            )));
-        }
+        let patch = package.select(version);
         let mut package_files = Sources::new();
         collect(source, Path::new("lib"), &mut package_files)?;
         package_files.insert(PathBuf::from("pubspec.yaml"), spec);
@@ -101,8 +92,8 @@ pub(crate) fn prepare(root: &Path, mut config: Value) -> io::Result<PathBuf> {
         for (relative, contents) in package_files {
             files.insert(Path::new(name).join(relative), contents);
         }
+        crate::dependency_patches::apply(&mut files, patch).map_err(error)?;
     }
-    patch(&mut files)?;
     let digests = files
         .iter()
         .map(|(path, bytes)| (path, digest_bytes(bytes)))
@@ -116,7 +107,7 @@ pub(crate) fn prepare(root: &Path, mut config: Value) -> io::Result<PathBuf> {
     publish(&slot, &files).map_err(|e| error(format!("{}: {e}", slot.display())))?;
     for package in packages {
         let name = package["name"].as_str().unwrap();
-        let path = if selections.iter().any(|(selected, _)| *selected == name) {
+        let path = if selections.iter().any(|package| package.name == name) {
             slot.join(name)
         } else {
             roots[name].clone()
@@ -253,13 +244,6 @@ mod validation {
     pub(super) fn save(_: &Path, _: String, _: Option<()>, _: &Path, _: &Sources, _: &Value) {}
 }
 
-fn patch(files: &mut Sources) -> io::Result<()> {
-    for patch in crate::dependency_patches::ISOLATION {
-        crate::dependency_patches::apply(files, patch).map_err(error)?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,7 +284,12 @@ mod tests {
                     serde_json::json!({"name":name,"rootUri":file_uri(&dir),"packageUri":"lib/"}),
                 );
             }
-            let files = crate::dependency_patches::preimages(&crate::dependency_patches::ISOLATION);
+            let files = crate::dependency_patches::preimages(
+                &crate::dependency_patches::ISOLATION
+                    .iter()
+                    .map(|package| package.select(""))
+                    .collect::<Vec<_>>(),
+            );
             for (path, bytes) in files {
                 let path = root.join(path);
                 fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -402,27 +391,39 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_versions_and_shapes_do_not_publish_a_selector() {
-        for change_version in [true, false] {
-            let fixture = Fixture::new();
-            if change_version {
-                fs::write(fixture.0.join("analyzer/pubspec.yaml"), "version: 99.0.0\n").unwrap();
-            } else {
-                fs::write(
-                    fixture.0.join("dart_style/lib/src/dart_formatter.dart"),
-                    "changed import\n",
-                )
-                .unwrap();
-            }
-            assert!(prepare(&fixture.0, fixture.config()).is_err());
-            assert!(!fixture.0.join(CONFIG).exists());
-            assert!(
-                !fixture
-                    .0
-                    .join(".dart_tool/build_runner_accelerator/runner-package_config.json")
-                    .exists()
-            );
+    fn unknown_versions_try_latest_patch_and_changed_context_fails_closed() {
+        let fixture = Fixture::new();
+        for package in crate::dependency_patches::ISOLATION {
+            fs::write(
+                fixture.0.join(package.name).join("pubspec.yaml"),
+                "version: 99.0.0\n",
+            )
+            .unwrap();
         }
+        let config = fixture.config();
+        prepare(&fixture.0, config.clone()).unwrap();
+        let selected = fs::read(fixture.0.join(CONFIG)).unwrap();
+        fs::write(
+            fixture.0.join("dart_style/lib/src/dart_formatter.dart"),
+            "changed import\n",
+        )
+        .unwrap();
+        assert!(
+            prepare(&fixture.0, config)
+                .unwrap_err()
+                .to_string()
+                .contains("source context differs")
+        );
+        assert_eq!(fs::read(fixture.0.join(CONFIG)).unwrap(), selected);
+
+        let fresh = Fixture::new();
+        fs::write(
+            fresh.0.join("dart_style/lib/src/dart_formatter.dart"),
+            "changed import\n",
+        )
+        .unwrap();
+        assert!(prepare(&fresh.0, fresh.config()).is_err());
+        assert!(!fresh.0.join(CONFIG).exists());
     }
 
     #[test]

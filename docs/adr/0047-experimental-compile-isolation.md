@@ -10,11 +10,12 @@ four compiler packages into content-addressed workspace setup state. The
 default remains disabled. This is an internal experiment, not a public 1.x
 configuration guarantee.
 
-The supported version window is documented in the
-[development guide](../development.md#local-checks) and enforced during package
-selection in a consumer workspace. Reject other versions and
-unexpected source shapes before native actions; never silently ignore a failed
-requested transformation. The accelerator's own package is copied too. Retain
+Known versions select their registered compiler patch. Unknown versions try the
+latest patch variant for each package, subject to normal dependency/SDK
+constraints. Reject unexpected source contexts before native actions; never use
+fuzzy matching, retry older variants, or silently ignore a failed requested
+transformation. A matching patch does not establish API or runtime compatibility.
+Known tested versions are listed in the [development guide](../development.md#local-checks). The accelerator's own package is copied too. Retain
 each package's pubspec and license and never edit original packages or the
 application's configuration/lockfile.
 
@@ -79,4 +80,4 @@ observed Clean medians of 37.977 s OFF and 37.296 s ON (1.8%) on the ten-model
 fixture, with a roughly 52 ms no-op median increase. The overlapping ranges and
 narrow workload support retaining the default-off experimental boundary.
 Correctness checks must cover source preservation, ON/OFF transitions, output
-equality and failure rollback before expanding the supported version window.
+equality and failure rollback when validating additional dependency versions.

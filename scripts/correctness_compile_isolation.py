@@ -32,7 +32,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--results', type=Path)
     parser.add_argument('--worker-mode', choices=['jit', 'aot'], default='jit')
-    parser.add_argument('--analyzer', choices=['14.5.0', '14.6.0', '14.7.0'],
+    parser.add_argument('--analyzer',
                         help='Pin Analyzer for this isolated correctness run')
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]

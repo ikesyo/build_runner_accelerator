@@ -6,7 +6,7 @@ applying them requires no Git executable, Dart subprocess, pub override or hook.
 The original package cache, application package config and builder asset roots
 are never edited.
 
-| Patch | Selected upstream versions | Purpose |
+| Patch | Known upstream versions | Purpose |
 | --- | --- | --- |
 | `build_runner-resolver-options.patch` | build_runner 2.15.3, 2.16.0, 2.16.1 | Existing dart-lang/build#5197 backport using the worker analysis-options factory |
 | `analyzer-compile-isolation.patch` | Analyzer 14.5.0, 14.6.0, 14.7.0 | Separate parsing utilities from resolution imports |
@@ -17,8 +17,17 @@ are never edited.
 The resolver backport runs first, under its existing version selection. The
 four isolation patches run only with
 `BUILD_RUNNER_ACCELERATOR_EXPERIMENTAL_COMPILE_ISOLATION=1`, in the order listed
-in `dependency_patches::ISOLATION`. Selection remains in `runner_compatibility`
-and `compile_isolation`; this is not a general package patch manager.
+in `dependency_patches::ISOLATION`. Each package registers patch variants from
+oldest to newest: a known version selects its registered variant; an unknown
+version tries the last (latest) variant. A variant can cover several known
+versions. Failed context matching is an error, with no retry of older variants.
+The resolver backport keeps its existing version selection in
+`runner_compatibility`; this is not a general package patch manager.
+
+Unknown versions are attempted within normal Pub dependency/SDK constraints.
+Successful patch application establishes only an exact source-context match;
+it does not establish API or runtime compatibility. Compilation and stock
+correctness validation remain necessary.
 
 The applier supports text modifications and new files, with exact, unique
 whole-line source context. Hunk line offsets may change; context may not.
@@ -28,9 +37,10 @@ unsupported. Contextless insertion is restricted to the beginning of a file
 configuration publication.
 
 To change a patch, compare the original and intended edited sources, update the
-committed diff, and check every selected upstream version. Choose context shared
-by those versions; if it differs, use an explicitly selected patch rather than
-relaxing matching. Preserve upstream copyright headers and licenses in generated
+committed diff, and check the registered upstream versions. Choose context shared
+by those versions; when a new version needs a different patch, append a new
+variant and register its known versions, retaining earlier variants for their
+versions rather than relaxing matching. Preserve upstream copyright headers and licenses in generated
 copies. Cache-lifecycle unit fixtures reconstruct only hunk preimages; they do
 not replace validation against actual upstream sources and stock build outputs.
 
