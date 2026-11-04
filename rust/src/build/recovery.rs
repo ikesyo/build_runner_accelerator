@@ -8,6 +8,10 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+// Version 2 uses algorithm-tagged BLAKE3 digests. Never interpret old undo
+// evidence using a different hash; preserve it for the matching frontend.
+const JOURNAL_VERSION: u32 = 2;
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Entry {
@@ -231,7 +235,7 @@ pub(super) fn prepare(
         fs::write(dir.join("graph"), bytes)?;
     }
     let journal = Journal {
-        version: 1,
+        version: JOURNAL_VERSION,
         graph_path: graph.to_owned(),
         entries,
         graph: before_graph.as_deref().map(digest_bytes),
@@ -300,7 +304,7 @@ pub(crate) fn recover(graph: &Path) -> io::Result<bool> {
         check_no_symlinks(&marker)?;
         let encoded = fs::read(&marker)?;
         let journal: Journal = serde_json::from_slice(&encoded)?;
-        if journal.version != 1 || journal.graph_path != graph {
+        if journal.version != JOURNAL_VERSION || journal.graph_path != graph {
             return Err(io::Error::other("unsupported or relocated undo journal"));
         }
         for (index, entry) in journal.entries.iter().enumerate() {
@@ -404,6 +408,26 @@ mod tests {
             digest: digest_bytes(bytes),
             remove_first,
         }
+    }
+
+    #[test]
+    fn old_hash_journal_is_preserved_before_any_recovery_write() {
+        let fixture = Fixture::new();
+        fs::write(fixture.output(), b"old").unwrap();
+        fixture.prepare();
+        let marker = directory(&fixture.graph()).join("journal.json");
+        let mut journal: Journal = serde_json::from_slice(&fs::read(&marker).unwrap()).unwrap();
+        journal.version = 1;
+        let old = serde_json::to_vec(&journal).unwrap();
+        fs::write(&marker, &old).unwrap();
+        fs::write(fixture.output(), b"new").unwrap();
+        assert!(recover(&fixture.graph()).is_err());
+        assert_eq!(fs::read(fixture.output()).unwrap(), b"new");
+        assert_eq!(fs::read(marker).unwrap(), old);
+        assert_eq!(
+            fs::read(directory(&fixture.graph()).join("0")).unwrap(),
+            b"old"
+        );
     }
 
     #[test]

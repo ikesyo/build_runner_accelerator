@@ -67,7 +67,8 @@ options arrive at runtime; changed catalogs cannot share artifacts. Detached
 prewarm retains the same configuration vector as foreground prewarm/build.
 
 Bind the private version-9 manifest to the exact UTF-8 worker source with
-`worker_source_digest`, using the existing FNV-1a disposable-state identity.
+`worker_source_digest`, using the dedicated FNV-1a worker-source identity shared with the Dart
+emitter. This contract is separate from Rust disposable-state hashes.
 Before reuse, check the expected local worker bytes. Missing metadata, a missing
 worker or a digest mismatch requires generation before actions. Restored caches
 are rebased only to matching local source; stale absolute worker paths are never

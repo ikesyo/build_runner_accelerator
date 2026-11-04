@@ -1891,7 +1891,7 @@ mod tests {
             })
         });
         assert_eq!(
-            root.join(".dart_tool/build_runner_accelerator/aot-validation-digests.json")
+            root.join(".dart_tool/build_runner_accelerator/aot-validation-digests-b3.json")
                 .is_file(),
             eligible
         );

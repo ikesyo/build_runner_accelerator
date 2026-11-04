@@ -1,0 +1,16 @@
+[package]
+name = "accelerator-perf-kernels"
+version = "0.0.0"
+edition = "2024"
+publish = false
+default-run = "accelerator-perf-kernels"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# Match the production Cargo.lock, rather than a newer parser patch release.
+serde_json = { version = "=1.0.151", features = ["preserve_order"] }
+simd-json = "=0.17.3"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+blake3 = "1"
+crc32c = "0.6"
+roaring = "0.11"
