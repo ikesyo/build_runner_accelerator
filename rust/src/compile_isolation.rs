@@ -88,7 +88,13 @@ pub(crate) fn prepare(root: &Path, mut config: Value) -> io::Result<PathBuf> {
         let mut package_files = Sources::new();
         collect(source, Path::new("lib"), &mut package_files)?;
         package_files.insert(PathBuf::from("pubspec.yaml"), spec);
-        package_files.insert(PathBuf::from("LICENSE"), fs::read(source.join("LICENSE"))?);
+        match fs::read(source.join("LICENSE")) {
+            Ok(license) => {
+                package_files.insert(PathBuf::from("LICENSE"), license);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
         for (relative, contents) in package_files {
             files.insert(Path::new(name).join(relative), contents);
         }
@@ -167,9 +173,16 @@ mod validation {
         let mut snapshot = Snapshot(Vec::new());
         for root in roots {
             snapshot.tree(&root.join("lib")).ok()?;
-            for name in ["pubspec.yaml", "LICENSE"] {
-                let path = root.join(name);
-                snapshot.0.push((path.clone(), stamp(&path).ok()?));
+            let spec = root.join("pubspec.yaml");
+            snapshot.0.push((spec.clone(), stamp(&spec).ok()?));
+            let license = root.join("LICENSE");
+            match stamp(&license) {
+                Ok(value) => snapshot.0.push((license, value)),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    // Observe creation of an initially absent optional license.
+                    snapshot.0.push((root.clone(), stamp(root).ok()?));
+                }
+                Err(_) => return None,
             }
         }
         Some(snapshot)
@@ -424,6 +437,44 @@ mod tests {
         .unwrap();
         assert!(prepare(&fresh.0, fresh.config()).is_err());
         assert!(!fresh.0.join(CONFIG).exists());
+    }
+
+    #[test]
+    fn optional_license_is_copied_when_present_and_absence_is_reusable() {
+        let fixture = Fixture::new();
+        let original = fixture.config();
+        let license = fixture.0.join("build_runner_accelerator/LICENSE");
+        fs::remove_file(&license).unwrap();
+        let selector = prepare(&fixture.0, original.clone()).unwrap();
+        let config: Value = serde_json::from_slice(&fs::read(&selector).unwrap()).unwrap();
+        assert!(
+            !copied_root(&config, "build_runner_accelerator")
+                .join("LICENSE")
+                .exists()
+        );
+        #[cfg(unix)]
+        {
+            let key = receipt_input(&fixture.0);
+            assert!(validation::reuse(&fixture.0, &key));
+            fs::write(&license, "added license").unwrap();
+            assert!(!validation::reuse(&fixture.0, &key));
+        }
+        #[cfg(not(unix))]
+        fs::write(&license, "added license").unwrap();
+        prepare(&fixture.0, original.clone()).unwrap();
+        let config: Value = serde_json::from_slice(&fs::read(&selector).unwrap()).unwrap();
+        assert_eq!(
+            fs::read(copied_root(&config, "build_runner_accelerator").join("LICENSE")).unwrap(),
+            b"added license"
+        );
+        fs::remove_file(&license).unwrap();
+        prepare(&fixture.0, original).unwrap();
+        let config: Value = serde_json::from_slice(&fs::read(selector).unwrap()).unwrap();
+        assert!(
+            !copied_root(&config, "build_runner_accelerator")
+                .join("LICENSE")
+                .exists()
+        );
     }
 
     #[test]

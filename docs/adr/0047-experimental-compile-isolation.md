@@ -16,7 +16,7 @@ constraints. Reject unexpected source contexts before native actions; never use
 fuzzy matching, retry older variants, or silently ignore a failed requested
 transformation. A matching patch does not establish API or runtime compatibility.
 Known tested versions are listed in the [development guide](../development.md#local-checks). The accelerator's own package is copied too. Retain
-each package's pubspec and license and never edit original packages or the
+each package's pubspec and any existing license and never edit original packages or the
 application's configuration/lockfile.
 
 Separate unchanged parseFile/parseString implementations from Analyzer's

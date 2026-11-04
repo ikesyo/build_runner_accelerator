@@ -40,7 +40,7 @@ To change a patch, compare the original and intended edited sources, update the
 committed diff, and check the registered upstream versions. Choose context shared
 by those versions; when a new version needs a different patch, append a new
 variant and register its known versions, retaining earlier variants for their
-versions rather than relaxing matching. Preserve upstream copyright headers and licenses in generated
+versions rather than relaxing matching. Preserve upstream copyright headers and any existing licenses in generated
 copies. Cache-lifecycle unit fixtures reconstruct only hunk preimages; they do
 not replace validation against actual upstream sources and stock build outputs.
 
