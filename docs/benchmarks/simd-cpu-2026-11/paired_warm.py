@@ -14,12 +14,14 @@ import subprocess
 
 
 def inventory(workspace):
+    """Hash the generated output inventory for cross-variant comparisons."""
     return {str(p.relative_to(workspace / 'lib')): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted((workspace / 'lib').rglob('*.dart'))
             if p.name.endswith(('.g.dart', '.freezed.dart'))}
 
 
 def marker(workspace, value):
+    """Apply the requested edit to the disposable mixed benchmark fixture."""
     shared = workspace / 'lib/shared.dart'
     before = shared.read_text()
     after = re.sub(r'enum Lifecycle \{[^}]+\}',
@@ -39,12 +41,18 @@ def marker(workspace, value):
 
 
 def main():
+    """Validate the prepared fixture, then measure the rotating variants."""
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ['workspace', 'repository', 'baseline', 'native', 'proposal',
                  'cache', 'dart', 'pub-cache', 'results']:
         parser.add_argument('--' + name, required=True, type=Path)
     args = parser.parse_args()
     workspace = args.workspace.resolve()
+    # Match benchmark_frontend_regen.py: managed environments can expose a
+    # .git control directory that is not a repository. Recognize worktrees too.
+    if any((parent / '.git').is_file() or (parent / '.git/HEAD').is_file()
+           for parent in (workspace, *workspace.parents)):
+        raise SystemExit('workspace must be a disposable fixture outside a Git checkout')
     repository = args.repository.resolve()
     results = args.results.resolve()
     results.mkdir(parents=True)

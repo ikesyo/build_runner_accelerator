@@ -256,13 +256,27 @@ python3 scripts/benchmark_part_scanner.py --baseline 617bb0b \
   --results /tmp/new-scanner-results
 ```
 
-The paired follow-up used a temporary copy of the existing E2E harness that
-retained its disposable workspace on success; [the exact harness delta](retained-harness.patch)
-changes only script location resolution and cleanup, not measured commands.
+For the paired follow-up, create a temporary copy alongside the original script
+in the checkout's `scripts/` directory and apply the
+[retention-only harness patch](retained-harness.patch) to that copy. Keeping the
+copy beside the original preserves its checkout-relative helper lookup; the
+patch changes only cleanup, not measured commands:
+
+```sh
+retained_harness=$(mktemp "$PWD/scripts/.benchmark-retained.XXXXXX.sh")
+cp scripts/benchmark_current_baseline.sh "$retained_harness"
+patch "$retained_harness" < docs/benchmarks/simd-cpu-2026-11/retained-harness.patch
+```
+
+Run that copy with the same E2E environment above.
+Remove the temporary script after the retained workspace is prepared.
 Then run `paired_warm.py --help` and provide that workspace, its shared cache,
 the checkout, SDK/pub-cache paths and the three saved executables. The script
 restores the generated fixture before each edit; use only the disposable
-500-feature benchmark, not an application checkout.
+500-feature benchmark, not an application checkout. The preflight rejects Git
+repositories and worktrees before creating results or editing sources. Being
+outside Git does not establish that a workspace is disposable; the existing
+fixture-shape checks and disposable-workspace requirement still apply.
 
 The scanner includes three tracked Dart sources in addition to synthetic sizes
 and dense identifier candidates. Graph sizes are 64, 4,096 and 32,768 nodes,
