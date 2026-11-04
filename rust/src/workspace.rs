@@ -96,6 +96,8 @@ pub struct Workspace {
 
 #[derive(Debug, Deserialize)]
 struct PackageConfigFile {
+    #[serde(rename = "buildRunnerAcceleratorCompileIsolation", default)]
+    compile_isolation: Option<String>,
     #[serde(rename = "configVersion")]
     config_version: Option<u32>,
     packages: Vec<PackageConfigEntry>,
@@ -213,7 +215,9 @@ impl Workspace {
         if let Ok(relative) = path.strip_prefix(&self.root) {
             // Compatibility package roots are workspace-local setup state, but
             // their compiler identity must survive a workspace relocation.
-            if !relative.starts_with(".dart_tool/build_runner_accelerator/runner-compat") {
+            if !relative.starts_with(".dart_tool/build_runner_accelerator/runner-compat")
+                && !relative.starts_with(".dart_tool/build_runner_accelerator/compile-isolation")
+            {
                 return Some(format!("workspace:{}", normalized_relative_path(relative)));
             }
         }
@@ -581,6 +585,11 @@ fn stable_package_config_identity(config: &PackageConfigFile) -> String {
     entries.sort();
 
     let mut bytes = b"package-config-v2\0".to_vec();
+    if let Some(identity) = &config.compile_isolation {
+        bytes.extend_from_slice(b"experimental-compile-isolation\0");
+        bytes.extend_from_slice(identity.as_bytes());
+        bytes.push(0);
+    }
     if let Some(version) = config.config_version {
         bytes.extend_from_slice(version.to_string().as_bytes());
     }

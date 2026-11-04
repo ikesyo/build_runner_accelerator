@@ -1,0 +1,51 @@
+--- a/build_runner/lib/src/bootstrap/processes.dart
++++ b/build_runner/lib/src/bootstrap/processes.dart
+@@ -12,7 +12,6 @@
+ import 'package:path/path.dart' as p;
+ 
+ import '../build_plan/builder_factories.dart';
+-import '../build_runner.dart';
+ import '../logging/build_log.dart';
+ import 'build_process_state.dart';
+ import 'powershell.dart';
+@@ -229,16 +228,8 @@
+     List<String> arguments,
+     BuilderFactories builderFactories,
+   ) async {
+-    _isRunning = true;
+-    buildProcessState.deserializeAndSet(await receive());
+-    final exitCode = await BuildRunner(
+-      arguments: arguments,
+-      builderFactories: builderFactories,
+-    ).run();
+-    await exitWithMessage(
+-      exitCode: exitCode,
+-      message: buildProcessState.serialize(),
+-    );
++    stderr.writeln('Experimental compile isolation does not support ChildProcess.run; unset BUILD_RUNNER_ACCELERATOR_EXPERIMENTAL_COMPILE_ISOLATION');
++    exit(64);
+   }
+ 
+   /// Receives the message sent from the parent process.
+--- a/build_runner/lib/src/build/build.dart
++++ b/build_runner/lib/src/build/build.dart
+@@ -5,7 +5,7 @@
+ import 'dart:async';
+ import 'dart:convert';
+ 
+-import 'package:analyzer/dart/analysis/utilities.dart';
++import 'package:analyzer/src/clients/build_resolvers/parse_utilities.dart';
+ import 'package:analyzer/dart/ast/ast.dart';
+ import 'package:build/build.dart';
+ import 'package:built_collection/built_collection.dart';
+--- a/build_runner/lib/src/build/library_cycle_graph/asset_deps_loader.dart
++++ b/build_runner/lib/src/build/library_cycle_graph/asset_deps_loader.dart
+@@ -2,7 +2,7 @@
+ // for details. All rights reserved. Use of this source code is governed by a
+ // BSD-style license that can be found in the LICENSE file.
+ 
+-import 'package:analyzer/dart/analysis/utilities.dart';
++import 'package:analyzer/src/clients/build_resolvers/parse_utilities.dart';
+ import 'package:analyzer/dart/ast/ast.dart';
+ import 'package:build/build.dart';
+ 

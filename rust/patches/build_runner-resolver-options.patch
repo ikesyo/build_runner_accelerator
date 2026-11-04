@@ -1,0 +1,15 @@
+--- a/lib/src/build/resolver/resolvers_impl.dart
++++ b/lib/src/build/resolver/resolvers_impl.dart
+@@ -0,0 +1,3 @@
++// Accelerator compatibility backport: dart-lang/build#5197.
++// ignore: implementation_imports
++import 'package:build_runner_accelerator/src/worker_analysis_options.dart' show workerAnalysisOptions;
+@@ -80,5 +83,3 @@
+-        AnalysisOptionsImpl()
+-          // ignore: deprecated_member_use
+-          ..contextFeatures = _featureSet(
+-            enableExperiments: enabledExperiments,
+-          ),
++        workerAnalysisOptions(_featureSet(
++            enableExperiments: enabledExperiments,
++          )),

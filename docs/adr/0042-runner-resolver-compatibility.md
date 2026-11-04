@@ -62,6 +62,8 @@ The dependency comparison covers legacy retention, restart, regeneration,
 watch and upgrade in the same release line.
 The backport is a deliberately bounded private-source compatibility surface;
 additional fixes require explicit evidence rather than opportunistic text edits.
+The opt-in source-isolation experiment is separately bounded by
+[ADR 0047](0047-experimental-compile-isolation.md).
 Direct stock use with the affected runner/Analyzer combination remains broken;
 the backport only fixes accelerator compilation. The
 [dependency comparison](../development.md#dependency-window-comparison) describes

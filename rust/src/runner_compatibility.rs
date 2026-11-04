@@ -10,11 +10,18 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const CONFIG: &str = ".dart_tool/build_runner_accelerator/runner-package_config.json";
+#[cfg(test)]
 const RESOLVER: &str = "lib/src/build/resolver/resolvers_impl.dart";
+#[cfg(test)]
 const BEFORE: &str = "AnalysisOptionsImpl()\n          // ignore: deprecated_member_use\n          ..contextFeatures = _featureSet(\n            enableExperiments: enabledExperiments,\n          ),";
+#[cfg(test)]
 const AFTER: &str = "workerAnalysisOptions(_featureSet(\n            enableExperiments: enabledExperiments,\n          )),";
 
 pub(crate) fn package_config(root: &Path) -> PathBuf {
+    let isolated = root.join(crate::compile_isolation::CONFIG);
+    if crate::compile_isolation::enabled() && isolated.is_file() {
+        return isolated;
+    }
     let compatible = root.join(CONFIG);
     if compatible.is_file() {
         compatible
@@ -78,19 +85,21 @@ pub(crate) fn prepare(root: &Path) -> io::Result<PathBuf> {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
-        return Ok(original);
+        return if crate::compile_isolation::enabled() {
+            crate::compile_isolation::prepare(root, config)
+        } else {
+            Ok(original)
+        };
     }
     let runner_root = runner_root.unwrap();
     let mut files = BTreeMap::new();
     collect(&runner_root, Path::new("lib"), &mut files)?;
-    for name in ["pubspec.yaml", "LICENSE"] {
-        files.insert(PathBuf::from(name), fs::read(runner_root.join(name))?);
-    }
-    let resolver = files
-        .get_mut(Path::new(RESOLVER))
-        .ok_or_else(|| io::Error::other("legacy build_runner resolver is missing"))?;
-    *resolver =
-        patch_resolver(std::str::from_utf8(resolver).map_err(io::Error::other)?)?.into_bytes();
+    files.insert(
+        PathBuf::from("pubspec.yaml"),
+        fs::read(runner_root.join("pubspec.yaml"))?,
+    );
+    collect_license(&runner_root, &mut files)?;
+    crate::dependency_patches::apply(&mut files, crate::dependency_patches::RESOLVER)?;
     let identity = digest_bytes(&serde_json::to_vec(
         &files
             .iter()
@@ -112,8 +121,25 @@ pub(crate) fn prepare(root: &Path) -> io::Result<PathBuf> {
         };
         entry["rootUri"] = Value::String(file_uri(&path));
     }
-    let destination = root.join(CONFIG);
-    let bytes = serde_json::to_vec(&config)?;
+    let destination = publish_config(root, &config)?;
+    if crate::compile_isolation::enabled() {
+        return crate::compile_isolation::prepare(root, config);
+    }
+    Ok(destination)
+}
+
+pub(crate) fn publish_config(root: &Path, config: &Value) -> io::Result<PathBuf> {
+    publish_config_at(root, CONFIG, config)
+}
+
+pub(crate) fn publish_config_at(
+    root: &Path,
+    relative: &str,
+    config: &Value,
+) -> io::Result<PathBuf> {
+    let destination = root.join(relative);
+    fs::create_dir_all(destination.parent().unwrap())?;
+    let bytes = serde_json::to_vec(config)?;
     if fs::read(&destination).ok().as_deref() != Some(&bytes) {
         let temporary = temporary_path(&destination);
         fs::write(&temporary, &bytes)?;
@@ -137,23 +163,26 @@ pub(crate) fn prepare(root: &Path) -> io::Result<PathBuf> {
     Ok(destination)
 }
 
-fn patch_resolver(source: &str) -> io::Result<String> {
-    if source.matches(BEFORE).count() != 1 {
-        return Err(io::Error::other(
-            "build_runner 2.16 resolver differs from the supported #5197 backport",
-        ));
+/// Preserve an existing package license without requiring one for path packages.
+pub(crate) fn collect_license(
+    root: &Path,
+    files: &mut BTreeMap<PathBuf, Vec<u8>>,
+) -> io::Result<()> {
+    match fs::read(root.join("LICENSE")) {
+        Ok(license) => {
+            files.insert(PathBuf::from("LICENSE"), license);
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
     }
-    // Share the worker factory: it handles Analyzer 13.3's ExperimentStatus
-    // cast as well as the newer immutable analysis options.
-    Ok(format!(
-        "// Accelerator compatibility backport: dart-lang/build#5197.\n\
-         // ignore: implementation_imports\n\
-         import 'package:build_runner_accelerator/src/worker_analysis_options.dart' show workerAnalysisOptions;\n{}",
-        source.replacen(BEFORE, AFTER, 1)
-    ))
+    Ok(())
 }
 
-fn collect(root: &Path, relative: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) -> io::Result<()> {
+pub(crate) fn collect(
+    root: &Path,
+    relative: &Path,
+    files: &mut BTreeMap<PathBuf, Vec<u8>>,
+) -> io::Result<()> {
     for entry in fs::read_dir(root.join(relative))? {
         let entry = entry?;
         let name = relative.join(entry.file_name());
@@ -170,7 +199,7 @@ fn collect(root: &Path, relative: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>)
     Ok(())
 }
 
-fn publish(slot: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> io::Result<()> {
+pub(crate) fn publish(slot: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> io::Result<()> {
     if !slot.exists() {
         fs::create_dir_all(slot.parent().unwrap())?;
         let temporary = temporary_path(slot);
@@ -190,15 +219,40 @@ fn publish(slot: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> io::Result<()> {
         let _ = fs::remove_dir_all(&temporary);
         result?;
     }
-    // Fail before compilation on incomplete or altered disposable state.
-    for (path, bytes) in files {
-        if fs::read(slot.join(path))? != *bytes {
-            return Err(io::Error::other(
-                "invalid runner-compat cache; remove it and retry",
-            ));
+    // Validate the file set and bytes in one pass, without retaining a second
+    // copy of every source. Compile-isolation receipt reuse skips this cold path.
+    fn validate(
+        slot: &Path,
+        relative: &Path,
+        files: &BTreeMap<PathBuf, Vec<u8>>,
+    ) -> io::Result<usize> {
+        let mut count = 0;
+        for entry in fs::read_dir(slot.join(relative))? {
+            let entry = entry?;
+            let path = relative.join(entry.file_name());
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                count += validate(slot, &path, files)?;
+            } else if kind.is_file()
+                && files.get(&path).is_some_and(|expected| {
+                    fs::read(entry.path()).is_ok_and(|actual| actual == *expected)
+                })
+            {
+                count += 1;
+            } else {
+                return Err(invalid_copy());
+            }
         }
+        Ok(count)
+    }
+    if validate(slot, Path::new(""), files)? != files.len() {
+        return Err(invalid_copy());
     }
     Ok(())
+}
+
+fn invalid_copy() -> io::Error {
+    io::Error::other("invalid runner-compat cache; remove it and retry")
 }
 
 fn temporary_path(path: &Path) -> PathBuf {
@@ -210,7 +264,7 @@ fn temporary_path(path: &Path) -> PathBuf {
     ))
 }
 
-fn file_uri(path: &Path) -> String {
+pub(crate) fn file_uri(path: &Path) -> String {
     let normalized = path.to_string_lossy().replace('\\', "/");
     let mut uri = if normalized.starts_with('/') {
         "file://"
@@ -249,7 +303,12 @@ mod tests {
             )
             .unwrap();
             fs::write(runner.join("LICENSE"), "upstream BSD license").unwrap();
-            fs::write(runner.join(RESOLVER), format!("// upstream\n{BEFORE}\n")).unwrap();
+            fs::write(
+                runner.join(RESOLVER),
+                &crate::dependency_patches::preimages(&[crate::dependency_patches::RESOLVER])
+                    [Path::new(RESOLVER)],
+            )
+            .unwrap();
             fs::write(root.join(".dart_tool/package_config.json"), serde_json::to_vec(&serde_json::json!({
                 "configVersion": 2,
                 "packages": [
@@ -487,7 +546,60 @@ mod tests {
             prepare(root)
                 .unwrap_err()
                 .to_string()
-                .contains("differs from the supported")
+                .contains("source context differs")
         );
+    }
+    #[test]
+    fn published_copy_rejects_extra_missing_and_changed_files() {
+        let fixture = Fixture::new();
+        let slot = fixture.0.join("copy");
+        let path = PathBuf::from("lib/source.dart");
+        let files = BTreeMap::from([(path.clone(), b"expected".to_vec())]);
+        publish(&slot, &files).unwrap();
+        let extra = slot.join("lib/injected.dart");
+        fs::write(&extra, "unexpected").unwrap();
+        assert!(publish(&slot, &files).is_err());
+        fs::remove_file(extra).unwrap();
+        publish(&slot, &files).unwrap();
+        fs::write(slot.join(&path), "changed").unwrap();
+        assert!(publish(&slot, &files).is_err());
+        fs::remove_file(slot.join(path)).unwrap();
+        assert!(publish(&slot, &files).is_err());
+    }
+    #[test]
+    fn legacy_runner_license_is_optional_but_other_read_errors_propagate() {
+        for version in ["2.15.3", "2.16.0", "2.16.1"] {
+            let fixture = Fixture::new();
+            let runner = fixture.0.join("upstream runner");
+            fs::write(
+                runner.join("pubspec.yaml"),
+                format!("name: build_runner\nversion: {version}\n"),
+            )
+            .unwrap();
+            fs::remove_file(runner.join("LICENSE")).unwrap();
+            crate::workspace::Workspace::load(fixture.0.clone()).unwrap();
+            let config: Value =
+                serde_json::from_slice(&fs::read(fixture.0.join(CONFIG)).unwrap()).unwrap();
+            let copied = resolve_uri(
+                Path::new("/"),
+                config["packages"][1]["rootUri"].as_str().unwrap(),
+            );
+            assert!(!copied.join("LICENSE").exists());
+            fs::write(runner.join("LICENSE"), "restored license").unwrap();
+            prepare(&fixture.0).unwrap();
+            let config: Value =
+                serde_json::from_slice(&fs::read(fixture.0.join(CONFIG)).unwrap()).unwrap();
+            let copied = resolve_uri(
+                Path::new("/"),
+                config["packages"][1]["rootUri"].as_str().unwrap(),
+            );
+            assert_eq!(
+                fs::read(copied.join("LICENSE")).unwrap(),
+                b"restored license"
+            );
+            fs::remove_file(runner.join("LICENSE")).unwrap();
+            fs::create_dir(runner.join("LICENSE")).unwrap();
+            assert!(prepare(&fixture.0).is_err());
+        }
     }
 }
