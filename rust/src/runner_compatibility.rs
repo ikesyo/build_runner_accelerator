@@ -94,9 +94,11 @@ pub(crate) fn prepare(root: &Path) -> io::Result<PathBuf> {
     let runner_root = runner_root.unwrap();
     let mut files = BTreeMap::new();
     collect(&runner_root, Path::new("lib"), &mut files)?;
-    for name in ["pubspec.yaml", "LICENSE"] {
-        files.insert(PathBuf::from(name), fs::read(runner_root.join(name))?);
-    }
+    files.insert(
+        PathBuf::from("pubspec.yaml"),
+        fs::read(runner_root.join("pubspec.yaml"))?,
+    );
+    collect_license(&runner_root, &mut files)?;
     crate::dependency_patches::apply(&mut files, crate::dependency_patches::RESOLVER)?;
     let identity = digest_bytes(&serde_json::to_vec(
         &files
@@ -159,6 +161,21 @@ pub(crate) fn publish_config_at(
         }
     }
     Ok(destination)
+}
+
+/// Preserve an existing package license without requiring one for path packages.
+pub(crate) fn collect_license(
+    root: &Path,
+    files: &mut BTreeMap<PathBuf, Vec<u8>>,
+) -> io::Result<()> {
+    match fs::read(root.join("LICENSE")) {
+        Ok(license) => {
+            files.insert(PathBuf::from("LICENSE"), license);
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    Ok(())
 }
 
 pub(crate) fn collect(
@@ -548,5 +565,41 @@ mod tests {
         assert!(publish(&slot, &files).is_err());
         fs::remove_file(slot.join(path)).unwrap();
         assert!(publish(&slot, &files).is_err());
+    }
+    #[test]
+    fn legacy_runner_license_is_optional_but_other_read_errors_propagate() {
+        for version in ["2.15.3", "2.16.0", "2.16.1"] {
+            let fixture = Fixture::new();
+            let runner = fixture.0.join("upstream runner");
+            fs::write(
+                runner.join("pubspec.yaml"),
+                format!("name: build_runner\nversion: {version}\n"),
+            )
+            .unwrap();
+            fs::remove_file(runner.join("LICENSE")).unwrap();
+            crate::workspace::Workspace::load(fixture.0.clone()).unwrap();
+            let config: Value =
+                serde_json::from_slice(&fs::read(fixture.0.join(CONFIG)).unwrap()).unwrap();
+            let copied = resolve_uri(
+                Path::new("/"),
+                config["packages"][1]["rootUri"].as_str().unwrap(),
+            );
+            assert!(!copied.join("LICENSE").exists());
+            fs::write(runner.join("LICENSE"), "restored license").unwrap();
+            prepare(&fixture.0).unwrap();
+            let config: Value =
+                serde_json::from_slice(&fs::read(fixture.0.join(CONFIG)).unwrap()).unwrap();
+            let copied = resolve_uri(
+                Path::new("/"),
+                config["packages"][1]["rootUri"].as_str().unwrap(),
+            );
+            assert_eq!(
+                fs::read(copied.join("LICENSE")).unwrap(),
+                b"restored license"
+            );
+            fs::remove_file(runner.join("LICENSE")).unwrap();
+            fs::create_dir(runner.join("LICENSE")).unwrap();
+            assert!(prepare(&fixture.0).is_err());
+        }
     }
 }

@@ -88,13 +88,7 @@ pub(crate) fn prepare(root: &Path, mut config: Value) -> io::Result<PathBuf> {
         let mut package_files = Sources::new();
         collect(source, Path::new("lib"), &mut package_files)?;
         package_files.insert(PathBuf::from("pubspec.yaml"), spec);
-        match fs::read(source.join("LICENSE")) {
-            Ok(license) => {
-                package_files.insert(PathBuf::from("LICENSE"), license);
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
+        crate::runner_compatibility::collect_license(source, &mut package_files)?;
         for (relative, contents) in package_files {
             files.insert(Path::new(name).join(relative), contents);
         }

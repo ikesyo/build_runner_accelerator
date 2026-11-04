@@ -1942,6 +1942,39 @@ mod tests {
     }
 
     #[test]
+    fn kernel_stamp_tracks_isolated_configuration_in_child_process() {
+        const CHILD: &str = "BRA_TEST_ISOLATED_KERNEL_STAMP_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            assert!(std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "worker_kernel::tests::kernel_stamp_tracks_isolated_configuration_in_child_process", "--nocapture"])
+                .env(CHILD, "1").env(crate::compile_isolation::ENV, "1")
+                .status().unwrap().success());
+            return;
+        }
+        assert!(crate::compile_isolation::enabled());
+        let root =
+            std::env::temp_dir().join(format!("isolated-kernel-stamp-{}", std::process::id()));
+        fs::create_dir_all(root.join(".dart_tool/build_runner_accelerator")).unwrap();
+        let original = root.join(".dart_tool/package_config.json");
+        let isolated = root.join(crate::compile_isolation::CONFIG);
+        let kernel = root.join("worker.dill");
+        fs::write(&original, "original").unwrap();
+        fs::write(&isolated, "isolated").unwrap();
+        let stamp = kernel.with_extension("dill.config");
+        fs::write(&stamp, super::digest_file(&original).unwrap()).unwrap();
+        assert!(!super::kernel_config_is_current(&root, &kernel));
+        fs::write(&stamp, super::digest_file(&isolated).unwrap()).unwrap();
+        assert!(super::kernel_config_is_current(&root, &kernel));
+        fs::write(original, "changed original").unwrap();
+        assert!(super::kernel_config_is_current(&root, &kernel));
+        fs::write(isolated, "changed isolated").unwrap();
+        assert!(!super::kernel_config_is_current(&root, &kernel));
+        fs::remove_file(stamp).unwrap();
+        assert!(!super::kernel_config_is_current(&root, &kernel));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn prewarm_helper_uses_original_package_even_when_compiler_copies_only_lib() {
         let root =
             std::env::temp_dir().join(format!("prewarm-original-package-{}", std::process::id()));
