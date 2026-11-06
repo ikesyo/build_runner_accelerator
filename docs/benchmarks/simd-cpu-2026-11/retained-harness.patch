@@ -1,0 +1,5 @@
+--- a/scripts/benchmark_current_baseline.sh
++++ b/scripts/benchmark_current_baseline.sh
+@@ -97 +97 @@
+-  remove_tree "$work_root"
++  : # retain disposable workspaces for paired follow-up
