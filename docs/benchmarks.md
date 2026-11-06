@@ -3,6 +3,10 @@
 For SIMD/CPU-extension candidates, dense-input handling and the limits of the
 measured build-wide benefit, see [the SIMD investigation](benchmarks/simd-cpu-2026-11/README.md).
 
+For graph representations, internal hash algorithms and JSON CPU-extension
+candidates and current-main comparisons, see the
+[B/C/D investigation](benchmarks/graph-hash-json-2026-11/README.md).
+
 For warm worker startup, see [AOT validation digest reuse](benchmarks/aot-validation-digests-2026-10.md).
 
 For the experimental worker dependency splits and their limited AOT compile

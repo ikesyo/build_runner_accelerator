@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-pub const GRAPH_SCHEMA_VERSION: u32 = 7;
+pub const GRAPH_SCHEMA_VERSION: u32 = 8;
 const GRAPH_MAGIC: &[u8; 4] = b"BRAG";
 const GRAPH_FORMAT_VERSION: u8 = 3;
 const GRAPH_HEADER_LENGTH: usize = GRAPH_MAGIC.len() + 1 + 4;
@@ -134,8 +134,9 @@ impl GraphState {
         Self::decode_checked(&contents, true)
     }
 
-    /// Recovery must preserve ownership rather than silently invalidating an
-    /// obsolete backup. The ordinary loader retains its existing reset policy.
+    /// Recovery validates the recorded binary layout without changing its
+    /// bytes or dropping ownership evidence. Ordinary loading may invalidate
+    /// an obsolete cache schema only after file rollback has completed.
     pub(crate) fn decode_checked(contents: &[u8], invalidate_obsolete: bool) -> io::Result<Self> {
         if contents.len() < GRAPH_HEADER_LENGTH {
             return Err(invalid_graph("graph file is truncated"));
@@ -164,17 +165,12 @@ impl GraphState {
 
         let mut decoder = Decoder::new(&contents[GRAPH_HEADER_LENGTH..]);
         let schema_version = decoder.read_u32()?;
-        if schema_version != GRAPH_SCHEMA_VERSION {
-            if !invalidate_obsolete {
-                return Err(invalid_graph(
-                    "undo graph has an unsupported schema; use the matching frontend or reconcile outputs manually",
-                ));
-            }
+        if schema_version != GRAPH_SCHEMA_VERSION && invalidate_obsolete {
             eprintln!(
                 "build_runner_accelerator: invalidating graph schema {schema_version}; expected {GRAPH_SCHEMA_VERSION}"
             );
-            // Payloads from another schema version are not decodable:
-            // rebuild from a clean graph instead of failing the build.
+            // Obsolete cache evidence must not be reused during normal loading.
+            // Recovery instead validates the saved layout before restoring it.
             return Ok(Self {
                 schema_version: GRAPH_SCHEMA_VERSION,
                 ..Self::default()
@@ -231,21 +227,33 @@ impl GraphState {
     /// instead of per action.
     pub fn dirty_context<'a>(&'a self, current_assets: &'a Snapshot) -> DirtyContext<'a> {
         let mut changed = std::collections::HashSet::new();
-        for (asset, entry) in &self.assets {
-            let current = current_assets
-                .get(asset)
-                .map(|entry| (entry.exists, entry.digest.as_str()));
-            if Some((entry.exists, entry.digest.as_str())) != current {
-                changed.insert(asset.as_str());
+        // Both snapshots are ordered. Merge them once instead of searching
+        // either tree for every asset; additions and removals are changes too.
+        let mut previous = self.assets.iter().peekable();
+        let mut current = current_assets.iter().peekable();
+        while let (Some((old_asset, old)), Some((new_asset, new))) =
+            (previous.peek(), current.peek())
+        {
+            match old_asset.cmp(new_asset) {
+                std::cmp::Ordering::Less => {
+                    changed.insert(old_asset.as_str());
+                    previous.next();
+                }
+                std::cmp::Ordering::Greater => {
+                    changed.insert(new_asset.as_str());
+                    current.next();
+                }
+                std::cmp::Ordering::Equal => {
+                    if old.exists != new.exists || old.digest != new.digest {
+                        changed.insert(old_asset.as_str());
+                    }
+                    previous.next();
+                    current.next();
+                }
             }
         }
-        // Assets present only in the current snapshot are new (and therefore
-        // changed); entries present in both were compared above.
-        for asset in current_assets.keys() {
-            if !self.assets.contains_key(asset) {
-                changed.insert(asset.as_str());
-            }
-        }
+        changed.extend(previous.map(|(asset, _)| asset.as_str()));
+        changed.extend(current.map(|(asset, _)| asset.as_str()));
         // The reverse closure of an empty change set is empty. In particular,
         // no-op builds need no reverse-edge map or per-node Vec allocations.
         if changed.is_empty() {
@@ -789,6 +797,76 @@ mod tests {
     }
 
     #[test]
+    fn dirty_context_matches_lookup_reference_for_interleaved_snapshots() {
+        // Every key is absent, missing, or present in each snapshot. Exhaustive
+        // pairs cover empty maps, additions/removals at both tails and in the
+        // middle, and equal IDs with different existence or content evidence.
+        fn snapshot(mut pattern: usize, newer: bool) -> super::Snapshot {
+            let mut result = super::Snapshot::new();
+            for key in ["a", "b", "c", "d"] {
+                match pattern % 3 {
+                    0 => {}
+                    state => {
+                        result.insert(
+                            key.to_owned(),
+                            super::AssetSnapshot {
+                                exists: state == 2,
+                                digest: if newer && key == "b" { "new" } else { "old" }.into(),
+                                size: u64::from(newer),
+                            },
+                        );
+                    }
+                }
+                pattern /= 3;
+            }
+            result
+        }
+        for previous in 0..81 {
+            let state = super::GraphState {
+                assets: snapshot(previous, false),
+                // Duplicate edges, a cycle, and an absent dependency must not
+                // alter the reverse closure or make its traversal unbounded.
+                resolver_dep_graph: std::collections::BTreeMap::from([
+                    ("a".into(), vec!["b".into(), "b".into()]),
+                    ("b".into(), vec!["a".into(), "c".into()]),
+                    ("c".into(), vec!["d".into(), "missing".into()]),
+                ]),
+                ..Default::default()
+            };
+            for next in 0..81 {
+                let current = snapshot(next, true);
+                let expected: std::collections::HashSet<_> = state
+                    .assets
+                    .keys()
+                    .chain(current.keys())
+                    .filter(|key| {
+                        let evidence = |entry: Option<&super::AssetSnapshot>| {
+                            entry.map(|entry| (entry.exists, entry.digest.clone()))
+                        };
+                        evidence(state.assets.get(*key)) != evidence(current.get(*key))
+                    })
+                    .map(String::as_str)
+                    .collect();
+                let mut tainted = expected.clone();
+                loop {
+                    let before = tainted.len();
+                    for (node, deps) in &state.resolver_dep_graph {
+                        if deps.iter().any(|dep| tainted.contains(dep.as_str())) {
+                            tainted.insert(node.as_str());
+                        }
+                    }
+                    if tainted.len() == before {
+                        break;
+                    }
+                }
+                let actual = state.dirty_context(&current);
+                assert_eq!(actual.changed, expected, "{previous}/{next}");
+                assert_eq!(actual.tainted, tainted, "{previous}/{next}");
+            }
+        }
+    }
+
+    #[test]
     fn resolver_cycle_detection_handles_shared_children_and_missing_leaves() {
         let mut state = super::GraphState {
             resolver_dep_graph: std::collections::BTreeMap::from([
@@ -1014,6 +1092,7 @@ mod tests {
             (2, super::GRAPH_SCHEMA_VERSION),
             (99, super::GRAPH_SCHEMA_VERSION),
             (super::GRAPH_FORMAT_VERSION, 1),
+            (super::GRAPH_FORMAT_VERSION, 7),
         ] {
             let previous = GraphState {
                 schema_version: schema,

@@ -74,7 +74,7 @@ interrupted publication without a journal have no undo evidence; their partial
 state requires manual reconciliation before reuse or reset.
 
 If automatic recovery refuses an externally changed output, missing/damaged
-backup, unreadable/obsolete undo graph, symlink, moved workspace, or I/O error, it reports the reason and preserves
+backup, unreadable undo graph, symlink, moved workspace, or I/O error, it reports the reason and preserves
 `graph-v3.commit-undo` under `.dart_tool/build_runner_accelerator`. It does not
 report a successful build. Stop native and stock processes; copy this directory
 and affected files to a safe backup. Fix disk space/permissions and retry. For an
@@ -84,8 +84,9 @@ remove the link before retrying. Restore a moved workspace to its original path.
 If evidence was lost or corrupted, restore intact state/output backups or
 manually reconcile the listed outputs before any cold reset. Do not delete just
 the graph, discard the undo journal, or run stock over partial publication.
-Use a frontend that understands the journal format; older binaries cannot
-detect it. Resolve pending recovery before downgrading or switching frontends.
+An ordinary build verifies existing publication evidence using the recorded
+journal format, restores the files, and removes the completed journal. Obsolete
+cache state is regenerated afterwards; a separate older executable is not needed.
 The general reset procedure below applies only after pending recovery is resolved.
 
 This guarantee covers process termination, including forced kill, and recoverable

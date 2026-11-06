@@ -12,7 +12,8 @@ mod local {
         path::PathBuf,
     };
 
-    const RECEIPT: &str = ".dart_tool/build_runner_accelerator/aot-validation-digests.json";
+    // A new namespace discards FNV evidence without a legacy-format reader.
+    const RECEIPT: &str = ".dart_tool/build_runner_accelerator/aot-validation-digests-b3.json";
 
     #[derive(Default, Deserialize, Serialize)]
     struct Receipt {
@@ -137,6 +138,23 @@ mod local {
         fn test_cache(root: &Path) -> Cache {
             // Exercise receipt logic independently of the test host's mounts.
             Cache::load_on_devices(root, Some([stamp(root).unwrap()[0]].into_iter().collect()))
+        }
+        #[test]
+        fn previous_algorithm_receipts_are_not_loaded() {
+            let root = std::env::temp_dir().join(format!("aot-digest-old-{}", std::process::id()));
+            fs::create_dir_all(root.join(RECEIPT).parent().unwrap()).unwrap();
+            let old = root.join(".dart_tool/build_runner_accelerator/aot-validation-digests.json");
+            let previous = Receipt {
+                files: BTreeMap::from([(
+                    root.join("worker"),
+                    (stamp(&root).unwrap(), "old-fnv-digest".to_owned()),
+                )]),
+            };
+            fs::write(&old, serde_json::to_vec(&previous).unwrap()).unwrap();
+            assert!(test_cache(&root).receipt.unwrap().files.is_empty());
+            assert!(!root.join(RECEIPT).exists());
+            assert!(old.exists());
+            fs::remove_dir_all(root).unwrap();
         }
         #[test]
         fn unsupported_devices_and_disabled_cache_rehash_despite_clock_lead() {

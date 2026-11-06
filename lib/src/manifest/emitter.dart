@@ -56,7 +56,7 @@ Future<void> emitManifestArtifacts({
   await _writeAtomically(manifestFile, jsonEncode(manifest) + '\n');
 }
 
-/// FNV-1a over UTF-8, matching Rust's disposable-state `digest_bytes` identity.
+/// FNV-1a over UTF-8, matching Rust's manifest `worker_source_digest` identity.
 String workerSourceDigest(String source) {
   var hash = 0xcbf29ce484222325;
   for (final byte in utf8.encode(source)) {
