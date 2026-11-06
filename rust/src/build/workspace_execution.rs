@@ -248,6 +248,8 @@ impl Schedule<'_> {
                     dispatch.send(
                         worker,
                         WorkspaceLease {
+                            trace_context: crate::telemetry::capture(),
+                            queued: None,
                             application: index,
                             package: self.builders[index].package.clone(),
                             requests: prepared.requests.clone(),

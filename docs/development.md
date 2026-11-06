@@ -224,3 +224,6 @@ before publication. Manual dispatch defaults to a non-publishing dry-run with a
 temporary signing key. See [distribution validation](distribution-validation.md)
 for verification order, replay commands, timing evidence, and platform limits.
 The production public key remains pinned in the package.
+
+For opt-in OpenTelemetry build spans, local OTLP JSON output, bounds and
+cross-language timing semantics, see [build telemetry](adr/0048-build-telemetry.md).

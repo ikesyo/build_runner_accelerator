@@ -19,6 +19,7 @@ mod protocol;
 mod runner_compatibility;
 mod shared_library;
 mod snapshot;
+mod telemetry;
 mod validated_digest;
 mod visibility;
 mod wall;
@@ -163,7 +164,9 @@ fn main() -> io::Result<()> {
         "build" => {
             let _wall = wall::Session::new();
             worker_kernel::apply_default_worker_aot_policy(&options.command);
-            build::run(&options)
+            let result = build::run(&options);
+            _wall.finish(result.is_ok());
+            result
         }
         "watch" => {
             worker_kernel::apply_default_worker_aot_policy(&options.command);

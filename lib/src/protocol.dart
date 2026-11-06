@@ -241,6 +241,7 @@ class WorkerBuildRequest {
     required this.blockedAssets,
     required this.triggers,
     this.partPhaseIndex,
+    this.traceparent,
   });
 
   factory WorkerBuildRequest.fromJson(
@@ -281,6 +282,9 @@ class WorkerBuildRequest {
       isRoot: _requiredBool(message, 'is_root', 'build'),
       blockedAssets: blockedAssets,
       triggers: _triggerList(message['triggers'], 'build triggers'),
+      traceparent: message['traceparent'] is String
+          ? message['traceparent'] as String
+          : null,
     );
   }
 
@@ -296,6 +300,7 @@ class WorkerBuildRequest {
   final List<String> blockedAssets;
   final List<WorkerBuildTrigger> triggers;
   final int? partPhaseIndex;
+  final String? traceparent;
 
   bool get isPostProcess => kind == 'post_process';
 }

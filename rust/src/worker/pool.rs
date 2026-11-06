@@ -616,7 +616,11 @@ impl WorkerPool {
                 senders.push(sender);
                 let completed = completed.clone();
                 let factory = &factory;
-                handles.push(scope.spawn(move || run_worker(index, factory, receiver, completed)));
+                let context = crate::telemetry::capture();
+                handles.push(scope.spawn(move || {
+                    let _context = crate::telemetry::attach(context);
+                    run_worker(index, factory, receiver, completed)
+                }));
             }
             drop(completed);
             let dispatch = WorkspaceDispatch {
@@ -700,11 +704,18 @@ impl WorkerPool {
             let mut senders = Vec::new();
             let mut handles = Vec::new();
             for (index, worker) in self.workers.iter_mut().take(worker_count).enumerate() {
-                let (sender, receiver) = mpsc::sync_channel::<std::ops::Range<usize>>(1);
+                let (sender, receiver) =
+                    mpsc::sync_channel::<(std::ops::Range<usize>, Option<Instant>)>(1);
                 senders.push(sender);
                 let completed = completed.clone();
+                let context = crate::telemetry::capture();
                 handles.push(scope.spawn(move || {
-                    while let Ok(range) = receiver.recv() {
+                    let _context = crate::telemetry::attach(context);
+                    while let Ok((range, queued)) = receiver.recv() {
+                        let lease = crate::wall::Span::new("worker_lease");
+                        if let Some(queued) = queued {
+                            lease.attribute("queue.wait.us", queued.elapsed().as_micros() as u64);
+                        }
                         let started = Instant::now();
                         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             worker.build_batch(
@@ -741,14 +752,20 @@ impl WorkerPool {
                             && let Some(range) = inputs.take(worker_count)
                         {
                             senders[worker]
-                                .send(range.clone())
+                                .send((
+                                    range.clone(),
+                                    crate::telemetry::enabled().then(Instant::now),
+                                ))
                                 .map_err(|_| io::Error::other("input worker disconnected"))?;
                             running[worker] = Some(range);
                         }
                     }
-                    let (worker, range, elapsed, batch) = completions
-                        .recv()
-                        .map_err(|_| io::Error::other("input completion channel disconnected"))?;
+                    let (worker, range, elapsed, batch) = {
+                        let _wait = crate::wall::Span::new("controller_wait");
+                        completions.recv().map_err(|_| {
+                            io::Error::other("input completion channel disconnected")
+                        })?
+                    };
                     if running.get_mut(worker).and_then(Option::take) != Some(range.clone()) {
                         return Err(io::Error::other(
                             "input completion does not match its lease",
@@ -948,7 +965,9 @@ impl WorkerPool {
                     let mut worker_deleted = initial_deleted.clone();
                     let coordinator = coordinator.clone();
                     let next_root = &next_root;
+                    let context = crate::telemetry::capture();
                     scope.spawn(move || {
+                        let _context = crate::telemetry::attach(context);
                         let result = (|| {
                             loop {
                                 if let Some(error) = coordinator.failure() {
@@ -1102,7 +1121,9 @@ impl WorkerPool {
                         let deleted = &deleted;
                         let updated_cache = &updated_cache;
                         let deleted_cache = &deleted_cache;
+                        let context = crate::telemetry::capture();
                         scope.spawn(move || {
+                            let _context = crate::telemetry::attach(context);
                             worker.reset_resolver(
                                 updated,
                                 deleted,
