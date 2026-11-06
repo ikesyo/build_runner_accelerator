@@ -26,9 +26,8 @@ would misclassify overlapping workers and controller waits.
 Reuse `wall::Session` and `wall::Span` call sites as the instrumentation boundary.
 Add the OpenTelemetry Rust API/SDK and official OTLP protobuf JSON serialization
 (without HTTP/gRPC transport features, TLS, an async runtime, or a Dart SDK).
-The proto crate does bring generated tonic/prost message dependencies; these
-avoid maintaining a custom OTLP wire schema. SDK providers are local to each
-build, so tracing does not replace an application's global provider. The local
+The official schema avoids maintaining a custom OTLP wire format.
+SDK providers are local to each build, so tracing does not replace an application's global provider. The local
 provider uses AlwaysOn plus the admission budgets below; ambient
 `OTEL_TRACES_SAMPLER` cannot silently remove the build root.
 
@@ -40,7 +39,9 @@ and unwinding. The command/watch wrapper sets the root status from its result;
 an unwound build retains an interrupted/error status.
 
 Each traced build request carries a sampled W3C `traceparent` referring to its
-Rust worker batch (including optional-demand calls). The Dart worker sends an
+Rust worker batch (including optional-demand calls), with a bounded single-use
+action ticket. Responses must match an issued ticket and its parent before
+consuming span budget. The Dart worker sends an
 `otel_action` diagnostic frame in `finally`, before the ordinary result/error.
 A Rust SDK bridge reconstructs `dart.action`, `dart.run_builder` and sampled
 `dart.resolver_get` children using an epoch anchor and monotonic durations.
@@ -84,19 +85,21 @@ JSON sizing, activity snapshots or detailed path diagnostics.
   rejected span attempts. This is a prefix budget, not statistical sampling.
 - At most 2,048 action timing reports are requested per build, with at most
   16 resolver get intervals each. Remaining actions still build normally;
-  root `diagnostic.dropped_action_reports` reports budget rejections; missing
-  action spans do not imply no work. Aggregate resolver counts can
+  root `diagnostic.dropped_action_reports` counts budget rejections and rejected
+  duplicate/invalid reports. Missing action spans do not imply no work. Aggregate resolver counts can
   exceed the number of resolver child spans.
 - High-volume `receive_frame`, `asset_rpc`, `asset_rpc_lazy` and hypothetical
   JSON-sizing intervals remain wall-only. No per-file/hash OTel spans.
 - One bounded export queue (one pending build), one export worker, at most
   32 MiB written per process. Builds buffer SDK records; conversion/writes run
   off the build thread. At most one active, one queued and one exporting bounded
-  build buffer can coexist. No retry queue or network client exists.
+  build buffer can coexist. One warning worker and a one-message warning queue
+  keep stalled stderr off build/export threads; excess warnings are dropped.
+  No retry queue or network client exists.
 - Build-end acknowledgment waits at most 100 ms; full/disconnected queues drop
   the trace. File creation/write/byte-limit failures disable file output and
-  emit a short stderr diagnostic. They do not change build results. A stalled
-  filesystem may leave an exporter thread pending until process termination.
+  enqueue a best-effort stderr diagnostic through a separate warning worker.
+  They do not change build results. A stalled filesystem may leave an exporter thread pending until process termination.
 - No options, source content, asset/input names, absolute paths,
   PID or exception text are exported. Builder IDs have configuration-bounded
   cardinality and are recorded on phase spans. The service/scope names are

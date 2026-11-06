@@ -140,6 +140,7 @@ void main() {
         'v': 1,
         'type': 'build',
         'id': 12,
+        'otel_report_id': 1,
         'traceparent':
             '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
         'builder': 'app|copy',
@@ -162,6 +163,7 @@ void main() {
       expect(message, isA<WorkerBuildMessage>());
       final request = (message as WorkerBuildMessage).request;
       expect(request.id, 12);
+      expect(request.otelReportId, 1);
       expect(
         request.traceparent,
         '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
@@ -189,6 +191,7 @@ void main() {
         'requests': <dynamic>[
           <String, dynamic>{
             'id': 21,
+            'otel_report_id': 1,
             'traceparent':
                 '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
             'builder': 'app|one',
@@ -203,6 +206,9 @@ void main() {
           },
           <String, dynamic>{
             'id': 22,
+            'otel_report_id': 2,
+            'traceparent':
+                '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
             'builder': 'app|two',
             'input': 'app|lib/two.dart',
             'kind': 'normal',
@@ -226,7 +232,9 @@ void main() {
         batch.requests[0].traceparent,
         '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
       );
-      expect(batch.requests[1].traceparent, isNull);
+      expect(batch.requests[1].traceparent, batch.requests[0].traceparent);
+      expect(batch.requests[0].otelReportId, 1);
+      expect(batch.requests[1].otelReportId, 2);
       expect(batch.requests[0].isRoot, isTrue);
       expect(batch.requests[0].blockedAssets, ['app|lib/blocked.dart']);
       expect(batch.requests[0].blockedAssets, same(batch.blockedAssets));

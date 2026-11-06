@@ -905,7 +905,7 @@ Future<JsonMap> _runBuild(
   Map<String, PostProcessBuilderFactory> postProcessCatalog, {
   Set<AssetId>? inheritedBlockedAssets,
 }) async {
-  final traceStart = request.traceparent == null
+  final traceStart = request.traceparent == null || request.otelReportId == null
       ? null
       : DateTime.now().microsecondsSinceEpoch;
   final builderId = request.builder;
@@ -1242,6 +1242,7 @@ Future<JsonMap> _runBuild(
         'v': 1,
         'type': 'otel_action',
         'traceparent': request.traceparent,
+        'otel_report_id': request.otelReportId,
         'start_us': traceStart,
         'duration_us': profile._total.elapsedMicroseconds,
         'success':

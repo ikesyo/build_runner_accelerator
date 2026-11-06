@@ -441,17 +441,21 @@ impl WorkerClient {
             message.get("type").and_then(Value::as_str),
             Some("build" | "build_batch")
         ) {
-            if let Some(parent) = crate::telemetry::traceparent() {
+            if let Some((parent, report_id)) = crate::telemetry::request_context() {
                 traced = message.clone();
                 if let Some(requests) = traced.get_mut("requests").and_then(Value::as_array_mut) {
-                    let mut first = Some(parent);
+                    let mut first = Some((parent, report_id));
                     for request in requests {
-                        if let Some(parent) = first.take().or_else(crate::telemetry::traceparent) {
+                        if let Some((parent, report_id)) =
+                            first.take().or_else(crate::telemetry::request_context)
+                        {
                             request["traceparent"] = Value::String(parent);
+                            request["otel_report_id"] = Value::from(report_id);
                         }
                     }
                 } else {
                     traced["traceparent"] = Value::String(parent);
+                    traced["otel_report_id"] = Value::from(report_id);
                 }
                 &traced
             } else {

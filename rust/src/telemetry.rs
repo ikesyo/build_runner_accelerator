@@ -5,9 +5,9 @@ use opentelemetry::trace::{
     Tracer, TracerProvider,
 };
 use opentelemetry::{Context, ContextGuard, KeyValue};
-use opentelemetry_proto::tonic::{
-    collector::trace::v1::ExportTraceServiceRequest,
-    trace::v1::{ResourceSpans, ScopeSpans},
+use opentelemetry_proto::{
+    tonic::collector::trace::v1::ExportTraceServiceRequest,
+    transform::trace::tonic::group_spans_by_resource_and_scope,
 };
 use opentelemetry_sdk::{
     error::OTelSdkResult,
@@ -15,6 +15,7 @@ use opentelemetry_sdk::{
 };
 use serde_json::Value;
 use std::{
+    collections::BTreeMap,
     fs::OpenOptions,
     io::Write,
     sync::{
@@ -26,6 +27,7 @@ use std::{
 };
 
 const MAX_SPANS: usize = 10_000;
+const MAX_REPORTS: usize = 2048;
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 static ACTIVE: Mutex<Option<Arc<Build>>> = Mutex::new(None);
 
@@ -53,6 +55,8 @@ struct Build {
     buffer: Buffer,
     admitted: AtomicUsize,
     reports: AtomicUsize,
+    rejected_reports: AtomicUsize,
+    pending_reports: Mutex<BTreeMap<u64, SpanContext>>,
     root: Context,
 }
 
@@ -83,6 +87,8 @@ impl Session {
             buffer,
             admitted: AtomicUsize::new(0),
             reports: AtomicUsize::new(0),
+            rejected_reports: AtomicUsize::new(0),
+            pending_reports: Mutex::new(BTreeMap::new()),
             root,
         });
         *active = Some(build.clone());
@@ -112,7 +118,11 @@ impl Drop for Session {
             .set_attribute(KeyValue::new("diagnostic.dropped_spans", dropped as i64));
         build.root.span().set_attribute(KeyValue::new(
             "diagnostic.dropped_action_reports",
-            build.reports.load(Ordering::Relaxed).saturating_sub(2048) as i64,
+            build
+                .reports
+                .load(Ordering::Relaxed)
+                .saturating_sub(MAX_REPORTS)
+                .saturating_add(build.rejected_reports.load(Ordering::Relaxed)) as i64,
         ));
         build.root.span().end();
         let spans = std::mem::take(&mut *build.buffer.0.lock().unwrap());
@@ -193,17 +203,54 @@ pub(crate) fn attach(context: Option<Context>) -> Option<ContextGuard> {
     context.map(Context::attach)
 }
 
-pub(crate) fn traceparent() -> Option<String> {
+/// Issue a bounded, single-use report ticket for one action, including batch items.
+pub(crate) fn request_context() -> Option<(String, u64)> {
     if !enabled() {
         return None;
     }
     let build = ACTIVE.lock().unwrap().clone()?;
     let current = Context::current();
-    let parent = &current.get::<IpcParent>()?.0;
-    if build.reports.fetch_add(1, Ordering::Relaxed) >= 2048 {
+    issue_report(&build, &current.get::<IpcParent>()?.0)
+}
+
+fn issue_report(build: &Build, parent: &SpanContext) -> Option<(String, u64)> {
+    let index = build.reports.fetch_add(1, Ordering::Relaxed);
+    if index >= MAX_REPORTS {
         return None;
     }
-    Some(format!("00-{}-{}-01", parent.trace_id(), parent.span_id()))
+    let id = index as u64 + 1;
+    build
+        .pending_reports
+        .lock()
+        .unwrap()
+        .insert(id, parent.clone());
+    Some((
+        format!("00-{}-{}-01", parent.trace_id(), parent.span_id()),
+        id,
+    ))
+}
+
+/// Consume only a ticket whose parent matches; duplicates and stale reports cannot
+/// spend span admission budget. Matching tickets are consumed even if timing is invalid.
+fn report_parent(build: &Build, message: &Value) -> Option<Context> {
+    let valid = || {
+        let id = message.get("otel_report_id")?.as_u64()?;
+        let context = parent(message.get("traceparent")?.as_str()?)?;
+        let mut pending = build.pending_reports.lock().unwrap();
+        let expected = pending.get(&id)?;
+        if context.span().span_context().trace_id() != expected.trace_id()
+            || context.span().span_context().span_id() != expected.span_id()
+        {
+            return None;
+        }
+        pending.remove(&id);
+        Some(context)
+    };
+    let context = valid();
+    if context.is_none() {
+        build.rejected_reports.fetch_add(1, Ordering::Relaxed);
+    }
+    context
 }
 
 fn parent(value: &str) -> Option<Context> {
@@ -240,35 +287,34 @@ pub(crate) fn worker_report(message: &Value) {
 }
 
 fn record_worker_report(build: &Build, message: &Value) {
-    let Some(context) = message
-        .get("traceparent")
-        .and_then(Value::as_str)
-        .and_then(parent)
-    else {
+    let Some(context) = report_parent(build, message) else {
         return;
     };
-    if context.span().span_context().trace_id() != build.root.span().span_context().trace_id() {
-        return;
+    if !record_action(build, message, context) {
+        build.rejected_reports.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+fn record_action(build: &Build, message: &Value, context: Context) -> bool {
     let Some(start) = message
         .get("start_us")
         .and_then(Value::as_u64)
         .and_then(|us| UNIX_EPOCH.checked_add(Duration::from_micros(us)))
     else {
-        return;
+        return false;
     };
     let Some(duration) = message
         .get("duration_us")
         .and_then(Value::as_u64)
         .filter(|us| *us <= 86_400_000_000)
     else {
-        return;
+        return false;
     };
     let Some(end) = start.checked_add(Duration::from_micros(duration)) else {
-        return;
+        return false;
     };
     if build.admitted.fetch_add(1, Ordering::Relaxed) >= MAX_SPANS {
-        return;
+        return false;
     }
     let tracer = build.provider.tracer("build_runner_accelerator.dart");
     let mut span = tracer.build_with_context(
@@ -292,22 +338,18 @@ fn record_worker_report(build: &Build, message: &Value) {
     } else {
         span.set_status(Status::error("builder failed or cancelled"));
     }
-    let action = context.with_span(span);
+    let action = TimedSpan {
+        context: context.with_span(span),
+        offset: 0,
+        end: duration,
+    };
     let run = message
         .get("run_builder_start_us")
         .and_then(Value::as_u64)
         .zip(message.get("run_builder_us").and_then(Value::as_u64));
     let mut run_context = None;
     if let Some((offset, length)) = run {
-        run_context = timed_child(
-            build,
-            &action,
-            "dart.run_builder",
-            start,
-            duration,
-            offset,
-            length,
-        );
+        run_context = timed_child(build, &action, "dart.run_builder", start, offset, length);
     }
     if let Some(spans) = message.get("resolver_spans").and_then(Value::as_array) {
         for item in spans.iter().take(16) {
@@ -320,61 +362,98 @@ fn record_worker_report(build: &Build, message: &Value) {
                     run_context.as_ref().unwrap_or(&action),
                     "dart.resolver_get",
                     start,
-                    duration,
                     offset,
                     length,
                 )
             {
-                child
-                    .span()
-                    .end_with_timestamp(start + Duration::from_micros(offset + length));
+                child.end(start);
             }
         }
     }
-    if let (Some(child), Some((offset, length))) = (run_context, run) {
-        child
-            .span()
-            .end_with_timestamp(start + Duration::from_micros(offset + length));
+    if let Some(child) = run_context {
+        child.end(start);
     }
-    action.span().end_with_timestamp(end);
+    action.context.span().end_with_timestamp(end);
+    true
 }
 
-#[allow(clippy::too_many_arguments)]
+struct TimedSpan {
+    context: Context,
+    offset: u64,
+    end: u64,
+}
+impl TimedSpan {
+    fn end(&self, origin: SystemTime) {
+        self.context
+            .span()
+            .end_with_timestamp(origin + Duration::from_micros(self.end));
+    }
+}
+
+/// Validate against the selected parent before admitting a child span.
 fn timed_child(
     build: &Build,
-    parent: &Context,
+    parent: &TimedSpan,
     name: &'static str,
     start: SystemTime,
-    duration: u64,
     offset: u64,
     length: u64,
-) -> Option<Context> {
-    if offset.checked_add(length)? > duration
+) -> Option<TimedSpan> {
+    let end = offset.checked_add(length)?;
+    if offset < parent.offset
+        || end > parent.end
         || build.admitted.fetch_add(1, Ordering::Relaxed) >= MAX_SPANS
     {
         return None;
     }
     let tracer = build.provider.tracer("build_runner_accelerator.dart");
-    Some(
-        parent.with_span(
+    Some(TimedSpan {
+        context: parent.context.with_span(
             tracer.build_with_context(
                 tracer
                     .span_builder(name)
                     .with_start_time(start + Duration::from_micros(offset)),
-                parent,
+                &parent.context,
             ),
         ),
-    )
+        offset,
+        end,
+    })
 }
 
 struct Job {
     spans: Vec<SpanData>,
     done: mpsc::SyncSender<()>,
 }
-fn sink() -> Option<&'static mpsc::SyncSender<Job>> {
-    static SINK: OnceLock<Option<mpsc::SyncSender<Job>>> = OnceLock::new();
+struct ExportSink {
+    jobs: mpsc::SyncSender<Job>,
+    warnings: mpsc::SyncSender<&'static str>,
+}
+
+/// A bounded warning worker may block on stderr; build/export threads only try_send.
+fn warning_channel(
+    mut output: impl Write + Send + 'static,
+) -> Option<mpsc::SyncSender<&'static str>> {
+    let (sender, receiver) = mpsc::sync_channel::<&'static str>(1);
+    std::thread::Builder::new()
+        .name("otel-warning".into())
+        .spawn(move || {
+            for warning in receiver {
+                if writeln!(output, "{warning}").is_err() {
+                    break;
+                }
+            }
+        })
+        .ok()?;
+    Some(sender)
+}
+
+fn sink() -> Option<&'static ExportSink> {
+    static SINK: OnceLock<Option<ExportSink>> = OnceLock::new();
     SINK.get_or_init(|| {
         let path = std::env::var_os("BUILD_RUNNER_ACCELERATOR_OTEL_FILE")?;
+        let warnings = warning_channel(std::io::stderr())?;
+        let worker_warnings = warnings.clone();
         let (sender, receiver) = mpsc::sync_channel::<Job>(1);
         std::thread::Builder::new()
             .name("otel-file".into())
@@ -386,55 +465,35 @@ fn sink() -> Option<&'static mpsc::SyncSender<Job>> {
                     .open(path)
                     .ok();
                 if file.is_none() {
-                    eprintln!("OTel: cannot create trace file; export disabled");
+                    let _ =
+                        worker_warnings.try_send("OTel: cannot create trace file; export disabled");
                 }
                 let mut bytes = 0;
                 for job in receiver {
                     if let Some(output) = &mut file
                         && write_batch(output, &mut bytes, job.spans).is_err()
                     {
-                        eprintln!("OTel: trace byte limit or sink failure; export disabled");
+                        let _ = worker_warnings
+                            .try_send("OTel: trace byte limit or sink failure; export disabled");
                         file = None;
                     }
                     let _ = job.done.try_send(());
                 }
             })
             .ok()?;
-        Some(sender)
+        Some(ExportSink {
+            jobs: sender,
+            warnings,
+        })
     })
     .as_ref()
 }
 fn encode(spans: Vec<SpanData>) -> Result<Vec<u8>, serde_json::Error> {
-    use opentelemetry_proto::tonic::{
-        common::v1::{AnyValue, KeyValue as ProtoKeyValue, any_value},
-        resource::v1::Resource,
-    };
+    let resource = opentelemetry_sdk::Resource::builder_empty()
+        .with_attribute(KeyValue::new("service.name", "build_runner_accelerator"))
+        .build();
     let request = ExportTraceServiceRequest {
-        resource_spans: vec![ResourceSpans {
-            resource: Some(Resource {
-                attributes: vec![ProtoKeyValue {
-                    key: "service.name".into(),
-                    value: Some(AnyValue {
-                        value: Some(any_value::Value::StringValue(
-                            "build_runner_accelerator".into(),
-                        )),
-                    }),
-                }],
-                ..Default::default()
-            }),
-            scope_spans: vec![ScopeSpans {
-                scope: Some(
-                    opentelemetry_proto::tonic::common::v1::InstrumentationScope {
-                        name: "build_runner_accelerator".into(),
-                        version: env!("CARGO_PKG_VERSION").into(),
-                        ..Default::default()
-                    },
-                ),
-                spans: spans.into_iter().map(Into::into).collect(),
-                ..Default::default()
-            }],
-            ..Default::default()
-        }],
+        resource_spans: group_spans_by_resource_and_scope(spans, &(&resource).into()),
     };
     let mut data = serde_json::to_vec(&request)?;
     data.push(b'\n');
@@ -458,15 +517,19 @@ fn export(spans: Vec<SpanData>) {
     let Some(sink) = sink() else { return };
     submit(sink, spans);
 }
-fn submit(sink: &mpsc::SyncSender<Job>, spans: Vec<SpanData>) {
+fn submit(sink: &ExportSink, spans: Vec<SpanData>) {
     let (done, completed) = mpsc::sync_channel(1);
-    if sink.try_send(Job { spans, done }).is_ok() {
+    if sink.jobs.try_send(Job { spans, done }).is_ok() {
         // Bound the entire build-end IO wait, including an unavailable sink.
         if completed.recv_timeout(Duration::from_millis(100)).is_err() {
-            eprintln!("OTel: export pending; trace may be incomplete");
+            let _ = sink
+                .warnings
+                .try_send("OTel: export pending; trace may be incomplete");
         }
     } else {
-        eprintln!("OTel: export queue full; trace dropped");
+        let _ = sink
+            .warnings
+            .try_send("OTel: export queue full or disconnected; trace dropped");
     }
 }
 
@@ -525,6 +588,8 @@ mod tests {
             root,
             admitted: AtomicUsize::new(0),
             reports: AtomicUsize::new(0),
+            rejected_reports: AtomicUsize::new(0),
+            pending_reports: Mutex::new(BTreeMap::new()),
         }
     }
     #[test]
@@ -576,7 +641,8 @@ mod tests {
     fn worker_bridge_preserves_parent_timestamps_status_and_privacy() {
         let build = build();
         let sc = build.root.span().span_context().clone();
-        let report = serde_json::json!({"traceparent": format!("00-{}-{}-01", sc.trace_id(), sc.span_id()), "start_us": 1000000, "duration_us": 100,
+        let (traceparent, id) = issue_report(&build, &sc).unwrap();
+        let report = serde_json::json!({"traceparent": traceparent, "otel_report_id": id, "start_us": 1000000, "duration_us": 100,
             "run_builder_start_us": 10, "run_builder_us": 80, "resolver_get_us": 20,
             "resolver_spans": [{"offset_us": 20, "duration_us": 20}], "success": false,
             "input": "/secret/source.dart", "options": "secret"});
@@ -635,13 +701,235 @@ mod tests {
     #[test]
     fn stalled_and_full_export_queue_do_not_block_builds() {
         let (sender, receiver) = mpsc::sync_channel(1);
+        let (warnings, _warning_receiver) = mpsc::sync_channel(1);
+        let sink = ExportSink {
+            jobs: sender,
+            warnings,
+        };
         let started = std::time::Instant::now();
-        submit(&sender, vec![]);
+        submit(&sink, vec![]);
         assert!(started.elapsed() < Duration::from_secs(1));
         let started = std::time::Instant::now();
-        submit(&sender, vec![]);
+        submit(&sink, vec![]);
         assert!(started.elapsed() < Duration::from_secs(1));
         drop(receiver);
-        submit(&sender, vec![]);
+        submit(&sink, vec![]);
+    }
+    fn action_report(build: &Build) -> Value {
+        let parent = build.root.span().span_context().clone();
+        let (traceparent, id) = issue_report(build, &parent).unwrap();
+        serde_json::json!({
+            "traceparent": traceparent, "otel_report_id": id,
+            "start_us": 1000000, "duration_us": 100,
+            "run_builder_start_us": 10, "run_builder_us": 80,
+            "resolver_spans": [{"offset_us": 20, "duration_us": 20}], "success": true
+        })
+    }
+
+    #[test]
+    fn duplicate_and_unsolicited_reports_cannot_spend_publication_budget() {
+        let build = build();
+        let first = action_report(&build);
+        let second = action_report(&build);
+        assert_eq!(first["traceparent"], second["traceparent"]);
+        assert_ne!(first["otel_report_id"], second["otel_report_id"]);
+        build.admitted.store(MAX_SPANS - 7, Ordering::Relaxed);
+        record_worker_report(&build, &first);
+        for _ in 0..100 {
+            record_worker_report(&build, &first);
+        }
+        let mut unknown = second.clone();
+        unknown["otel_report_id"] = Value::from(999);
+        record_worker_report(&build, &unknown);
+        let mut forged = second.clone();
+        forged["traceparent"] =
+            Value::String(format!("00-{}-{}-01", TraceId::from(1), SpanId::from(1)));
+        record_worker_report(&build, &forged);
+        record_worker_report(&build, &second);
+        assert!(build.pending_reports.lock().unwrap().is_empty());
+        assert_eq!(build.rejected_reports.load(Ordering::Relaxed), 102);
+        assert_eq!(build.buffer.0.lock().unwrap().len(), 6);
+        assert!(Interval::in_build("commit", &build).is_some());
+        assert_eq!(build.admitted.load(Ordering::Relaxed), MAX_SPANS);
+    }
+
+    #[test]
+    fn malformed_reports_consume_tickets_and_issued_tickets_are_bounded() {
+        let build = build();
+        let valid = action_report(&build);
+        let mut malformed = valid.clone();
+        malformed["duration_us"] = Value::from(u64::MAX);
+        record_worker_report(&build, &malformed);
+        record_worker_report(&build, &valid);
+        assert_eq!(build.rejected_reports.load(Ordering::Relaxed), 2);
+        assert_eq!(build.admitted.load(Ordering::Relaxed), 0);
+        let parent = build.root.span().span_context().clone();
+        for _ in 1..MAX_REPORTS {
+            assert!(issue_report(&build, &parent).is_some());
+        }
+        assert!(issue_report(&build, &parent).is_none());
+        assert_eq!(build.pending_reports.lock().unwrap().len(), MAX_REPORTS - 1);
+    }
+
+    #[test]
+    fn resolver_samples_must_fit_the_selected_parent_before_admission() {
+        let build = build();
+        let mut report = action_report(&build);
+        report["resolver_spans"] = serde_json::json!([
+            {"offset_us": 5, "duration_us": 1},
+            {"offset_us": 89, "duration_us": 2},
+            {"offset_us": u64::MAX, "duration_us": 1},
+            {"offset_us": 10, "duration_us": 80}
+        ]);
+        record_worker_report(&build, &report);
+        assert_eq!(build.admitted.load(Ordering::Relaxed), 3);
+        let spans = build.buffer.0.lock().unwrap();
+        let resolver = spans
+            .iter()
+            .find(|span| span.name == "dart.resolver_get")
+            .unwrap();
+        let run = spans
+            .iter()
+            .find(|span| span.name == "dart.run_builder")
+            .unwrap();
+        assert_eq!(resolver.start_time, run.start_time);
+        assert_eq!(resolver.end_time, run.end_time);
+        drop(spans);
+        // Without a builder interval, the selected parent is the whole action.
+        let mut fallback = action_report(&build);
+        fallback
+            .as_object_mut()
+            .unwrap()
+            .remove("run_builder_start_us");
+        fallback["resolver_spans"] = serde_json::json!([{"offset_us": 0, "duration_us": 100}]);
+        record_worker_report(&build, &fallback);
+        let spans = build.buffer.0.lock().unwrap();
+        let action = spans.last().unwrap();
+        let resolver = &spans[spans.len() - 2];
+        assert_eq!(resolver.parent_span_id, action.span_context.span_id());
+        assert_eq!(resolver.start_time, action.start_time);
+        assert_eq!(resolver.end_time, action.end_time);
+    }
+
+    #[test]
+    fn encoding_preserves_rust_and_dart_scope_metadata() {
+        let build = build();
+        let scope = opentelemetry::InstrumentationScope::builder("native-test")
+            .with_version("1.2.3")
+            .with_schema_url("https://example.invalid/schema")
+            .with_attributes([KeyValue::new("component", "native")])
+            .build();
+        let mut native = build
+            .provider
+            .tracer_with_scope(scope)
+            .start_with_context("phase", &build.root);
+        native.end();
+        record_worker_report(&build, &action_report(&build));
+        let data = encode(build.buffer.0.lock().unwrap().clone()).unwrap();
+        let request: Value = serde_json::from_slice(&data).unwrap();
+        let scopes = request["resourceSpans"][0]["scopeSpans"]
+            .as_array()
+            .unwrap();
+        assert_eq!(scopes.len(), 2);
+        let native = scopes
+            .iter()
+            .find(|scope| scope["scope"]["name"] == "native-test")
+            .unwrap();
+        assert_eq!(native["scope"]["version"], "1.2.3");
+        assert_eq!(native["schemaUrl"], "https://example.invalid/schema");
+        assert_eq!(native["scope"]["attributes"][0]["key"], "component");
+        assert_eq!(native["spans"][0]["name"], "phase");
+        let dart = scopes
+            .iter()
+            .find(|scope| scope["scope"]["name"] == "build_runner_accelerator.dart")
+            .unwrap();
+        assert_eq!(dart["spans"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn blocked_stderr_and_saturated_warning_queue_do_not_block_submit() {
+        struct BlockedStderr {
+            started: mpsc::SyncSender<()>,
+            release: mpsc::Receiver<()>,
+        }
+        impl Write for BlockedStderr {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                let _ = self.started.try_send(());
+                let _ = self.release.recv();
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let (started, writing) = mpsc::sync_channel(1);
+        let (release, blocked) = mpsc::channel();
+        let warnings = warning_channel(BlockedStderr {
+            started,
+            release: blocked,
+        })
+        .unwrap();
+        warnings.try_send("block warning writer").unwrap();
+        writing.recv_timeout(Duration::from_secs(1)).unwrap();
+        warnings.try_send("fill warning queue").unwrap();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let sink = ExportSink {
+            jobs: sender,
+            warnings,
+        };
+        let started = std::time::Instant::now();
+        submit(&sink, vec![]); // stalled job, warning queue full
+        submit(&sink, vec![]); // export queue full, warning queue full
+        drop(receiver);
+        submit(&sink, vec![]); // disconnected export, warning queue full
+        assert!(started.elapsed() < Duration::from_secs(1));
+        drop(release);
+    }
+
+    #[test]
+    fn wall_span_retains_interval_until_drop() {
+        const CHILD: &str = "BUILD_RUNNER_ACCELERATOR_TEST_WALL_BRIDGE";
+        if std::env::var_os(CHILD).is_some() {
+            let session = crate::wall::Session::new();
+            let build = ACTIVE.lock().unwrap().clone().unwrap();
+            let span = crate::wall::Span::new("wall_bridge_test");
+            assert!(build.buffer.0.lock().unwrap().is_empty());
+            assert!(Context::current().span().is_recording());
+            drop(span);
+            let records = build.buffer.0.lock().unwrap();
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].name, "wall_bridge_test");
+            drop(records);
+            session.finish(true);
+            drop(session);
+            return;
+        }
+        // Isolate cached opt-in state without mutating the multi-threaded test environment.
+        let path = std::env::temp_dir().join(format!(
+            "otel-wall-{}-{}.ndjson",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "telemetry::tests::wall_span_retains_interval_until_drop",
+            ])
+            .env(CHILD, "1")
+            .env("BUILD_RUNNER_ACCELERATOR_OTEL_FILE", &path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let request: Value = serde_json::from_slice(&bytes).unwrap();
+        let spans = request["resourceSpans"][0]["scopeSpans"][0]["spans"]
+            .as_array()
+            .unwrap();
+        assert!(spans.iter().any(|span| span["name"] == "wall_bridge_test"));
+        assert!(spans.iter().any(|span| span["name"] == "native_build"));
     }
 }
