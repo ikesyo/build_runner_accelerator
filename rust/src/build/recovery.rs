@@ -8,8 +8,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-// Version 2 uses algorithm-tagged BLAKE3 digests. Never interpret old undo
-// evidence using a different hash; preserve it for the matching frontend.
+// New publications use BLAKE3. Format 1 is accepted only to complete rollback
+// of an interrupted publication; it is never written or reused as cache state.
 const JOURNAL_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
@@ -253,13 +253,26 @@ pub(super) fn finish(graph: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn backup(dir: &Path, name: &str, digest: &Option<String>) -> io::Result<Option<Vec<u8>>> {
+fn evidence_digest(version: u32, bytes: &[u8]) -> String {
+    if version == 1 {
+        crate::digest::fnv1a_64(bytes)
+    } else {
+        digest_bytes(bytes)
+    }
+}
+
+fn backup(
+    dir: &Path,
+    name: &str,
+    digest: &Option<String>,
+    version: u32,
+) -> io::Result<Option<Vec<u8>>> {
     let Some(digest) = digest else {
         return Ok(None);
     };
     let bytes = read_optional(&dir.join(name))?
         .ok_or_else(|| io::Error::other(format!("missing undo backup {name}")))?;
-    if digest_bytes(&bytes) != *digest {
+    if evidence_digest(version, &bytes) != *digest {
         return Err(io::Error::other(format!("damaged undo backup {name}")));
     }
     Ok(Some(bytes))
@@ -304,7 +317,7 @@ pub(crate) fn recover(graph: &Path) -> io::Result<bool> {
         check_no_symlinks(&marker)?;
         let encoded = fs::read(&marker)?;
         let journal: Journal = serde_json::from_slice(&encoded)?;
-        if journal.version != JOURNAL_VERSION || journal.graph_path != graph {
+        if !matches!(journal.version, 1 | JOURNAL_VERSION) || journal.graph_path != graph {
             return Err(io::Error::other("unsupported or relocated undo journal"));
         }
         for (index, entry) in journal.entries.iter().enumerate() {
@@ -316,7 +329,9 @@ pub(crate) fn recover(graph: &Path) -> io::Result<bool> {
             {
                 return Err(io::Error::other("invalid undo output path"));
             }
-            let current = read_optional(&entry.path)?.as_deref().map(digest_bytes);
+            let current = read_optional(&entry.path)?
+                .as_deref()
+                .map(|bytes| evidence_digest(journal.version, bytes));
             if current.is_some() && current != entry.before && current != entry.after {
                 return Err(io::Error::other(format!(
                     "output changed outside the interrupted commit: {}",
@@ -326,9 +341,9 @@ pub(crate) fn recover(graph: &Path) -> io::Result<bool> {
             validate_temporary(&entry.path)?;
             // Validate every backup before any mutation, without retaining the
             // entire output tree in memory. Recheck each copy when restoring.
-            backup(&dir, &index.to_string(), &entry.before)?;
+            backup(&dir, &index.to_string(), &entry.before, journal.version)?;
         }
-        let old_graph = backup(&dir, "graph", &journal.graph)?;
+        let old_graph = backup(&dir, "graph", &journal.graph, journal.version)?;
         if let Some(bytes) = &old_graph {
             crate::graph::GraphState::decode_checked(bytes, false)?;
         }
@@ -346,7 +361,7 @@ pub(crate) fn recover(graph: &Path) -> io::Result<bool> {
         }
         remove_temporary(graph)?;
         for (index, entry) in journal.entries.iter().enumerate() {
-            let bytes = backup(&dir, &index.to_string(), &entry.before)?;
+            let bytes = backup(&dir, &index.to_string(), &entry.before, journal.version)?;
             restore(&entry.path, bytes.as_deref())?;
             super::commit::boundary("after_restore")?;
         }
@@ -358,7 +373,7 @@ pub(crate) fn recover(graph: &Path) -> io::Result<bool> {
 
 fn guidance(dir: &Path, error: io::Error) -> io::Error {
     io::Error::other(format!(
-        "cannot recover interrupted commit: {error}. Undo state preserved at {}. Stop build/watch and stock processes; back up this directory and affected files. Fix I/O permissions/space, or move externally edited files aside, then retry the same native command. For damaged/incompatible evidence, restore intact backups or use the matching frontend; see docs/compatibility-cleanup.md#interrupted-publication. Do not clear the graph or undo state before recovery.",
+        "cannot recover interrupted commit: {error}. Undo state preserved at {}. Stop build/watch and stock processes; back up this directory and affected files. Fix I/O permissions/space, or move externally edited files aside, then retry the same native command. For damaged evidence, restore intact backups or reconcile the listed files; see docs/compatibility-cleanup.md#interrupted-publication. Do not clear the graph or undo state before recovery.",
         dir.display()
     ))
 }
@@ -411,22 +426,67 @@ mod tests {
     }
 
     #[test]
-    fn old_hash_journal_is_preserved_before_any_recovery_write() {
+    fn fnv_publication_rolls_back_before_obsolete_cache_is_regenerated() {
+        let fixture = Fixture::new();
+        fs::write(fixture.output(), b"old").unwrap();
+        crate::graph::GraphState {
+            schema_version: crate::graph::GRAPH_SCHEMA_VERSION - 1,
+            ..Default::default()
+        }
+        .save(&fixture.graph())
+        .unwrap();
+        let original_graph = fs::read(fixture.graph()).unwrap();
+        let dir = directory(&fixture.graph());
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("0"), b"old").unwrap();
+        fs::write(dir.join("graph"), &original_graph).unwrap();
+        // Fixed FNV vectors describe an existing publication, not new writes.
+        fs::write(dir.join("journal.json"), serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "graph_path": fixture.graph(),
+            "entries": [{"path": fixture.output(), "before": "1a0fad1921d08076", "after": "2138d5192571b731"}],
+            "graph": crate::digest::fnv1a_64(&original_graph)
+        })).unwrap()).unwrap();
+        fs::write(fixture.output(), b"new").unwrap();
+        fs::write(fixture.graph(), b"partially published graph").unwrap();
+
+        // Corrupt evidence and external edits must still block *all* writes.
+        fs::write(dir.join("0"), b"damaged").unwrap();
+        assert!(recover(&fixture.graph()).is_err());
+        assert_eq!(fs::read(fixture.output()).unwrap(), b"new");
+        assert!(pending(&fixture.graph()));
+        fs::write(dir.join("0"), b"old").unwrap();
+        fs::write(fixture.output(), b"manual edit").unwrap();
+        assert!(recover(&fixture.graph()).is_err());
+        assert_eq!(fs::read(fixture.output()).unwrap(), b"manual edit");
+        fs::write(fixture.output(), b"new").unwrap();
+
+        let current = crate::graph::GraphState::load(&fixture.graph()).unwrap();
+        assert_eq!(fs::read(fixture.output()).unwrap(), b"old");
+        assert_eq!(fs::read(fixture.graph()).unwrap(), original_graph);
+        assert!(!dir.exists());
+        assert_eq!(current.schema_version, crate::graph::GRAPH_SCHEMA_VERSION);
+        assert!(current.config_digest.is_empty());
+    }
+
+    #[test]
+    fn new_publications_keep_blake3_evidence() {
         let fixture = Fixture::new();
         fs::write(fixture.output(), b"old").unwrap();
         fixture.prepare();
-        let marker = directory(&fixture.graph()).join("journal.json");
-        let mut journal: Journal = serde_json::from_slice(&fs::read(&marker).unwrap()).unwrap();
-        journal.version = 1;
-        let old = serde_json::to_vec(&journal).unwrap();
-        fs::write(&marker, &old).unwrap();
-        fs::write(fixture.output(), b"new").unwrap();
-        assert!(recover(&fixture.graph()).is_err());
-        assert_eq!(fs::read(fixture.output()).unwrap(), b"new");
-        assert_eq!(fs::read(marker).unwrap(), old);
-        assert_eq!(
-            fs::read(directory(&fixture.graph()).join("0")).unwrap(),
-            b"old"
+        let journal: Journal = serde_json::from_slice(
+            &fs::read(directory(&fixture.graph()).join("journal.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(journal.version, JOURNAL_VERSION);
+        assert_eq!(journal.entries[0].before, Some(digest_bytes(b"old")));
+        assert_eq!(journal.entries[0].after, Some(digest_bytes(b"new")));
+        assert!(
+            journal.entries[0]
+                .after
+                .as_ref()
+                .unwrap()
+                .starts_with("b3-")
         );
     }
 
@@ -670,25 +730,14 @@ mod tests {
         );
     }
     #[test]
-    fn unreadable_old_graph_never_becomes_an_empty_recovery_graph() {
-        for obsolete in [false, true] {
-            let fixture = Fixture::new();
-            fs::write(fixture.output(), b"old").unwrap();
-            if obsolete {
-                crate::graph::GraphState {
-                    schema_version: crate::graph::GRAPH_SCHEMA_VERSION - 1,
-                    ..crate::graph::GraphState::default()
-                }
-                .save(&fixture.graph())
-                .unwrap();
-            } else {
-                fs::write(fixture.graph(), b"old corrupt graph").unwrap();
-            }
-            fixture.prepare();
-            fs::write(fixture.output(), b"new").unwrap();
-            assert!(crate::graph::GraphState::load(&fixture.graph()).is_err());
-            assert!(pending(&fixture.graph()));
-            assert_eq!(fs::read(fixture.output()).unwrap(), b"new");
-        }
+    fn corrupt_undo_graph_blocks_recovery_before_any_output_write() {
+        let fixture = Fixture::new();
+        fs::write(fixture.output(), b"old").unwrap();
+        fs::write(fixture.graph(), b"old corrupt graph").unwrap();
+        fixture.prepare();
+        fs::write(fixture.output(), b"new").unwrap();
+        assert!(crate::graph::GraphState::load(&fixture.graph()).is_err());
+        assert!(pending(&fixture.graph()));
+        assert_eq!(fs::read(fixture.output()).unwrap(), b"new");
     }
 }

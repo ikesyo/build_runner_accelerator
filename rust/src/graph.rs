@@ -134,8 +134,9 @@ impl GraphState {
         Self::decode_checked(&contents, true)
     }
 
-    /// Recovery must preserve ownership rather than silently invalidating an
-    /// obsolete backup. The ordinary loader retains its existing reset policy.
+    /// Recovery validates the recorded binary layout without changing its
+    /// bytes or dropping ownership evidence. Ordinary loading may invalidate
+    /// an obsolete cache schema only after file rollback has completed.
     pub(crate) fn decode_checked(contents: &[u8], invalidate_obsolete: bool) -> io::Result<Self> {
         if contents.len() < GRAPH_HEADER_LENGTH {
             return Err(invalid_graph("graph file is truncated"));
@@ -164,12 +165,7 @@ impl GraphState {
 
         let mut decoder = Decoder::new(&contents[GRAPH_HEADER_LENGTH..]);
         let schema_version = decoder.read_u32()?;
-        if schema_version != GRAPH_SCHEMA_VERSION {
-            if !invalidate_obsolete {
-                return Err(invalid_graph(
-                    "undo graph has an unsupported schema; use the matching frontend or reconcile outputs manually",
-                ));
-            }
+        if schema_version != GRAPH_SCHEMA_VERSION && invalidate_obsolete {
             eprintln!(
                 "build_runner_accelerator: invalidating graph schema {schema_version}; expected {GRAPH_SCHEMA_VERSION}"
             );

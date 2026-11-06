@@ -158,7 +158,7 @@ the existing output verification hashes remain a large part of `dirty_check`.
 | --- | --- | --- |
 | Source/dependency/output snapshots; output reuse; watch expected bytes | Rust FNV-1a-64 | BLAKE3-256 with `b3-` tag |
 | Configuration, package/compiler/manifest/AOT cache identities | Rust FNV-1a-64 | Same tagged BLAKE3; changed identities select new cache entries |
-| Publication undo backup content verification | Rust FNV-1a-64, journal v1 | BLAKE3, journal v2; old evidence is rejected before writes and preserved |
+| Publication undo backup content verification | Rust FNV-1a-64, journal v1 | New journals use BLAKE3; existing FNV journals are verified and rolled back by the same executable |
 | Worker-source producer/consumer identity | Dart FNV-1a-64 and Rust comparison | Unchanged dedicated function; not a security authenticator or a legacy reader |
 | Dart asset-read digest, resolver reads, directive cache, byte-store fingerprint, factory probe | SHA-256 plus existing reuse | Unchanged |
 | Release archive/binary integrity, signed release metadata | SHA-256/signature verification | Unchanged; never substitute noncryptographic hashes |
@@ -217,14 +217,13 @@ authentication. Local receipts retain their existing trusted-filesystem/stamp
 assumptions; an attacker who can replace all cache metadata is outside that
 reuse model. Release authentication remains a separate boundary.
 
-Migration has no old-format reader: graph schema 8 discards schema-7 evidence;
-`b3-` identities select new internal cache namespaces; the validation receipt is
-`aot-validation-digests-b3.json`; journal v2 refuses v1 before any recovery write.
-Old disposable cache entries may remain on disk but cannot authorize current
-reuse. Existing interrupted v1 transactions must be recovered using the matching
-frontend before upgrading. Undo evidence must not be deleted as cache cleanup.
-The Rust/Dart worker-source FNV contract stays separate and is exercised with
-matching empty/ASCII/Unicode vectors.
+Graph schema 8, tagged cache identities and `aot-validation-digests-b3.json`
+invalidate obsolete cache evidence. Pending publications are rolled back first:
+checksums follow the recorded journal format, all backups and destinations are
+validated, files are restored, and the completed journal is removed. Normal
+loading then regenerates obsolete cache state. New publications use BLAKE3;
+FNV verification is confined to existing format-1 journals and the separate
+Rust/Dart worker-source identity contract.
 
 Hash-return-string kernels, microseconds. FNV includes its 16-character hex
 result, xxHash its 32-character hex, and BLAKE3 the actual production 67-character
@@ -292,8 +291,6 @@ and cross-file buffer pooling remain untested. Production file I/O is unchanged.
 
 Real package_config is 14,504 B; builder-manifest is 35,255 B. Final JSON results
 use production serde_json **1.0.151**, preserve_order, and simd-json **0.17.3**.
-An exploratory run accidentally selected serde_json 1.0.154; it is excluded from
-these JSON tables. The evaluation manifest now pins the production version.
 
 | Input / operation | Release us | Native us | Allocations | Peak bytes |
 | --- | ---: | ---: | ---: | ---: |
@@ -448,7 +445,7 @@ from the distribution.
 | Sorted snapshot merge | Adopt; improves all tested context cases without extra allocation | Small; exhaustive reference comparison preserves missing/existence/content semantics |
 | String HashMap reverse edges | Defer; real graph faster, tiny graph slower; small E2E contribution | Small implementation, more workload evidence needed |
 | Dense/sparse/Roaring IDs | Defer one-shot integration; reuse is fast, conversion dominates this real graph | Larger lifetime/rebuild/unknown-vertex and retained-memory design; prototype seeds are indexed graph vertices |
-| BLAKE3-256 internal identity | Adopt; remaining real hash cost and steady E2E reduction | Small algorithm change, medium invalidation surface; larger strings, short-key cost, cold upgrade and old undo refusal documented/tested |
+| BLAKE3-256 internal identity | Adopt; remaining real hash cost and steady E2E reduction | Small algorithm change, medium invalidation surface; larger strings, short-key cost, cold upgrade and automatic publication rollback validated |
 | xxHash3-128 | Not adopted; fastest kernel, while BLAKE3 provides one stronger 256-bit primitive for content, keys and undo evidence | A domain-specific alternative remains possible; no xxHash E2E implementation was measured |
 | CRC32C | Reject standalone identity; 32-bit collisions/linearity | Inappropriate correctness boundary, regardless of instruction throughput |
 | Streaming file reads | Defer policy change; helps large warm files, larger buffers regress small ones | Requires distribution/threshold and memory-pressure evidence; no production I/O change |
@@ -457,7 +454,7 @@ from the distribution.
 
 ## Correctness and reproducibility checks
 
-- `cargo test --locked --manifest-path rust/Cargo.toml`: 233 passed, three ignored.
+- `cargo test --locked --manifest-path rust/Cargo.toml`: 234 passed, three ignored.
 - `cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings`: passed.
 - Release build, Rust formatting and `git diff --check`: passed.
 - `dart test --compiler=source test/manifest_emitter_test.dart`: three passed.
@@ -465,8 +462,9 @@ from the distribution.
   passed publication interruption points, stale deletion, stock byte equality,
   no-op and resident watch I/O failure/rollback/retry.
 - 6,561 snapshot-pair differential cases; old schema-7 invalidation preserves
-  source/output files; old undo journals are preserved before recovery writes;
-  old receipt namespace is not loaded; current corruption/edit tests pass.
+  source/output files; existing FNV publications roll back before cache
+  invalidation; corrupt backups/external edits block writes; the old receipt
+  namespace is not loaded.
 - Default SIMD dispatch and forced portable BLAKE3 produced the same tagged
   values for ten lengths from zero through 4 MiB, including 1,023/1,024/1,025-byte
   boundaries. BLAKE3/xxHash/CRC chunked values match one-shot values too.
@@ -495,14 +493,11 @@ focused validation does not replace every supported builder/platform gate.
 - Native runtime benchmarks on the other four distribution targets and the
   existing long stock/watch compatibility matrix, which remains CI work.
 
-Raw JSON/CSV/logs are intentionally not committed. Reproduction writes new
-local artifacts; no unavailable raw-data links are referenced here.
-
 ## Reproduction
 
 Check out measured commit `bd18bee` and use stable 1.98.1, Dart 3.13.3 and the
 fixture lockfile to reproduce these tables.
-Use a fresh disposable output directory. All raw output belongs outside Git.
+Use a fresh disposable output directory.
 Finish builds/checks before any timing; run benchmarks sequentially.
 
 ```sh

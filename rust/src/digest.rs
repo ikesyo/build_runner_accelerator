@@ -12,6 +12,10 @@ pub fn digest_bytes(bytes: &[u8]) -> String {
 /// contract, not an internal cache digest. Keep matching workerSourceDigest
 /// in lib/src/manifest/emitter.dart. This is not a security authenticator.
 pub(crate) fn worker_source_digest(bytes: &[u8]) -> String {
+    fnv1a_64(bytes)
+}
+
+pub(crate) fn fnv1a_64(bytes: &[u8]) -> String {
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in bytes {
         hash ^= u64::from(*byte);
