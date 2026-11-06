@@ -1,32 +1,22 @@
 # Graph, hash and JSON CPU-extension investigation
 
-This follow-up measures the B/C/D candidates left untested in PR #163. Its
-previous deferrals are not treated as negative performance evidence. Before rebasing, the selected
-changes reduced median No-op time by 6.9% and One-file time by 6.6% in the final
-500-feature workload comparison. **Clean and Broad do not establish a consistent
-improvement; this is not a universal build-speed claim.**
-
-## Rebase onto merged PR #163
-
-On 2026-11-06 this branch was rebased onto main `5ae9ee8`, which includes
-PR #163. Both the cached Finder and empty-change early return are retained.
-The snapshot merge drains both iterator tails before checking for an empty
-change set, so additions/removals at either tail still propagate correctly.
-The performance tables below are historical measurements from pre-rebase
-commit `bd18bee` against `617bb0b`; they are **not** measurements of additional
-benefit over merged PR #163. No E2E benchmark was repeated for this rebase. Rust tests after integration
-passed (233 tests, three ignored), as did Clippy and formatting checks.
+Internal state hashing and ordered snapshot comparison are optimized after
+profiling the remaining work. In the measured 500-feature workload, median
+No-op time decreased by 6.9% and One-file time by 6.6%. **Clean and Broad do not
+establish a consistent improvement; this is not a universal build-speed claim.**
 
 ## Baseline and scope
 
-Baseline: main `617bb0bf6fba9193527d557c39a7c40ce3730aae`, fetched on
-2026-11-04. PR #163 was still an open, unmerged Draft at head
-`4f9c73db92979508e42384d77ca98ad222e457cd`. Its cached part Finder and empty
-reverse-closure shortcut were **not** included in the measured proposal. Neither
-was reimplemented; both now come from main after rebasing.
-Main already prunes the FVM SDK from asset discovery, batches resolver work,
-reuses output digests, validates eligible AOT file digests through local stamps,
-and caches Dart directive dependencies. Those optimizations remain in place.
+Measured commits: baseline `617bb0bf6fba9193527d557c39a7c40ce3730aae`,
+proposal `bd18bee`. Neither measured binary includes the cached part Finder or
+empty-change reverse-closure shortcut present in current main. The tables do
+not quantify incremental benefit over those shortcuts.
+
+The implementation retains the Finder and empty-change shortcut. Snapshot
+comparison drains both iterator tails before checking for an empty change set,
+so additions/removals at either tail still propagate correctly. FVM SDK scan
+pruning, resolver batching, output/AOT digest reuse and directive caching also
+remain in place.
 
 The selected production changes are:
 
@@ -467,7 +457,7 @@ from the distribution.
 
 ## Correctness and reproducibility checks
 
-- `cargo test --locked --manifest-path rust/Cargo.toml`: 230 passed, one ignored.
+- `cargo test --locked --manifest-path rust/Cargo.toml`: 233 passed, three ignored.
 - `cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings`: passed.
 - Release build, Rust formatting and `git diff --check`: passed.
 - `dart test --compiler=source test/manifest_emitter_test.dart`: three passed.
@@ -510,9 +500,8 @@ local artifacts; no unavailable raw-data links are referenced here.
 
 ## Reproduction
 
-To reproduce the historical tables, check out measured commit `bd18bee` and use
-stable 1.98.1, Dart 3.13.3 and the fixture lockfile. The rebased branch includes
-additional main optimizations and is not the measured proposal.
+Check out measured commit `bd18bee` and use stable 1.98.1, Dart 3.13.3 and the
+fixture lockfile to reproduce these tables.
 Use a fresh disposable output directory. All raw output belongs outside Git.
 Finish builds/checks before any timing; run benchmarks sequentially.
 
