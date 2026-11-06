@@ -263,13 +263,20 @@ copy beside the original preserves its checkout-relative helper lookup; the
 patch changes only cleanup, not measured commands:
 
 ```sh
-retained_harness=$(mktemp "$PWD/scripts/.benchmark-retained.XXXXXX.sh")
+retained_harness=$(mktemp "$PWD/scripts/.benchmark-retained.sh.XXXXXX")
 cp scripts/benchmark_current_baseline.sh "$retained_harness"
 patch "$retained_harness" < docs/benchmarks/simd-cpu-2026-11/retained-harness.patch
+
+retained_results=$(mktemp -d "${TMPDIR:-/tmp}/build-runner-retained-results.XXXXXX")
+LANE=accelerator WORKLOAD=application COUNT=500 REPEATS=3 ACCELERATOR_JOBS=2 \
+  BUILD_RUNNER_ACCELERATOR_BIN=/absolute/path/to/variant \
+  RESULTS_DIR="$retained_results" \
+  bash "$retained_harness"
+rm -f "$retained_harness"
 ```
 
-Run that copy with the same E2E environment above.
-Remove the temporary script after the retained workspace is prepared.
+The retained run uses a fresh results directory; reusing the earlier E2E run's
+`RESULTS_DIR` would fail because it already contains measurements.
 Then run `paired_warm.py --help` and provide that workspace, its shared cache,
 the checkout, SDK/pub-cache paths and the three saved executables. The script
 restores the generated fixture before each edit; use only the disposable
