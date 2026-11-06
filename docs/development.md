@@ -260,7 +260,7 @@ continues reporting broken pipe.
 
 See [ADR 0048](adr/0048-build-telemetry.md) for the instrumentation boundary,
 parent/context semantics, output budgets and failure policy. Historical overhead
-checks are in [benchmarks](benchmarks.md#telemetry-overhead-check-2026-11-06).
+checks are in [the telemetry overhead report](benchmarks/build-telemetry-2026-11.md).
 
 ## Release checks
 

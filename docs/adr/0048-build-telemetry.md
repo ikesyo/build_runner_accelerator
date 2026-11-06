@@ -121,5 +121,5 @@ unbiased comparisons of individual action distributions. Opt-in remains the
 default because representative production overhead has not been established.
 
 See [development](../development.md#build-telemetry) for activation and local
-inspection, and [benchmarks](../benchmarks.md#telemetry-overhead-check-2026-11-06)
+inspection, and [the telemetry overhead report](../benchmarks/build-telemetry-2026-11.md)
 for measurement conditions and evidence limits.
