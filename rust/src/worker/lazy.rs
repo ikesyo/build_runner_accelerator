@@ -768,6 +768,7 @@ impl WorkerClient {
         let started = Instant::now();
         let id = self.next_id();
         let _wall = self.wall_span("worker_build_lazy", Some(id));
+        let metrics_before = self.metrics;
         let effective_deleted;
         let deleted = if lazy.filtered_previous.is_some() {
             // Pending producers must still reach the demand RPC even if their
@@ -853,6 +854,7 @@ impl WorkerClient {
                         return Err(io::Error::other("worker response id mismatch"));
                     }
                     self.metrics.build_us += started.elapsed().as_micros() as u64;
+                    self.trace_metrics(&_wall, metrics_before);
                     return Ok(result);
                 }
             }
@@ -876,6 +878,7 @@ impl WorkerClient {
         let started = Instant::now();
         let id = self.next_id();
         let _wall = self.wall_span("worker_batch_lazy", Some(id));
+        let metrics_before = self.metrics;
         // Lazy batches have the same visibility context as ordinary batches;
         // the nested build path still carries its own single-action hint.
         let blocked_assets = batch_blocked_assets(requests, visibility, deleted_overlay)?;
@@ -953,6 +956,7 @@ impl WorkerClient {
                         return Err(io::Error::other("worker batch result id mismatch"));
                     }
                     self.metrics.build_us += started.elapsed().as_micros() as u64;
+                    self.trace_metrics(&_wall, metrics_before);
                     return Ok(results);
                 }
             }

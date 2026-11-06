@@ -19,6 +19,9 @@ For native-to-native scheduling comparisons in JIT and AOT modes, see
 [workspace and single-package scheduler benchmarks](benchmarks/workspace-scheduler-2026-10/README.md).
 The stock-versus-native application comparison below measures a separate workload.
 
+For opt-in build tracing overhead and its measurement limits, see
+[the telemetry overhead check](benchmarks/build-telemetry-2026-11.md).
+
 ## Mixed application comparison (2026-10-24)
 
 This synthetic benchmark compares stock build_runner with the accelerator

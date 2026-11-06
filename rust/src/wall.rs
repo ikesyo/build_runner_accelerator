@@ -37,23 +37,27 @@ struct Event {
 
 /// One session per native build (including no-op/error), or watch iteration.
 /// A nested session shares the outer recorder and does not flush it.
-pub(crate) struct Session(Option<Arc<Recorder>>);
+pub(crate) struct Session(Option<Arc<Recorder>>, crate::telemetry::Session);
 
 impl Session {
+    pub(crate) fn finish(&self, success: bool) {
+        self.1.finish(success);
+    }
     pub(crate) fn new() -> Self {
+        let otel = crate::telemetry::Session::new();
         if !enabled() {
-            return Self(None);
+            return Self(None, otel);
         }
         let mut active = ACTIVE.lock().unwrap();
         if active.is_some() {
-            return Self(None);
+            return Self(None, otel);
         }
         let recorder = Arc::new(Recorder {
             origin: Instant::now(),
             events: Mutex::new((Vec::new(), 0)),
         });
         *active = Some(recorder.clone());
-        Self(Some(recorder))
+        Self(Some(recorder), otel)
     }
 }
 
@@ -96,30 +100,45 @@ fn write_trace(
     writer.flush()
 }
 
-pub(crate) struct Span(Option<(Arc<Recorder>, Event)>);
+pub(crate) struct Span(
+    Option<(Arc<Recorder>, Event)>,
+    Option<crate::telemetry::Interval>,
+);
 
 impl Span {
     pub(crate) fn new(stage: &'static str) -> Self {
+        let otel = crate::telemetry::Interval::new(stage);
         if !enabled() {
-            return Self(None);
+            return Self(None, otel);
         }
         let recorder = ACTIVE.lock().unwrap().clone();
-        Self(recorder.map(|recorder| {
-            let event = Event {
-                stage,
-                start_us: recorder.origin.elapsed().as_micros(),
-                end_us: 0,
-                thread: format!("{:?}", std::thread::current().id()),
-                phase: None,
-                builder: None,
-                worker_pid: None,
-                batch_id: None,
-            };
-            (recorder, event)
-        }))
+        Self(
+            recorder.map(|recorder| {
+                let event = Event {
+                    stage,
+                    start_us: recorder.origin.elapsed().as_micros(),
+                    end_us: 0,
+                    thread: format!("{:?}", std::thread::current().id()),
+                    phase: None,
+                    builder: None,
+                    worker_pid: None,
+                    batch_id: None,
+                };
+                (recorder, event)
+            }),
+            otel,
+        )
     }
 
+    pub(crate) fn attribute(&self, key: &'static str, value: u64) {
+        if let Some(span) = &self.1 {
+            span.attribute(key, value);
+        }
+    }
     pub(crate) fn phase(mut self, phase: u32, builder: &str) -> Self {
+        if let Some(span) = &self.1 {
+            span.phase(phase, builder);
+        }
         if let Some((_, event)) = &mut self.0 {
             event.phase = Some(phase);
             event.builder = Some(builder.to_owned());
@@ -156,19 +175,22 @@ mod tests {
     use super::*;
 
     fn span(recorder: &Arc<Recorder>) -> Span {
-        Span(Some((
-            recorder.clone(),
-            Event {
-                stage: "test",
-                start_us: recorder.origin.elapsed().as_micros(),
-                end_us: 0,
-                thread: format!("{:?}", std::thread::current().id()),
-                phase: None,
-                builder: None,
-                worker_pid: None,
-                batch_id: None,
-            },
-        )))
+        Span(
+            Some((
+                recorder.clone(),
+                Event {
+                    stage: "test",
+                    start_us: recorder.origin.elapsed().as_micros(),
+                    end_us: 0,
+                    thread: format!("{:?}", std::thread::current().id()),
+                    phase: None,
+                    builder: None,
+                    worker_pid: None,
+                    batch_id: None,
+                },
+            )),
+            None,
+        )
     }
 
     #[test]

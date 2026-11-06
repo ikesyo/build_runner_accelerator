@@ -246,11 +246,33 @@ fn run_watch_build(
     reuse_configuration: bool,
     changed_paths: &WatchChanges,
 ) -> io::Result<()> {
+    let session = crate::wall::Session::new();
+    let result = run_watch_build_inner(
+        options,
+        pool,
+        pool_signature,
+        pool_shape,
+        watch_state,
+        reuse_configuration,
+        changed_paths,
+    );
+    session.finish(result.is_ok());
+    result
+}
+
+fn run_watch_build_inner(
+    options: &Options,
+    pool: &mut Option<WorkerPool>,
+    pool_signature: &mut Option<String>,
+    pool_shape: &mut Option<Vec<ConfiguredBuilder>>,
+    watch_state: &mut WatchState,
+    reuse_configuration: bool,
+    changed_paths: &WatchChanges,
+) -> io::Result<()> {
     let mut cycle_metrics = WatchCycleMetrics {
         started: crate::metrics::runtime_metrics_enabled().then(Instant::now),
         success: false,
     };
-    let _wall = crate::wall::Session::new();
     let workspace = Workspace::load(options.root.clone())?;
     let loaded_graph = watch_state.graph.take_for_build(&workspace)?;
     let session_start = watch_state.cached_configuration.is_none();

@@ -611,8 +611,10 @@ class _BuildProfile {
     required this.builder,
     required this.input,
     required this.resolverProfile,
+    this.traceEnabled = false,
   }) : _total = Stopwatch()..start();
 
+  final bool traceEnabled;
   final String builder;
   final String input;
   final Stopwatch _total;
@@ -622,6 +624,8 @@ class _BuildProfile {
   int resolverGetCalls = 0;
   int resolverFirstGetUs = 0;
   int runBuilderUs = 0;
+  int? runBuilderStartUs;
+  List<Map<String, int>>? resolverSpans;
   int resolverReadsUs = 0;
   int resultAssemblyUs = 0;
   int outputCount = 0;
@@ -632,6 +636,15 @@ class _BuildProfile {
   final ResolverInitializationProfile resolverProfile;
 
   void recordResolverGet(int elapsedUs, {required bool first}) {
+    if (traceEnabled) {
+      final spans = resolverSpans ??= <Map<String, int>>[];
+      if (spans.length < 16) {
+        spans.add({
+          'offset_us': _total.elapsedMicroseconds - elapsedUs,
+          'duration_us': elapsedUs,
+        });
+      }
+    }
     resolverGetUs += elapsedUs;
     resolverGetCalls++;
     if (first) resolverFirstGetUs += elapsedUs;
@@ -892,6 +905,9 @@ Future<JsonMap> _runBuild(
   Map<String, PostProcessBuilderFactory> postProcessCatalog, {
   Set<AssetId>? inheritedBlockedAssets,
 }) async {
+  final traceStart = request.traceparent == null || request.otelReportId == null
+      ? null
+      : DateTime.now().microsecondsSinceEpoch;
   final builderId = request.builder;
   final inputName = request.input;
   final isPostProcess = request.isPostProcess;
@@ -900,6 +916,7 @@ Future<JsonMap> _runBuild(
     builder: builderId,
     input: inputName,
     resolverProfile: runtime.resolverProfile,
+    traceEnabled: traceStart != null,
   );
   var actionStarted = false;
   var resolverUsed = false;
@@ -980,127 +997,131 @@ Future<JsonMap> _runBuild(
       );
     }
     final runBuilderTimer = Stopwatch()..start();
-
-    if (!triggered) {
-      profile.status = 'not_triggered';
-    } else if (isPostProcess) {
-      final factory = postProcessCatalog[builderId];
-      if (factory == null) {
-        throw StateError('Unknown post-process builder: $builderId');
-      }
-      final instanceKey = _instanceKey(request);
-      var postProcessBuilder = runtime.postProcessBuilders[instanceKey];
-      if (postProcessBuilder == null) {
-        final factoryTimer = Stopwatch()..start();
-        postProcessBuilder = factory(BuilderOptions(options, isRoot: isRoot));
-        profile.factoryUs = factoryTimer.elapsedMicroseconds;
-        runtime.postProcessBuilders[instanceKey] = postProcessBuilder;
-      }
-      final postProcessStep = RemotePostProcessBuildStep(
-        inputId: input,
-        io: runtime.io,
-        deletePrimaryInput: deleted.add,
-      );
-      await BuildLogLogger.scopeLogAsync(() async {
-        try {
-          await postProcessBuilder!.build(postProcessStep);
-        } finally {
-          await postProcessStep.complete();
+    if (traceStart != null)
+      profile.runBuilderStartUs = profile._total.elapsedMicroseconds;
+    try {
+      if (!triggered) {
+        profile.status = 'not_triggered';
+      } else if (isPostProcess) {
+        final factory = postProcessCatalog[builderId];
+        if (factory == null) {
+          throw StateError('Unknown post-process builder: $builderId');
         }
-      }, actionLog);
-    } else {
-      final trackedResolver = _TrackingResolvers(
-        runtime.resolver,
-        retainedOutputGuard: runtime.retainedOutputGuard,
-      );
-      final resolver = _metricsEnabled
-          ? _ProfilingResolvers(trackedResolver, runtime, profile)
-          : trackedResolver;
-      final factory = builderCatalog[builderId];
-      if (factory == null) {
-        throw StateError('Unknown builder: $builderId');
-      }
-      final instanceKey = _instanceKey(request);
-      var builder = runtime.builders[instanceKey];
-      if (builder == null) {
-        final factoryTimer = Stopwatch()..start();
-        builder = factory(BuilderOptions(options, isRoot: isRoot));
-        profile.factoryUs = factoryTimer.elapsedMicroseconds;
-        runtime.builders[instanceKey] = builder;
-      }
-      final inputTracker = InputTracker(
-        runtime.io.filesystem,
-        primaryInput: input,
-        builderLabel: builderId,
-      );
-      final createStep = runtime.retainedOutputGuard
-          ? _RetainedOutputBuildStep.new
-          : BuildStepImpl.new;
-      if (request.partPhaseIndex != null && runtime.retainedOutputGuard) {
-        throw UnsupportedError(_retainedApiUnsupported);
-      }
-      final expectedOutputs = [
-        for (final output in request.allowedOutputs) AssetId.parse(output),
-      ];
-      final BuildStepImpl activeStep;
-      if (request.partPhaseIndex == null) {
-        activeStep = createStep(
+        final instanceKey = _instanceKey(request);
+        var postProcessBuilder = runtime.postProcessBuilders[instanceKey];
+        if (postProcessBuilder == null) {
+          final factoryTimer = Stopwatch()..start();
+          postProcessBuilder = factory(BuilderOptions(options, isRoot: isRoot));
+          profile.factoryUs = factoryTimer.elapsedMicroseconds;
+          runtime.postProcessBuilders[instanceKey] = postProcessBuilder;
+        }
+        final postProcessStep = RemotePostProcessBuildStep(
           inputId: input,
-          expectedOutputs: expectedOutputs,
-          inputTracker: inputTracker,
-          buildFilesystem: runtime.buildFilesystem,
-          phase: request.phase,
-          resolvers: resolver,
-          resourceManager: runtime.resourceManager,
+          io: runtime.io,
+          deletePrimaryInput: deleted.add,
         );
-      } else {
-        final create = _sharedPartStepFactory;
-        if (create == null)
-          throw StateError('Shared-part worker factory is missing');
-        activeStep = create(
-          input,
-          expectedOutputs,
-          inputTracker,
-          runtime.buildFilesystem,
-          request.phase,
-          request.partPhaseIndex!,
-          resolver,
-          runtime.resourceManager,
-        );
-      }
-      step = activeStep;
-      await BuildLogLogger.scopeLogAsync(() async {
-        try {
-          await builder!.build(activeStep);
-          if (request.partPhaseIndex != null) {
-            final encode = _sharedPartEncoder;
-            if (encode == null)
-              throw StateError('Shared-part worker codec is missing');
-            sharedPart = await encode(activeStep, builderId);
-          }
-        } finally {
+        await BuildLogLogger.scopeLogAsync(() async {
           try {
-            await activeStep.complete();
+            await postProcessBuilder!.build(postProcessStep);
           } finally {
-            // Latch the unsupported API even if a builder catches its exception
-            // or fails later. Never publish the builder's catch-path output.
-            if ((activeStep is _RetainedOutputBuildStep &&
-                    activeStep.unsupportedDigestUsed) ||
-                (trackedResolver.retainedOutputGuard &&
-                    trackedResolver.wasUsed)) {
-              throw UnsupportedError(_retainedApiUnsupported);
+            await postProcessStep.complete();
+          }
+        }, actionLog);
+      } else {
+        final trackedResolver = _TrackingResolvers(
+          runtime.resolver,
+          retainedOutputGuard: runtime.retainedOutputGuard,
+        );
+        final resolver = (_metricsEnabled || traceStart != null)
+            ? _ProfilingResolvers(trackedResolver, runtime, profile)
+            : trackedResolver;
+        final factory = builderCatalog[builderId];
+        if (factory == null) {
+          throw StateError('Unknown builder: $builderId');
+        }
+        final instanceKey = _instanceKey(request);
+        var builder = runtime.builders[instanceKey];
+        if (builder == null) {
+          final factoryTimer = Stopwatch()..start();
+          builder = factory(BuilderOptions(options, isRoot: isRoot));
+          profile.factoryUs = factoryTimer.elapsedMicroseconds;
+          runtime.builders[instanceKey] = builder;
+        }
+        final inputTracker = InputTracker(
+          runtime.io.filesystem,
+          primaryInput: input,
+          builderLabel: builderId,
+        );
+        final createStep = runtime.retainedOutputGuard
+            ? _RetainedOutputBuildStep.new
+            : BuildStepImpl.new;
+        if (request.partPhaseIndex != null && runtime.retainedOutputGuard) {
+          throw UnsupportedError(_retainedApiUnsupported);
+        }
+        final expectedOutputs = [
+          for (final output in request.allowedOutputs) AssetId.parse(output),
+        ];
+        final BuildStepImpl activeStep;
+        if (request.partPhaseIndex == null) {
+          activeStep = createStep(
+            inputId: input,
+            expectedOutputs: expectedOutputs,
+            inputTracker: inputTracker,
+            buildFilesystem: runtime.buildFilesystem,
+            phase: request.phase,
+            resolvers: resolver,
+            resourceManager: runtime.resourceManager,
+          );
+        } else {
+          final create = _sharedPartStepFactory;
+          if (create == null)
+            throw StateError('Shared-part worker factory is missing');
+          activeStep = create(
+            input,
+            expectedOutputs,
+            inputTracker,
+            runtime.buildFilesystem,
+            request.phase,
+            request.partPhaseIndex!,
+            resolver,
+            runtime.resourceManager,
+          );
+        }
+        step = activeStep;
+        await BuildLogLogger.scopeLogAsync(() async {
+          try {
+            await builder!.build(activeStep);
+            if (request.partPhaseIndex != null) {
+              final encode = _sharedPartEncoder;
+              if (encode == null)
+                throw StateError('Shared-part worker codec is missing');
+              sharedPart = await encode(activeStep, builderId);
+            }
+          } finally {
+            try {
+              await activeStep.complete();
+            } finally {
+              // Latch the unsupported API even if a builder catches its exception
+              // or fails later. Never publish the builder's catch-path output.
+              if ((activeStep is _RetainedOutputBuildStep &&
+                      activeStep.unsupportedDigestUsed) ||
+                  (trackedResolver.retainedOutputGuard &&
+                      trackedResolver.wasUsed)) {
+                throw UnsupportedError(_retainedApiUnsupported);
+              }
             }
           }
-        }
-      }, actionLog);
-      resolverUsed = trackedResolver.wasUsed;
+        }, actionLog);
+        resolverUsed = trackedResolver.wasUsed;
+      }
+      if (actionLog.errors.isNotEmpty) {
+        throw StateError(
+          'Builder $builderId logged errors: ${actionLog.errors.join('\n')}',
+        );
+      }
+    } finally {
+      profile.runBuilderUs = runBuilderTimer.elapsedMicroseconds;
     }
-    if (actionLog.errors.isNotEmpty) {
-      throw StateError(
-        'Builder $builderId logged errors: ${actionLog.errors.join('\n')}',
-      );
-    }
-    profile.runBuilderUs = runBuilderTimer.elapsedMicroseconds;
 
     if (triggered) {
       final resolverReadsTimer = Stopwatch()..start();
@@ -1214,6 +1235,28 @@ Future<JsonMap> _runBuild(
   } finally {
     if (actionStarted) runtime.io.endAction();
     profile.emit();
+    if (traceStart != null) {
+      // A fixed-size report, with no asset IDs, options or source text. The
+      // native SDK exports this as a child of the propagated batch context.
+      await writer.send(<String, dynamic>{
+        'v': 1,
+        'type': 'otel_action',
+        'traceparent': request.traceparent,
+        'otel_report_id': request.otelReportId,
+        'start_us': traceStart,
+        'duration_us': profile._total.elapsedMicroseconds,
+        'success':
+            profile.status == 'success' || profile.status == 'not_triggered',
+        'run_builder_us': profile.runBuilderUs,
+        'run_builder_start_us': profile.runBuilderStartUs,
+        'resolver_spans': profile.resolverSpans,
+        'resolver_get_us': profile.resolverGetUs,
+        'resolver_get_calls': profile.resolverGetCalls,
+        'outputs': profile.outputCount,
+        'reads': profile.readCount,
+        'resolver_reads': profile.resolverReadCount,
+      });
+    }
   }
 }
 

@@ -94,6 +94,8 @@ impl WorkspaceBaseline {
 }
 
 pub(crate) struct WorkspaceLease {
+    pub(crate) trace_context: Option<opentelemetry::Context>,
+    pub(crate) queued: Option<std::time::Instant>,
     pub(crate) application: usize,
     pub(crate) package: String,
     pub(crate) requests: Arc<Vec<BuildRequest>>,
@@ -120,13 +122,15 @@ impl WorkspaceDispatch {
         self.leases.len()
     }
 
-    pub(crate) fn send(&self, worker: usize, lease: WorkspaceLease) -> io::Result<()> {
+    pub(crate) fn send(&self, worker: usize, mut lease: WorkspaceLease) -> io::Result<()> {
+        lease.queued = crate::telemetry::enabled().then(std::time::Instant::now);
         self.leases[worker]
             .send(lease)
             .map_err(|_| io::Error::other("workspace worker disconnected"))
     }
 
     pub(crate) fn receive(&self) -> io::Result<WorkspaceCompletion> {
+        let _wait = crate::wall::Span::new("controller_wait");
         self.completions
             .recv()
             .map_err(|_| io::Error::other("workspace completion channel disconnected"))
@@ -166,6 +170,11 @@ pub(super) fn run_worker(
     let mut package = None;
     let mut baseline: Option<Weak<WorkspaceBaseline>> = None;
     while let Ok(lease) = leases.recv() {
+        let _context = crate::telemetry::attach(lease.trace_context.clone());
+        let interval = crate::wall::Span::new("worker_lease");
+        if let Some(queued) = lease.queued {
+            interval.attribute("queue.wait.us", queued.elapsed().as_micros() as u64);
+        }
         let mut elapsed = Duration::ZERO;
         let result = catch_unwind(AssertUnwindSafe(|| {
             if outcome.worker.is_none() {

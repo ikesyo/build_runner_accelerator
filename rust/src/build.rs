@@ -141,6 +141,7 @@ pub(crate) fn run_with_config_session(
     // reuse its worker pool. Keep that resolution alive for the build itself.
     let _wall = crate::wall::Session::new();
     let _build = crate::wall::Span::new("build_with_config");
+    let _reads = crate::telemetry::WorkspaceReads::new(&workspace);
     let NativeFrontend {
         config: build_config,
         preflight,

@@ -140,6 +140,9 @@ void main() {
         'v': 1,
         'type': 'build',
         'id': 12,
+        'otel_report_id': 1,
+        'traceparent':
+            '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
         'builder': 'app|copy',
         'input': 'app|lib/input.dart',
         'kind': 'normal',
@@ -160,6 +163,11 @@ void main() {
       expect(message, isA<WorkerBuildMessage>());
       final request = (message as WorkerBuildMessage).request;
       expect(request.id, 12);
+      expect(request.otelReportId, 1);
+      expect(
+        request.traceparent,
+        '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+      );
       expect(request.builder, 'app|copy');
       expect(request.input, 'app|lib/input.dart');
       expect(request.kind, 'normal');
@@ -183,6 +191,9 @@ void main() {
         'requests': <dynamic>[
           <String, dynamic>{
             'id': 21,
+            'otel_report_id': 1,
+            'traceparent':
+                '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
             'builder': 'app|one',
             'input': 'app|lib/one.dart',
             'kind': 'normal',
@@ -195,6 +206,9 @@ void main() {
           },
           <String, dynamic>{
             'id': 22,
+            'otel_report_id': 2,
+            'traceparent':
+                '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
             'builder': 'app|two',
             'input': 'app|lib/two.dart',
             'kind': 'normal',
@@ -214,6 +228,13 @@ void main() {
       expect(batch.blockedAssets, ['app|lib/blocked.dart']);
       expect(batch.requests, hasLength(2));
       expect(batch.requests[0].id, 21);
+      expect(
+        batch.requests[0].traceparent,
+        '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+      );
+      expect(batch.requests[1].traceparent, batch.requests[0].traceparent);
+      expect(batch.requests[0].otelReportId, 1);
+      expect(batch.requests[1].otelReportId, 2);
       expect(batch.requests[0].isRoot, isTrue);
       expect(batch.requests[0].blockedAssets, ['app|lib/blocked.dart']);
       expect(batch.requests[0].blockedAssets, same(batch.blockedAssets));
