@@ -495,90 +495,12 @@ focused validation does not replace every supported builder/platform gate.
 
 ## Reproduction
 
-Check out measured commit `bd18bee` and use stable 1.98.1, Dart 3.13.3 and the
-fixture lockfile to reproduce these tables.
-Use a fresh disposable output directory.
-Finish builds/checks before any timing; run benchmarks sequentially.
+Measured commits: baseline `617bb0b`, proposal `bd18bee`. Use stable Rust 1.98.1,
+Dart 3.13.3 and the fixture lockfile. Finish compilation and correctness checks
+before timing; run benchmarks sequentially.
 
-```sh
-repo="$PWD"
-export CARGO_HOME="$repo/.toolchains/cargo"
-export RUSTUP_HOME="$repo/.toolchains/rustup"
-cargo="$CARGO_HOME/bin/cargo"
-rustc="$CARGO_HOME/bin/rustc"
-dart="$repo/.toolchains/dart/dart-sdk/bin/dart"
-out=/tmp/bra-bcd-evaluation
-mkdir -p "$out"
+- [Evaluation code](https://github.com/ikesyo/build_runner_accelerator/tree/37c01949a4d268afd51ad5bbd6b784a9e2f86290/scripts/perf-kernels)
+- [Commands and measurement setup](https://github.com/ikesyo/build_runner_accelerator/blob/37c01949a4d268afd51ad5bbd6b784a9e2f86290/docs/benchmarks/graph-hash-json-2026-11/README.md#reproduction)
 
-# Build controls from the exact old main, keeping this checkout intact.
-git worktree add --detach "$out/main" 617bb0bf6fba9193527d557c39a7c40ce3730aae
-"$cargo" build --locked --release --manifest-path "$out/main/rust/Cargo.toml"
-cp "$out/main/rust/target/release/build_runner_accelerator" "$out/baseline"
-RUSTFLAGS='-C target-cpu=native' CARGO_TARGET_DIR="$out/native-target" \
-  "$cargo" build --locked --release --manifest-path "$out/main/rust/Cargo.toml"
-cp "$out/native-target/release/build_runner_accelerator" "$out/native"
-"$cargo" build --locked --release --manifest-path rust/Cargo.toml
-cp rust/target/release/build_runner_accelerator "$out/proposal"
-
-# The retained baseline workspace supplies real graph/config/manifest inputs.
-KEEP_BENCHMARK_WORKSPACE=1 LANE=accelerator COUNT=500 CASES=clean REPEATS=1 \
-  ACCELERATOR_JOBS=2 PUB_GET_OFFLINE=0 \
-  BUILD_RUNNER_ACCELERATOR_BIN="$out/baseline" RESULTS_DIR="$out/initial" \
-  bash scripts/benchmark_current_baseline.sh
-# Set work to the retained .../default/r1/clean path printed by the wrapper.
-work=/absolute/path/to/retained/default/r1/clean
-
-# Capture schema-7 graph before any proposal build invalidates it.
-python3 scripts/perf-kernels/extract_graph.py \
-  "$work/.dart_tool/build_runner_accelerator/graph-v3.bin" "$out/resolver.json"
-"$cargo" build --locked --release --manifest-path scripts/perf-kernels/Cargo.toml
-RUSTFLAGS='-C target-cpu=native' CARGO_TARGET_DIR="$out/kernels-native" \
-  "$cargo" build --locked --release --manifest-path scripts/perf-kernels/Cargo.toml
-python3 scripts/perf-kernels/compare_context.py --baseline 617bb0b \
-  --results "$out/context" --rustc "$rustc"
-
-# After ALL compilation has finished; repeat these in reverse order too.
-kernel="$repo/scripts/perf-kernels/target/release/accelerator-perf-kernels"
-PERF_GRAPH="$out/resolver.json" "$kernel" graph > "$out/graph.csv"
-"$kernel" sets > "$out/sets.csv"
-"$kernel" hash "$work/lib/features/feature_001/model.dart" > "$out/hash.csv"
-"$kernel" json "$work/.dart_tool/package_config.json" \
-  "$work/.dart_tool/build_runner_accelerator/builder-manifest.json" > "$out/json.csv"
-"$kernel" stream /absolute/path/to/test-file > "$out/stream.csv"
-"$kernel" compat > "$out/compat.log"
-for variant in baseline native proposal proposal native baseline; do
-  "$out/context/$variant" >> "$out/context-$variant.csv"
-done
-```
-
-Diagnostics are a separate source copy. `profile.py` records FNV call sites,
-scan reads, incoming JSON parsing and outgoing JSON serialization. Its optional
-`PERF_JSON_DIRECTORY` captures incoming JSON metadata/control only. It never
-writes raw binary asset/output bodies to those JSON files. Build the copy
-before running it; never use its timings as instrument-free E2E observations.
-
-```sh
-python3 scripts/perf-kernels/profile.py "$out/profile-src" --revision 617bb0b
-"$cargo" build --locked --release --manifest-path "$out/profile-src/Cargo.toml"
-# Run this binary on a separately prepared diagnostic fixture with
-# BUILD_RUNNER_ACCELERATOR_WALL_TRACE=1 and PERF_JSON_DIRECTORY set to an
-# existing local directory. Do not run a timed campaign concurrently.
-
-python3 scripts/perf-kernels/migration.py --workspace "$work" \
-  --baseline "$out/baseline" --proposal "$out/proposal" --dart "$dart" \
-  --pub-cache "$repo/.pub-cache" --cache "$work.shared-cache" \
-  --results "$out/migration"
-cp -L "$work/.dart_tool/build_runner_accelerator/aot-sdk/bin/dynamic_worker" \
-  "$out/fixed-worker"
-python3 scripts/perf-kernels/paired_warm.py --workspace "$work" \
-  --repository "$repo" --baseline "$out/baseline" --native "$out/native" \
-  --proposal "$out/proposal" --worker-aot "$out/fixed-worker" \
-  --cache "$work.shared-cache" --dart "$dart" --pub-cache "$repo/.pub-cache" \
-  --results "$out/paired" --noop-repeats 15 --edit-repeats 6 --broad-repeats 3
-```
-
-`digest_vectors` can be run with default features and with
-`--features blake3/pure,blake3/no_sse2,blake3/no_sse41,blake3/no_avx2`; compare
-stdout. This checks values, not portable-backend throughput. For allocator and
-JSON compatibility details inspect the standalone kernel sources. The eval
-package and its lockfile do not add simd-json/CRC/xxHash/Roaring to production.
+These links reference the evaluation snapshot, including its pinned dependencies,
+allocation counters, CPU fallback checks and E2E harnesses.

@@ -90,10 +90,6 @@ remove_tree() {
 
 cleanup() {
   local status=$?
-  if [[ "${KEEP_BENCHMARK_WORKSPACE:-0}" == 1 ]]; then
-    printf 'current-baseline: retained workspace: %s\n' "$work_root" >&2
-    return 0
-  fi
   if ((status != 0)); then
     printf 'current-baseline: retained failed workspace: %s\n' "$work_root" >&2
     return 0
