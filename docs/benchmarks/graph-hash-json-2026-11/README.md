@@ -1,13 +1,18 @@
 # Graph, hash and JSON CPU-extension investigation
 
 Internal state hashing and ordered snapshot comparison are optimized after
-profiling the remaining work. In the measured 500-feature workload, median
-No-op time decreased by 6.9% and One-file time by 6.6%. **Clean and Broad do not
-establish a consistent improvement; this is not a universal build-speed claim.**
+profiling the remaining work. The [current-main comparison](remeasurement.md)
+measures **7.8% shorter No-op** and **7.9% shorter One-file** median times on the
+500-feature workload. Clean does not improve; Broad's median is 7.2% slower with
+high variability, leaving a possible regression unresolved.
+
+The candidate investigation and initial measurements below cover graph/set
+representations, hash algorithms and JSON parsing. The linked comparison measures
+the final implementation against main including #163.
 
 ## Baseline and scope
 
-Measured commits: baseline `617bb0bf6fba9193527d557c39a7c40ce3730aae`,
+Initial investigation commits: baseline `617bb0bf6fba9193527d557c39a7c40ce3730aae`,
 proposal `bd18bee`. Neither measured binary includes the cached part Finder or
 empty-change reverse-closure shortcut present in current main. The tables do
 not quantify incremental benefit over those shortcuts.

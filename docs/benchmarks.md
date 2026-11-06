@@ -4,7 +4,8 @@ For SIMD/CPU-extension candidates, dense-input handling and the limits of the
 measured build-wide benefit, see [the SIMD investigation](benchmarks/simd-cpu-2026-11/README.md).
 
 For graph representations, internal hash algorithms and JSON CPU-extension
-candidates, see the [B/C/D investigation](benchmarks/graph-hash-json-2026-11/README.md).
+candidates, see the [B/C/D investigation](benchmarks/graph-hash-json-2026-11/README.md)
+and its [current-main comparison](benchmarks/graph-hash-json-2026-11/remeasurement.md).
 
 For warm worker startup, see [AOT validation digest reuse](benchmarks/aot-validation-digests-2026-10.md).
 
