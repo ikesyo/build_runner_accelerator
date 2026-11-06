@@ -97,6 +97,52 @@ runs preserve the 1,001 generated files and their bytes. The upgrade cost is
 separate from steady timings. Three following No-ops with overlapping ranges
 are a correctness/cost control, not another independent speedup claim.
 
+## Targeted Broad diagnosis
+
+A follow-up uses the same prepared fixture, two workers and fixed AOT executable,
+with `BUILD_RUNNER_ACCELERATOR_METRICS=1` and
+`BUILD_RUNNER_ACCELERATOR_WALL_TRACE=1`. Only four Broad builds are diagnosed:
+main/proposal, then proposal/main. Base inputs are restored and rebuilt outside
+the diagnosed interval, using the saved graph/manifest for each variant. These
+instrumented runs are not pooled with the E2E timing table above. All four
+match the 1,001 generated files and bytes.
+
+Rust `native_build` trace seconds (launcher excluded):
+
+| Pair | Main total / execution | Proposal total / execution | Main / proposal outside execution |
+| --- | ---: | ---: | ---: |
+| Main then proposal | 9.418 / 9.069 | 8.446 / 8.143 | 0.349 / 0.303 |
+| Proposal then main | 8.815 / 8.461 | 9.542 / 9.241 | 0.354 / 0.301 |
+
+The sign reverses between pairs. Execution accounts for the difference; the
+changed Rust bookkeeping paths are faster in both pairs. Dirty checks take
+73–75 ms on main versus 65–66 ms on proposal; commit takes about 180 ms versus
+156 ms. Graph saving remains 8–9 ms. The larger digest strings do not produce a
+material saving/IPC bottleneck in these traces.
+
+All original 18 Broad runs and the four diagnosed runs execute 2,004 actions.
+Every diagnosed run has six resolver resets, zero directive-parse cache misses,
+and 100% byte-store lookup hits. There is no observed extra action execution,
+resolver reset or cache-miss increase attributable to the proposal.
+
+Worker assignment still varies: main leases 241/239 batches across the two
+runs, proposal 229/243. Cycle-graph file loads are 6,761/6,759 on main and
+6,815/6,646 on proposal. The existing `InputQueue` adapts batch sizes to elapsed
+time and workers lease the next inputs on completion, so worker-local analysis
+reuse can vary with timing. This is a plausible source of workload variability,
+not an established root cause. Neither scheduling nor Dart builder execution is
+changed by this PR. No specific production regression was isolated or fixed;
+the original Broad regression risk remains open.
+
+### Follow-up measurement budget
+
+Default to the affected case on main and proposal, two order-reversed pairs,
+using existing binaries, fixture and AOT state. Use diagnostic counters first
+when investigating a cause. Add a native control, repeated Clean/upgrade builds,
+or more repetitions only when they answer a specific unresolved question.
+A full three-variant campaign is reserved for evidence that needs that scope;
+the reproduction commands below describe the completed full campaign.
+
 ## Current dirty-context kernel
 
 Exact function bodies from the two measured revisions, identical snapshots and
