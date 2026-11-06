@@ -160,7 +160,9 @@ the existing output verification hashes remain a large part of `dirty_check`.
 | Configuration, package/compiler/manifest/AOT cache identities | Rust FNV-1a-64 | Same tagged BLAKE3; changed identities select new cache entries |
 | Publication undo backup content verification | Rust FNV-1a-64, journal v1 | New journals use BLAKE3; existing FNV journals are verified and rolled back by the same executable |
 | Worker-source producer/consumer identity | Dart FNV-1a-64 and Rust comparison | Unchanged dedicated function; not a security authenticator or a legacy reader |
-| Dart asset-read digest, resolver reads, directive cache, byte-store fingerprint, factory probe | SHA-256 plus existing reuse | Unchanged |
+| Dart content digests, resolver reads, directive cache, factory probe | SHA-256 plus existing reuse | Unchanged |
+| Dart analysis byte-store fingerprint | SHA-256 truncated to 64 bits | Unchanged |
+| Public builder asset digest | MD5 over content followed by asset ID | Unchanged build_runner contract |
 | Release archive/binary integrity, signed release metadata | SHA-256/signature verification | Unchanged; never substitute noncryptographic hashes |
 
 A separately instrumented baseline No-op called the Rust internal digest 8,810
@@ -434,7 +436,7 @@ Hash strings grow from 16 to 67 characters. Saved graph files were approximately
 scheduling, so this is not an isolated equal-record size comparison. Unchanged
 maximum child RSS does not prove unchanged Rust heap: the launcher/worker can
 be the largest process. No whole-build memory reduction is claimed. The Linux x86_64 Release executable
-grows from 4,725,640 to 4,800,504 B (about 75 KB); BLAKE3 adds seven locked package
+grows from 4,725,640 to 4,800,504 B (about 75 KB); BLAKE3 adds eight locked package
 entries including its build dependencies. JSON evaluation dependencies are isolated
 from the distribution.
 
@@ -454,7 +456,8 @@ from the distribution.
 
 ## Correctness and reproducibility checks
 
-- `cargo test --locked --manifest-path rust/Cargo.toml`: 234 passed, three ignored.
+- `cargo test --locked --manifest-path rust/Cargo.toml`: 235 passed, three ignored.
+- dart2js and DDC lifecycle checks: passed, including generated-byte equality, compiler failure and atomic recovery.
 - `cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings`: passed.
 - Release build, Rust formatting and `git diff --check`: passed.
 - `dart test --compiler=source test/manifest_emitter_test.dart`: three passed.

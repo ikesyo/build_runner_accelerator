@@ -169,8 +169,8 @@ impl GraphState {
             eprintln!(
                 "build_runner_accelerator: invalidating graph schema {schema_version}; expected {GRAPH_SCHEMA_VERSION}"
             );
-            // Payloads from another schema version are not decodable:
-            // rebuild from a clean graph instead of failing the build.
+            // Obsolete cache evidence must not be reused during normal loading.
+            // Recovery instead validates the saved layout before restoring it.
             return Ok(Self {
                 schema_version: GRAPH_SCHEMA_VERSION,
                 ..Self::default()

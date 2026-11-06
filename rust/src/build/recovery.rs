@@ -730,6 +730,31 @@ mod tests {
         );
     }
     #[test]
+    fn malformed_obsolete_undo_graph_is_not_reset_during_recovery() {
+        let fixture = Fixture::new();
+        fs::write(fixture.output(), b"old").unwrap();
+        crate::graph::GraphState {
+            schema_version: crate::graph::GRAPH_SCHEMA_VERSION - 1,
+            ..Default::default()
+        }
+        .save(&fixture.graph())
+        .unwrap();
+        let mut bytes = fs::read(fixture.graph()).unwrap();
+        // Keep a valid binary envelope/checksum but break its payload layout.
+        bytes.push(0);
+        let length = u32::try_from(bytes.len() - 9).unwrap();
+        bytes[5..9].copy_from_slice(&length.to_be_bytes());
+        fs::write(fixture.graph(), &bytes).unwrap();
+        fixture.prepare();
+        fs::write(fixture.output(), b"new").unwrap();
+
+        assert!(crate::graph::GraphState::load(&fixture.graph()).is_err());
+        assert_eq!(fs::read(fixture.output()).unwrap(), b"new");
+        assert_eq!(fs::read(fixture.graph()).unwrap(), bytes);
+        assert!(pending(&fixture.graph()));
+    }
+
+    #[test]
     fn corrupt_undo_graph_blocks_recovery_before_any_output_write() {
         let fixture = Fixture::new();
         fs::write(fixture.output(), b"old").unwrap();

@@ -35,7 +35,7 @@ class Reader:
 
 def native_graph(root):
     r = Reader(root / '.dart_tool/build_runner_accelerator/graph-v3.bin')
-    assert r.u32() == 7, 'update the pinned native graph reader'
+    assert r.u32() == 8, 'update the pinned native graph reader'
     r.string()
     r.take(1)
     for _ in range(r.u32()):

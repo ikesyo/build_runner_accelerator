@@ -45,8 +45,8 @@ cache algorithm: new journals use BLAKE3, while an existing format-1 FNV journal
 can be rolled back by the same executable. The saved graph must pass strict
 binary-layout validation; its cache schema may be obsolete. Restore its original
 bytes with the output files before ordinary loading can invalidate obsolete
-cache evidence. Never discard recovery ownership before rollback completes. Preserve all recovery evidence and report the affected path
-and safe next steps. The journal is trusted private metadata, not protection
+cache evidence. Never discard recovery ownership before rollback completes. Preserve all recovery
+evidence and report the affected path and safe next steps. The journal is trusted private metadata, not protection
 against an adversary editing it or digest collisions.
 
 Restore each output atomically, then the old graph, then unlink the journal.
