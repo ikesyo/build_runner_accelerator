@@ -133,7 +133,8 @@ def descendants(pid):
 def live(pid):
     try:
         return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0] != 'Z'
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
+        # A process can exit between opening and reading its procfs stat file.
         return False
 
 
