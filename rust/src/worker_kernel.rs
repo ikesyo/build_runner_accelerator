@@ -928,21 +928,19 @@ pub(crate) fn aot_cache_key(
     sdk_root: &Path,
 ) -> io::Result<String> {
     let (sdk_version, allowed_experiments) = aot_sdk_identity(sdk_root)?;
-    // The manifest fingerprint already includes normalized lockfile contents
-    // and propagates read errors. Do not read/normalize/hash the lock a second
-    // time for this same key. The changed key shape invalidates old AOT slots.
+    // The manifest fingerprint includes the package-config identity and
+    // normalized lockfile contents, propagating read errors. Do not append
+    // those identities again. The changed key shape invalidates old AOT slots.
     let manifest = workspace.builder_manifest_fingerprint()?;
     let worker = digest_file(worker_path)?;
-    let package_config = workspace.package_config_identity();
     Ok(format!(
-        "build-runner-accelerator-aot-{AOT_CACHE_KEY_VERSION}-{}-{}-sdk{}-allowed{}-manifest{}-worker{}-packages{}",
+        "build-runner-accelerator-aot-{AOT_CACHE_KEY_VERSION}-{}-{}-sdk{}-allowed{}-manifest{}-worker{}",
         std::env::consts::OS,
         std::env::consts::ARCH,
         sdk_version,
         allowed_experiments,
         manifest,
         worker,
-        package_config,
     ))
 }
 
@@ -1832,13 +1830,34 @@ mod tests {
         fs::write(&lock, "packages:\n  second: 2\n").unwrap();
         let second = key().unwrap();
         assert_ne!(first, second);
-        let old_key = second.replacen(
-            "-worker",
-            &format!(
-                "-lock{}-worker",
-                crate::digest::digest_bytes(b"packages:\n  second: 2\n")
+        let config_path = root.join(".dart_tool/package_config.json");
+        let original_config = fs::read(&config_path).unwrap();
+        fs::write(
+            &config_path,
+            r#"{"configVersion":2,"packages":[{"name":"app","rootUri":"../","languageVersion":"3.13"}]}"#,
+        )
+        .unwrap();
+        let changed = crate::workspace::Workspace::load(root.clone()).unwrap();
+        assert_ne!(
+            workspace.package_config_identity(),
+            changed.package_config_identity()
+        );
+        assert_ne!(
+            second,
+            super::aot_cache_key(&changed, &worker, &root.join("sdk")).unwrap()
+        );
+        fs::write(&config_path, original_config).unwrap();
+        let old_key = format!(
+            "{}-packages{}",
+            second.replacen(
+                "-worker",
+                &format!(
+                    "-lock{}-worker",
+                    crate::digest::digest_bytes(b"packages:\n  second: 2\n")
+                ),
+                1,
             ),
-            1,
+            workspace.package_config_identity(),
         );
         let artifact = root.join("worker");
         fs::write(&artifact, "artifact").unwrap();

@@ -27,6 +27,11 @@ pub fn glob_digest(matches: &[String]) -> String {
 
 pub fn scan_packages(workspace: &Workspace, packages: &BTreeSet<String>) -> io::Result<Snapshot> {
     let mut snapshot = Snapshot::new();
+    let virtual_primary = std::cell::LazyCell::new(|| AssetSnapshot {
+        exists: true,
+        digest: digest_bytes(b"<virtual-primary>"),
+        size: 0,
+    });
     for package in packages {
         for (asset, path) in workspace.list_package_assets(package)? {
             if crate::placeholders::is_placeholder_asset(&asset) {
@@ -47,14 +52,7 @@ pub fn scan_packages(workspace: &Workspace, packages: &BTreeSet<String>) -> io::
         // Stock adds these IDs to the plan independently of filesystem sources.
         // A constant snapshot is primary-input evidence, not readable content.
         for path in crate::placeholders::PATHS {
-            snapshot.insert(
-                format!("{package}|{path}"),
-                AssetSnapshot {
-                    exists: true,
-                    digest: digest_bytes(b"<virtual-primary>"),
-                    size: 0,
-                },
-            );
+            snapshot.insert(format!("{package}|{path}"), (*virtual_primary).clone());
         }
     }
     Ok(snapshot)

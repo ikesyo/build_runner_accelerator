@@ -221,7 +221,8 @@ Clean/upgrade or more repetitions only for a specific unresolved question.
 ## Follow-up: repeated constants and configuration work (2026-11-07)
 
 Against main `8728af5` (including #164 and #166), adopt local planning-marker
-reuse, parsed package-config reuse and removal of the redundant AOT lock digest.
+and virtual-primary reuse, parsed package-config reuse and removal of redundant
+AOT lock/package-config components.
 These remove small repeated operations; **no E2E speedup is established**.
 Historical 2,004-placeholder / nine-configuration-hash diagnostics are not current
 savings measurements.
@@ -233,12 +234,13 @@ Counts describe call paths, not an instrumented whole-build profile.
 | Candidate / code | Repeated work | Decision and boundary |
 | --- | --- | --- |
 | `<planned>`, `build/planning.rs::create` | Hash/format per declared normal output, including stale-output retries; present entries discard it | Adopt one local template per call, cloning only for absent/missing entries. Preserve phase visibility and retries; inserted strings still allocate. Zero-output calls now pay one extra digest |
-| `<virtual-primary>`, `snapshot.rs`; `<missing>`, `assets.rs`, `build/filtered.rs`, `worker/{asset_rpc,lazy}.rs` | Four hashes per scanned package; missing markers per newly recorded dependency/read, with existing snapshot/read deduplication | Defer: small fixed count or workload-dependent frequency; no measured need for process-wide retention |
+| `<virtual-primary>`, `snapshot.rs::scan_packages` | Four hashes per scanned package | Adopt one lazy template per scan: 4 × packages → one hash, or zero for no packages. Local 67-byte string plus insertion clones; no global state |
+| `<missing>`, `assets.rs`, `build/filtered.rs`, `worker/{asset_rpc,lazy}.rs` | Per newly recorded dependency/read, with existing deduplication | Defer: unknown remaining repetition; retaining a template adds a copy when used only once |
 | `workspace.rs::load` | Ordinary config read/parse in runner preparation, compiler resolution and source resolution: three times | Adopt parsed reuse when effective/original paths agree: three become two. Patched/isolation source resolution stays separate; add name copies instead of another read/parse |
-| `runner_compatibility.rs::prepare`; `Workspace::package_config_identity` | Preparation DOM and Workspace typed parse remain separate; normalized identity is computed once per Workspace | Keep preparation boundary and existing digest reuse; sharing another representation would broaden ownership/API for a small saving |
+| `runner_compatibility.rs::prepare`; `Workspace::package_config_identity` | Preparation DOM and Workspace typed parse remain separate; normalized identity is computed once per Workspace | Keep existing digest reuse. DOM→typed conversion loses duplicate-field rejection; isolation cache hits return a validated file rather than the effective DOM. Sharing parsed data needs a coordinated return-type/validation change |
 | `assets.rs::config_digest`, `build.rs` | Once in ordinary root-only builds, up to three times with filtered checks/preflight | Keep execution-time comparison with the stored preflight digest; unconditional reuse could hide changes during setup |
 | `frontend.rs::settings_fingerprint`, `Workspace::builder_manifest_fingerprint`; `manifest_generator.rs::package_resolution/cache_key` | Settings refreshes after generation; package-resolution key recomputes after compilation on a miss | Keep fresh observations and distinct raw-config, normalized-content and resolved-location identities, including JSON order and URI-base semantics |
-| `worker_kernel.rs::aot_cache_key` lock component | Manifest fingerprint includes normalized lock bytes; old key separately rereads/normalizes/hashes them | Adopt removal of the duplicate component/helpers. Non-NotFound lock read errors now propagate through manifest fingerprint; missing/empty remain distinct. Existing AOT slots regenerate under the changed key |
+| `worker_kernel.rs::aot_cache_key` lock/package components | Manifest fingerprint already includes normalized lock bytes and the exact package-config identity | Adopt removal of both duplicate components. Lock removal saves read/normalize/hash; package removal saves 76 key bytes, with no extra read/hash saved. Lock read errors propagate; missing/empty remain distinct. Old AOT slots regenerate |
 | AOT metadata validation, `worker_kernel.rs`; initialization signature, `worker/pool.rs` | SDK/worker/dependency checks repeat across waiting/compilation; context, receipts and resident pool already retain compatible identities | Keep revalidation/publication gates and existing reuse. Defer another cached directory-name field for miss/wait-only repeats |
 
 Reuse stays within one preparation: commands and watch cycles load fresh
@@ -262,7 +264,8 @@ each; no worker, launcher or IPC. Untimed plan/dirty/index dumps match byte-for-
 | 500 / 4,000 → 1 | 13,079.5 (12,499–13,660) | 12,328 (11,971–12,685) |
 
 These noisy two-sample medians cover only planning, not Workspace construction
-or build latency. Separate `rustc -O` kernels give these scales:
+or build latency. Additional virtual-marker/package-component changes are assessed
+by removed work only. Separate `rustc -O` kernels give these scales:
 
 | Operation / input | Median kernel time | Interpretation |
 | --- | --- | --- |
@@ -295,10 +298,10 @@ fixture config size depends on local paths.
 
 - Release build, Rust **249 passed / three ignored**, final focused AOT metadata
   test, formatting, all-target/all-feature Clippy and `git diff --check` pass.
-- `bash scripts/verify.sh` passes for the initial two changes; final Release passes
-  `VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh`, covering all common checks
-  and arbitrary-builder cases. Stock/native bytes and No-op match.
-- Coverage includes generated-primary visibility, config reload, patched/isolation
+- The initial implementation passes both `scripts/verify.sh` variants, including
+  `VERIFY_ARBITRARY_BUILDER=1`. Later virtual-marker/package-key changes pass
+  `bash scripts/smoke.sh`; stock/native bytes and No-op match.
+- Coverage includes generated-primary visibility, config reload/AOT key sensitivity, patched/isolation
   source separation, lock missing/empty/content/newline/error behavior, new/old
   AOT metadata, cache/SDK/worker changes, upgrade and incremental/delete/rename/
   failure/output-conflict paths. Full watch/builder suites and other-platform
