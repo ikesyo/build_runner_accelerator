@@ -215,6 +215,53 @@ consolidates reproducible launcher-inclusive measurements and a separate
 section of user-reported examples with their conditions and evidence limits.
 The current mixed-application results were measured in PR #138.
 
+## Build telemetry
+
+Set `BUILD_RUNNER_ACCELERATOR_OTEL_FILE` to a new file outside the watched
+workspace to enable OpenTelemetry build spans. Its parent directory must exist.
+Each line is a standard OTLP JSON `ExportTraceServiceRequest`, one build, with
+`service.name=build_runner_accelerator`. Watch iterations share the file.
+
+```bash
+trace_dir=$(mktemp -d)
+BUILD_RUNNER_ACCELERATOR_OTEL_FILE="$trace_dir/build.ndjson" \
+  dart run build_runner_accelerator build
+# Existing wall analysis can be requested independently:
+BUILD_RUNNER_ACCELERATOR_WALL_TRACE=1 \
+  dart run build_runner_accelerator build 2>"$trace_dir/wall.log"
+python3 scripts/summarize_frontend_wall.py "$trace_dir/wall.log"
+python3 scripts/check_otel_trace.py "$trace_dir/build.ndjson"
+```
+
+Inspect locally with:
+
+```bash
+jq -r '.resourceSpans[].scopeSpans[].spans[] |
+  [.name, .traceId, .spanId, .parentSpanId,
+   .startTimeUnixNano, .endTimeUnixNano] | @tsv' "$trace_dir/build.ndjson"
+```
+
+For an existing Collector/Jaeger OTLP HTTP JSON receiver, explicitly send each
+line to its configured trace endpoint, for example a local receiver:
+
+```bash
+while IFS= read -r batch; do
+  printf '%s\n' "$batch" | curl --fail --silent --show-error \
+    --connect-timeout 1 --max-time 2 \
+    -H 'Content-Type: application/json' --data-binary @- \
+    http://127.0.0.1:4318/v1/traces
+done < "$trace_dir/build.ndjson"
+```
+
+The build does not contact a backend or honor `OTEL_EXPORTER_OTLP_ENDPOINT`.
+An unavailable receiver only fails the explicit forwarding command above.
+After an external kill of a resident worker, restart the frontend if watch
+continues reporting broken pipe.
+
+See [ADR 0048](adr/0048-build-telemetry.md) for the instrumentation boundary,
+parent/context semantics, output budgets and failure policy. Historical overhead
+checks are in [the telemetry overhead report](benchmarks/build-telemetry-2026-11.md).
+
 ## Release checks
 
 The release workflow requires successful correctness CI for the exact source

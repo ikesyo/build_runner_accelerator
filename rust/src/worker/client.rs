@@ -306,6 +306,7 @@ impl WorkerClient {
         let started = Instant::now();
         let id = self.next_id();
         let _wall = self.wall_span("worker_batch", Some(id));
+        let metrics_before = self.metrics;
         let encoding = self.wall_span("request_encode_send", Some(id));
         // Every request in this batch has the same phase and kind. Keep the
         // visibility hint at the batch level instead of copying the full
@@ -385,9 +386,42 @@ impl WorkerClient {
                         return Err(io::Error::other("worker batch result id mismatch"));
                     }
                     self.metrics.build_us += started.elapsed().as_micros() as u64;
+                    self.trace_metrics(&_wall, metrics_before);
                     return Ok(results);
                 }
             }
+        }
+    }
+
+    pub(super) fn trace_metrics(&self, span: &crate::wall::Span, before: WorkerClientMetrics) {
+        for (key, after, before) in [
+            (
+                "ipc.sent.bytes",
+                self.metrics.ipc_bytes_sent,
+                before.ipc_bytes_sent,
+            ),
+            (
+                "ipc.received.bytes",
+                self.metrics.ipc_bytes_received,
+                before.ipc_bytes_received,
+            ),
+            (
+                "asset.read.bytes",
+                self.metrics.read_bytes,
+                before.read_bytes,
+            ),
+            (
+                "asset.requests",
+                self.metrics.asset_requests,
+                before.asset_requests,
+            ),
+            (
+                "asset.rpc.us",
+                self.metrics.asset_rpc_us,
+                before.asset_rpc_us,
+            ),
+        ] {
+            span.attribute(key, after.saturating_sub(before));
         }
     }
 
@@ -402,6 +436,34 @@ impl WorkerClient {
     }
 
     pub(super) fn send(&mut self, message: &Value) -> io::Result<()> {
+        let mut traced;
+        let message = if matches!(
+            message.get("type").and_then(Value::as_str),
+            Some("build" | "build_batch")
+        ) {
+            if let Some((parent, report_id)) = crate::telemetry::request_context() {
+                traced = message.clone();
+                if let Some(requests) = traced.get_mut("requests").and_then(Value::as_array_mut) {
+                    let mut first = Some((parent, report_id));
+                    for request in requests {
+                        if let Some((parent, report_id)) =
+                            first.take().or_else(crate::telemetry::request_context)
+                        {
+                            request["traceparent"] = Value::String(parent);
+                            request["otel_report_id"] = Value::from(report_id);
+                        }
+                    }
+                } else {
+                    traced["traceparent"] = Value::String(parent);
+                    traced["otel_report_id"] = Value::from(report_id);
+                }
+                &traced
+            } else {
+                message
+            }
+        } else {
+            message
+        };
         let frame_size = write_frame(&mut self.input, message)?;
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
@@ -419,28 +481,36 @@ impl WorkerClient {
     /// than v1 before dispatching the message to a build/reset handler.
     pub(super) fn receive(&mut self) -> io::Result<IncomingFrame> {
         let _receive = self.wall_span("receive_frame", None);
-        let (message, frame_size) = read_message_with_size(&mut self.output)?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "Dart worker exited"))?;
-        let metadata = match &message {
-            IncomingFrame::Json(value) => value,
-            IncomingFrame::Binary(frame) => &frame.metadata,
-        };
-        if metadata.get("v").and_then(Value::as_u64) != Some(1) {
-            return Err(protocol_error(
-                "unsupported or missing IPC protocol version",
-                metadata,
-            ));
+        loop {
+            let (message, frame_size) =
+                read_message_with_size(&mut self.output)?.ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::UnexpectedEof, "Dart worker exited")
+                })?;
+            let metadata = match &message {
+                IncomingFrame::Json(value) => value,
+                IncomingFrame::Binary(frame) => &frame.metadata,
+            };
+            if metadata.get("v").and_then(Value::as_u64) != Some(1) {
+                return Err(protocol_error(
+                    "unsupported or missing IPC protocol version",
+                    metadata,
+                ));
+            }
+            if metadata.get("type").and_then(Value::as_str) == Some("otel_action") {
+                crate::telemetry::worker_report(metadata);
+                continue;
+            }
+            self.metrics.ipc_frames_received += 1;
+            self.metrics.ipc_bytes_received += frame_size as u64;
+            if matches!(
+                &message,
+                IncomingFrame::Binary(frame) if frame.magic == *BINARY_BUILD_RESULT_MAGIC
+            ) {
+                self.metrics.build_result_frames += 1;
+                self.metrics.build_result_bytes += frame_size as u64;
+            }
+            return Ok(message);
         }
-        self.metrics.ipc_frames_received += 1;
-        self.metrics.ipc_bytes_received += frame_size as u64;
-        if matches!(
-            &message,
-            IncomingFrame::Binary(frame) if frame.magic == *BINARY_BUILD_RESULT_MAGIC
-        ) {
-            self.metrics.build_result_frames += 1;
-            self.metrics.build_result_bytes += frame_size as u64;
-        }
-        Ok(message)
     }
 
     /// Requires a JSON control frame; binary input is invalid at handshake and

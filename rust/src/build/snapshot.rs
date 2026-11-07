@@ -40,8 +40,10 @@ pub(super) fn scan_initial(
     let scan_started = Instant::now();
     let mut current_snapshot = crate::snapshot::scan_packages(workspace, scanned_packages)?;
     filesystem_metrics.initial_scan_us = scan_started.elapsed().as_micros();
-    drop(scan);
     let (initial_scan_assets, initial_scan_bytes) = snapshot_summary(&current_snapshot);
+    scan.attribute("scan.assets", initial_scan_assets as u64);
+    scan.attribute("scan.bytes", initial_scan_bytes);
+    drop(scan);
     filesystem_metrics.initial_scan_assets = initial_scan_assets;
     filesystem_metrics.initial_scan_bytes = initial_scan_bytes;
     if plan_metrics_enabled() {
