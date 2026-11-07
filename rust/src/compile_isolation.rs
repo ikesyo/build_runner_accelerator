@@ -598,6 +598,14 @@ mod tests {
             let key = on.logical_dependency_key(&copy).unwrap();
             assert_eq!(key, "package:analyzer:lib/dart/analysis/utilities.dart");
             assert_eq!(on.resolve_logical_dependency(&key).unwrap(), copy);
+            let warm = Workspace::load(root.clone()).unwrap();
+            assert_eq!(warm.package_config_identity(), on.package_config_identity());
+            assert_eq!(warm.resolve_logical_dependency(&key).unwrap(), copy);
+            assert_eq!(
+                warm.path_for_asset("analyzer|lib/dart/analysis/utilities.dart")
+                    .unwrap(),
+                root.join("analyzer/lib/dart/analysis/utilities.dart")
+            );
             assert_eq!(
                 on.path_for_asset("analyzer|lib/dart/analysis/utilities.dart")
                     .unwrap(),

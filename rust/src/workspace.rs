@@ -95,12 +95,16 @@ pub struct Workspace {
 }
 
 #[derive(Debug, Deserialize)]
-struct PackageConfigFile {
+pub(crate) struct PackageConfigFile {
     #[serde(rename = "buildRunnerAcceleratorCompileIsolation", default)]
     compile_isolation: Option<String>,
     #[serde(rename = "configVersion")]
     config_version: Option<u32>,
     packages: Vec<PackageConfigEntry>,
+    // Validate unknown metadata as JSON values too. Ignoring it would accept
+    // invalid surrogates/out-of-range numbers rejected by the previous DOM pass.
+    #[serde(flatten)]
+    _extra: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +116,17 @@ struct PackageConfigEntry {
     package_uri: String,
     #[serde(rename = "languageVersion", default)]
     language_version: String,
+    #[serde(flatten)]
+    _extra: BTreeMap<String, serde_json::Value>,
+}
+
+impl PackageConfigFile {
+    pub(crate) fn runner_root(&self, config_dir: &Path) -> Option<PathBuf> {
+        self.packages
+            .iter()
+            .find(|entry| entry.name == "build_runner")
+            .map(|entry| resolve_uri(config_dir, &entry.root_uri))
+    }
 }
 
 impl Workspace {
@@ -121,30 +136,19 @@ impl Workspace {
     pub fn load(root: PathBuf) -> io::Result<Self> {
         let root = canonicalize(root)?;
         let root_package = package_name(&root.join("pubspec.yaml"))?;
-        let package_config_path = crate::runner_compatibility::prepare(&root)?;
-        let package_config = fs::read_to_string(&package_config_path)?;
-        let parsed: PackageConfigFile =
-            serde_json::from_str(&package_config).map_err(io::Error::other)?;
-        let package_config_identity = stable_package_config_identity(&parsed);
-        let config_dir = package_config_path
+        let prepared = crate::runner_compatibility::prepare(&root)?;
+        let compiler_config = prepared.compiler.as_ref().unwrap_or(&prepared.original);
+        let package_config_identity = stable_package_config_identity(compiler_config);
+        let config_dir = prepared
+            .path
             .parent()
             .ok_or_else(|| io::Error::other("package_config.json has no parent"))?;
 
         // A compile-only backport must not change builder-visible dependency
         // bytes, source enumeration, or package paths.
         let original_path = root.join(".dart_tool/package_config.json");
-        // In the ordinary path both views use the same file in this preparation
-        // unit. Reuse its parsed contents; patched compiler configurations still
-        // require the separate original builder-visible resolution.
-        let original: PackageConfigFile;
-        let source_config = if package_config_path == original_path {
-            &parsed
-        } else {
-            original = serde_json::from_slice(&fs::read(&original_path)?)?;
-            &original
-        };
         let mut packages = BTreeMap::new();
-        for entry in &source_config.packages {
+        for entry in &prepared.original.packages {
             packages.insert(
                 entry.name.clone(),
                 resolve_uri(original_path.parent().unwrap(), &entry.root_uri),
@@ -152,6 +156,7 @@ impl Workspace {
         }
         packages.insert(root_package.clone(), root.clone());
         let mut compiler_packages = BTreeMap::new();
+        let parsed = prepared.compiler.unwrap_or(prepared.original);
         for entry in parsed.packages {
             compiler_packages.insert(entry.name, resolve_uri(config_dir, &entry.root_uri));
         }
@@ -1056,6 +1061,58 @@ mod tests {
         assert!(path.is_dir());
         #[cfg(windows)]
         assert!(!path.as_os_str().to_string_lossy().starts_with(r"\\?\"));
+    }
+
+    #[test]
+    fn preparation_preserves_json_validation_for_known_and_unknown_fields() {
+        let temp = TempDir::new();
+        let tool = temp.path().join(".dart_tool");
+        fs::create_dir_all(&tool).unwrap();
+        fs::write(temp.path().join("pubspec.yaml"), "name: app\n").unwrap();
+        let config = tool.join("package_config.json");
+        for (json, valid) in [
+            (r#"{"packages":[],"packages":[]}"#, false),
+            (
+                r#"{"packages":[],"configVersion":2,"configVersion":2}"#,
+                false,
+            ),
+            (
+                r#"{"packages":[{"name":"app","name":"app","rootUri":"../"}]}"#,
+                false,
+            ),
+            (
+                r#"{"packages":[{"name":"app","rootUri":"../","rootUri":"../"}]}"#,
+                false,
+            ),
+            (r#"{"packages":[],"metadata":"\uD800"}"#, false),
+            (r#"{"packages":[],"metadata":1e999}"#, false),
+            (
+                r#"{"packages":[{"name":"app","rootUri":"../","metadata":{"text":"\uD800"}}]}"#,
+                false,
+            ),
+            (
+                r#"{"packages":[{"name":"app","rootUri":"../","metadata":[1e999]}]}"#,
+                false,
+            ),
+            (
+                r#"{"packages":[],"metadata":{"b":1,"a":[true,null,"日本語",1e308]}}"#,
+                true,
+            ),
+            (r#"{"packages":[],"metadata":1,"metadata":2}"#, true),
+            (
+                r#"{"packages":[{"name":"app","rootUri":"../","metadata":{"z":2,"a":1}}]}"#,
+                true,
+            ),
+        ] {
+            fs::write(&config, json).unwrap();
+            assert_eq!(
+                super::Workspace::load(temp.path().to_path_buf()).is_ok(),
+                valid,
+                "{json}",
+            );
+        }
+        fs::write(&config, b"{\"packages\":[],\"metadata\":\"\xff\"}").unwrap();
+        assert!(super::Workspace::load(temp.path().to_path_buf()).is_err());
     }
 
     #[test]
