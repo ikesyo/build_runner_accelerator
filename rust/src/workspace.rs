@@ -130,23 +130,32 @@ impl Workspace {
             .parent()
             .ok_or_else(|| io::Error::other("package_config.json has no parent"))?;
 
+        // A compile-only backport must not change builder-visible dependency
+        // bytes, source enumeration, or package paths.
+        let original_path = root.join(".dart_tool/package_config.json");
+        // In the ordinary path both views use the same file in this preparation
+        // unit. Reuse its parsed contents; patched compiler configurations still
+        // require the separate original builder-visible resolution.
+        let original: PackageConfigFile;
+        let source_config = if package_config_path == original_path {
+            &parsed
+        } else {
+            original = serde_json::from_slice(&fs::read(&original_path)?)?;
+            &original
+        };
+        let mut packages = BTreeMap::new();
+        for entry in &source_config.packages {
+            packages.insert(
+                entry.name.clone(),
+                resolve_uri(original_path.parent().unwrap(), &entry.root_uri),
+            );
+        }
+        packages.insert(root_package.clone(), root.clone());
         let mut compiler_packages = BTreeMap::new();
         for entry in parsed.packages {
             compiler_packages.insert(entry.name, resolve_uri(config_dir, &entry.root_uri));
         }
         compiler_packages.insert(root_package.clone(), root.clone());
-        // A compile-only backport must not change builder-visible dependency
-        // bytes, source enumeration, or package paths.
-        let original_path = root.join(".dart_tool/package_config.json");
-        let original: PackageConfigFile = serde_json::from_slice(&fs::read(&original_path)?)?;
-        let mut packages = BTreeMap::new();
-        for entry in original.packages {
-            packages.insert(
-                entry.name,
-                resolve_uri(original_path.parent().unwrap(), &entry.root_uri),
-            );
-        }
-        packages.insert(root_package.clone(), root.clone());
 
         Ok(Self {
             root,
@@ -167,9 +176,13 @@ impl Workspace {
         let mut bytes = b"build-runner-accelerator-manifest-v4\0".to_vec();
         bytes.extend_from_slice(self.package_config_identity.as_bytes());
         bytes.push(0);
-        if let Ok(contents) = fs::read(self.root.join("pubspec.lock")) {
-            bytes.extend_from_slice(&normalize_text_bytes(&contents));
-            bytes.push(0xfe);
+        match fs::read(self.root.join("pubspec.lock")) {
+            Ok(contents) => {
+                bytes.extend_from_slice(&normalize_text_bytes(&contents));
+                bytes.push(0xfe);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
         }
         // Pub's roots and direct dependency graph can change while the
         // package configuration and lockfile remain byte-identical. Those
@@ -1043,6 +1056,36 @@ mod tests {
         assert!(path.is_dir());
         #[cfg(windows)]
         assert!(!path.as_os_str().to_string_lossy().starts_with(r"\\?\"));
+    }
+
+    #[test]
+    fn ordinary_resolution_reuses_both_views_but_reloads_at_preparation_boundaries() {
+        let temp = TempDir::new();
+        let tool = temp.path().join(".dart_tool");
+        fs::create_dir_all(&tool).unwrap();
+        fs::write(temp.path().join("pubspec.yaml"), "name: app\n").unwrap();
+        let config = tool.join("package_config.json");
+        for (directory, language) in [("first", "3.11"), ("second", "3.13")] {
+            fs::create_dir_all(temp.path().join(directory)).unwrap();
+            fs::write(
+                &config,
+                format!(
+                    r#"{{"configVersion":2,"packages":[{{"name":"dep","rootUri":"../{directory}/","packageUri":"lib/","languageVersion":"{language}"}}]}}"#
+                ),
+            )
+            .unwrap();
+            let workspace = super::Workspace::load(temp.path().to_path_buf()).unwrap();
+            assert_eq!(workspace.packages, workspace.compiler_packages);
+            assert_eq!(
+                super::canonicalize(&workspace.packages["dep"]).unwrap(),
+                super::canonicalize(temp.path().join(directory)).unwrap()
+            );
+            let parsed = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+            assert_eq!(
+                workspace.package_config_identity(),
+                super::stable_package_config_identity(&parsed)
+            );
+        }
     }
 
     #[test]

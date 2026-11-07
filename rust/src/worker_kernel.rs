@@ -928,18 +928,19 @@ pub(crate) fn aot_cache_key(
     sdk_root: &Path,
 ) -> io::Result<String> {
     let (sdk_version, allowed_experiments) = aot_sdk_identity(sdk_root)?;
+    // The manifest fingerprint already includes normalized lockfile contents
+    // and propagates read errors. Do not read/normalize/hash the lock a second
+    // time for this same key. The changed key shape invalidates old AOT slots.
     let manifest = workspace.builder_manifest_fingerprint()?;
-    let lock = digest_optional_file(&workspace.root.join("pubspec.lock"))?;
     let worker = digest_file(worker_path)?;
     let package_config = workspace.package_config_identity();
     Ok(format!(
-        "build-runner-accelerator-aot-{AOT_CACHE_KEY_VERSION}-{}-{}-sdk{}-allowed{}-manifest{}-lock{}-worker{}-packages{}",
+        "build-runner-accelerator-aot-{AOT_CACHE_KEY_VERSION}-{}-{}-sdk{}-allowed{}-manifest{}-worker{}-packages{}",
         std::env::consts::OS,
         std::env::consts::ARCH,
         sdk_version,
         allowed_experiments,
         manifest,
-        lock,
         worker,
         package_config,
     ))
@@ -1054,31 +1055,6 @@ fn aot_metadata_is_current(
 
 fn digest_file(path: &Path) -> io::Result<String> {
     Ok(digest_bytes(&fs::read(path)?))
-}
-
-fn digest_optional_file(path: &Path) -> io::Result<String> {
-    match fs::read(path) {
-        Ok(contents) => Ok(digest_bytes(&normalize_text_bytes(&contents))),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok("missing".to_owned()),
-        Err(error) => Err(error),
-    }
-}
-
-fn normalize_text_bytes(contents: &[u8]) -> Vec<u8> {
-    let mut normalized = Vec::with_capacity(contents.len());
-    let mut index = 0;
-    while index < contents.len() {
-        if contents[index] == b'\r' {
-            normalized.push(b'\n');
-            if contents.get(index + 1) == Some(&b'\n') {
-                index += 1;
-            }
-        } else {
-            normalized.push(contents[index]);
-        }
-        index += 1;
-    }
-    normalized
 }
 
 fn dart_sdk_root(dart_binary: &str) -> io::Result<PathBuf> {
@@ -1823,6 +1799,82 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Barrier};
     use std::thread;
+
+    #[test]
+    fn aot_key_tracks_lock_contents_through_manifest_and_rejects_read_errors() {
+        let root = std::env::temp_dir().join(format!("aot-lock-key-{}", std::process::id()));
+        fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        fs::create_dir_all(root.join("sdk/lib/_internal")).unwrap();
+        fs::write(root.join("pubspec.yaml"), "name: app\n").unwrap();
+        fs::write(
+            root.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[]}"#,
+        )
+        .unwrap();
+        fs::write(root.join("sdk/version"), "3.13.3").unwrap();
+        fs::write(
+            root.join("sdk/lib/_internal/allowed_experiments.json"),
+            "{}",
+        )
+        .unwrap();
+        let worker = root.join("worker.dart");
+        fs::write(&worker, "worker").unwrap();
+        let workspace = crate::workspace::Workspace::load(root.clone()).unwrap();
+        let key = || super::aot_cache_key(&workspace, &worker, &root.join("sdk"));
+        let lock = root.join("pubspec.lock");
+        let missing = key().unwrap();
+        fs::write(&lock, "").unwrap();
+        assert_ne!(missing, key().unwrap());
+        fs::write(&lock, "packages:\n  first: 1\n").unwrap();
+        let first = key().unwrap();
+        fs::write(&lock, "packages:\r\n  first: 1\r\n").unwrap();
+        assert_eq!(first, key().unwrap());
+        fs::write(&lock, "packages:\n  second: 2\n").unwrap();
+        let second = key().unwrap();
+        assert_ne!(first, second);
+        let old_key = second.replacen(
+            "-worker",
+            &format!(
+                "-lock{}-worker",
+                crate::digest::digest_bytes(b"packages:\n  second: 2\n")
+            ),
+            1,
+        );
+        let artifact = root.join("worker");
+        fs::write(&artifact, "artifact").unwrap();
+        let (sdk_version, allowed_experiments) =
+            super::aot_sdk_identity(&root.join("sdk")).unwrap();
+        let mut metadata = super::AotMetadata {
+            format: super::AOT_METADATA_VERSION,
+            cache_key: second.clone(),
+            sdk_version,
+            allowed_experiments,
+            package_config: workspace.package_config_identity().into(),
+            worker: super::digest_file(&worker).unwrap(),
+            executable: super::digest_file(&artifact).unwrap(),
+            dependencies: Default::default(),
+        };
+        let metadata_path = root.join("worker.sdk");
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        let current = || {
+            super::aot_metadata_is_current(
+                &artifact,
+                &metadata_path,
+                &workspace,
+                &root.join("sdk"),
+                &worker,
+                &second,
+            )
+        };
+        assert!(current());
+        metadata.cache_key = old_key;
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        assert!(!current());
+        fs::remove_file(&lock).unwrap();
+        fs::create_dir(&lock).unwrap();
+        assert!(key().is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[cfg(unix)]
     #[test]

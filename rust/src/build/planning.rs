@@ -70,6 +70,14 @@ pub(super) fn create(
     // a post-process input (or a normal input for a later phase) while
     // planning this build. Recompute until removing one stale output exposes
     // another stale action.
+    // Reuse the fixed marker across phases and stale-output retries. Existing
+    // present entries need no marker allocation; missing entries still become
+    // visible when an earlier phase declares their output.
+    let planned = crate::snapshot::AssetSnapshot {
+        exists: true,
+        digest: digest_bytes(b"<planned>"),
+        size: 0,
+    };
     let (normal_specs, normal_planning_snapshot, normal_primary_inputs) = loop {
         let normal_phases = build_config
             .builders
@@ -97,11 +105,6 @@ pub(super) fn create(
                     primary_inputs
                         .entry(output.clone())
                         .or_insert_with(|| spec.input.clone());
-                    let planned = crate::snapshot::AssetSnapshot {
-                        exists: true,
-                        digest: digest_bytes(b"<planned>"),
-                        size: 0,
-                    };
                     planning_snapshot
                         .entry(output.clone())
                         .and_modify(|entry| {
@@ -112,7 +115,7 @@ pub(super) fn create(
                                 *entry = planned.clone();
                             }
                         })
-                        .or_insert(planned);
+                        .or_insert_with(|| planned.clone());
                 }
             }
             specs.extend(phase_specs);

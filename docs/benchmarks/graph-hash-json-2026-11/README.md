@@ -217,3 +217,161 @@ full builder/watch CI coverage. None is ruled out by these experiments.
 Further measurements update this report. Start with the affected case on main
 and proposal, two order-reversed pairs, reusing binaries/fixture/AOT. Add native,
 Clean/upgrade or more repetitions only for a specific unresolved question.
+
+## Follow-up: repeated constants and configuration work (2026-11-07)
+
+Baseline: latest main `8728af5`, including merged #164 (`1d6c7ca`, final
+head `76dbf94`) and #166. The #164 final diff changes internal identities to
+BLAKE3, preserves worker-source FNV and adds legacy-journal rollback; this
+follow-up preserves those digest/worker-source/journal contracts. The user
+subsequently authorized changing the AOT key, allowing the redundant lock digest
+to be removed; existing AOT cache slots must be regenerated. Historical 2,004-placeholder / nine
+configuration-hash diagnostics are **not** current savings measurements.
+
+### Inventory and decisions
+
+Counts below describe call paths, not a new instrumented whole-build profile.
+
+| Candidate / code | Repeated work and lifetime | Decision / correctness boundary |
+| --- | --- | --- |
+| `build/planning.rs::create`, `<planned>` (9 B) | One hash, hex conversion and allocation per declared normal output, including stale-output retries; already-present entries discard the result; missing entries previously also clone it | Adopt one local template before the retry loop, clone only for absent/missing entries. Same exists/digest/size; preserve primary provenance, phase visibility and stale-output convergence. One 67-byte template string per call plus inserted-marker clone allocations; zero-output calls now pay one otherwise unnecessary digest. No process cache or shared ownership type |
+| `snapshot.rs::scan_packages`, `<virtual-primary>` (17 B) | Four hashes per scanned package; snapshot already retains these entries | Defer: small fixed count in ordinary single-root builds; no evidence justifying a broader constant facility |
+| `<missing>` (9 B): `assets.rs`, `build/filtered.rs`, `worker/asset_rpc.rs`, `worker/lazy.rs` | Per newly recorded missing dependency/read; tracked snapshot and read evidence already deduplicate many repeats | Defer: absent-input frequency is workload dependent. A process-wide marker would span unrelated owners; no measured hot path requiring it |
+| `workspace.rs::load` | Ordinary path reads/parses the same original config in runner preparation, compiler resolution and source resolution (three times). The latter two are one preparation unit | Adopt parsed-config reuse only when effective and original **path values** agree: three reads/parses become two. Runner preparation remains fresh. Both maps and URI resolution remain separate; add name copies, avoid a second file buffer/JSON parse. Patched/isolation paths still read original source resolution separately |
+| `runner_compatibility.rs::prepare` / compile isolation | DOM parse selects and validates effective compiler configuration; Workspace then uses a typed parse | Keep this remaining parse boundary: returning another representation from compiler preparation would broaden its API and ownership for a small saving; patched content must remain distinct from builder-visible inputs |
+| `workspace.rs::stable_package_config_identity` | One sorted, normalized typed identity per Workspace; borrowed by manifest/AOT metadata and keys | Already reused. Keep language/package URI, isolation and config-version semantics; do not substitute raw JSON or resolved-location identity |
+| `assets.rs::config_digest`, `build.rs` | Raw build.yaml/package_config plus builder fields/options. Ordinary root-only build: once; filtered checks plus preflight can make up to three calls | Keep. Preflight stores its digest and plan; execution recomputes and compares before reuse. Reusing it unconditionally could hide changes during frontend/worker setup. No JSON parsing of config here; builder options serialize per call |
+| `frontend.rs::settings_fingerprint`, `Workspace::builder_manifest_fingerprint` | Settings wraps one manifest fingerprint; generation refreshes it (up to two retries). AOT key separately calls manifest fingerprint. Each manifest fingerprint rereads lock, package graph, package build.yaml/pubspec files and normalizes line endings | Keep fresh filesystem observations across generation/compile boundaries. These identify different domains from the graph config and package-resolution keys; they cannot be substituted for each other |
+| `manifest_generator.rs::package_resolution/cache_key` | Read JSON, canonicalize roots, serialize normalized DOM and ordered locations, two distinct digests per key; one key on hit, another after compilation on miss | Keep content and location identities separate, including JSON ordering, URI bases, workspace-root normalization and fallback behavior. The postcompile key check prevents publication under changed inputs |
+| `worker_kernel.rs::aot_cache_key` lock component | Manifest fingerprint already includes normalized lockfile bytes; the old key separately rereads, normalizes and hashes that same file | Adopt removal of the redundant lock component, with user authorization to change AOT keys. Manifest lock reads now propagate non-NotFound errors for every caller; missing and empty files remain distinct. Remove the duplicate optional-file digest/normalization helpers. Old metadata/key slots are rejected and regenerated without a legacy reader or new metadata schema |
+| `worker_kernel.rs::build_aot_metadata/aot_metadata_is_current` | SDK version/experiments, manifest, lock, worker and package identities; SDK/worker checked again in validation and after compile. Context retains cache key (shared-cache directory names rehash it on restore/publication); Workspace retains package identity; validated-digest receipts reuse unchanged file hashes | Keep validation, dependency digests, artifact binding, lock-winner rechecks and publication gates; defer an extra cached directory-name field for miss/wait-only repeats. SDK/worker may change while waiting/compiling. Kernel/manifest/AOT metadata serve separate purposes |
+| `worker/pool.rs::ensure_initialized` | Retains workspace/config/artifact initialization signature and resident workers | Already reuses identity/state within compatible watch iterations; do not extend across incompatible SDK/artifact/configuration boundaries |
+
+Ordinary commands load a fresh Workspace. Watch also loads one each cycle,
+including when it retains the manifest configuration; the new parsed view never
+escapes that Workspace preparation. Config/dependency resolution changes therefore
+reload on the next preparation. Selected settings, package graph, SDK and worker
+changes retain their existing fingerprint, artifact validation and pool-reset
+boundaries. No cached digest is newly passed across a filesystem revalidation.
+AOT lockfile handling now reads and normalizes once per key instead of twice,
+and hashes it only as part of the manifest fingerprint. With the resolved fixture
+this removes one read, one normalization buffer/copy and one BLAKE3/hex/String
+operation over a 12,196-byte lockfile. A final targeted kernel characterizes
+this removed operation below; there is no additional E2E campaign or speed claim. Missing
+and empty locks remain distinguishable; CR/LF/CRLF normalization is unchanged.
+Non-NotFound read errors now also fail the standalone manifest fingerprint rather
+than being silently omitted. All generation, SDK/worker/dependency validation and
+postcompile publication checks remain in place. Existing AOT keys/metadata and
+shared slots no longer match and incur an ordinary recompilation or new-key
+shared-cache restore; there is no migration/legacy layer. Other identities retain
+their values. The existing key shape already separates old/new entries, so no
+extra schema/version machinery is necessary.
+
+Public builder digests, release integrity/signatures, journal recovery, dependency
+recording and all-success publication are untouched. Stable Rust and the five
+existing distribution targets acquire no new dependencies or platform code.
+
+### Minimal measurements
+
+Same Linux x86_64 Xeon Platinum 8573C, two-CPU quota, Rust 1.98.1 stable,
+Dart 3.13.3, default portable Release profile/CPU dispatch. All compilation and
+other verification stop before timings. No native/Clean campaign or E2E timing
+is justified by these sub-millisecond candidates.
+
+Existing `planning_retention_benchmark`, main then proposal / proposal then main,
+two samples each; 250/500 source inputs, four actions and eight declared output
+visits per input. No worker, launcher or IPC is in this fixture. Untimed serialized
+plan/dirty/index dumps match byte-for-byte at both sizes.
+
+| Inputs / marker calls before → after | Main planning µs (range) | Proposal planning µs (range) |
+| --- | --- | --- |
+| 250 / 2,000 → 1 | 6,813 (6,473–7,153) | 5,956 (5,657–6,255) |
+| 500 / 4,000 → 1 | 13,079.5 (12,499–13,660) | 12,328 (11,971–12,685) |
+
+These two-sample medians are noisy function timings, **not build speedups**.
+They compare only the planning change; Workspace construction is outside its timer.
+
+Separate `rustc -O` kernels use `black_box` inputs/results, five batches of
+100,000 operations, dropping each returned object inside the loop. Median ns
+(min–max): hash only **70.3 (67.2–78.7)**; precomputed hash to hex
+**24.5 (22.7–28.1)**; precomputed hex into a tagged, capacity-67 String
+**15.9 (15.7–17.7)**; actual `digest_bytes` **115.1 (114.0–124.6)**;
+67-byte String clone **21.0 (19.0–21.7)**. Components are isolated experiments,
+not additive attribution. At 2,004 output visits this suggests roughly
+**0.19–0.23 ms** less marker work, depending on existing entries; this is a
+kernel-based scale estimate, not a strict latency bound or an E2E observation.
+The snapshot strings still require allocation/copy when inserted.
+
+Resolved `json_serializable_app` config: **11,125 B / 54 packages**.
+The same fixture has a 106-byte build.yaml; SDK version/allowed-experiments
+inputs are 7/380 bytes. Other combined identities scale with builder/package
+metadata and are not separately timed because their domains cannot be merged.
+Warm `fs::read`: **2.383 µs (2.354–2.398)**; typed `PackageConfigFile`-shape
+`serde_json::from_slice` including destruction: **15.087 µs (14.537–15.265)**;
+54 additional name clones into a temporary Vec: **1.750 µs (1.745–1.810)**.
+These characterize the removed read/parse and added copies, not the duration of
+Workspace load. Rough net scale is 16 µs per ordinary preparation, not nine
+hashes × an old diagnostic time. A generic JSON DOM costs 45.715 µs here;
+**that larger number is not the typed-parser saving**. Normalization/serialization
+and hashes remain unchanged for parsed-config reuse, so further microprofiling
+those operations was unnecessary.
+
+A final isolated AOT kernel measures the removed `fs::read` → old
+`normalize_text_bytes` → current `digest_bytes` chain, including buffer/result
+destruction: **18.991 µs (18.805–19.756)** for the 12,196-byte fixture lockfile,
+five batches of 10,000 operations. Verification and compilation are stopped
+first. This is the scale of one removed operation per AOT key, not a build
+latency result or a strict wall-time bound; filesystem/page-cache costs vary.
+
+### Reproduction and validation
+
+Save normal main Release and Release test executables before editing, using the
+same Cargo/Rust toolchain/cache; build the proposal before timing. With each
+version's emitted test executable copied to `/tmp/main-tests` and
+`/tmp/proposal-tests`:
+
+```bash
+cargo build --locked --release --manifest-path rust/Cargo.toml
+cargo test --locked --release --manifest-path rust/Cargo.toml --no-run
+python3 scripts/benchmark_plan_retention.py \
+  --baseline-bin /tmp/main-tests --candidate-bin /tmp/proposal-tests \
+  --inputs 250 500 --repeats 2
+```
+
+For the isolated kernels, link the same Release `blake3`, `serde_json` and
+`serde` rlibs with stable `rustc -O`, use `std::hint::black_box` around inputs
+and results, and measure five loops of 100,000 operations with `Instant`.
+Operations are `blake3::hash(b"<planned>")`, precomputed `Hash::to_hex`,
+`String::with_capacity(67)` + `push_str("b3-")` + precomputed hex,
+`digest_bytes(b"<planned>")`, and the resulting String's `clone`.
+For JSON, deserialize into the exact fields/types/serde attributes of
+`workspace.rs::PackageConfigFile/PackageConfigEntry`; separately time
+`fs::read` of the resolved fixture config and cloning the 54 names. Exclude
+file setup and precomputed values from timers. For the AOT kernel, use the
+normalization function from main `8728af5` and time `fs::read` → normalization →
+`digest_bytes` on `fixtures/json_serializable_app/pubspec.lock`, five batches of
+10,000 operations, dropping all buffers/results per iteration. Do not run compilation or other
+verification concurrently. Config size can vary with local package paths.
+
+Validation:
+
+- Stable Release build, Rust **249 passed / three ignored**, all-target/all-feature
+  Clippy with `-D warnings`, formatting and `git diff --check` pass. The strengthened
+  AOT metadata acceptance/rejection test also passes separately after the full run.
+- `bash scripts/verify.sh` passes for the initial two changes. The subsequent
+  `VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh` uses the final Release for
+  every native invocation and passes all common checks plus every arbitrary-builder
+  case. Both reuse the built frontend via `BUILD_RUNNER_ACCELERATOR_BIN`.
+- Stock/native output bytes and No-op match; manifest snapshot relocation, code/
+  config/SDK changes, corrupt/unavailable caches and AOT/JIT/background/explicit
+  modes pass. Upgrade, trigger incremental/delete/rename/failure and arbitrary
+  builder/output-conflict checks pass.
+- Added coverage: absent/missing/present generated primaries feeding later phases;
+  fresh ordinary compiler/source resolutions across config changes; lockfile
+  missing/empty/content/line-ending semantics, valid new metadata versus rejected
+  old-key metadata, and read-error failure. Existing compiler-isolation, patched
+  source visibility, SDK/worker invalidation and recovery unit tests pass.
+- Full watch/builder suites and native execution on the other four distribution
+  targets remain CI work; no cross-platform runtime or E2E speed claim is made.
+
+Raw kernel sources, JSON dumps and logs stay outside the tracked tree.

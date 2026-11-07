@@ -1359,6 +1359,33 @@ fn undemanded_optional_stays_demandable_without_changing_successful_empty_reuse(
 }
 
 #[test]
+fn planning_declared_outputs_feed_later_phases_with_absent_missing_or_present_evidence()
+-> io::Result<()> {
+    let (_temporary, workspace, mut config, snapshot) = planning_fixture(1)?;
+    config.builders.truncate(2);
+    config.builders[1].runtime_extensions.as_mut().unwrap()[0].input_suffix = ".first.one".into();
+    let intermediate = "app|lib/input_00000.first.one";
+    for exists in [None, Some(false), Some(true)] {
+        let mut current = snapshot.clone();
+        if let Some(exists) = exists {
+            current.insert(
+                intermediate.into(),
+                crate::snapshot::AssetSnapshot {
+                    exists,
+                    digest: crate::digest::digest_bytes(b"previous evidence"),
+                    size: 17,
+                },
+            );
+        }
+        let plan = super::planning::create(&workspace, &GraphState::default(), &config, &current)?;
+        assert_eq!(plan.specs.len(), 2);
+        assert_eq!(plan.specs[1].input, intermediate);
+        assert_eq!(plan.specs[1].instance.phase, 1);
+    }
+    Ok(())
+}
+
+#[test]
 fn planned_actions_share_only_their_configured_instance_and_release_with_the_build()
 -> io::Result<()> {
     use super::{dirty, execution, planning};
