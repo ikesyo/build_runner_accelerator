@@ -46,32 +46,34 @@ verification_pool_run() {
       starts[$pid]=$started
       ((next += 1))
     done
-    # Bash can reap a fast background job before wait -n observes it. Wait
-    # for a specific completed PID instead, which retains its exit status.
-    completed=
-    while [[ -z "$completed" ]]; do
-      for pid in "${verification_pool_pids[@]}"; do
-        if ! kill -0 "$pid" 2>/dev/null; then
-          completed=$pid
-          break
-        fi
-      done
-      [[ -n "$completed" ]] || sleep 0.1
-    done
-    status=0
-    wait "$completed" || status=$?
+    # Drain every worker already finished before launching more work.
+    # Waiting for each PID preserves statuses of fast, already-reaped jobs.
+    completed=0
     local -a remaining=()
     for pid in "${verification_pool_pids[@]}"; do
-      [[ "$pid" == "$completed" ]] || remaining+=("$pid")
+      if kill -0 "$pid" 2>/dev/null; then
+        remaining+=("$pid")
+        continue
+      fi
+      completed=1
+      local -a active=()
+      local other
+      for other in "${verification_pool_pids[@]}"; do
+        [[ "$other" == "$pid" ]] || active+=("$other")
+      done
+      verification_pool_pids=("${active[@]}")
+      status=0
+      wait "$pid" || status=$?
+      printf 'verify: suite=%s status=%s elapsed=%ss\n' "${names[$pid]}" "$status" "$(( $(verification_now) - starts[$pid] ))" >&2
+      if ((status != 0)); then
+        printf 'verify: FAIL: full verification suite failed: %s (status=%s)\n' "${names[$pid]}" "$status" >&2
+        verification_pool_stop
+        printf 'verify: full suites elapsed=%ss\n' "$(( $(verification_now) - total_start ))" >&2
+        return "$status"
+      fi
     done
     verification_pool_pids=("${remaining[@]}")
-    printf 'verify: suite=%s status=%s elapsed=%ss\n' "${names[$completed]}" "$status" "$(( $(verification_now) - starts[$completed] ))" >&2
-    if ((status != 0)); then
-      printf 'verify: FAIL: full verification suite failed: %s (status=%s)\n' "${names[$completed]}" "$status" >&2
-      verification_pool_stop
-      printf 'verify: full suites elapsed=%ss\n' "$(( $(verification_now) - total_start ))" >&2
-      return "$status"
-    fi
+    ((completed)) || sleep 0.1
   done
   printf 'verify: full suites elapsed=%ss\n' "$(( $(verification_now) - total_start ))" >&2
 }

@@ -48,6 +48,8 @@ jobs:
       - uses: $/.github/actions/setup-worker
         with:
           cache-scope: dart-package-${{ matrix.resolution }}
+          cache-inputs: |
+            fixtures/**/pubspec.lock
           dart-version: ${{ matrix.sdk }}
           dependency-resolution: ${{ matrix.resolution }}
           setup-rust: 'true'

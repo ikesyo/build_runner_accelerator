@@ -13,18 +13,24 @@ import sys
 
 
 def parse_time(value):
+    """Parse an ISO timestamp; reject naive times instead of guessing a zone."""
     if not value:
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         # Actions uses year 0001 as a placeholder for matrix steps skipped by
         # an `if:` condition; it is not an observed timestamp.
-        return None if parsed.year == 1 else parsed
-    except (AttributeError, ValueError):
+        if parsed.year == 1:
+            return None
+        if parsed.utcoffset() is None:
+            raise ValueError(f"timestamp must include a timezone offset: {value!r}")
+        return parsed
+    except AttributeError:
         return None
 
 
 def seconds(start, end):
+    """Return a valid nonnegative interval length, or None if incomplete."""
     left, right = parse_time(start), parse_time(end)
     if left is None or right is None or right < left:
         return None
@@ -49,6 +55,7 @@ def is_overhead_step(name):
 
 
 def interval_union_seconds(spans):
+    """Return elapsed wall time covered by possibly overlapping intervals."""
     spans = sorted((start, end) for start, end in spans if start and end and end >= start)
     if not spans:
         return 0
@@ -64,12 +71,17 @@ def interval_union_seconds(spans):
 
 
 def summarize(payload, run=None):
+    """Summarize GitHub job data, keeping setup, job, and parallel time distinct."""
     if isinstance(payload, list):
         jobs = payload
     elif isinstance(payload, dict) and isinstance(payload.get("jobs"), list):
         jobs = payload["jobs"]
     else:
         raise ValueError("jobs JSON must be an array or contain a jobs array")
+    if any(not isinstance(job, dict) for job in jobs):
+        raise ValueError("every item in the jobs array must be an object")
+    if run is not None and not isinstance(run, dict):
+        raise ValueError("run JSON must be an object")
     lines = []
     if run:
         sha = run.get("head_sha")
@@ -123,12 +135,19 @@ def summarize(payload, run=None):
             [(parse_time(step.get("started_at")), parse_time(step.get("completed_at")))
              for step, _ in setup_steps])
         setup_complete = bool(setup_steps) and all(elapsed is not None for _, elapsed in setup_steps)
-        longest = max(lanes, key=lambda item: item[1]) if lanes else None
+        # Some Actions jobs are serial and have no parallel group. Still show
+        # their slowest completed step, while leaving setup unknown.
+        completed_steps = [(step.get("name", "unnamed step"), elapsed)
+                           for step, elapsed in ordinary if elapsed is not None]
+        candidates = lanes if concurrent else completed_steps
+        longest = max(candidates, key=lambda item: item[1]) if candidates else None
         lines.append(f"\n- {name} [{job.get('conclusion') or job.get('status') or 'unknown'}]")
         lines.append(f"  Job: {duration(job_time)}")
         lines.append(f"  Setup steps: {duration(setup_time) if setup_complete else 'incomplete/unknown'}")
-        if longest:
+        if longest and concurrent:
             lines.append(f"  Longest completed step/lane: {longest[0]} — {duration(longest[1])}")
+        elif longest:
+            lines.append(f"  Longest completed step: {longest[0]} — {duration(longest[1])}")
         else:
             lines.append("  Longest completed step/lane: unavailable")
         if run and run.get("created_at") and job.get("started_at"):
@@ -140,6 +159,7 @@ def summarize(payload, run=None):
 
 
 def main(argv=None):
+    """Read JSON files and report malformed input as a concise CLI error."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("jobs_json", type=Path, help="gh api jobs response JSON")
     parser.add_argument("--run-json", type=Path, help="optional workflow run JSON")

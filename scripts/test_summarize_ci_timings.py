@@ -75,6 +75,64 @@ class CiTimingSummaryTest(unittest.TestCase):
     def test_rejects_unexpected_json_shape(self):
         with self.assertRaises(ValueError):
             summarize({"workflow": "CI"})
+        for payload in ([None], {"jobs": [None]}, {"jobs": None}):
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                summarize(payload)
+        for run in ([], [{"created_at": "2026-01-01T00:00:00Z"}], None):
+            if run is None:
+                continue
+            with self.subTest(run=run), self.assertRaises(ValueError):
+                summarize([], run)
+
+    def test_naive_timestamp_is_rejected_and_cli_returns_input_error(self):
+        jobs = [{"name": "job", "started_at": "2026-01-01T00:00:00",
+                 "completed_at": "2026-01-01T00:01:00", "steps": []}]
+        with self.assertRaisesRegex(ValueError, "timezone offset"):
+            summarize(jobs)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.json"
+            path.write_text(json.dumps({"jobs": jobs}))
+            command = [sys.executable, "-B", str(Path(__file__).with_name(
+                "summarize_ci_timings.py")), str(path)]
+            completed = subprocess.run(command, text=True, capture_output=True)
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(completed.stdout, "")
+        self.assertIn("timezone offset", completed.stderr)
+
+    def test_cli_reports_malformed_json_and_jobs_shape_with_exit_two(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.json"
+            command = [sys.executable, "-B", str(Path(__file__).with_name(
+                "summarize_ci_timings.py")), str(path)]
+            for content, message in (("{broken", "error:"),
+                                     ('{"jobs": [null]}', "every item")):
+                with self.subTest(content=content):
+                    path.write_text(content)
+                    completed = subprocess.run(command, text=True, capture_output=True)
+                    self.assertEqual(completed.returncode, 2)
+                    self.assertEqual(completed.stdout, "")
+                    self.assertIn(message, completed.stderr)
+
+            path.write_text('{"jobs": []}')
+            run_path = Path(directory) / "run.json"
+            run_path.write_text('[{"created_at":"2026-01-01T00:00:00Z"}]')
+            completed = subprocess.run(command + ["--run-json", str(run_path)],
+                                       text=True, capture_output=True)
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(completed.stdout, "")
+            self.assertIn("run JSON must be an object", completed.stderr)
+
+    def test_serial_steps_show_longest_completed_without_guessing_setup(self):
+        jobs = [{"name": "serial job", "status": "completed",
+                 "started_at": "2026-01-01T00:00:00Z",
+                 "completed_at": "2026-01-01T00:03:00Z",
+                 "steps": [step("Setup", "2026-01-01T00:00:05Z", "2026-01-01T00:01:00Z"),
+                           step("Test suite", "2026-01-01T00:01:00Z", "2026-01-01T00:02:30Z"),
+                           step("Post cleanup", "2026-01-01T00:02:30Z", "2026-01-01T00:03:00Z")]}]
+        result = summarize(jobs)
+        self.assertIn("Setup steps: incomplete/unknown", result)
+        self.assertIn("Longest completed step: Test suite — 1m 30s", result)
+        self.assertNotIn("Longest completed step/lane", result)
 
     def test_skipped_matrix_step_sentinel_is_not_a_timing(self):
         jobs = [{"name": "Native build (windows)", "status": "completed",

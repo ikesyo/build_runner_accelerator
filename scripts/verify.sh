@@ -50,6 +50,7 @@ all_cases=(
 cleanup() {
   local cleanup_status=$?
   verification_pool_stop
+  verification_stop_active_command
   if ((cleanup_status != 0)) && [[ "${VERIFY_KEEP_TEMP_ON_FAILURE:-1}" != 0 ]]; then
     printf 'verification: retaining full-verification logs: %s\n' "$results_dir" >&2
     return 0

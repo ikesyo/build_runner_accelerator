@@ -565,6 +565,14 @@ def configuration_publication_recovery(reference, native, compile_flag):
 
 
 def configuration_compile(temporary, reference):
+    # This sequence verifies compilation, including when other settings groups
+    # reuse a persistent cache. Keep its assets inside the retained workspace.
+    cache = tempfile.mkdtemp(prefix='compile-accelerator-cache-', dir=temporary)
+    with patch.dict(ENV, {'BUILD_RUNNER_ACCELERATOR_CACHE': cache}):
+        _configuration_compile(temporary, reference)
+
+
+def _configuration_compile(temporary, reference):
     # Prewarm writes no outputs, including detached prewarm. AOT and JIT
     # are compared after changing settings in the same workspace/cache.
     warmed = temporary / 'prewarm'

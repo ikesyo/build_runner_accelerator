@@ -136,6 +136,21 @@ verification_report_watch_timeout() {
     } | tee -a "$log_path" >&2 || true
   done
 }
+# The verification entry point calls this on exit to stop an interrupted command.
+verification_active_command_pid=
+verification_active_tail_pid=
+verification_stop_active_command() {
+  if [[ -n "$verification_active_command_pid" ]]; then
+    verification_stop_process_group "$verification_active_command_pid"
+    verification_active_command_pid=
+  fi
+  if [[ -n "$verification_active_tail_pid" ]]; then
+    kill "$verification_active_tail_pid" 2>/dev/null || true
+    wait "$verification_active_tail_pid" 2>/dev/null || true
+    verification_active_tail_pid=
+  fi
+}
+
 verification_run_command() {
   local label=$1
   local timeout_seconds=$2
@@ -157,10 +172,12 @@ verification_run_command() {
   printf 'verification: command-start label=%s timeout=%ss workspace=%s log=%s command=%s\n' "$label" "$timeout_seconds" "$workspace" "$log_path" "$command_line" | tee -a "$log_path" >&2
   setsid "$@" >>"$log_path" 2>&1 &
   local pid=$!
+  verification_active_command_pid=$pid
   local tail_pid=
   if [[ "${VERIFY_STREAM_LOGS:-0}" == 1 ]]; then
     tail -n +1 -F "$log_path" >&2 &
     tail_pid=$!
+    verification_active_tail_pid=$tail_pid
   fi
   local status=0
   while kill -0 "$pid" 2>/dev/null; do
@@ -181,6 +198,8 @@ verification_run_command() {
     kill "$tail_pid" 2>/dev/null || true
     wait "$tail_pid" 2>/dev/null || true
   fi
+  verification_active_command_pid=
+  verification_active_tail_pid=
   local elapsed=$(($(verification_now) - started))
   printf 'verification: command-end label=%s status=%s elapsed=%ss workspace=%s log=%s\n' "$label" "$status" "$elapsed" "$workspace" "$log_path" | tee -a "$log_path" >&2
   if ((status != 0 && status != 124)); then
