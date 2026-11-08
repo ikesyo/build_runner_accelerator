@@ -87,6 +87,21 @@ for ((attempt = 0; attempt < 100; attempt++)); do
 done
 [[ -s "$drain_tmp/ready-success" && -s "$drain_tmp/ready-fail" ]]
 kill -STOP "$drain_pid"
+# Delivery of SIGSTOP is asynchronous; confirm it before releasing workers.
+scheduler_stopped=0
+for ((attempt = 0; attempt < 100; attempt++)); do
+  if ! scheduler_state=$(ps -o stat= -p "$drain_pid"); then
+    printf 'pool test: cannot inspect scheduler %s\n' "$drain_pid" >&2
+    exit 1
+  fi
+  [[ -n "$scheduler_state" ]] || { printf 'pool test: missing scheduler state for %s\n' "$drain_pid" >&2; exit 1; }
+  if [[ "$scheduler_state" == T* || "$scheduler_state" == t* ]]; then
+    scheduler_stopped=1
+    break
+  fi
+  sleep 0.05
+done
+((scheduler_stopped)) || { printf 'pool test: scheduler did not stop: %s\n' "$drain_pid" >&2; exit 1; }
 touch "$drain_tmp/gate"
 # A zombie has exited but cannot be reaped until its stopped parent resumes.
 # Wait for both actual worker processes, not markers written before exit.
