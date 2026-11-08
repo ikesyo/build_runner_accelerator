@@ -77,32 +77,45 @@ runs:
         printf 'digest=%s\n' "$digest" >>"$GITHUB_OUTPUT"
 
     - name: Cache Pub downloads
+      if: github.ref == 'refs/heads/main'
       uses: actions/cache@v6.1.0
-      with:
+      with: &pub-download-cache
         path: .pub-cache
         key: pub-v2-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ inputs.dependency-resolution }}-${{ steps.versions.outputs.digest }}
         restore-keys: |
           pub-v2-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ inputs.dependency-resolution }}-
+    - name: Restore Pub downloads
+      if: github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@v6.1.0
+      with: *pub-download-cache
 
-    - if: inputs.setup-rust == 'true'
-      name: Cache Cargo downloads
+    - name: Cache Cargo downloads
+      if: inputs.setup-rust == 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache@v6.1.0
-      with:
+      with: &cargo-download-cache
         path: |
           ~/.cargo/registry
           ~/.cargo/git
         key: cargo-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock') }}
         restore-keys: |
           cargo-downloads-v1-${{ runner.os }}-${{ runner.arch }}-
+    - name: Restore Cargo downloads
+      if: inputs.setup-rust == 'true' && github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@v6.1.0
+      with: *cargo-download-cache
 
-    - if: inputs.setup-rust == 'true'
-      name: Cache Rust build artifacts
+    - name: Cache Rust build artifacts
+      if: inputs.setup-rust == 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache@v6.1.0
-      with:
+      with: &rust-build-cache
         path: rust/target
         key: rust-target-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.rust }}-${{ inputs.frontend-profile }}-${{ inputs.rust-target || 'host' }}-${{ hashFiles('rust/**', '!rust/target/**', 'rust-toolchain.toml') }}
         restore-keys: |
           rust-target-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.rust }}-${{ inputs.frontend-profile }}-${{ inputs.rust-target || 'host' }}-
+    - name: Restore Rust build artifacts
+      if: inputs.setup-rust == 'true' && github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@v6.1.0
+      with: *rust-build-cache
 
     - uses: dart-lang/setup-dart@v1.8.1
       with:

@@ -16,7 +16,10 @@ def parse_time(value):
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        # Actions uses year 0001 as a placeholder for matrix steps skipped by
+        # an `if:` condition; it is not an observed timestamp.
+        return None if parsed.year == 1 else parsed
     except (AttributeError, ValueError):
         return None
 
@@ -71,10 +74,14 @@ def summarize(payload, run=None):
     if run:
         sha = run.get("head_sha")
         created = run.get("created_at")
+        attempt = run.get("run_attempt", 1)
         if sha:
             lines.append(f"Source SHA: {sha}")
         if created:
-            lines.append(f"Run created: {created}")
+            lines.append(f"Run attempt: {attempt}")
+            reference = run.get("run_started_at") if attempt > 1 else created
+            reference_label = "Attempt started" if attempt > 1 and reference else "Run created"
+            lines.append(f"{reference_label}: {reference or created}")
     if not jobs:
         lines.append("No jobs found.")
         return "\n".join(lines)
@@ -125,8 +132,10 @@ def summarize(payload, run=None):
         else:
             lines.append("  Longest completed step/lane: unavailable")
         if run and run.get("created_at") and job.get("started_at"):
-            delay = seconds(run["created_at"], job["started_at"])
-            lines.append(f"  Start delay from run creation: {duration(delay)}")
+            reference = run.get("run_started_at") if run.get("run_attempt", 1) > 1 else run["created_at"]
+            if reference:
+                delay = seconds(reference, job["started_at"])
+                lines.append(f"  Start delay from {('attempt start' if run.get('run_attempt', 1) > 1 else 'run creation')}: {duration(delay)}")
     return "\n".join(lines)
 
 

@@ -61,9 +61,34 @@ class CiTimingSummaryTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("Start delay from run creation: 20s", completed.stdout)
 
+    def test_rerun_delay_uses_attempt_start(self):
+        jobs = [{"name": "unit", "status": "completed",
+                 "started_at": "2026-01-01T00:01:20Z", "completed_at": "2026-01-01T00:01:30Z",
+                 "steps": []}]
+        run = {"head_sha": "abc123", "created_at": "2026-01-01T00:00:00Z",
+               "run_started_at": "2026-01-01T00:01:00Z", "run_attempt": 2}
+        result = summarize(jobs, run)
+        self.assertIn("Run attempt: 2", result)
+        self.assertIn("Attempt started: 2026-01-01T00:01:00Z", result)
+        self.assertIn("Start delay from attempt start: 20s", result)
+
     def test_rejects_unexpected_json_shape(self):
         with self.assertRaises(ValueError):
             summarize({"workflow": "CI"})
+
+    def test_skipped_matrix_step_sentinel_is_not_a_timing(self):
+        jobs = [{"name": "Native build (windows)", "status": "completed",
+                 "started_at": "2026-01-01T00:00:00Z", "completed_at": "2026-01-01T00:02:00Z",
+                 "steps": [step("Build", "2026-01-01T00:00:05Z", "2026-01-01T00:00:25Z"),
+                           step("Skipped conditional lane", "0001-01-01T00:00:00Z",
+                                "2026-01-01T00:00:00Z"),
+                           step("Other lane", "2026-01-01T00:00:25Z",
+                                "2026-01-01T00:01:00Z"),
+                           step("Verify package", "2026-01-01T00:00:25Z",
+                                "2026-01-01T00:01:30Z")] }]
+        result = summarize(jobs)
+        self.assertIn("Longest completed step/lane: Verify package — 1m 05s", result)
+        self.assertNotIn("106549", result)
 
 
 if __name__ == "__main__":

@@ -70,4 +70,4 @@ verification_pool_run_item() { :; }
 mapfile -t fast_items < <(seq 1 100)
 verification_pool_run 4 "${fast_items[@]}" 2>"$tmp/fast.log"
 [[ $(grep -c '^verify: suite=' "$tmp/fast.log") == 100 ]]
-printf 'verification pool tests passed\n'  
+printf 'verification pool tests passed\n'

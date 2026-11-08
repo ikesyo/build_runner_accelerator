@@ -658,21 +658,31 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Cache Cargo downloads
+        if: github.ref == 'refs/heads/main'
         uses: actions/cache@v6.1.0
-        with:
+        with: &native-cargo-download-cache
           path: |
             ~/.cargo/registry
             ~/.cargo/git
           key: cargo-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock') }}
           restore-keys: |
             cargo-downloads-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: Restore Cargo downloads
+        if: github.ref != 'refs/heads/main'
+        uses: actions/cache/restore@v6.1.0
+        with: *native-cargo-download-cache
       - name: Cache Rust build artifacts
+        if: github.ref == 'refs/heads/main'
         uses: actions/cache@v6.1.0
-        with:
+        with: &native-rust-build-cache
           path: rust/target
           key: rust-target-v1-${{ runner.os }}-${{ runner.arch }}-1.98.1-release-${{ matrix.rust_target }}-${{ hashFiles('rust/**', '!rust/target/**', 'rust-toolchain.toml') }}
           restore-keys: |
             rust-target-v1-${{ runner.os }}-${{ runner.arch }}-1.98.1-release-${{ matrix.rust_target }}-
+      - name: Restore Rust build artifacts
+        if: github.ref != 'refs/heads/main'
+        uses: actions/cache/restore@v6.1.0
+        with: *native-rust-build-cache
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 1.98.1
         with:
           toolchain: 1.98.1

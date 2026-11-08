@@ -50,6 +50,8 @@ Make cache paths match the directories actually used by tools. Separate
 architecture, toolchain and dependency-resolution caches. A cache miss must
 remain correct. Reuse compiled test helpers and prepared baselines where safe,
 preserving active paths, timestamps and SDK links required by incremental tests.
+Only main-branch runs save Actions caches; pull requests and other refs restore
+existing compatible caches without creating branch-scoped cache entries.
 Do not share mutable scenario state or relax assertions and deadlines to
 hide scheduling or setup problems.
 
