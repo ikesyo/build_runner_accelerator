@@ -236,7 +236,7 @@ Counts describe call paths, not an instrumented whole-build profile.
 | `<planned>`, `build/planning.rs::create` | Hash/format per declared normal output, including stale-output retries; present entries discard it | Adopt one local template per call, cloning only for absent/missing entries. Preserve phase visibility and retries; inserted strings still allocate. Zero-output calls now pay one extra digest |
 | `<virtual-primary>`, `snapshot.rs::scan_packages` | Four hashes per scanned package | Adopt one lazy template per scan: 4 × packages → one hash, or zero for no packages. Local 67-byte string plus insertion clones; no global state |
 | `<missing>`, `assets.rs`, `build/filtered.rs`, `worker/{asset_rpc,lazy}.rs` | Per newly recorded dependency/read, with existing deduplication | Defer: unknown remaining repetition; retaining a template adds a copy when used only once |
-| `workspace.rs::load`, `runner_compatibility.rs::prepare` | Ordinary config read/parse in runner preparation, compiler resolution and source resolution: three times on main | Adopt one prepared typed original view for ordinary compiler/source resolution: three become one (initial local reuse reduced three to two). Patched compiler views remain separate |
+| `workspace.rs::load`, `runner_compatibility.rs::prepare` | Ordinary config read/parse in runner preparation, compiler resolution and source resolution: three times on main | Adopt one prepared typed original view for ordinary compiler/source resolution: two reads (including final byte verification), one parse. Patched compiler views remain separate |
 | Preparation DOM; `Workspace::package_config_identity` | Full DOM is only needed to rewrite legacy/isolation paths; normalized identity is already reused | Adopt deferred DOM construction from original text, preserving metadata/order. Validate unknown metadata and duplicate known fields in the typed pass; still read the validated compiler file after isolation cache hits |
 | `assets.rs::config_digest`, `build.rs` | Once in ordinary root-only builds, up to three times with filtered checks/preflight | Keep execution-time comparison with the stored preflight digest; unconditional reuse could hide changes during setup |
 | `frontend.rs::settings_fingerprint`, `Workspace::builder_manifest_fingerprint`; `manifest_generator.rs::package_resolution/cache_key` | Settings refreshes after generation; package-resolution key recomputes after compilation on a miss | Keep fresh observations and distinct raw-config, normalized-content and resolved-location identities, including JSON order and URI-base semantics |
@@ -244,7 +244,9 @@ Counts describe call paths, not an instrumented whole-build profile.
 | AOT metadata validation, `worker_kernel.rs`; initialization signature, `worker/pool.rs` | SDK/worker/dependency checks repeat across waiting/compilation; context, receipts and resident pool already retain compatible identities | Keep revalidation/publication gates and existing reuse. Defer another cached directory-name field for miss/wait-only repeats |
 
 Reuse stays within one preparation: commands and watch cycles load fresh
-Workspaces. Generation/compilation rechecks, config/dependency/SDK/worker change
+Workspaces. Original bytes are rechecked after preparation; changed inputs discard
+the attempt and retry, with failure after three unstable attempts. Generation/
+compilation rechecks, config/dependency/SDK/worker change
 detection, dependency recording and all-success publication remain intact.
 BLAKE3-256 tags/values and worker-source/public-builder/release verification
 contracts are unchanged; only the AOT key shape changes. Lock read errors now
@@ -300,7 +302,7 @@ from `6e4bc2c` and this change, five batches of 10,000 parses each, dropping the
 old DOM before typed parsing and all results per iteration; compare normalized
 identities outside timing. No concurrent compilation/verification.
 
-- Release build, Rust **250 passed / three ignored**, formatting,
+- Release build, Rust **252 passed / three ignored**, formatting,
   all-target/all-feature Clippy and `git diff --check` pass.
 - The initial implementation passes both `scripts/verify.sh` variants, including
   `VERIFY_ARBITRARY_BUILDER=1`. Later virtual-marker/package-key changes pass
@@ -309,6 +311,7 @@ identities outside timing. No concurrent compilation/verification.
   covering mode changes, warm reuse, incremental builds and failure/recovery.
 - Coverage includes generated-primary visibility, config reload/AOT key sensitivity,
   patched/isolation source separation, duplicate fields/invalid unknown metadata/UTF-8 rejection,
+  replacement/repeated changes during preparation (including obsolete failures),
   lock missing/empty/content/newline/error behavior, new/old
   AOT metadata, cache/SDK/worker changes, upgrade and incremental/delete/rename/
   failure/output-conflict paths. Full watch/builder suites and other-platform

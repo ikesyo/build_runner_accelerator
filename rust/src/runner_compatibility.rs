@@ -66,22 +66,41 @@ pub(crate) struct PreparedConfig {
 pub(crate) fn prepare(root: &Path) -> io::Result<PreparedConfig> {
     #[cfg(test)]
     PREPARE_CALLS.with(|calls| calls.set(calls.get() + 1));
+    prepare_with_read(root, |path| fs::read_to_string(path))
+}
+
+/// Reject a view computed from inputs replaced during preparation. Retry from
+/// the new text, including when the obsolete inputs made preparation fail.
+fn prepare_with_read(
+    root: &Path,
+    mut read: impl FnMut(&Path) -> io::Result<String>,
+) -> io::Result<PreparedConfig> {
     let original_path = root.join(".dart_tool/package_config.json");
-    let contents = fs::read_to_string(&original_path)?;
-    let original: PackageConfigFile = serde_json::from_str(&contents)?;
-    let path = prepare_compiler(root, &original_path, &original, &contents)?;
-    // Isolation cache hits return the validated on-disk selection, not the
-    // incoming DOM. Keep reading that effective configuration after validation.
-    let compiler = if path == original_path {
-        None
-    } else {
-        Some(serde_json::from_str(&fs::read_to_string(&path)?)?)
-    };
-    Ok(PreparedConfig {
-        path,
-        original,
-        compiler,
-    })
+    for _ in 0..3 {
+        let contents = read(&original_path)?;
+        let prepared = (|| {
+            let original: PackageConfigFile = serde_json::from_str(&contents)?;
+            let path = prepare_compiler(root, &original_path, &original, &contents)?;
+            // Isolation cache hits return the validated on-disk selection, not
+            // the incoming DOM. Read that configuration after validation.
+            let compiler = if path == original_path {
+                None
+            } else {
+                Some(serde_json::from_str(&fs::read_to_string(&path)?)?)
+            };
+            Ok(PreparedConfig {
+                path,
+                original,
+                compiler,
+            })
+        })();
+        if read(&original_path)? == contents {
+            return prepared;
+        }
+    }
+    Err(io::Error::other(
+        "package_config.json changed repeatedly during preparation; retry the command",
+    ))
 }
 
 fn prepare_compiler(
@@ -355,6 +374,80 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn replaced_config_retries_with_latest_roots_even_if_obsolete_preparation_failed() {
+        for obsolete_fails in [false, true] {
+            let fixture = Fixture::new();
+            let latest = Fixture::new();
+            fs::write(
+                latest.0.join("upstream runner/pubspec.yaml"),
+                "version: 2.16.2\n",
+            )
+            .unwrap();
+            if obsolete_fails {
+                fs::write(
+                    fixture.0.join("upstream runner").join(RESOLVER),
+                    "unsupported API",
+                )
+                .unwrap();
+            }
+            let original = fixture.0.join(".dart_tool/package_config.json");
+            let mut config: Value = serde_json::from_slice(&fs::read(&original).unwrap()).unwrap();
+            let latest_root = latest.0.join("upstream runner");
+            config["packages"][1]["rootUri"] = Value::String(file_uri(&latest_root));
+            let replacement = serde_json::to_vec(&config).unwrap();
+            let mut reads = 0;
+            let prepared = super::prepare_with_read(&fixture.0, |path| {
+                reads += 1;
+                if reads == 2 {
+                    // Replace after the first compiler view was prepared, before
+                    // accepting it. No thread timing or sleeps are involved.
+                    let staging = path.with_extension("replacement");
+                    fs::write(&staging, &replacement)?;
+                    #[cfg(windows)]
+                    fs::remove_file(path)?;
+                    fs::rename(staging, path)?;
+                }
+                fs::read_to_string(path)
+            })
+            .unwrap();
+            assert_eq!(prepared.path, original);
+            assert!(prepared.compiler.is_none());
+            assert_eq!(
+                prepared.original.runner_root(original.parent().unwrap()),
+                Some(latest_root),
+            );
+            assert!(!fixture.0.join(CONFIG).exists());
+        }
+    }
+
+    #[test]
+    fn continually_changing_config_fails_instead_of_returning_a_stale_view() {
+        let fixture = Fixture::new();
+        fs::write(
+            fixture.0.join("upstream runner/pubspec.yaml"),
+            "version: 2.16.2\n",
+        )
+        .unwrap();
+        let mut reads = 0;
+        let result = super::prepare_with_read(&fixture.0, |path| {
+            reads += 1;
+            if reads % 2 == 0 {
+                let mut config: Value = serde_json::from_slice(&fs::read(path)?)?;
+                config["generation"] = serde_json::json!(reads);
+                fs::write(path, serde_json::to_vec(&config)?)?;
+            }
+            fs::read_to_string(path)
+        });
+        assert!(
+            result
+                .err()
+                .expect("unstable configuration must not be accepted")
+                .to_string()
+                .contains("changed repeatedly during preparation")
+        );
     }
 
     #[test]
