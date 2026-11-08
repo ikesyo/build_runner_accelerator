@@ -987,7 +987,7 @@ fn build_aot_metadata(
         dependency_digests.insert(key, digest_file(&dependency)?);
     }
     let (sdk_version, allowed_experiments) = aot_sdk_identity(sdk_root)?;
-    Ok(AotMetadata {
+    let metadata = AotMetadata {
         format: AOT_METADATA_VERSION,
         cache_key: cache_key.to_owned(),
         sdk_version,
@@ -996,7 +996,11 @@ fn build_aot_metadata(
         worker: digest_file(worker_path)?,
         executable: digest_file(executable_path)?,
         dependencies: dependency_digests,
-    })
+    };
+    // Early/background compilation can precede the build's graph-key read.
+    // Reject changed resolution before publishing an executable under this key.
+    workspace.read_package_config()?;
+    Ok(metadata)
 }
 
 /// Validate portable AOT metadata against current identities and file digests.
@@ -1889,6 +1893,37 @@ mod tests {
         metadata.cache_key = old_key;
         fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
         assert!(!current());
+        let depfile = root.join("worker.d");
+        let dependency = super::canonicalize(&worker)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace(' ', "\\ ");
+        fs::write(&depfile, format!("out: {dependency}\n")).unwrap();
+        let build_metadata = || {
+            super::build_aot_metadata(
+                &workspace,
+                &root.join("sdk"),
+                &worker,
+                &depfile,
+                &artifact,
+                &second,
+            )
+        };
+        assert!(build_metadata().is_ok());
+        let original = fs::read(&config_path).unwrap();
+        fs::write(
+            &config_path,
+            r#"{"packages":[],"configVersion":2,"changed":true}"#,
+        )
+        .unwrap();
+        assert!(
+            build_metadata()
+                .unwrap_err()
+                .to_string()
+                .contains("changed after workspace preparation")
+        );
+        fs::write(config_path, original).unwrap();
         fs::remove_file(&lock).unwrap();
         fs::create_dir(&lock).unwrap();
         assert!(key().is_err());

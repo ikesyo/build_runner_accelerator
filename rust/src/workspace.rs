@@ -87,6 +87,7 @@ pub struct Workspace {
     compiler_packages: BTreeMap<String, PathBuf>,
     sources: Arc<OnceLock<Arc<AssetSources>>>,
     package_config_identity: String,
+    package_config_contents: Arc<String>,
     asset_index: Arc<Mutex<BTreeMap<String, Arc<Vec<String>>>>>,
     find_assets_cache: Arc<Mutex<FindAssetsCache>>,
     asset_read_cache: Arc<Mutex<BTreeMap<String, Arc<Vec<u8>>>>>,
@@ -169,12 +170,25 @@ impl Workspace {
             compiler_packages,
             sources: Arc::new(OnceLock::new()),
             package_config_identity,
+            package_config_contents: Arc::new(prepared.contents),
             asset_index: Arc::new(Mutex::new(BTreeMap::new())),
             find_assets_cache: Arc::new(Mutex::new(BTreeMap::new())),
             asset_read_cache: Arc::new(Mutex::new(BTreeMap::new())),
             asset_read_cache_hits: Arc::new(AtomicU64::new(0)),
             asset_read_cache_misses: Arc::new(AtomicU64::new(0)),
         })
+    }
+
+    /// Reuse this read for graph identity while rejecting a stale resolution.
+    /// Keep the original text, not another digest or parsed copy, for comparison.
+    pub(crate) fn read_package_config(&self) -> io::Result<Vec<u8>> {
+        let bytes = fs::read(self.root.join(".dart_tool/package_config.json"))?;
+        if bytes != self.package_config_contents.as_bytes() {
+            return Err(io::Error::other(
+                "package_config.json changed after workspace preparation; rerun after dependency resolution finishes",
+            ));
+        }
+        Ok(bytes)
     }
 
     pub fn builder_manifest_fingerprint(&self) -> io::Result<String> {

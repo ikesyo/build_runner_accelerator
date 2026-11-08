@@ -151,9 +151,7 @@ pub(crate) fn config_digest(workspace: &Workspace, config: &RustBuildConfig) -> 
     // error. Never reuse those action results under scoped builder logging.
     let mut bytes = b"build-runner-accelerator-config-v7\0".to_vec();
     bytes.extend_from_slice(&fs::read(build_yaml).unwrap_or_default());
-    bytes.extend_from_slice(
-        &fs::read(workspace.root.join(".dart_tool/package_config.json")).unwrap_or_default(),
-    );
+    bytes.extend_from_slice(&workspace.read_package_config()?);
     if let Some(signature) = &config.manifest_signature {
         bytes.extend_from_slice(signature.as_bytes());
     }

@@ -438,6 +438,89 @@ impl Drop for TemporaryWorkspace {
 }
 
 #[test]
+fn graph_identity_rejects_resolution_changes_before_build_actions() -> io::Result<()> {
+    let temporary = TemporaryWorkspace::new()?;
+    let path = temporary.0.join(".dart_tool/package_config.json");
+    fs::create_dir(temporary.0.join("old_dep"))?;
+    fs::write(
+        &path,
+        r#"{"configVersion":2,"packages":[{"name":"app","rootUri":"../"},{"name":"dep","rootUri":"../old_dep/"}]}"#,
+    )?;
+    let workspace = Workspace::load(temporary.0.clone())?;
+    let config = dirty_test_config(&[]);
+    let before = crate::assets::config_digest(&workspace, &config)?;
+    let original = fs::read(&path)?;
+    fs::create_dir(temporary.0.join("other"))?;
+    let replacement = path.with_extension("replacement");
+    fs::write(
+        &replacement,
+        r#"{"configVersion":2,"packages":[{"name":"app","rootUri":"../"},{"name":"dep","rootUri":"../other/"}]}"#,
+    )?;
+    #[cfg(windows)]
+    fs::remove_file(&path)?;
+    fs::rename(replacement, &path)?;
+    for stale in [&workspace, &workspace.clone()] {
+        assert!(
+            crate::assets::config_digest(stale, &config)
+                .unwrap_err()
+                .to_string()
+                .contains("changed after workspace preparation")
+        );
+    }
+    let options = crate::cli::Options::parse(
+        [
+            "build".to_owned(),
+            "--root".to_owned(),
+            temporary.0.to_string_lossy().into_owned(),
+        ]
+        .into_iter(),
+    )?;
+    let manifest =
+        crate::frontend::prepare_native_frontend(&options, &workspace, &GraphState::default());
+    assert!(
+        manifest
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("changed after workspace preparation")
+    );
+    let graph = super::graph_path(&workspace);
+    let result = super::run_with_config_session(
+        &options,
+        None,
+        workspace.clone(),
+        crate::frontend::NativeFrontend::new(config.clone()),
+        super::LoadedGraph::resident(GraphState::default(), &graph),
+        true,
+        &crate::watch::WatchChanges::default(),
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("changed after workspace preparation")
+    );
+    assert!(!graph.exists());
+    assert!(
+        !temporary
+            .0
+            .join(".dart_tool/build_runner_accelerator/builder-manifest.json")
+            .exists()
+    );
+    let fresh = Workspace::load(temporary.0.clone())?;
+    assert_ne!(
+        crate::workspace::canonicalize(workspace.package_root("dep")?)?,
+        crate::workspace::canonicalize(fresh.package_root("dep")?)?,
+    );
+    assert_ne!(before, crate::assets::config_digest(&fresh, &config)?);
+    fs::write(&path, &original)?;
+    assert_eq!(before, crate::assets::config_digest(&workspace, &config)?);
+    fs::remove_file(path)?;
+    assert!(crate::assets::config_digest(&workspace, &config).is_err());
+    Ok(())
+}
+
+#[test]
 fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()> {
     commit_reused_dynamic_output(b"obsolete output")
 }
