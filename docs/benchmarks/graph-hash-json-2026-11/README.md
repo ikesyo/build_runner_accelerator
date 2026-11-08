@@ -243,29 +243,14 @@ Counts describe call paths, not an instrumented whole-build profile.
 | `worker_kernel.rs::aot_cache_key` lock/package components | Manifest fingerprint already includes normalized lock bytes and the exact package-config identity | Adopt removal of both duplicate components. Lock removal saves read/normalize/hash; package removal saves 76 key bytes, with no extra read/hash saved. Lock read errors propagate; missing/empty remain distinct. Old AOT slots regenerate |
 | AOT metadata validation, `worker_kernel.rs`; initialization signature, `worker/pool.rs` | SDK/worker/dependency checks repeat across waiting/compilation; context, receipts and resident pool already retain compatible identities | Keep revalidation/publication gates and existing reuse. Defer another cached directory-name field for miss/wait-only repeats |
 
-Reuse stays within one preparation: commands and watch cycles load fresh
-Workspaces. Keep the original text (11,125 B here) for the Workspace lifetime,
-shared by clones. The existing graph-key read compares bytes before actions,
-without additional I/O/parsing/hashing or automatic retries. Manifest misses,
-new AOT publication and prewarm completion check separately. Changed inputs
-fail at these gates before actions or new AOT publication. Generation/compilation
-rechecks, config/dependency/SDK/worker change detection, dependency recording
-and all-success publication remain intact. AOT misses alone write a private
-compiler-config sibling from captured bytes, preserving relative URI bases;
-it is excluded from persistent dependencies and removed on completion/error.
-Its `._` prefix uses the existing source exclusion, so abrupt termination
-cannot leave a compiler snapshot that a later source scan discovers.
-Unix snapshots are created owner-only. Automatic orphan reclamation is deferred:
-each killed compile leaves one config-sized file; distinguishing active compilers
-would add lifecycle management beyond this change. Normal/error cleanup remains.
-Normal configs share the original buffer; patched modes retain one additional
-compiler-config buffer without rereading/reparsing it. Cache hits create no file.
-Manifest-preparation failures can still stop watch; no automatic retry policy
-is added. Supported config edits retain their existing event-based reloads.
-BLAKE3-256 tags/values and worker-source/public-builder/release verification
-contracts are unchanged; only the AOT key shape changes. Lock read errors now
-also fail standalone manifest fingerprinting rather than being silently omitted.
-No process cache, shared ownership type or new dependency is added.
+Reuse stays within one preparation; commands and watch cycles load fresh
+Workspaces. The original config text (11,125 B here) is retained and shared by
+clones; patched modes retain an additional compiler-config buffer. Comparing
+bytes from the existing graph-key read adds no ordinary-path I/O, parsing or
+hashing. Manifest/AOT publication and prewarm retain their revalidation gates.
+AOT compile misses use the captured compiler config; cache hits create no file.
+BLAKE3 values/tags, JSON identity semantics and publication contracts remain
+unchanged; the simplified AOT key invalidates existing AOT slots.
 
 ### Measurements and limits
 
@@ -319,19 +304,9 @@ identities outside timing. The guard comparison uses five batches of 10,000
 `read_to_string`/comparison operations versus 100,000 comparisons of already-read
 bytes, with setup outside timing. No concurrent compilation/verification.
 
-- Release build, Rust **252 passed / three ignored**, formatting,
-  all-target/all-feature Clippy and `git diff --check` pass.
-- The initial implementation passes both `scripts/verify.sh` variants, including
-  `VERIFY_ARBITRARY_BUILDER=1`. Later virtual-marker/package-key changes pass
-  `bash scripts/smoke.sh`; stock/native bytes and No-op match. Prepared-config
-  sharing also passes `python3 scripts/correctness_compile_isolation.py` (JIT),
-  covering mode changes, warm reuse, incremental builds and failure/recovery.
-  Compiler snapshots additionally pass `--worker-mode aot`, with no No-op
-  recompilation or leftover snapshot files; ephemeral paths are absent from metadata.
-- Coverage includes generated-primary visibility, config reload/AOT key sensitivity,
-  patched/isolation source separation, duplicate fields/invalid unknown metadata/UTF-8 rejection,
-  changed resolution rejected before actions/manifest generation/AOT publication,
-  lock missing/empty/content/newline/error behavior, new/old
-  AOT metadata, cache/SDK/worker changes, upgrade and incremental/delete/rename/
-  failure/output-conflict paths. Full watch/builder suites and other-platform
-  native execution remain CI work. Raw data/tools are not in the tracked tree.
+Validation covers Rust tests (252 passed, three ignored), formatting, Clippy,
+Release builds, smoke and compile-isolation checks in JIT/AOT modes. Stock/native
+outputs match; No-op reuse, configuration invalidation, source/compiler
+separation and failure/recovery are covered. Both verification-script variants
+passed the initial implementation; full watch/builder suites and other-platform
+execution remain CI coverage. No E2E speedup is claimed.
