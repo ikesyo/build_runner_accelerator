@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.19.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.18.0...v0.19.0) - 2026-11-08
+
+- perf: reuse SIMD keyword search and skip empty resolver closures by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/163
+- perf: accelerate state hashing and sorted snapshot comparisons by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/164
+- feat: add bounded opt-in OpenTelemetry build spans by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/166
+- perf: reuse planning and configuration identity work by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/168
+
 ## [v0.18.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.17.1...v0.18.0) - 2026-11-04
 
 - ci: adopt GitHub Actions workflow lockfile by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/152
