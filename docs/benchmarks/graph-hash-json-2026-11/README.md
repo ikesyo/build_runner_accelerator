@@ -249,8 +249,14 @@ shared by clones. The existing graph-key read compares bytes before actions,
 without additional I/O/parsing/hashing or automatic retries. Manifest misses,
 new AOT publication and prewarm completion check separately. Changed inputs
 fail at these gates before actions or new AOT publication. Generation/compilation
-rechecks, config/dependency/SDK/worker change
-detection, dependency recording and all-success publication remain intact.
+rechecks, config/dependency/SDK/worker change detection, dependency recording
+and all-success publication remain intact. AOT misses alone write a private
+compiler-config sibling from captured bytes, preserving relative URI bases;
+it is excluded from persistent dependencies and removed on completion/error.
+Normal configs share the original buffer; patched modes retain one additional
+compiler-config buffer without rereading/reparsing it. Cache hits create no file.
+Manifest-preparation failures can still stop watch; no automatic retry policy
+is added. Supported config edits retain their existing event-based reloads.
 BLAKE3-256 tags/values and worker-source/public-builder/release verification
 contracts are unchanged; only the AOT key shape changes. Lock read errors now
 also fail standalone manifest fingerprinting rather than being silently omitted.
@@ -308,13 +314,15 @@ identities outside timing. The guard comparison uses five batches of 10,000
 `read_to_string`/comparison operations versus 100,000 comparisons of already-read
 bytes, with setup outside timing. No concurrent compilation/verification.
 
-- Release build, Rust **251 passed / three ignored**, formatting,
+- Release build, Rust **252 passed / three ignored**, formatting,
   all-target/all-feature Clippy and `git diff --check` pass.
 - The initial implementation passes both `scripts/verify.sh` variants, including
   `VERIFY_ARBITRARY_BUILDER=1`. Later virtual-marker/package-key changes pass
   `bash scripts/smoke.sh`; stock/native bytes and No-op match. Prepared-config
   sharing also passes `python3 scripts/correctness_compile_isolation.py` (JIT),
   covering mode changes, warm reuse, incremental builds and failure/recovery.
+  Compiler snapshots additionally pass `--worker-mode aot`, with no No-op
+  recompilation or leftover snapshot files; ephemeral paths are absent from metadata.
 - Coverage includes generated-primary visibility, config reload/AOT key sensitivity,
   patched/isolation source separation, duplicate fields/invalid unknown metadata/UTF-8 rejection,
   changed resolution rejected before actions/manifest generation/AOT publication,

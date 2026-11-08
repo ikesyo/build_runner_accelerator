@@ -60,7 +60,7 @@ pub(crate) struct PreparedConfig {
     /// Exact original bytes; consumers revalidate at build/cache boundaries.
     pub(crate) contents: String,
     /// Absent when the compiler uses the original configuration unchanged.
-    pub(crate) compiler: Option<PackageConfigFile>,
+    pub(crate) compiler: Option<(PackageConfigFile, String)>,
 }
 
 /// Called before loading a workspace, including native-only and prewarm paths.
@@ -76,7 +76,8 @@ pub(crate) fn prepare(root: &Path) -> io::Result<PreparedConfig> {
     let compiler = if path == original_path {
         None
     } else {
-        Some(serde_json::from_str(&fs::read_to_string(&path)?)?)
+        let contents = fs::read_to_string(&path)?;
+        Some((serde_json::from_str(&contents)?, contents))
     };
     Ok(PreparedConfig {
         path,
@@ -422,6 +423,13 @@ mod tests {
             fs::read(&path).unwrap(),
             serde_json::to_vec(&config).unwrap()
         );
+        let (prepared_path, prepared_contents) = workspace.compiler_package_config();
+        assert_eq!(prepared_path, path);
+        assert_eq!(
+            prepared_contents.as_bytes(),
+            serde_json::to_vec(&config).unwrap()
+        );
+        assert_ne!(prepared_contents.as_bytes(), fs::read(&path).unwrap());
         // A version transition must remove the old selection before compilation.
         assert!(!legacy_output_defaults(root).unwrap());
         fs::write(

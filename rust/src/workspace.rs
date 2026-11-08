@@ -88,6 +88,8 @@ pub struct Workspace {
     sources: Arc<OnceLock<Arc<AssetSources>>>,
     package_config_identity: String,
     package_config_contents: Arc<String>,
+    compiler_config_path: PathBuf,
+    compiler_config_contents: Arc<String>,
     asset_index: Arc<Mutex<BTreeMap<String, Arc<Vec<String>>>>>,
     find_assets_cache: Arc<Mutex<FindAssetsCache>>,
     asset_read_cache: Arc<Mutex<BTreeMap<String, Arc<Vec<u8>>>>>,
@@ -138,7 +140,11 @@ impl Workspace {
         let root = canonicalize(root)?;
         let root_package = package_name(&root.join("pubspec.yaml"))?;
         let prepared = crate::runner_compatibility::prepare(&root)?;
-        let compiler_config = prepared.compiler.as_ref().unwrap_or(&prepared.original);
+        let compiler_config = prepared
+            .compiler
+            .as_ref()
+            .map(|(config, _)| config)
+            .unwrap_or(&prepared.original);
         let package_config_identity = stable_package_config_identity(compiler_config);
         let config_dir = prepared
             .path
@@ -157,7 +163,11 @@ impl Workspace {
         }
         packages.insert(root_package.clone(), root.clone());
         let mut compiler_packages = BTreeMap::new();
-        let parsed = prepared.compiler.unwrap_or(prepared.original);
+        let original_contents = Arc::new(prepared.contents);
+        let (parsed, compiler_contents) = match prepared.compiler {
+            Some((config, contents)) => (config, Arc::new(contents)),
+            None => (prepared.original, Arc::clone(&original_contents)),
+        };
         for entry in parsed.packages {
             compiler_packages.insert(entry.name, resolve_uri(config_dir, &entry.root_uri));
         }
@@ -170,7 +180,9 @@ impl Workspace {
             compiler_packages,
             sources: Arc::new(OnceLock::new()),
             package_config_identity,
-            package_config_contents: Arc::new(prepared.contents),
+            package_config_contents: original_contents,
+            compiler_config_path: prepared.path,
+            compiler_config_contents: compiler_contents,
             asset_index: Arc::new(Mutex::new(BTreeMap::new())),
             find_assets_cache: Arc::new(Mutex::new(BTreeMap::new())),
             asset_read_cache: Arc::new(Mutex::new(BTreeMap::new())),
@@ -189,6 +201,15 @@ impl Workspace {
             ));
         }
         Ok(bytes)
+    }
+
+    /// Captured compiler selection; do not reselect a mutable global file when
+    /// compiling an artifact under this Workspace's identity.
+    pub(crate) fn compiler_package_config(&self) -> (&Path, &str) {
+        (
+            &self.compiler_config_path,
+            self.compiler_config_contents.as_str(),
+        )
     }
 
     pub fn builder_manifest_fingerprint(&self) -> io::Result<String> {

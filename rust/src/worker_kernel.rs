@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -510,6 +510,48 @@ struct AotContext {
     sdk_metadata_path: PathBuf,
 }
 
+/// A compile-only snapshot in the selected config's directory: relative URIs
+/// retain their base. Unique exclusive creation prevents competing preparations
+/// from rewriting this compiler's inputs; no cache-hit I/O is added.
+struct CompilerConfigSnapshot {
+    path: PathBuf,
+}
+
+impl CompilerConfigSnapshot {
+    fn create(workspace: &Workspace) -> io::Result<Self> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let (selected, contents) = workspace.compiler_package_config();
+        let parent = selected
+            .parent()
+            .ok_or_else(|| io::Error::other("compiler package configuration has no parent"))?;
+        loop {
+            let path = parent.join(format!(
+                ".worker-aot-packages-{}-{}.json",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed),
+            ));
+            let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            };
+            let snapshot = Self { path };
+            let result = file
+                .write_all(contents.as_bytes())
+                .and_then(|()| file.flush());
+            drop(file);
+            result?;
+            return Ok(snapshot);
+        }
+    }
+}
+
+impl Drop for CompilerConfigSnapshot {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 fn prepare_aot_context(
     workspace: &Workspace,
     dart_binary: &str,
@@ -724,11 +766,11 @@ fn prepare_worker_aot(
     if let Some(parent) = temp_aot.parent() {
         fs::create_dir_all(parent)?;
     }
-    let package_config = crate::runner_compatibility::package_config(&context.workspace.root);
+    let package_config = CompilerConfigSnapshot::create(&context.workspace)?;
     let compile_start = Instant::now();
     let status = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "exe"])
-        .arg(format!("--packages={}", package_config.display()))
+        .arg(format!("--packages={}", package_config.path.display()))
         .arg(format!("--depfile={}", temp_depfile.display()))
         .arg(&context.worker_path)
         .arg("-o")
@@ -754,6 +796,7 @@ fn prepare_worker_aot(
         &context.workspace,
         &context.sdk_root,
         &context.worker_path,
+        &package_config.path,
         &temp_depfile,
         &temp_aot,
         &context.cache_key,
@@ -960,14 +1003,14 @@ fn build_aot_metadata(
     workspace: &Workspace,
     sdk_root: &Path,
     worker_path: &Path,
+    compiler_config: &Path,
     depfile: &Path,
     executable_path: &Path,
     cache_key: &str,
 ) -> io::Result<AotMetadata> {
     let dependencies = parse_depfile_dependencies(&fs::read_to_string(depfile)?)
         .ok_or_else(|| io::Error::other("AOT compiler depfile has no dependencies"))?;
-    let package_config_path =
-        canonicalize(crate::runner_compatibility::package_config(&workspace.root))?;
+    let package_config_path = canonicalize(compiler_config)?;
     let canonical_sdk_root = canonicalize(sdk_root)?;
     let mut dependency_digests = BTreeMap::new();
     for dependency in dependencies {
@@ -1803,6 +1846,106 @@ mod tests {
     use std::thread;
 
     #[test]
+    fn compiler_snapshot_keeps_prepared_roots_and_is_not_a_persistent_dependency() {
+        let root = std::env::temp_dir().join(format!("aot-config-snapshot-{}", std::process::id()));
+        fs::create_dir_all(root.join(".dart_tool/build_runner_accelerator")).unwrap();
+        fs::create_dir_all(root.join("first")).unwrap();
+        fs::create_dir_all(root.join("second")).unwrap();
+        fs::create_dir_all(root.join("sdk/lib/_internal")).unwrap();
+        fs::write(root.join("pubspec.yaml"), "name: app\n").unwrap();
+        let original_path = root.join(".dart_tool/package_config.json");
+        let original = r#"{"configVersion":2,"packages":[{"name":"dep","rootUri":"../first/"}]}"#;
+        fs::write(&original_path, original).unwrap();
+        let workspace = crate::workspace::Workspace::load(root.clone()).unwrap();
+        // A later preparation chooses a different compiler file, leaving the
+        // original unchanged. Reading only the original cannot detect this.
+        let selector = root.join(".dart_tool/build_runner_accelerator/runner-package_config.json");
+        fs::write(
+            &selector,
+            r#"{"packages":[{"name":"dep","rootUri":"../../second/"}]}"#,
+        )
+        .unwrap();
+        assert_ne!(
+            crate::runner_compatibility::package_config(&root),
+            original_path
+        );
+        let snapshot = super::CompilerConfigSnapshot::create(&workspace).unwrap();
+        let snapshot_path = snapshot.path.clone();
+        assert_eq!(fs::read_to_string(&snapshot.path).unwrap(), original);
+        let parsed: serde_json::Value = serde_json::from_str(original).unwrap();
+        let resolved = crate::workspace::resolve_uri(
+            snapshot.path.parent().unwrap(),
+            parsed["packages"][0]["rootUri"].as_str().unwrap(),
+        );
+        assert_eq!(
+            super::canonicalize(resolved).unwrap(),
+            super::canonicalize(root.join("first")).unwrap()
+        );
+        // Rewrites, including change-and-restore, never touch this snapshot.
+        fs::write(&selector, original).unwrap();
+        assert_eq!(fs::read_to_string(&snapshot.path).unwrap(), original);
+        let second = super::CompilerConfigSnapshot::create(&workspace).unwrap();
+        assert_ne!(snapshot.path, second.path);
+        let second_path = second.path.clone();
+        drop(second);
+        assert!(!second_path.exists());
+        let worker = root.join("worker.dart");
+        let artifact = root.join("worker");
+        fs::write(&worker, "worker").unwrap();
+        fs::write(&artifact, "artifact").unwrap();
+        fs::write(root.join("sdk/version"), "sdk").unwrap();
+        fs::write(
+            root.join("sdk/lib/_internal/allowed_experiments.json"),
+            "{}",
+        )
+        .unwrap();
+        let escape = |path: &Path| {
+            path.to_string_lossy()
+                .replace('\\', "\\\\")
+                .replace(' ', "\\ ")
+        };
+        let depfile = root.join("worker.d");
+        fs::write(
+            &depfile,
+            format!("out: {} {}\n", escape(&worker), escape(&snapshot.path)),
+        )
+        .unwrap();
+        let metadata = super::build_aot_metadata(
+            &workspace,
+            &root.join("sdk"),
+            &worker,
+            &snapshot.path,
+            &depfile,
+            &artifact,
+            "snapshot-key",
+        )
+        .unwrap();
+        assert_eq!(metadata.dependencies.len(), 1);
+        drop(snapshot);
+        assert!(!snapshot_path.exists());
+        let metadata_path = root.join("worker.sdk");
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        assert!(super::aot_metadata_is_current(
+            &artifact,
+            &metadata_path,
+            &workspace,
+            &root.join("sdk"),
+            &worker,
+            "snapshot-key",
+        ));
+        let mut failed_path = None;
+        let failed = (|| -> std::io::Result<()> {
+            let snapshot = super::CompilerConfigSnapshot::create(&workspace)?;
+            failed_path = Some(snapshot.path.clone());
+            Command::new(root.join("missing-compiler")).status()?;
+            Ok(())
+        })();
+        assert!(failed.is_err());
+        assert!(!failed_path.unwrap().exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn aot_key_tracks_lock_contents_through_manifest_and_rejects_read_errors() {
         let root = std::env::temp_dir().join(format!("aot-lock-key-{}", std::process::id()));
         fs::create_dir_all(root.join(".dart_tool")).unwrap();
@@ -1905,6 +2048,7 @@ mod tests {
                 &workspace,
                 &root.join("sdk"),
                 &worker,
+                &config_path,
                 &depfile,
                 &artifact,
                 &second,
