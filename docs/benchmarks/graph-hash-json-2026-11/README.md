@@ -255,6 +255,9 @@ compiler-config sibling from captured bytes, preserving relative URI bases;
 it is excluded from persistent dependencies and removed on completion/error.
 Its `._` prefix uses the existing source exclusion, so abrupt termination
 cannot leave a compiler snapshot that a later source scan discovers.
+Unix snapshots are created owner-only. Automatic orphan reclamation is deferred:
+each killed compile leaves one config-sized file; distinguishing active compilers
+would add lifecycle management beyond this change. Normal/error cleanup remains.
 Normal configs share the original buffer; patched modes retain one additional
 compiler-config buffer without rereading/reparsing it. Cache hits create no file.
 Manifest-preparation failures can still stop watch; no automatic retry policy
@@ -262,7 +265,7 @@ is added. Supported config edits retain their existing event-based reloads.
 BLAKE3-256 tags/values and worker-source/public-builder/release verification
 contracts are unchanged; only the AOT key shape changes. Lock read errors now
 also fail standalone manifest fingerprinting rather than being silently omitted.
-No process cache, shared ownership type, new dependency or platform code is added.
+No process cache, shared ownership type or new dependency is added.
 
 ### Measurements and limits
 

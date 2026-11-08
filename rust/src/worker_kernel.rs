@@ -532,7 +532,14 @@ impl CompilerConfigSnapshot {
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed),
             ));
-            let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = match options.open(&path) {
                 Ok(file) => file,
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(error) => return Err(error),
@@ -1863,6 +1870,14 @@ mod tests {
         // workspace must not discover it, even with all JSON files included.
         let orphan = super::CompilerConfigSnapshot::create(&workspace).unwrap();
         let orphan_path = orphan.path.clone();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&orphan_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
         std::mem::forget(orphan);
         let reloaded = crate::workspace::Workspace::load(root.clone()).unwrap();
         assert!(
