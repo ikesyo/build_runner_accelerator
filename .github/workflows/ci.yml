@@ -668,6 +668,12 @@ jobs:
       - name: Build native frontend
         shell: bash
         run: cargo build --locked --release --manifest-path rust/Cargo.toml --target ${{ matrix.rust_target }}
+      - name: Verify Windows compiler-config ACL
+        if: runner.os == 'Windows'
+        shell: bash
+        run: >-
+          cargo test --locked --manifest-path rust/Cargo.toml --target ${{ matrix.rust_target }}
+          compiler_config_has_protected_owner_acl_and_exclusive_creation
       - name: Native binary smoke
         shell: bash
         run: |

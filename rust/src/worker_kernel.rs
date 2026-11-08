@@ -519,6 +519,9 @@ struct CompilerConfigSnapshot {
     path: PathBuf,
 }
 
+#[cfg(windows)]
+mod windows;
+
 impl CompilerConfigSnapshot {
     fn create(workspace: &Workspace) -> io::Result<Self> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -532,14 +535,7 @@ impl CompilerConfigSnapshot {
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed),
             ));
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let mut file = match options.open(&path) {
+            let mut file = match create_compiler_config(&path) {
                 Ok(file) => file,
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(error) => return Err(error),
@@ -554,6 +550,21 @@ impl CompilerConfigSnapshot {
         }
     }
 }
+
+#[cfg(not(windows))]
+fn create_compiler_config(path: &Path) -> io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
+#[cfg(windows)]
+use windows::create_compiler_config;
 
 impl Drop for CompilerConfigSnapshot {
     fn drop(&mut self) {
