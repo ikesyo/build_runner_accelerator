@@ -122,6 +122,38 @@ class CiTimingSummaryTest(unittest.TestCase):
             self.assertEqual(completed.stdout, "")
             self.assertIn("run JSON must be an object", completed.stderr)
 
+    def test_cli_rejects_invalid_nested_run_attempt_and_step_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            jobs_path = Path(directory) / "jobs.json"
+            run_path = Path(directory) / "run.json"
+            command = [sys.executable, "-B", str(Path(__file__).with_name(
+                "summarize_ci_timings.py")), str(jobs_path)]
+            jobs_path.write_text('{"jobs": []}')
+            for attempt in (None, "2"):
+                with self.subTest(run_attempt=attempt):
+                    run_path.write_text(json.dumps({"run_attempt": attempt}))
+                    completed = subprocess.run(command + ["--run-json", str(run_path)],
+                                               text=True, capture_output=True)
+                    self.assertEqual(completed.returncode, 2)
+                    self.assertEqual(completed.stdout, "")
+                    self.assertIn("run_attempt must be a positive integer", completed.stderr)
+
+            for steps in ({}, 0, "invalid"):
+                with self.subTest(steps=steps):
+                    jobs_path.write_text(json.dumps({"jobs": [{"steps": steps}]}))
+                    completed = subprocess.run(command, text=True, capture_output=True)
+                    self.assertEqual(completed.returncode, 2)
+                    self.assertEqual(completed.stdout, "")
+                    self.assertIn("must be an array", completed.stderr)
+
+            for name in (None, 7):
+                with self.subTest(step_name=name):
+                    jobs_path.write_text(json.dumps({"jobs": [{"steps": [{"name": name}]}]}))
+                    completed = subprocess.run(command, text=True, capture_output=True)
+                    self.assertEqual(completed.returncode, 2)
+                    self.assertEqual(completed.stdout, "")
+                    self.assertIn("step names for job", completed.stderr)
+
     def test_serial_steps_show_longest_completed_without_guessing_setup(self):
         jobs = [{"name": "serial job", "status": "completed",
                  "started_at": "2026-01-01T00:00:00Z",

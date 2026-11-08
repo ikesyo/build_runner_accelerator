@@ -82,11 +82,13 @@ def summarize(payload, run=None):
         raise ValueError("every item in the jobs array must be an object")
     if run is not None and not isinstance(run, dict):
         raise ValueError("run JSON must be an object")
+    attempt = run.get("run_attempt", 1) if run is not None else 1
+    if type(attempt) is not int or attempt < 1:
+        raise ValueError("run_attempt must be a positive integer")
     lines = []
     if run:
         sha = run.get("head_sha")
         created = run.get("created_at")
-        attempt = run.get("run_attempt", 1)
         if sha:
             lines.append(f"Source SHA: {sha}")
         if created:
@@ -102,7 +104,14 @@ def summarize(payload, run=None):
     for job in jobs:
         name = job.get("name") or f"job {job.get('id', '?')}"
         job_time = seconds(job.get("started_at"), job.get("completed_at"))
-        steps = job.get("steps") or []
+        steps = job.get("steps")
+        if steps is None:
+            steps = []
+        if not isinstance(steps, list):
+            raise ValueError(f"steps for job {name!r} must be an array")
+        if any("name" in step and not isinstance(step["name"], str)
+               for step in steps if isinstance(step, dict)):
+            raise ValueError(f"step names for job {name!r} must be strings")
         valid_steps = [(step, seconds(step.get("started_at"), step.get("completed_at")))
                        for step in steps if isinstance(step, dict)]
         ordinary = [(step, elapsed) for step, elapsed in valid_steps
