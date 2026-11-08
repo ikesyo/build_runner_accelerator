@@ -1,7 +1,7 @@
 //! Isolated backport of dart-lang/build#5197 for build_runner 2.15.3/2.16.0/2.16.1.
 //! Never edits Pub's package cache or the application's package configuration.
 use crate::digest::digest_bytes;
-use crate::workspace::{canonicalize, resolve_uri};
+use crate::workspace::{PackageConfigFile, canonicalize, resolve_uri};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
@@ -53,22 +53,47 @@ thread_local! {
     static PREPARE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// Parsed original and effective compiler views from one preparation.
+pub(crate) struct PreparedConfig {
+    pub(crate) path: PathBuf,
+    pub(crate) original: PackageConfigFile,
+    /// Exact original bytes; consumers revalidate at build/cache boundaries.
+    pub(crate) contents: String,
+    /// Absent when the compiler uses the original configuration unchanged.
+    pub(crate) compiler: Option<(PackageConfigFile, String)>,
+}
+
 /// Called before loading a workspace, including native-only and prewarm paths.
 /// The effective resolution participates in all existing graph/compiler keys.
-pub(crate) fn prepare(root: &Path) -> io::Result<PathBuf> {
+pub(crate) fn prepare(root: &Path) -> io::Result<PreparedConfig> {
     #[cfg(test)]
     PREPARE_CALLS.with(|calls| calls.set(calls.get() + 1));
-    let original = root.join(".dart_tool/package_config.json");
-    let mut config: Value = serde_json::from_slice(&fs::read(&original)?)?;
-    let packages = config["packages"]
-        .as_array_mut()
-        .ok_or_else(|| io::Error::other("package configuration has no packages"))?;
-    let runner = packages
-        .iter()
-        .find(|entry| entry["name"] == "build_runner");
-    let runner_root = runner
-        .and_then(|entry| entry["rootUri"].as_str())
-        .map(|uri| resolve_uri(original.parent().unwrap(), uri));
+    let original_path = root.join(".dart_tool/package_config.json");
+    let contents = fs::read_to_string(&original_path)?;
+    let original: PackageConfigFile = serde_json::from_str(&contents)?;
+    let path = prepare_compiler(root, &original_path, &original, &contents)?;
+    // Isolation hits return the validated on-disk selection, not the input DOM.
+    let compiler = if path == original_path {
+        None
+    } else {
+        let contents = fs::read_to_string(&path)?;
+        Some((serde_json::from_str(&contents)?, contents))
+    };
+    Ok(PreparedConfig {
+        path,
+        original,
+        compiler,
+        contents,
+    })
+}
+
+fn prepare_compiler(
+    root: &Path,
+    original: &Path,
+    parsed: &PackageConfigFile,
+    contents: &str,
+) -> io::Result<PathBuf> {
+    let runner_root = parsed.runner_root(original.parent().unwrap());
     let is_legacy = runner_root.as_ref().is_some_and(|path| {
         fs::read_to_string(path.join("pubspec.yaml")).is_ok_and(|spec| {
             spec.lines().any(|line| {
@@ -85,12 +110,18 @@ pub(crate) fn prepare(root: &Path) -> io::Result<PathBuf> {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
-        return if crate::compile_isolation::enabled() {
-            crate::compile_isolation::prepare(root, config)
-        } else {
-            Ok(original)
-        };
+        if !crate::compile_isolation::enabled() {
+            return Ok(original.to_path_buf());
+        }
     }
+    // Only rewriting paths needs a full DOM. Preserve the original metadata
+    // and object order by parsing the original text rather than reserializing
+    // the typed view with defaulted/omitted fields.
+    let mut config: Value = serde_json::from_str(contents)?;
+    if !is_legacy {
+        return crate::compile_isolation::prepare(root, config);
+    }
+    let packages = config["packages"].as_array_mut().unwrap();
     let runner_root = runner_root.unwrap();
     let mut files = BTreeMap::new();
     collect(&runner_root, Path::new("lib"), &mut files)?;
@@ -289,6 +320,10 @@ pub(crate) fn file_uri(path: &Path) -> String {
 mod tests {
     use super::*;
 
+    fn prepare(root: &Path) -> io::Result<PathBuf> {
+        super::prepare(root).map(|prepared| prepared.path)
+    }
+
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
@@ -388,6 +423,13 @@ mod tests {
             fs::read(&path).unwrap(),
             serde_json::to_vec(&config).unwrap()
         );
+        let (prepared_path, prepared_contents) = workspace.compiler_package_config();
+        assert_eq!(prepared_path, path);
+        assert_eq!(
+            prepared_contents.as_bytes(),
+            serde_json::to_vec(&config).unwrap()
+        );
+        assert_ne!(prepared_contents.as_bytes(), fs::read(&path).unwrap());
         // A version transition must remove the old selection before compilation.
         assert!(!legacy_output_defaults(root).unwrap());
         fs::write(

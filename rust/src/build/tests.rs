@@ -438,6 +438,89 @@ impl Drop for TemporaryWorkspace {
 }
 
 #[test]
+fn graph_identity_rejects_resolution_changes_before_build_actions() -> io::Result<()> {
+    let temporary = TemporaryWorkspace::new()?;
+    let path = temporary.0.join(".dart_tool/package_config.json");
+    fs::create_dir(temporary.0.join("old_dep"))?;
+    fs::write(
+        &path,
+        r#"{"configVersion":2,"packages":[{"name":"app","rootUri":"../"},{"name":"dep","rootUri":"../old_dep/"}]}"#,
+    )?;
+    let workspace = Workspace::load(temporary.0.clone())?;
+    let config = dirty_test_config(&[]);
+    let before = crate::assets::config_digest(&workspace, &config)?;
+    let original = fs::read(&path)?;
+    fs::create_dir(temporary.0.join("other"))?;
+    let replacement = path.with_extension("replacement");
+    fs::write(
+        &replacement,
+        r#"{"configVersion":2,"packages":[{"name":"app","rootUri":"../"},{"name":"dep","rootUri":"../other/"}]}"#,
+    )?;
+    #[cfg(windows)]
+    fs::remove_file(&path)?;
+    fs::rename(replacement, &path)?;
+    for stale in [&workspace, &workspace.clone()] {
+        assert!(
+            crate::assets::config_digest(stale, &config)
+                .unwrap_err()
+                .to_string()
+                .contains("changed after workspace preparation")
+        );
+    }
+    let options = crate::cli::Options::parse(
+        [
+            "build".to_owned(),
+            "--root".to_owned(),
+            temporary.0.to_string_lossy().into_owned(),
+        ]
+        .into_iter(),
+    )?;
+    let manifest =
+        crate::frontend::prepare_native_frontend(&options, &workspace, &GraphState::default());
+    assert!(
+        manifest
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("changed after workspace preparation")
+    );
+    let graph = super::graph_path(&workspace);
+    let result = super::run_with_config_session(
+        &options,
+        None,
+        workspace.clone(),
+        crate::frontend::NativeFrontend::new(config.clone()),
+        super::LoadedGraph::resident(GraphState::default(), &graph),
+        true,
+        &crate::watch::WatchChanges::default(),
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("changed after workspace preparation")
+    );
+    assert!(!graph.exists());
+    assert!(
+        !temporary
+            .0
+            .join(".dart_tool/build_runner_accelerator/builder-manifest.json")
+            .exists()
+    );
+    let fresh = Workspace::load(temporary.0.clone())?;
+    assert_ne!(
+        crate::workspace::canonicalize(workspace.package_root("dep")?)?,
+        crate::workspace::canonicalize(fresh.package_root("dep")?)?,
+    );
+    assert_ne!(before, crate::assets::config_digest(&fresh, &config)?);
+    fs::write(&path, &original)?;
+    assert_eq!(before, crate::assets::config_digest(&workspace, &config)?);
+    fs::remove_file(path)?;
+    assert!(crate::assets::config_digest(&workspace, &config).is_err());
+    Ok(())
+}
+
+#[test]
 fn commit_preserves_dynamic_output_reused_from_deleted_action() -> io::Result<()> {
     commit_reused_dynamic_output(b"obsolete output")
 }
@@ -1355,6 +1438,33 @@ fn undemanded_optional_stays_demandable_without_changing_successful_empty_reuse(
     // until an input changes; absence alone must not demand it repeatedly.
     state.actions.get_mut(&key).unwrap().status = "success".into();
     assert!(analyze(&state)?.lazy_force_keys.is_empty());
+    Ok(())
+}
+
+#[test]
+fn planning_declared_outputs_feed_later_phases_with_absent_missing_or_present_evidence()
+-> io::Result<()> {
+    let (_temporary, workspace, mut config, snapshot) = planning_fixture(1)?;
+    config.builders.truncate(2);
+    config.builders[1].runtime_extensions.as_mut().unwrap()[0].input_suffix = ".first.one".into();
+    let intermediate = "app|lib/input_00000.first.one";
+    for exists in [None, Some(false), Some(true)] {
+        let mut current = snapshot.clone();
+        if let Some(exists) = exists {
+            current.insert(
+                intermediate.into(),
+                crate::snapshot::AssetSnapshot {
+                    exists,
+                    digest: crate::digest::digest_bytes(b"previous evidence"),
+                    size: 17,
+                },
+            );
+        }
+        let plan = super::planning::create(&workspace, &GraphState::default(), &config, &current)?;
+        assert_eq!(plan.specs.len(), 2);
+        assert_eq!(plan.specs[1].input, intermediate);
+        assert_eq!(plan.specs[1].instance.phase, 1);
+    }
     Ok(())
 }
 

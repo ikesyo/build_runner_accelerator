@@ -377,6 +377,9 @@ fn generate_manifest(
     worker_entrypoint: &Path,
 ) -> io::Result<()> {
     let _wall = crate::wall::Span::new("manifest_generate");
+    // Cache hits are checked by the graph-key read before actions. On a miss,
+    // also check before launching code that publishes a generated manifest.
+    workspace.read_package_config()?;
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     let settings_json =
         serde_json::to_string(&options.build_arguments).map_err(io::Error::other)?;
@@ -680,6 +683,8 @@ pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
     if let Some(analysis_prewarm) = analysis_prewarm {
         analysis_prewarm.wait_for_children();
     }
+    // Prewarm does not run the graph-key validation used by build/watch.
+    workspace.read_package_config()?;
     println!("AOT prewarm ready: {}", artifact.display());
     Ok(())
 }

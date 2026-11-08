@@ -217,3 +217,96 @@ full builder/watch CI coverage. None is ruled out by these experiments.
 Further measurements update this report. Start with the affected case on main
 and proposal, two order-reversed pairs, reusing binaries/fixture/AOT. Add native,
 Clean/upgrade or more repetitions only for a specific unresolved question.
+
+## Follow-up: repeated constants and configuration work (2026-11-07)
+
+Against main `8728af5` (including #164 and #166), adopt local planning-marker
+and virtual-primary reuse, parsed package-config reuse and removal of redundant
+AOT lock/package-config components.
+These remove small repeated operations; **no E2E speedup is established**.
+Historical 2,004-placeholder / nine-configuration-hash diagnostics are not current
+savings measurements.
+
+### Candidate decisions
+
+Counts describe call paths, not an instrumented whole-build profile.
+
+| Candidate / code | Repeated work | Decision and boundary |
+| --- | --- | --- |
+| `<planned>`, `build/planning.rs::create` | Hash/format per declared normal output, including stale-output retries; present entries discard it | Adopt one local template per call, cloning only for absent/missing entries. Preserve phase visibility and retries; inserted strings still allocate. Zero-output calls now pay one extra digest |
+| `<virtual-primary>`, `snapshot.rs::scan_packages` | Four hashes per scanned package | Adopt one lazy template per scan: 4 × packages → one hash, or zero for no packages. Local 67-byte string plus insertion clones; no global state |
+| `<missing>`, `assets.rs`, `build/filtered.rs`, `worker/{asset_rpc,lazy}.rs` | Per newly recorded dependency/read, with existing deduplication | Defer: unknown remaining repetition; retaining a template adds a copy when used only once |
+| `workspace.rs::load`, `runner_compatibility.rs::prepare` | Ordinary config read/parse in runner preparation, compiler resolution and source resolution: three times on main | Adopt one preparation read/parse and a shared typed original view. Validate its bytes through the existing graph-key read before actions; patched compiler views remain separate |
+| Preparation DOM; `Workspace::package_config_identity` | Full DOM is only needed to rewrite legacy/isolation paths; normalized identity is already reused | Adopt deferred DOM construction from original text, preserving metadata/order. Validate unknown metadata and duplicate known fields in the typed pass; still read the validated compiler file after isolation cache hits |
+| `assets.rs::config_digest`, `build.rs` | Once in ordinary root-only builds, up to three times with filtered checks/preflight | Keep execution-time comparison with the stored preflight digest; unconditional reuse could hide changes during setup |
+| `frontend.rs::settings_fingerprint`, `Workspace::builder_manifest_fingerprint`; `manifest_generator.rs::package_resolution/cache_key` | Settings refreshes after generation; package-resolution key recomputes after compilation on a miss | Keep fresh observations and distinct raw-config, normalized-content and resolved-location identities, including JSON order and URI-base semantics |
+| `worker_kernel.rs::aot_cache_key` lock/package components | Manifest fingerprint already includes normalized lock bytes and the exact package-config identity | Adopt removal of both duplicate components. Lock removal saves read/normalize/hash; package removal saves 76 key bytes, with no extra read/hash saved. Lock read errors propagate; missing/empty remain distinct. Old AOT slots regenerate |
+| AOT metadata validation, `worker_kernel.rs`; initialization signature, `worker/pool.rs` | SDK/worker/dependency checks repeat across waiting/compilation; context, receipts and resident pool already retain compatible identities | Keep revalidation/publication gates and existing reuse. Defer another cached directory-name field for miss/wait-only repeats |
+
+Reuse stays within one preparation; commands and watch cycles load fresh
+Workspaces. The original config text (11,125 B here) is retained and shared by
+clones; patched modes retain an additional compiler-config buffer. Comparing
+bytes from the existing graph-key read adds no ordinary-path I/O, parsing or
+hashing. Manifest/AOT publication and prewarm retain their revalidation gates.
+AOT compile misses use the captured compiler config; cache hits create no file.
+BLAKE3 values/tags, JSON identity semantics and publication contracts remain
+unchanged; the simplified AOT key invalidates existing AOT slots.
+
+### Measurements and limits
+
+Linux x86_64 Xeon Platinum 8573C, two-CPU quota, stable Rust 1.98.1, Dart 3.13.3,
+default portable Release. Compilation and verification stop before timing.
+The existing planning fixture uses main/proposal then proposal/main, two samples
+each; no worker, launcher or IPC. Untimed plan/dirty/index dumps match byte-for-byte.
+
+| Inputs / marker calls before → after | Main planning µs (range) | Proposal planning µs (range) |
+| --- | --- | --- |
+| 250 / 2,000 → 1 | 6,813 (6,473–7,153) | 5,956 (5,657–6,255) |
+| 500 / 4,000 → 1 | 13,079.5 (12,499–13,660) | 12,328 (11,971–12,685) |
+
+These noisy two-sample medians cover only planning, not Workspace construction
+or build latency. Additional virtual-marker/package-component changes are assessed
+by removed work only. Separate `rustc -O` kernels give these scales:
+
+| Operation / input | Median kernel time | Interpretation |
+| --- | --- | --- |
+| 9 B marker: hash / hex / tagged String allocation / full digest / clone | 70.3 / 24.5 / 15.9 / 115.1 / 21.0 ns | Components are not additive. About 0.19–0.23 ms less marker work at 2,004 visits, depending on existing entries |
+| Initial config reuse: 11,125 B, 54 packages; read / typed parse / additional name copies | 2.383 / 15.087 / 1.750 µs | Rough net scale of 16 µs per ordinary preparation; not a Workspace-load timing |
+| Preparation parsing against `6e4bc2c`: DOM + typed / one typed pass with metadata validation | 61.320 µs (53.648–71.613) / 15.919 µs (15.506–17.316) | Same 11,125 B input and normalized identity; excludes file reads and Workspace construction |
+| Resolution guard: dedicated read/comparison → comparison of already-read 11,125 B | 2.816 µs (2.786–2.910) → 0.115 µs (0.107–0.121) | Incremental warm-buffer check only; existing graph-key read is common work, not eliminated |
+| Lock: 12,196 B; removed read/normalize/digest chain | 18.991 µs (18.805–19.756) | One removed operation per AOT key |
+
+These are kernel-based scale estimates, not strict latency bounds. Filesystem
+costs vary; no additional Clean/native/E2E campaign or memory claim is justified.
+
+### Reproduction and validation
+
+Build main and proposal Release/test executables with the same toolchain/cache,
+copying their emitted test binaries to the paths below before comparing:
+
+```bash
+cargo build --locked --release --manifest-path rust/Cargo.toml
+cargo test --locked --release --manifest-path rust/Cargo.toml --no-run
+python3 scripts/benchmark_plan_retention.py \
+  --baseline-bin /tmp/main-tests --candidate-bin /tmp/proposal-tests \
+  --inputs 250 500 --repeats 2
+```
+
+Isolated kernels link the same Release rlibs with `rustc -O`, use `black_box`
+inputs/results and `Instant`, and drop results inside each iteration. Use five
+batches of 100,000 operations for marker components, config read, typed
+`PackageConfigFile` parse and name clones; five of 10,000 for lock read → main
+`8728af5` normalization → `digest_bytes`. Exclude setup and concurrent work;
+fixture config size depends on local paths. Preparation parsing uses the types
+from `6e4bc2c` and this change, five batches of 10,000 parses each, dropping the
+old DOM before typed parsing and all results per iteration; compare normalized
+identities outside timing. The guard comparison uses five batches of 10,000
+`read_to_string`/comparison operations versus 100,000 comparisons of already-read
+bytes, with setup outside timing. No concurrent compilation/verification.
+
+Validation covers Rust tests (252 passed, three ignored), formatting, Clippy,
+Release builds, smoke and compile-isolation checks in JIT/AOT modes. Stock/native
+outputs match; No-op reuse, configuration invalidation, source/compiler
+separation and failure/recovery are covered. Both verification-script variants
+passed the initial implementation; full watch/builder suites and other-platform
+execution remain CI coverage. No E2E speedup is claimed.

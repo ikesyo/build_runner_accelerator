@@ -87,6 +87,9 @@ pub struct Workspace {
     compiler_packages: BTreeMap<String, PathBuf>,
     sources: Arc<OnceLock<Arc<AssetSources>>>,
     package_config_identity: String,
+    package_config_contents: Arc<String>,
+    compiler_config_path: PathBuf,
+    compiler_config_contents: Arc<String>,
     asset_index: Arc<Mutex<BTreeMap<String, Arc<Vec<String>>>>>,
     find_assets_cache: Arc<Mutex<FindAssetsCache>>,
     asset_read_cache: Arc<Mutex<BTreeMap<String, Arc<Vec<u8>>>>>,
@@ -95,12 +98,16 @@ pub struct Workspace {
 }
 
 #[derive(Debug, Deserialize)]
-struct PackageConfigFile {
+pub(crate) struct PackageConfigFile {
     #[serde(rename = "buildRunnerAcceleratorCompileIsolation", default)]
     compile_isolation: Option<String>,
     #[serde(rename = "configVersion")]
     config_version: Option<u32>,
     packages: Vec<PackageConfigEntry>,
+    // Validate unknown metadata as JSON values too. Ignoring it would accept
+    // invalid surrogates/out-of-range numbers rejected by the previous DOM pass.
+    #[serde(flatten)]
+    _extra: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +119,17 @@ struct PackageConfigEntry {
     package_uri: String,
     #[serde(rename = "languageVersion", default)]
     language_version: String,
+    #[serde(flatten)]
+    _extra: BTreeMap<String, serde_json::Value>,
+}
+
+impl PackageConfigFile {
+    pub(crate) fn runner_root(&self, config_dir: &Path) -> Option<PathBuf> {
+        self.packages
+            .iter()
+            .find(|entry| entry.name == "build_runner")
+            .map(|entry| resolve_uri(config_dir, &entry.root_uri))
+    }
 }
 
 impl Workspace {
@@ -121,32 +139,39 @@ impl Workspace {
     pub fn load(root: PathBuf) -> io::Result<Self> {
         let root = canonicalize(root)?;
         let root_package = package_name(&root.join("pubspec.yaml"))?;
-        let package_config_path = crate::runner_compatibility::prepare(&root)?;
-        let package_config = fs::read_to_string(&package_config_path)?;
-        let parsed: PackageConfigFile =
-            serde_json::from_str(&package_config).map_err(io::Error::other)?;
-        let package_config_identity = stable_package_config_identity(&parsed);
-        let config_dir = package_config_path
+        let prepared = crate::runner_compatibility::prepare(&root)?;
+        let compiler_config = prepared
+            .compiler
+            .as_ref()
+            .map(|(config, _)| config)
+            .unwrap_or(&prepared.original);
+        let package_config_identity = stable_package_config_identity(compiler_config);
+        let config_dir = prepared
+            .path
             .parent()
             .ok_or_else(|| io::Error::other("package_config.json has no parent"))?;
 
-        let mut compiler_packages = BTreeMap::new();
-        for entry in parsed.packages {
-            compiler_packages.insert(entry.name, resolve_uri(config_dir, &entry.root_uri));
-        }
-        compiler_packages.insert(root_package.clone(), root.clone());
         // A compile-only backport must not change builder-visible dependency
         // bytes, source enumeration, or package paths.
         let original_path = root.join(".dart_tool/package_config.json");
-        let original: PackageConfigFile = serde_json::from_slice(&fs::read(&original_path)?)?;
         let mut packages = BTreeMap::new();
-        for entry in original.packages {
+        for entry in &prepared.original.packages {
             packages.insert(
-                entry.name,
+                entry.name.clone(),
                 resolve_uri(original_path.parent().unwrap(), &entry.root_uri),
             );
         }
         packages.insert(root_package.clone(), root.clone());
+        let mut compiler_packages = BTreeMap::new();
+        let original_contents = Arc::new(prepared.contents);
+        let (parsed, compiler_contents) = match prepared.compiler {
+            Some((config, contents)) => (config, Arc::new(contents)),
+            None => (prepared.original, Arc::clone(&original_contents)),
+        };
+        for entry in parsed.packages {
+            compiler_packages.insert(entry.name, resolve_uri(config_dir, &entry.root_uri));
+        }
+        compiler_packages.insert(root_package.clone(), root.clone());
 
         Ok(Self {
             root,
@@ -155,6 +180,9 @@ impl Workspace {
             compiler_packages,
             sources: Arc::new(OnceLock::new()),
             package_config_identity,
+            package_config_contents: original_contents,
+            compiler_config_path: prepared.path,
+            compiler_config_contents: compiler_contents,
             asset_index: Arc::new(Mutex::new(BTreeMap::new())),
             find_assets_cache: Arc::new(Mutex::new(BTreeMap::new())),
             asset_read_cache: Arc::new(Mutex::new(BTreeMap::new())),
@@ -163,13 +191,38 @@ impl Workspace {
         })
     }
 
+    /// Reuse this read for graph identity while rejecting a stale resolution.
+    /// Keep the original text, not another digest or parsed copy, for comparison.
+    pub(crate) fn read_package_config(&self) -> io::Result<Vec<u8>> {
+        let bytes = fs::read(self.root.join(".dart_tool/package_config.json"))?;
+        if bytes != self.package_config_contents.as_bytes() {
+            return Err(io::Error::other(
+                "package_config.json changed after workspace preparation; rerun after dependency resolution finishes",
+            ));
+        }
+        Ok(bytes)
+    }
+
+    /// Captured compiler selection; do not reselect a mutable global file when
+    /// compiling an artifact under this Workspace's identity.
+    pub(crate) fn compiler_package_config(&self) -> (&Path, &str) {
+        (
+            &self.compiler_config_path,
+            self.compiler_config_contents.as_str(),
+        )
+    }
+
     pub fn builder_manifest_fingerprint(&self) -> io::Result<String> {
         let mut bytes = b"build-runner-accelerator-manifest-v4\0".to_vec();
         bytes.extend_from_slice(self.package_config_identity.as_bytes());
         bytes.push(0);
-        if let Ok(contents) = fs::read(self.root.join("pubspec.lock")) {
-            bytes.extend_from_slice(&normalize_text_bytes(&contents));
-            bytes.push(0xfe);
+        match fs::read(self.root.join("pubspec.lock")) {
+            Ok(contents) => {
+                bytes.extend_from_slice(&normalize_text_bytes(&contents));
+                bytes.push(0xfe);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
         }
         // Pub's roots and direct dependency graph can change while the
         // package configuration and lockfile remain byte-identical. Those
@@ -1043,6 +1096,88 @@ mod tests {
         assert!(path.is_dir());
         #[cfg(windows)]
         assert!(!path.as_os_str().to_string_lossy().starts_with(r"\\?\"));
+    }
+
+    #[test]
+    fn preparation_preserves_json_validation_for_known_and_unknown_fields() {
+        let temp = TempDir::new();
+        let tool = temp.path().join(".dart_tool");
+        fs::create_dir_all(&tool).unwrap();
+        fs::write(temp.path().join("pubspec.yaml"), "name: app\n").unwrap();
+        let config = tool.join("package_config.json");
+        for (json, valid) in [
+            (r#"{"packages":[],"packages":[]}"#, false),
+            (
+                r#"{"packages":[],"configVersion":2,"configVersion":2}"#,
+                false,
+            ),
+            (
+                r#"{"packages":[{"name":"app","name":"app","rootUri":"../"}]}"#,
+                false,
+            ),
+            (
+                r#"{"packages":[{"name":"app","rootUri":"../","rootUri":"../"}]}"#,
+                false,
+            ),
+            (r#"{"packages":[],"metadata":"\uD800"}"#, false),
+            (r#"{"packages":[],"metadata":1e999}"#, false),
+            (
+                r#"{"packages":[{"name":"app","rootUri":"../","metadata":{"text":"\uD800"}}]}"#,
+                false,
+            ),
+            (
+                r#"{"packages":[{"name":"app","rootUri":"../","metadata":[1e999]}]}"#,
+                false,
+            ),
+            (
+                r#"{"packages":[],"metadata":{"b":1,"a":[true,null,"日本語",1e308]}}"#,
+                true,
+            ),
+            (r#"{"packages":[],"metadata":1,"metadata":2}"#, true),
+            (
+                r#"{"packages":[{"name":"app","rootUri":"../","metadata":{"z":2,"a":1}}]}"#,
+                true,
+            ),
+        ] {
+            fs::write(&config, json).unwrap();
+            assert_eq!(
+                super::Workspace::load(temp.path().to_path_buf()).is_ok(),
+                valid,
+                "{json}",
+            );
+        }
+        fs::write(&config, b"{\"packages\":[],\"metadata\":\"\xff\"}").unwrap();
+        assert!(super::Workspace::load(temp.path().to_path_buf()).is_err());
+    }
+
+    #[test]
+    fn ordinary_resolution_reuses_both_views_but_reloads_at_preparation_boundaries() {
+        let temp = TempDir::new();
+        let tool = temp.path().join(".dart_tool");
+        fs::create_dir_all(&tool).unwrap();
+        fs::write(temp.path().join("pubspec.yaml"), "name: app\n").unwrap();
+        let config = tool.join("package_config.json");
+        for (directory, language) in [("first", "3.11"), ("second", "3.13")] {
+            fs::create_dir_all(temp.path().join(directory)).unwrap();
+            fs::write(
+                &config,
+                format!(
+                    r#"{{"configVersion":2,"packages":[{{"name":"dep","rootUri":"../{directory}/","packageUri":"lib/","languageVersion":"{language}"}}]}}"#
+                ),
+            )
+            .unwrap();
+            let workspace = super::Workspace::load(temp.path().to_path_buf()).unwrap();
+            assert_eq!(workspace.packages, workspace.compiler_packages);
+            assert_eq!(
+                super::canonicalize(&workspace.packages["dep"]).unwrap(),
+                super::canonicalize(temp.path().join(directory)).unwrap()
+            );
+            let parsed = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+            assert_eq!(
+                workspace.package_config_identity(),
+                super::stable_package_config_identity(&parsed)
+            );
+        }
     }
 
     #[test]
