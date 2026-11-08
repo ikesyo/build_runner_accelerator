@@ -14,8 +14,10 @@ import sys
 
 def parse_time(value):
     """Parse an ISO timestamp; reject naive times instead of guessing a zone."""
-    if not value:
+    if value is None:
         return None
+    if not isinstance(value, str):
+        raise ValueError(f"timestamp must be a string or null: {value!r}")
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         # Actions uses year 0001 as a placeholder for matrix steps skipped by

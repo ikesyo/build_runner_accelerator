@@ -99,6 +99,25 @@ class CiTimingSummaryTest(unittest.TestCase):
         self.assertEqual(completed.stdout, "")
         self.assertIn("timezone offset", completed.stderr)
 
+    def test_cli_rejects_non_string_timestamps_but_accepts_null(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.json"
+            command = [sys.executable, "-B", str(Path(__file__).with_name(
+                "summarize_ci_timings.py")), str(path)]
+            for value in (123, False, 0, []):
+                with self.subTest(timestamp=value):
+                    path.write_text(json.dumps({"jobs": [{"started_at": value,
+                                                           "completed_at": None}]}))
+                    completed = subprocess.run(command, text=True, capture_output=True)
+                    self.assertEqual(completed.returncode, 2)
+                    self.assertEqual(completed.stdout, "")
+                    self.assertIn("timestamp must be a string or null", completed.stderr)
+
+            path.write_text('{"jobs":[{"started_at":null,"completed_at":null}]}')
+            completed = subprocess.run(command, text=True, capture_output=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("Job: incomplete", completed.stdout)
+
     def test_cli_reports_malformed_json_and_jobs_shape_with_exit_two(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "jobs.json"

@@ -94,8 +94,12 @@ for ((attempt = 0; attempt < 100; attempt++)); do
   workers_exited=1
   for worker in "$drain_tmp/ready-success" "$drain_tmp/ready-fail"; do
     worker_pid=$(cat "$worker")
-    worker_state=$(ps -o stat= -p "$worker_pid" 2>/dev/null || true)
-    if [[ -n "$worker_state" && "$worker_state" != Z* ]]; then
+    if ! worker_state=$(ps -o stat= -p "$worker_pid"); then
+      printf 'pool test: cannot inspect worker %s\n' "$worker_pid" >&2
+      exit 1
+    fi
+    [[ -n "$worker_state" ]] || { printf 'pool test: missing worker state for %s\n' "$worker_pid" >&2; exit 1; }
+    if [[ "$worker_state" != Z* ]]; then
       workers_exited=0
     fi
   done
@@ -112,7 +116,7 @@ drain_pid=
 rm -rf -- "$drain_tmp"
 drain_tmp=
 signal_tmp=$(mktemp -d)
-VERIFY_POOL_TEST_TMP="$signal_tmp" VERIFY_POOL_TEST_SIGNAL=1 bash "$0" &
+setsid env VERIFY_POOL_TEST_TMP="$signal_tmp" VERIFY_POOL_TEST_SIGNAL=1 bash "$0" &
 signal_pid=$!
 for ((attempt = 0; attempt < 100; attempt++)); do
   [[ -s "$signal_tmp/child" ]] && break
