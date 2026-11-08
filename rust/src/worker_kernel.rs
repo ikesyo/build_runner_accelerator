@@ -513,6 +513,8 @@ struct AotContext {
 /// A compile-only snapshot in the selected config's directory: relative URIs
 /// retain their base. Unique exclusive creation prevents competing preparations
 /// from rewriting this compiler's inputs; no cache-hit I/O is added.
+/// The `._` prefix uses the existing source-discovery exclusion, so a killed
+/// compiler cannot leave a snapshot that later becomes a builder input.
 struct CompilerConfigSnapshot {
     path: PathBuf,
 }
@@ -526,7 +528,7 @@ impl CompilerConfigSnapshot {
             .ok_or_else(|| io::Error::other("compiler package configuration has no parent"))?;
         loop {
             let path = parent.join(format!(
-                ".worker-aot-packages-{}-{}.json",
+                "._worker-aot-packages-{}-{}.json",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed),
             ));
@@ -1857,6 +1859,43 @@ mod tests {
         let original = r#"{"configVersion":2,"packages":[{"name":"dep","rootUri":"../first/"}]}"#;
         fs::write(&original_path, original).unwrap();
         let workspace = crate::workspace::Workspace::load(root.clone()).unwrap();
+        // Simulate abrupt termination: Drop cannot clean up the file. A later
+        // workspace must not discover it, even with all JSON files included.
+        let orphan = super::CompilerConfigSnapshot::create(&workspace).unwrap();
+        let orphan_path = orphan.path.clone();
+        std::mem::forget(orphan);
+        let reloaded = crate::workspace::Workspace::load(root.clone()).unwrap();
+        assert!(
+            reloaded
+                .list_package_assets("app")
+                .unwrap()
+                .iter()
+                .all(|(_, path)| path != &orphan_path)
+        );
+        let sources = Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "app": {"targets": [{"include": ["**"], "exclude": []}],
+                        "public_assets": null}
+            }))
+            .unwrap(),
+        );
+        reloaded.configure_sources(Some(&sources));
+        assert_eq!(
+            reloaded.find_assets("app", "**/*.json").unwrap(),
+            vec!["app|.dart_tool/package_config.json"]
+        );
+        let scanned = crate::snapshot::scan_packages(
+            &reloaded,
+            &std::collections::BTreeSet::from(["app".to_owned()]),
+        )
+        .unwrap();
+        assert!(scanned.contains_key("app|.dart_tool/package_config.json"));
+        assert!(
+            scanned
+                .keys()
+                .all(|asset| !asset.contains("._worker-aot-packages-"))
+        );
+        assert!(orphan_path.exists());
         // A later preparation chooses a different compiler file, leaving the
         // original unchanged. Reading only the original cannot detect this.
         let selector = root.join(".dart_tool/build_runner_accelerator/runner-package_config.json");

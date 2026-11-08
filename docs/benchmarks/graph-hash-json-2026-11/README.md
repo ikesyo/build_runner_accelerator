@@ -253,6 +253,8 @@ rechecks, config/dependency/SDK/worker change detection, dependency recording
 and all-success publication remain intact. AOT misses alone write a private
 compiler-config sibling from captured bytes, preserving relative URI bases;
 it is excluded from persistent dependencies and removed on completion/error.
+Its `._` prefix uses the existing source exclusion, so abrupt termination
+cannot leave a compiler snapshot that a later source scan discovers.
 Normal configs share the original buffer; patched modes retain one additional
 compiler-config buffer without rereading/reparsing it. Cache hits create no file.
 Manifest-preparation failures can still stop watch; no automatic retry policy
