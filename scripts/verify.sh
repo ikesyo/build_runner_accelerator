@@ -227,7 +227,7 @@ run_script_probe() {
   local output_prefix=$3
   local log="$results_dir/$probe_name.log"
   local timeout_seconds
-  timeout_seconds=$(verification_timeout_seconds VERIFY_CASE_TIMEOUT_SECONDS 1200) || return 2
+  timeout_seconds=${4:-$(verification_timeout_seconds VERIFY_CASE_TIMEOUT_SECONDS 1200)} || return 2
   local interpreter=bash
   [[ "$script_name" != *.py ]] || interpreter=python3
   if verification_run_command_in_dir "$repo_root" "case/$probe_name" "$log" "$timeout_seconds" "$interpreter" "$script_dir/$script_name"; then
@@ -275,10 +275,13 @@ run_targeted() {
 
 run_output_policies_suite() {
   worker_prepare
-  # One command now covers the suite; retain the existing suite deadline.
-  VERIFY_CASE_TIMEOUT_SECONDS=${VERIFY_CASE_TIMEOUT_SECONDS:-${VERIFY_SUITE_TIMEOUT_SECONDS:-1800}} \
+  local suite_timeout
+  suite_timeout=$(verification_timeout_seconds VERIFY_SUITE_TIMEOUT_SECONDS 1800) || return 2
+  local progress_file="$results_dir/output-policies-group-start"
+  rm -f -- "$progress_file"
+  VERIFY_GROUP_PROGRESS_FILE="$progress_file" \
     OUTPUT_POLICY_CASE_GROUP=routing,modes,source,cache,failure,api run_script_probe output-policies \
-    correctness_output_policies.sh 'output-policies stock/native comparisons passed'
+    correctness_output_policies.sh 'output-policies stock/native comparisons passed' "$suite_timeout"
 }
 
 run_core_suite() {

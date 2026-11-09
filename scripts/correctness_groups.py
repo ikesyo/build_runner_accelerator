@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 
 
 def select_groups(selection, groups):
+    """Validate the complete ordered selection before any setup or case runs."""
     selected = tuple(groups) if selection == 'all' else tuple(selection.split(','))
     if (not selected or len(set(selected)) != len(selected)
             or any(name not in groups for name in selected)):
@@ -17,6 +18,7 @@ def select_groups(selection, groups):
 
 
 def run_groups(suite, variable, groups, run, *, setup=None, preserve_all=False):
+    """Run isolated groups, report progress to the shell guard and retain failures."""
     # Validate the entire selection before preparing anything or running cases.
     selection = os.environ.get(variable, 'all')
     selected = select_groups(selection, groups)
@@ -31,12 +33,22 @@ def run_groups(suite, variable, groups, run, *, setup=None, preserve_all=False):
             workspace.mkdir()
             started = time.monotonic()
             print(f'{suite}: start group={name} workspace={workspace}', flush=True)
+            progress = os.environ.get('VERIFY_GROUP_PROGRESS_FILE')
+            if progress:
+                progress_file = Path(progress)
+                pending = progress_file.with_name(progress_file.name + '.tmp')
+                pending.write_text(f'{int(time.time())} {name}\n')
+                pending.replace(progress_file)
             try:
                 run(name, workspace)
             except BaseException:
                 print(f'{suite}: FAIL group={name} elapsed={time.monotonic() - started:.1f}s '
                       f'rerun: {variable}={name}', flush=True)
                 raise
+            finally:
+                if progress:
+                    pending.write_text('')
+                    pending.replace(progress_file)
             print(f'{suite}: PASS group={name} elapsed={time.monotonic() - started:.1f}s', flush=True)
     except BaseException:
         print(f'{suite}: retained workspaces: {temporary}', flush=True)
@@ -58,6 +70,7 @@ class PreparedFixture:
         self.ready = False
 
     def copy(self, root, prepare):
+        """Prepare once and copy sources and reusable CLI assets without build state."""
         if not self.ready:
             prepare(self.template)
             config = self.template / '.dart_tool/package_config.json'
@@ -80,6 +93,7 @@ class PreparedFixture:
             self.ready = True
 
         def ignore(directory, names):
+            """Limit .dart_tool copies to Pub metadata and the stock package CLI."""
             if Path(directory) == self.template / '.dart_tool':
                 return set(names) - {'package_config.json', 'package_graph.json', 'pub'}
             if Path(directory) == self.template / '.dart_tool/pub':

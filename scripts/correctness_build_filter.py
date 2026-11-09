@@ -115,23 +115,27 @@ _prepared_fixture = None
 
 
 def configure_prepared_fixture(tmp):
+    """Select a process-local fixture template or explicit fresh preparation."""
     global _prepared_fixture
     _prepared_fixture = (PreparedFixture(tmp / 'prepared-fixture', warm=warm_stock_cli)
                          if os.environ.get('VERIFY_PREPARED_FIXTURES', '1') != '0' else None)
 
 
 def warm_stock_cli(root):
+    """Compile only the stock package CLI, without running fixture builders."""
     code, log = execute([DART, 'run', 'build_runner', '--help'], root)
     assert code == 0, log
 
 
 def prepare(root):
+    """Copy a pristine fixture, reusing invocation-local preparation when enabled."""
     if _prepared_fixture is None:
         return prepare_fresh(root)
     _prepared_fixture.copy(root, prepare_fresh)
 
 
 def prepare_fresh(root):
+    """Create fixture sources and resolve their dependencies without sharing build state."""
     copy_fixture(root)
     code, log = execute([DART, 'pub', 'get', '--offline'], root)
     assert code == 0, log
@@ -2290,7 +2294,9 @@ GROUPS = {
 
 
 def main():
+    """Run the selected isolated correctness groups with shared preparation."""
     def setup(tmp):
+        """Configure invocation-local fixture and compilation caches."""
         configure_prepared_fixture(tmp)
         ENV.setdefault('BUILD_RUNNER_ACCELERATOR_CACHE', str(tmp / 'accelerator-cache'))
 

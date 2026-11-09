@@ -353,6 +353,7 @@ def modes(tmp):
 
 
 def main():
+    """Run the selected output-policy groups with isolated state and shared setup."""
     matrix = lifecycle_matrix(os.environ.get('OUTPUT_POLICY_COVERAGE', 'full'))
     groups = {
         'routing': routing,
@@ -364,6 +365,7 @@ def main():
     }
 
     def setup(tmp):
+        """Configure the shared fixture template and compilation cache."""
         configure_prepared_fixture(tmp)
         ENV.setdefault('BUILD_RUNNER_ACCELERATOR_CACHE', str(tmp / 'accelerator-cache'))
 

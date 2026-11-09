@@ -170,6 +170,12 @@ group stops the batch, retains its workspaces and prints the selection for a
 focused rerun. `all` retains settings' existing combined lifecycle sequence;
 the other two suites run every group in declaration order.
 
+For the full output-policy suite, `VERIFY_CASE_TIMEOUT_SECONDS` remains a
+per-group deadline (1200 seconds by default), while
+`VERIFY_SUITE_TIMEOUT_SECONDS` bounds the entire batch (1800 seconds by default).
+The shell guard monitors atomic group-start records and uses the existing
+process-tree cleanup when a group expires.
+
 Within an invocation, these suites resolve one pristine fixture template and
 compile the stock package CLI once, then copy its sources, lockfile, Pub package
 metadata and CLI snapshot into fresh case workspaces. The CLI imports only

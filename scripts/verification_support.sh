@@ -158,6 +158,11 @@ verification_run_command() {
   shift 3
   (($# > 0)) || { printf 'verification: command is empty label=%s\n' "$label" >&2; return 2; }
   [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || { printf 'verification: invalid timeout label=%s value=%q\n' "$label" "$timeout_seconds" >&2; return 2; }
+  local group_progress=${VERIFY_GROUP_PROGRESS_FILE:-}
+  local group_timeout=
+  if [[ -n "$group_progress" ]]; then
+    group_timeout=$(verification_timeout_seconds VERIFY_CASE_TIMEOUT_SECONDS 1200) || return 2
+  fi
   local workspace=${VERIFY_WORKSPACE:-$(pwd)}
   mkdir -p -- "$(dirname -- "$log_path")"
   if [[ "${VERIFY_COMMAND_LOG_APPEND:-0}" == 1 ]]; then
@@ -186,6 +191,17 @@ verification_run_command() {
       verification_stop_process_group "$pid"
       status=124
       break
+    fi
+    if [[ -n "$group_progress" && -f "$group_progress" ]]; then
+      local group_started= group_name=
+      read -r group_started group_name <"$group_progress" || true
+      if [[ "$group_started" =~ ^[0-9]+$ && -n "$group_name" ]] &&
+          (( $(verification_now) - group_started >= group_timeout )); then
+        verification_report_failure_context "$label/group/$group_name" "$pid" "$log_path" "$workspace"
+        verification_stop_process_group "$pid"
+        status=124
+        break
+      fi
     fi
     sleep 0.2
   done

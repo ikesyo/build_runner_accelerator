@@ -42,16 +42,19 @@ _prepared_fixture = None
 
 
 def prepare(root):
+    """Copy a pristine fixture, reusing invocation-local preparation when enabled."""
     if _prepared_fixture is None:
         return prepare_fresh(root)
     _prepared_fixture.copy(root, prepare_fresh)
 
 
 def warm_stock_cli(root):
+    """Compile only the stock package CLI, without running fixture builders."""
     ok([DART, 'run', 'build_runner', '--help'], root)
 
 
 def prepare_fresh(root):
+    """Create fixture sources and resolve their dependencies without sharing build state."""
     shutil.copytree(REPO / 'fixtures/settings_builder_app', root,
                     ignore=shutil.ignore_patterns('.dart_tool', '*.out', '*.alternate', '*.marker'))
     pubspec = root / 'pubspec.yaml'
@@ -725,11 +728,13 @@ def run_group(group, temporary, compile_flag='--force-aot'):
 
 
 def main():
+    """Run the selected isolated correctness groups with shared preparation."""
     mode = os.environ.get('SETTINGS_COMPARISON_MODE', 'aot')
     if mode not in ('jit', 'aot'):
         raise ValueError(f'Unknown SETTINGS_COMPARISON_MODE: {mode}; expected jit or aot')
 
     def setup(temporary):
+        """Configure invocation-local fixture and compilation caches."""
         global _prepared_fixture
         _prepared_fixture = (PreparedFixture(temporary / 'prepared-fixture', warm=warm_stock_cli)
                              if os.environ.get('VERIFY_PREPARED_FIXTURES', '1') != '0' else None)
