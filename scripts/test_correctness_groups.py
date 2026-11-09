@@ -63,6 +63,20 @@ class CorrectnessGroupsTest(unittest.TestCase):
             finally:
                 shutil.rmtree(roots[0].parent)
 
+    def test_group_progress_is_cleared_after_success(self):
+        """A successful batch leaves no stale group deadline for the shell guard."""
+        with tempfile.TemporaryDirectory() as directory:
+            progress = Path(directory) / 'progress'
+            def run(name, root):
+                timestamp, active = progress.read_text().split()
+                self.assertGreater(int(timestamp), 0)
+                self.assertEqual(active, name)
+            with patch.dict(os.environ, CASE_GROUP='first,second',
+                            VERIFY_GROUP_PROGRESS_FILE=str(progress)), contextlib.redirect_stdout(io.StringIO()):
+                run_groups('test', 'CASE_GROUP', ('first', 'second'), run)
+            self.assertEqual(progress.read_text(), '')
+            self.assertFalse(progress.with_name('progress.tmp').exists())
+
     def test_failure_retains_evidence_and_stops_batch_with_rerun_hint(self):
         """Preserve failed-group evidence and skip subsequent selected groups."""
         roots = []

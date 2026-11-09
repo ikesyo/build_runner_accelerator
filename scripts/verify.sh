@@ -226,8 +226,10 @@ run_script_probe() {
   local script_name=$2
   local output_prefix=$3
   local log="$results_dir/$probe_name.log"
+  local case_timeout_seconds
+  case_timeout_seconds=$(verification_timeout_seconds VERIFY_CASE_TIMEOUT_SECONDS 1200) || return 2
   local timeout_seconds
-  timeout_seconds=${4:-$(verification_timeout_seconds VERIFY_CASE_TIMEOUT_SECONDS 1200)} || return 2
+  timeout_seconds=${4:-$case_timeout_seconds}
   local interpreter=bash
   [[ "$script_name" != *.py ]] || interpreter=python3
   if verification_run_command_in_dir "$repo_root" "case/$probe_name" "$log" "$timeout_seconds" "$interpreter" "$script_dir/$script_name"; then

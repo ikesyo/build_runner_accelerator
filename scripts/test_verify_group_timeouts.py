@@ -46,6 +46,18 @@ def run(name, workspace):
         proc = subprocess.Popen([sys.executable, '-c', command], start_new_session=True)
         (root / 'child').write_text(str(proc.pid))
         time.sleep(60)
+    elif mode == 'anchored':
+        # Hold until a fixed offset from the guard's own group-start record,
+        # so the measured group duration does not depend on how long the
+        # runner took to start the group. Six groups held for two seconds
+        # each make the batch outlast the case deadline only when that
+        # deadline resets for every group.
+        progress = Path(os.environ['VERIFY_GROUP_PROGRESS_FILE'])
+        group_started = int(progress.read_text().split()[0])
+        while time.time() < group_started + 2:
+            time.sleep(0.05)
+    elif mode == 'block':
+        time.sleep(300)
     else:
         time.sleep(0.65)
 run_groups('probe', 'OUTPUT_POLICY_CASE_GROUP',
@@ -55,7 +67,7 @@ print('output-policies stock/native comparisons passed', flush=True)
         env = dict(os.environ, VERIFY_LEVEL='full', VERIFY_FULL_SUITES='output-policies',
                    VERIFY_CASE_TIMEOUT_SECONDS=str(case_timeout),
                    VERIFY_SUITE_TIMEOUT_SECONDS=str(suite_timeout),
-                   VERIFY_FULL_TIMEOUT_SECONDS='30', VERIFY_TIMEOUT_GRACE_SECONDS='1',
+                   VERIFY_FULL_TIMEOUT_SECONDS='120', VERIFY_TIMEOUT_GRACE_SECONDS='1',
                    VERIFY_STREAM_LOGS='0', VERIFY_RESULTS_DIR=str(root / 'results'),
                    TEST_ROOT=str(root), TEST_MODE=mode, PYTHONDONTWRITEBYTECODE='1')
         caller = root / 'caller'
@@ -64,7 +76,7 @@ print('output-policies stock/native comparisons passed', flush=True)
             env['VERIFY_RESULTS_DIR'] = 'relative/results'
         try:
             return subprocess.run(['bash', str(stub / 'verify.sh')], cwd=caller, env=env, text=True,
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
         finally:
             if (root / 'workspace').exists():
                 workspace = Path((root / 'workspace').read_text())
@@ -87,7 +99,7 @@ print('output-policies stock/native comparisons passed', flush=True)
         """A batch longer than the case budget passes when every group stays within it."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            result = self.run_probe(root, 3, 12, 'success')
+            result = self.run_probe(root, 8, 120, 'anchored')
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertEqual((root / 'setup').read_text(), 'once\n')
             self.assertEqual((root / 'groups').read_text().splitlines(),
@@ -97,7 +109,7 @@ print('output-policies stock/native comparisons passed', flush=True)
         """The watchdog and group runner must share one absolute progress path."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            result = self.run_probe(root, 3, 12, 'success', relative_results=True)
+            result = self.run_probe(root, 8, 120, 'anchored', relative_results=True)
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertEqual((root / 'groups').read_text().splitlines(),
                              ['routing', 'modes', 'source', 'cache', 'failure', 'api'])
@@ -122,17 +134,32 @@ print('output-policies stock/native comparisons passed', flush=True)
                 shutil.rmtree(workspace.parent)
 
     def test_suite_deadline_still_caps_the_entire_batch(self):
-        """The batch stops at the suite budget even though its groups meet case budgets."""
+        """The batch stops at the suite budget while a group is within its case budget."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            result = self.run_probe(root, 10, 3, 'success')
+            result = self.run_probe(root, 60, 5, 'block')
             self.assertNotEqual(result.returncode, 0, result.stdout)
             logs = result.stdout + ''.join(p.read_text() for p in (root / 'results').rglob('*.log'))
             self.assertIn('timeout label=', logs)
             self.assertNotIn('timeout label=case/output-policies/group/', logs)
-            self.assertLess(len((root / 'groups').read_text().splitlines()), 6)
+            # The blocked first group can never release the batch, so no
+            # later group may start before the suite deadline stops it.
+            self.assertEqual((root / 'groups').read_text().splitlines(), ['routing'])
             workspace = Path((root / 'workspace').read_text())
-            shutil.rmtree(workspace.parent)
+            try:
+                self.assertEqual((workspace / 'graph').read_text(), 'committed evidence')
+            finally:
+                shutil.rmtree(workspace.parent)
+
+    def test_invalid_case_timeout_fails_before_the_probe_runs(self):
+        """Validation reports its own error instead of tailing a log never created."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = self.run_probe(root, 'bogus', 12, 'success')
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('invalid VERIFY_CASE_TIMEOUT_SECONDS', result.stdout)
+            self.assertNotIn('No such file or directory', result.stdout)
+            self.assertFalse((root / 'groups').exists())
 
 
 if __name__ == '__main__':
