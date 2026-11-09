@@ -633,7 +633,9 @@ def watch_comparison(tmp, cache=False):
                 wait(lambda root=root: value.encode() in (root / pattern).read_bytes(), handle[0], handle[1])
             assert outputs(stock) == outputs(native) != before, (pattern, before, outputs(stock), outputs(native))
             name = pattern.split('/')[-1].split('.')[0]
-            assert history(stock) == history(native) == Counter({'lib/common.txt': 1, f'lib/{name}.mid': 1}), (pattern, history(stock), history(native))
+            assert history(stock) == history(native) == Counter({'lib/common.txt': 1, f'lib/{name}.mid': 1}), (
+                'shared input edit', pattern, history(stock), history(native),
+                handles[0][1].read_text(), handles[1][1].read_text())
             for root in (stock, native): history_path(root).unlink(missing_ok=True)
             positions = [handle[1].stat().st_size for handle in handles]
             for root in (stock, native): (root / 'lib/common.txt').unlink()
@@ -645,7 +647,9 @@ def watch_comparison(tmp, cache=False):
                     and not any(path.endswith('/lib/common.' + suffix) or path == 'lib/common.' + suffix
                         for path in outputs(root) for suffix in ('side', 'mid')), handle[0], handle[1])
             assert outputs(stock) == outputs(native), (pattern, outputs(stock), outputs(native))
-            assert history(stock) == history(native) == Counter({f'lib/{name}.mid': 1}), (pattern, history(stock), history(native))
+            assert history(stock) == history(native) == Counter({f'lib/{name}.mid': 1}), (
+                'shared input deletion', pattern, history(stock), history(native),
+                handles[0][1].read_text(), handles[1][1].read_text())
             for root in (stock, native): (root / f'lib/{name}.txt').unlink()
             for root, handle in zip((stock, native), handles):
                 wait(lambda root=root: not (root / pattern).exists(), handle[0], handle[1])

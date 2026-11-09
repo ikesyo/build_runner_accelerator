@@ -277,7 +277,9 @@ run_output_policies_suite() {
   worker_prepare
   local suite_timeout
   suite_timeout=$(verification_timeout_seconds VERIFY_SUITE_TIMEOUT_SECONDS 1800) || return 2
-  local progress_file="$results_dir/output-policies-group-start"
+  local progress_dir
+  progress_dir=$(mkdir -p -- "$results_dir" && cd -- "$results_dir" && pwd) || return 2
+  local progress_file="$progress_dir/output-policies-group-start"
   rm -f -- "$progress_file"
   VERIFY_GROUP_PROGRESS_FILE="$progress_file" \
     OUTPUT_POLICY_CASE_GROUP=routing,modes,source,cache,failure,api run_script_probe output-policies \

@@ -11,7 +11,7 @@ import unittest
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'requires Linux process groups')
 class VerifyGroupTimeoutTest(unittest.TestCase):
-    def run_probe(self, root, case_timeout, suite_timeout, mode):
+    def run_probe(self, root, case_timeout, suite_timeout, mode, *, relative_results=False):
         """Use cheap groups while retaining the production scheduling and cleanup code."""
         scripts = Path(__file__).resolve().parent
         stub = root / 'scripts'
@@ -58,8 +58,12 @@ print('output-policies stock/native comparisons passed', flush=True)
                    VERIFY_FULL_TIMEOUT_SECONDS='30', VERIFY_TIMEOUT_GRACE_SECONDS='1',
                    VERIFY_STREAM_LOGS='0', VERIFY_RESULTS_DIR=str(root / 'results'),
                    TEST_ROOT=str(root), TEST_MODE=mode, PYTHONDONTWRITEBYTECODE='1')
+        caller = root / 'caller'
+        caller.mkdir()
+        if relative_results:
+            env['VERIFY_RESULTS_DIR'] = 'relative/results'
         try:
-            return subprocess.run(['bash', str(stub / 'verify.sh')], env=env, text=True,
+            return subprocess.run(['bash', str(stub / 'verify.sh')], cwd=caller, env=env, text=True,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
         finally:
             if (root / 'workspace').exists():
@@ -86,6 +90,15 @@ print('output-policies stock/native comparisons passed', flush=True)
             result = self.run_probe(root, 3, 12, 'success')
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertEqual((root / 'setup').read_text(), 'once\n')
+            self.assertEqual((root / 'groups').read_text().splitlines(),
+                             ['routing', 'modes', 'source', 'cache', 'failure', 'api'])
+
+    def test_relative_results_work_when_the_probe_changes_directory(self):
+        """The watchdog and group runner must share one absolute progress path."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = self.run_probe(root, 3, 12, 'success', relative_results=True)
+            self.assertEqual(result.returncode, 0, result.stdout)
             self.assertEqual((root / 'groups').read_text().splitlines(),
                              ['routing', 'modes', 'source', 'cache', 'failure', 'api'])
 
