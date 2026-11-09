@@ -49,12 +49,14 @@ def run(name, workspace):
     elif mode == 'anchored':
         # Hold until a fixed offset from the guard's own group-start record,
         # so the measured group duration does not depend on how long the
-        # runner took to start the group. Six groups held for two seconds
-        # each make the batch outlast the case deadline only when that
-        # deadline resets for every group.
+        # runner took to start the group. Six groups held for one second
+        # each make the batch outlast the five-second case deadline only
+        # when that deadline resets for every group, while each group ends
+        # about three seconds before the earliest point at which the
+        # second-granularity guard could fire.
         progress = Path(os.environ['VERIFY_GROUP_PROGRESS_FILE'])
         group_started = int(progress.read_text().split()[0])
-        while time.time() < group_started + 2:
+        while time.time() < group_started + 1:
             time.sleep(0.05)
     elif mode == 'block':
         time.sleep(300)
@@ -99,7 +101,7 @@ print('output-policies stock/native comparisons passed', flush=True)
         """A batch longer than the case budget passes when every group stays within it."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            result = self.run_probe(root, 8, 120, 'anchored')
+            result = self.run_probe(root, 5, 120, 'anchored')
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertEqual((root / 'setup').read_text(), 'once\n')
             self.assertEqual((root / 'groups').read_text().splitlines(),
@@ -109,7 +111,7 @@ print('output-policies stock/native comparisons passed', flush=True)
         """The watchdog and group runner must share one absolute progress path."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            result = self.run_probe(root, 8, 120, 'anchored', relative_results=True)
+            result = self.run_probe(root, 5, 120, 'anchored', relative_results=True)
             self.assertEqual(result.returncode, 0, result.stdout)
             self.assertEqual((root / 'groups').read_text().splitlines(),
                              ['routing', 'modes', 'source', 'cache', 'failure', 'api'])
