@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compare build-filter bytes, deletion, status and real builder invocation history."""
+from correctness_groups import PreparedFixture, run_groups
 from collections import Counter
 import json
 import os
@@ -8,7 +9,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from correctness_cli import REPO, DART, ENV, NATIVE, descendants, launcher, live
 
@@ -111,7 +111,27 @@ def copy_fixture(root):
     file.write_text(file.read_text().replace('path: ../..', f'path: {REPO}'))
 
 
+_prepared_fixture = None
+
+
+def configure_prepared_fixture(tmp):
+    global _prepared_fixture
+    _prepared_fixture = (PreparedFixture(tmp / 'prepared-fixture', warm=warm_stock_cli)
+                         if os.environ.get('VERIFY_PREPARED_FIXTURES', '1') != '0' else None)
+
+
+def warm_stock_cli(root):
+    code, log = execute([DART, 'run', 'build_runner', '--help'], root)
+    assert code == 0, log
+
+
 def prepare(root):
+    if _prepared_fixture is None:
+        return prepare_fresh(root)
+    _prepared_fixture.copy(root, prepare_fresh)
+
+
+def prepare_fresh(root):
     copy_fixture(root)
     code, log = execute([DART, 'pub', 'get', '--offline'], root)
     assert code == 0, log
@@ -2270,18 +2290,12 @@ GROUPS = {
 
 
 def main():
-    selected = os.environ.get('BUILD_FILTER_CASE_GROUP', 'all')
-    if selected != 'all' and selected not in GROUPS:
-        raise ValueError(f'unknown build-filter case group: {selected}')
-    groups = GROUPS if selected == 'all' else {selected: GROUPS[selected]}
-    with tempfile.TemporaryDirectory(prefix='build-filter-') as temporary:
-        tmp = Path(temporary)
+    def setup(tmp):
+        configure_prepared_fixture(tmp)
         ENV.setdefault('BUILD_RUNNER_ACCELERATOR_CACHE', str(tmp / 'accelerator-cache'))
-        for name, run_group in groups.items():
-            started = time.monotonic()
-            print(f'build-filter: start group={name}', flush=True)
-            run_group(tmp)
-            print(f'build-filter: PASS group={name} elapsed={time.monotonic() - started:.1f}s', flush=True)
+
+    run_groups('build-filter', 'BUILD_FILTER_CASE_GROUP', GROUPS,
+               lambda name, tmp: GROUPS[name](tmp), setup=setup)
     print('build-filter stock/native comparisons passed', flush=True)
 
 

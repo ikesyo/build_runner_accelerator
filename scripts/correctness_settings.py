@@ -15,6 +15,7 @@ import time
 from unittest.mock import patch
 
 from correctness_cli import REPO, DART, NATIVE, ENV, launcher
+from correctness_groups import PreparedFixture, run_groups
 
 ENV = {**ENV, 'BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM': '0'}
 
@@ -37,7 +38,20 @@ def outputs(root):
             if p.suffix in ('.out', '.alternate', '.marker', '.wrong')}
 
 
+_prepared_fixture = None
+
+
 def prepare(root):
+    if _prepared_fixture is None:
+        return prepare_fresh(root)
+    _prepared_fixture.copy(root, prepare_fresh)
+
+
+def warm_stock_cli(root):
+    ok([DART, 'run', 'build_runner', '--help'], root)
+
+
+def prepare_fresh(root):
     shutil.copytree(REPO / 'fixtures/settings_builder_app', root,
                     ignore=shutil.ignore_patterns('.dart_tool', '*.out', '*.alternate', '*.marker'))
     pubspec = root / 'pubspec.yaml'
@@ -714,21 +728,19 @@ def main():
     mode = os.environ.get('SETTINGS_COMPARISON_MODE', 'aot')
     if mode not in ('jit', 'aot'):
         raise ValueError(f'Unknown SETTINGS_COMPARISON_MODE: {mode}; expected jit or aot')
-    group = os.environ.get('SETTINGS_CASE_GROUP', 'all')
-    if group != 'all' and group not in GROUPS:
-        raise ValueError(f'Unknown SETTINGS_CASE_GROUP: {group}; expected all or {GROUPS}')
-    temporary = Path(tempfile.mkdtemp(prefix=f'settings-{group}-'))
-    ENV.setdefault('BUILD_RUNNER_ACCELERATOR_CACHE', str(temporary / 'accelerator-cache'))
-    print(f'settings group={group} comparison-mode={mode} workspaces: {temporary}', flush=True)
-    started = time.monotonic()
-    try:
-        run_group(group, temporary, f'--force-{mode}')
-        print(f'settings-compatibility: PASS group={group} elapsed={time.monotonic() - started:.1f}s', flush=True)
-    except BaseException:
-        print(f'retained failing settings workspaces: {temporary}', flush=True)
-        raise
-    else:
-        shutil.rmtree(temporary)
+
+    def setup(temporary):
+        global _prepared_fixture
+        _prepared_fixture = (PreparedFixture(temporary / 'prepared-fixture', warm=warm_stock_cli)
+                             if os.environ.get('VERIFY_PREPARED_FIXTURES', '1') != '0' else None)
+        ENV.setdefault('BUILD_RUNNER_ACCELERATOR_CACHE', str(temporary / 'accelerator-cache'))
+        print(f'settings comparison-mode={mode}', flush=True)
+
+    # Keep the historical all sequence, including its inter-case transitions.
+    run_groups('settings', 'SETTINGS_CASE_GROUP', GROUPS,
+               lambda group, temporary: run_group(group, temporary, f'--force-{mode}'),
+               setup=setup, preserve_all=True)
+    print('settings-compatibility: PASS', flush=True)
 
 
 if __name__ == '__main__':

@@ -275,11 +275,10 @@ run_targeted() {
 
 run_output_policies_suite() {
   worker_prepare
-  local group
-  for group in routing modes source cache failure api; do
-    OUTPUT_POLICY_CASE_GROUP="$group" run_script_probe "output-policies-$group" \
-      correctness_output_policies.sh 'output-policies stock/native comparisons passed'
-  done
+  # One command now covers the suite; retain the existing suite deadline.
+  VERIFY_CASE_TIMEOUT_SECONDS=${VERIFY_CASE_TIMEOUT_SECONDS:-${VERIFY_SUITE_TIMEOUT_SECONDS:-1800}} \
+    OUTPUT_POLICY_CASE_GROUP=routing,modes,source,cache,failure,api run_script_probe output-policies \
+    correctness_output_policies.sh 'output-policies stock/native comparisons passed'
 }
 
 run_core_suite() {

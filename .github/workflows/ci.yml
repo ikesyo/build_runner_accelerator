@@ -276,26 +276,20 @@ jobs:
           - name: Values, default watch, and arbitrary builder
             shell: bash
             run: |
-              SETTINGS_CASE_GROUP=values bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-default bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=values,watch-default bash scripts/correctness_settings.sh
               PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_builder.sh
           - name: Compact flags and reserved/topology watch
             shell: bash
             run: |
-              SETTINGS_CASE_GROUP=compact bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-reserved bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-topology bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=compact,watch-reserved,watch-topology bash scripts/correctness_settings.sh
           - name: Config paths and normalized dot/ancestor watch
             shell: bash
             run: |
-              SETTINGS_CASE_GROUP=paths bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-dot bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-package bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=paths,watch-dot,watch-package bash scripts/correctness_settings.sh
           - name: Config files, nested watch, and obsolete state
             shell: bash
             run: |
-              SETTINGS_CASE_GROUP=files bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-nested bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=files,watch-nested bash scripts/correctness_settings.sh
               bash scripts/correctness_upgrade.sh
 
   integration-settings-watch:
@@ -324,8 +318,7 @@ jobs:
           - name: Configuration errors and boundaries
             shell: bash
             run: |
-              SETTINGS_CASE_GROUP=errors bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=boundaries bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=errors,boundaries bash scripts/correctness_settings.sh
           - name: Precedence and post-process lifecycle
             shell: bash
             run: |
@@ -378,14 +371,12 @@ jobs:
           - name: Failure recovery and routing
             shell: bash
             run: |
-              OUTPUT_POLICY_CASE_GROUP=failure bash scripts/correctness_output_policies.sh
-              OUTPUT_POLICY_CASE_GROUP=routing bash scripts/correctness_output_policies.sh
+              OUTPUT_POLICY_CASE_GROUP=failure,routing bash scripts/correctness_output_policies.sh
           - name: Runner 2.16.1 / Analyzer 14.5 and config watches
             shell: bash
             run: |
               python3 scripts/correctness_dependency_window.py --runner 2.16.1 --analyzer 14.5.0
-              SETTINGS_CASE_GROUP=watch-backslash bash scripts/correctness_settings.sh
-              SETTINGS_CASE_GROUP=watch-named bash scripts/correctness_settings.sh
+              SETTINGS_CASE_GROUP=watch-backslash,watch-named bash scripts/correctness_settings.sh
 
   integration-core:
     name: 'Integration: baseline, CLI, and workspace scheduler'

@@ -7,9 +7,9 @@ import re
 import signal
 import shutil
 import subprocess
-import tempfile
 import time
-from correctness_build_filter import (prepare, outputs, execute, fixture_env, activity_path)
+from correctness_groups import run_groups
+from correctness_build_filter import (prepare, outputs, execute, fixture_env, activity_path, configure_prepared_fixture)
 from correctness_cli import DART, ENV, NATIVE, launcher
 
 VERIFY = '--only-check'
@@ -354,25 +354,21 @@ def modes(tmp):
 
 def main():
     matrix = lifecycle_matrix(os.environ.get('OUTPUT_POLICY_COVERAGE', 'full'))
-    with tempfile.TemporaryDirectory(prefix='output-policies-') as directory:
-        tmp = Path(directory)
+    groups = {
+        'routing': routing,
+        'modes': modes,
+        'api': retained_api_cases,
+        'source': lambda tmp: run_lifecycle_matrix(tmp, matrix, False),
+        'cache': lambda tmp: run_lifecycle_matrix(tmp, matrix, True),
+        'failure': lambda tmp: [failure_and_interrupt(tmp, policy) for policy in (VERIFY, KEEP)],
+    }
+
+    def setup(tmp):
+        configure_prepared_fixture(tmp)
         ENV.setdefault('BUILD_RUNNER_ACCELERATOR_CACHE', str(tmp / 'accelerator-cache'))
-        groups = {
-            'routing': lambda: routing(tmp),
-            'modes': lambda: modes(tmp),
-            'api': lambda: retained_api_cases(tmp),
-            'source': lambda: run_lifecycle_matrix(tmp, matrix, False),
-            'cache': lambda: run_lifecycle_matrix(tmp, matrix, True),
-            'failure': lambda: [failure_and_interrupt(tmp, policy) for policy in (VERIFY, KEEP)],
-        }
-        selected = os.environ.get('OUTPUT_POLICY_CASE_GROUP', 'all')
-        if selected != 'all' and selected not in groups:
-            raise ValueError(f'unknown output-policy group: {selected}')
-        for name, run_group in groups.items():
-            if selected in ('all', name):
-                print(f'output-policies: start group={name}', flush=True)
-                run_group()
-                print(f'output-policies: PASS group={name}', flush=True)
+
+    run_groups('output-policies', 'OUTPUT_POLICY_CASE_GROUP', groups,
+               lambda name, tmp: groups[name](tmp), setup=setup)
     print('output-policies stock/native comparisons passed', flush=True)
 
 
