@@ -96,6 +96,26 @@ The full level includes output policies, core, code generation, compatibility li
 compatibility graph, and compatibility mapping. VERIFY_FULL_SUITES accepts a
 comma-separated subset for local runs or CI shards.
 
+## Faster local verification
+
+Full verification accepts `VERIFY_JOBS=1` (the default) through `4`. Start with
+2 and compare wall time before increasing it; each suite also starts compiler
+and worker processes.
+
+```bash
+VERIFY_LEVEL=full VERIFY_JOBS=2 bash scripts/verify.sh
+VERIFY_LEVEL=full VERIFY_JOBS=2 VERIFY_CACHE_DIR="$PWD/.toolchains/verification-cache" bash scripts/verify.sh
+```
+
+`VERIFY_CACHE_DIR` must be absolute. It opts into retaining shared worker and
+Analyzer compilation assets between suites and invocations. Scenario workspaces
+and their output/graph state remain separate. Tests with explicit cold-cache or
+SDK-lifecycle cache directories retain those overrides. Omit this option for a
+cold-cache comparison; do not compare a warm run against a cold baseline.
+Suite status and elapsed time are printed as suites finish. On failure, pending
+suites are not started and running suite process trees are stopped; retained
+logs identify the failed suite.
+
 ## Correctness and CI
 
 Run the closest comparison script when changing a boundary:

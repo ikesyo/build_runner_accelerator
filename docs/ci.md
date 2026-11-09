@@ -50,6 +50,8 @@ Make cache paths match the directories actually used by tools. Separate
 architecture, toolchain and dependency-resolution caches. A cache miss must
 remain correct. Reuse compiled test helpers and prepared baselines where safe,
 preserving active paths, timestamps and SDK links required by incremental tests.
+Only main-branch runs save Actions caches; pull requests and other refs restore
+existing compatible caches without creating branch-scoped cache entries.
 Do not share mutable scenario state or relax assertions and deadlines to
 hide scheduling or setup problems.
 
@@ -108,3 +110,26 @@ throughput improvements.
 Keep run links, measurements, experiments and migration history in the PR
 description. Keep this document focused on policies that future changes should
 preserve.
+
+### Cache layout and timing reports
+
+The shared setup action keeps Pub downloads, Cargo downloads and Rust build
+artifacts in separate caches. Pub retains dependency-set scopes because each
+job prepares a different subset of fixtures; concurrent saves do not merge
+partial package caches. Cargo downloads share platform/lockfile keys. Rust
+artifacts use toolchain/profile/target/source keys with compatible fallback,
+so a source change can save its updated build rather than repeatedly restoring
+an immutable older snapshot. Cargo still checks freshness after restoration.
+Cache misses remain supported. No additional runner jobs are needed.
+
+Capture jobs and run metadata for timing comparisons:
+
+```bash
+gh api 'repos/OWNER/REPO/actions/runs/RUN_ID/jobs?per_page=100' > /tmp/ci-jobs.json
+gh api repos/OWNER/REPO/actions/runs/RUN_ID > /tmp/ci-run.json
+python3 scripts/summarize_ci_timings.py /tmp/ci-jobs.json --run-json /tmp/ci-run.json
+```
+
+Record cache state separately from this report. Start delay includes runner
+queueing and scheduling; it is not a direct measurement of concurrency-limit
+queue time. Compare the same SHA and toolchains, and repeat cold and warm runs.

@@ -1,9 +1,14 @@
 import unittest
 
-from check_ci import check, matrix_size
+from check_ci import check, check_composite_anchors, matrix_size
 
 
 class CheckCiTest(unittest.TestCase):
+    def test_composite_rejects_anchors_and_accepts_literal_ampersands(self):
+        with self.assertRaisesRegex(ValueError, 'do not support YAML anchors'):
+            check_composite_anchors('value: &cached item\ncopy: *cached\n', 'action.yml')
+        check_composite_anchors('run: |\n  echo "a && b"\n', 'action.yml')
+
     def test_expands_each_event_instead_of_assuming_pr_has_fewer_jobs(self):
         matrix = {'include': "${{ fromJSON(github.event_name == 'pull_request' && "
                             "'[{}, {}, {}]' || '[{}]') }}"}

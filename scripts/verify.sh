@@ -7,6 +7,7 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 source "$script_dir/toolchain.sh"
 source "$script_dir/worker.sh"
 source "$script_dir/verification_support.sh"
+source "$script_dir/verification_pool.sh"
 dart_bin=$(resolve_toolchain_dart)
 pub_cache=$(resolve_toolchain_pub_cache)
 results_dir=${VERIFY_RESULTS_DIR:-$(mktemp -d)}
@@ -14,6 +15,13 @@ results_dir=${VERIFY_RESULTS_DIR:-$(mktemp -d)}
 verify_level=${VERIFY_LEVEL:-quick}
 verify_cases=${VERIFY_CASES:-failure,conditional-dependency}
 verify_full_suites=${VERIFY_FULL_SUITES:-all}
+if [[ -n "${VERIFY_CACHE_DIR:-}" ]]; then
+  if [[ "$VERIFY_CACHE_DIR" != /* ]]; then
+    printf 'verify: FAIL: VERIFY_CACHE_DIR must be an absolute path: %s\n' "$VERIFY_CACHE_DIR" >&2
+    exit 2
+  fi
+  export BUILD_RUNNER_ACCELERATOR_CACHE="$VERIFY_CACHE_DIR"
+fi
 
 full_suites=(
   output-policies
@@ -41,6 +49,8 @@ all_cases=(
 
 cleanup() {
   local cleanup_status=$?
+  verification_pool_stop
+  verification_stop_active_command
   if ((cleanup_status != 0)) && [[ "${VERIFY_KEEP_TEMP_ON_FAILURE:-1}" != 0 ]]; then
     printf 'verification: retaining full-verification logs: %s\n' "$results_dir" >&2
     return 0
@@ -50,11 +60,18 @@ cleanup() {
   find "$results_dir" -depth -type d -empty -delete
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 fail() {
   printf 'verify: FAIL: %s\n' "$*" >&2
   exit 1
 }
+
+if [[ "$verify_level" == full ]]; then
+  verify_jobs=${VERIFY_JOBS:-1}
+  [[ "$verify_jobs" =~ ^[1-4]$ ]] || fail "VERIFY_JOBS must be an integer from 1 to 4: $verify_jobs"
+fi
 
 [[ -x "$dart_bin" ]] || fail "Dart executable not found: $dart_bin"
 if ! python3 "$script_dir/sync_release_metadata.py" --check; then
@@ -324,14 +341,29 @@ run_compatibility_mapping_suite() {
   run_script_probe drift-not-shared-watch watch_smoke_drift_not_shared.sh 'drift-not-shared-watch:'
 }
 
+verification_pool_run_item() {
+  local suite=$1
+  local index=$2
+  local suite_log="$results_dir/suite-$suite.log"
+  local suite_results_dir="$results_dir/suite-$suite"
+  # A repeated selection needs distinct paths when suites run concurrently.
+  if ((jobs > 1)); then
+    suite_log="$results_dir/suite-$index-$suite.log"
+    suite_results_dir="$results_dir/suite-$index-$suite"
+  fi
+  mkdir -p -- "$suite_results_dir" || return $?
+  local stream_logs=$VERIFY_STREAM_LOGS
+  if ((jobs > 1)); then
+    stream_logs=0
+    export VERIFY_LOG_DIR="${VERIFY_LOG_DIR:-$results_dir}/suite-$index-$suite-worker-logs"
+  fi
+  VERIFY_STREAM_LOGS="$stream_logs" VERIFY_WORKSPACE="$repo_root" verification_run_command "suite/$suite" "$suite_timeout" "$suite_log" env VERIFY_FULL_TIMEOUT_GUARD=1 VERIFY_SUITE_BODY="$suite" VERIFY_RESULTS_DIR="$suite_results_dir" bash "$script_dir/verify.sh"
+}
+
 run_full() {
   local -a suites
-  local suite
   local selected
   local suite_timeout
-  local suite_log
-  local suite_results_dir
-  local suite_status
   if [[ -n "${VERIFY_SUITE_BODY:-}" ]]; then
     case "$VERIFY_SUITE_BODY" in
       output-policies) run_output_policies_suite ;;
@@ -350,20 +382,19 @@ run_full() {
   mapfile -t suites <<<"$selected"
   printf 'verify: level=full suites=%s\n' "$(IFS=,; printf '%s' "${suites[*]}")"
   suite_timeout=$(verification_timeout_seconds VERIFY_SUITE_TIMEOUT_SECONDS 1800) || return 2
-  for suite in "${suites[@]}"; do
-    suite_log="$results_dir/suite-$suite.log"
-    suite_results_dir="$results_dir/suite-$suite"
-    mkdir -p -- "$suite_results_dir"
-    if VERIFY_WORKSPACE="$repo_root" verification_run_command "suite/$suite" "$suite_timeout" "$suite_log" env VERIFY_FULL_TIMEOUT_GUARD=1 VERIFY_SUITE_BODY="$suite" VERIFY_RESULTS_DIR="$suite_results_dir" bash "$script_dir/verify.sh"; then
-      suite_status=0
-    else
-      suite_status=$?
-    fi
-    if ((suite_status != 0)); then
-      printf 'verify: FAIL: full verification suite failed: %s (status=%s)\n' "$suite" "$suite_status" >&2
-      return "$suite_status"
-    fi
-  done
+  local jobs=$verify_jobs
+  if ((jobs > 1)); then
+    local suite other
+    local -a seen=()
+    for suite in "${suites[@]}"; do
+      for other in "${seen[@]}"; do
+        [[ "$suite" != "$other" ]] || fail "duplicate suite cannot run in parallel: $suite"
+      done
+      seen+=("$suite")
+    done
+  fi
+  printf 'verify: suite jobs=%s\n' "$jobs"
+  verification_pool_run "$jobs" "${suites[@]}" || return $?
   if [[ "${VERIFY_BENCHMARK:-0}" == 1 ]]; then
     COUNT=${VERIFY_COUNT:-10} JOBS=${VERIFY_BENCHMARK_JOBS:-1} bash "$script_dir/benchmark_json_serializable.sh"
     JOBS=${VERIFY_BENCHMARK_JOBS:-1} bash "$script_dir/benchmark_freezed.sh"

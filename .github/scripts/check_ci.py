@@ -19,6 +19,13 @@ RESERVED_JOBS = 4
 RUNNER_LIMIT = 20
 
 
+def check_composite_anchors(source, path):
+    """The Actions composite-action reader rejects YAML anchors and aliases."""
+    for event in yaml.parse(source):
+        if getattr(event, 'anchor', None) is not None:
+            raise ValueError(f'{path}: composite actions do not support YAML anchors or aliases')
+
+
 def matrix_size(matrix, event):
     if not matrix:
         return 1
@@ -64,3 +71,7 @@ def check(workflow):
 
 if __name__ == '__main__':
     check(yaml.safe_load((REPO / '.github/workflows/ci.yml').read_text()))
+    for path in (REPO / '.github/actions').glob('*/action.y*ml'):
+        source = path.read_text()
+        if yaml.safe_load(source).get('runs', {}).get('using') == 'composite':
+            check_composite_anchors(source, path)

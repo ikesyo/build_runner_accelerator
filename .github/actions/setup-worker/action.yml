@@ -3,16 +3,14 @@ description: Set up the pinned worker SDK, Rust toolchain, cache, and optional f
 
 inputs:
   cache-scope:
-    description: Isolated cache namespace for this job.
+    description: Namespace for the job-specific Pub dependency set.
     required: true
   cache-inputs:
-    description: Newline-separated lockfiles and inputs that affect the worker cache.
+    description: Newline-separated lockfiles and inputs that affect the Pub dependency set.
     required: false
     default: |
       pubspec.yaml
       pubspec.lock
-      rust/Cargo.toml
-      rust/Cargo.lock
   dart-version:
     description: Optional override for the worker Dart SDK.
     required: false
@@ -58,19 +56,11 @@ runs:
         printf 'rust=%s\n' "$rust_version" >>"$GITHUB_OUTPUT"
         printf 'PUB_CACHE=%s/.pub-cache\n' "$GITHUB_WORKSPACE" >>"$GITHUB_ENV"
 
-        files=(
-          .github/actions/setup-worker/action.yml
-          .github/worker-toolchain.env
-          scripts/worker.sh
-          scripts/toolchain.sh
-          scripts/run_rust_frontend.sh
-          scripts/verification_support.sh
-          pubspec.yaml
-          pubspec.lock
-          rust/Cargo.toml
-          rust/Cargo.lock
-          rust-toolchain.toml
-        )
+        # Each scope may resolve a different set of fixtures. Do not let one
+        # job publish its partial Pub cache as the union for other jobs.
+        files=(pubspec.yaml pubspec.lock)
+        shopt -s globstar nullglob
+        files+=(fixtures/**/pubspec.yaml)
         while IFS= read -r pattern; do
           [[ -n "$pattern" ]] || continue
           for path in $pattern; do
@@ -86,16 +76,60 @@ runs:
         )
         printf 'digest=%s\n' "$digest" >>"$GITHUB_OUTPUT"
 
-    - uses: actions/cache@v6.1.0
+    - name: Cache Pub downloads
+      if: github.ref == 'refs/heads/main'
+      uses: actions/cache@v6.1.0
+      with:
+        path: .pub-cache
+        key: pub-v2-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ inputs.dependency-resolution }}-${{ steps.versions.outputs.digest }}
+        restore-keys: |
+          pub-v2-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ inputs.dependency-resolution }}-
+    - name: Restore Pub downloads
+      if: github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@v6.1.0
+      with:
+        path: .pub-cache
+        key: pub-v2-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ inputs.dependency-resolution }}-${{ steps.versions.outputs.digest }}
+        restore-keys: |
+          pub-v2-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ inputs.dependency-resolution }}-
+
+    - name: Cache Cargo downloads
+      if: inputs.setup-rust == 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache@v6.1.0
       with:
         path: |
-          .pub-cache
           ~/.cargo/registry
           ~/.cargo/git
-          rust/target
-        key: worker-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ steps.versions.outputs.rust }}-${{ steps.versions.outputs.digest }}
+        key: cargo-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock') }}
         restore-keys: |
-          worker-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ steps.versions.outputs.rust }}-
+          cargo-downloads-v1-${{ runner.os }}-${{ runner.arch }}-
+    - name: Restore Cargo downloads
+      if: inputs.setup-rust == 'true' && github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@v6.1.0
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: cargo-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock') }}
+        restore-keys: |
+          cargo-downloads-v1-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Cache Rust build artifacts
+      if: inputs.setup-rust == 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache@v6.1.0
+      with:
+        path: rust/target
+        key: rust-target-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.rust }}-${{ inputs.frontend-profile }}-${{ inputs.rust-target || 'host' }}-${{ hashFiles('rust/**', '!rust/target/**', 'rust-toolchain.toml') }}
+        restore-keys: |
+          rust-target-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.rust }}-${{ inputs.frontend-profile }}-${{ inputs.rust-target || 'host' }}-
+    - name: Restore Rust build artifacts
+      if: inputs.setup-rust == 'true' && github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@v6.1.0
+      with:
+        path: rust/target
+        key: rust-target-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.rust }}-${{ inputs.frontend-profile }}-${{ inputs.rust-target || 'host' }}-${{ hashFiles('rust/**', '!rust/target/**', 'rust-toolchain.toml') }}
+        restore-keys: |
+          rust-target-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.rust }}-${{ inputs.frontend-profile }}-${{ inputs.rust-target || 'host' }}-
 
     - uses: dart-lang/setup-dart@v1.8.1
       with:
