@@ -226,8 +226,10 @@ run_script_probe() {
   local script_name=$2
   local output_prefix=$3
   local log="$results_dir/$probe_name.log"
+  local case_timeout_seconds
+  case_timeout_seconds=$(verification_timeout_seconds VERIFY_CASE_TIMEOUT_SECONDS 1200) || return 2
   local timeout_seconds
-  timeout_seconds=$(verification_timeout_seconds VERIFY_CASE_TIMEOUT_SECONDS 1200) || return 2
+  timeout_seconds=${4:-$case_timeout_seconds}
   local interpreter=bash
   [[ "$script_name" != *.py ]] || interpreter=python3
   if verification_run_command_in_dir "$repo_root" "case/$probe_name" "$log" "$timeout_seconds" "$interpreter" "$script_dir/$script_name"; then
@@ -275,11 +277,15 @@ run_targeted() {
 
 run_output_policies_suite() {
   worker_prepare
-  local group
-  for group in routing modes source cache failure api; do
-    OUTPUT_POLICY_CASE_GROUP="$group" run_script_probe "output-policies-$group" \
-      correctness_output_policies.sh 'output-policies stock/native comparisons passed'
-  done
+  local suite_timeout
+  suite_timeout=$(verification_timeout_seconds VERIFY_SUITE_TIMEOUT_SECONDS 1800) || return 2
+  local progress_dir
+  progress_dir=$(mkdir -p -- "$results_dir" && cd -- "$results_dir" && pwd) || return 2
+  local progress_file="$progress_dir/output-policies-group-start"
+  rm -f -- "$progress_file"
+  VERIFY_GROUP_PROGRESS_FILE="$progress_file" \
+    OUTPUT_POLICY_CASE_GROUP=routing,modes,source,cache,failure,api run_script_probe output-policies \
+    correctness_output_policies.sh 'output-policies stock/native comparisons passed' "$suite_timeout"
 }
 
 run_core_suite() {

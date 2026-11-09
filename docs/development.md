@@ -152,6 +152,44 @@ checks. The integration suites retain their cases within eleven jobs, with at
 most four parallel lanes per job. See [CI principles](ci.md)
 for coverage and scheduling rules, including the main/scheduled architecture checks.
 
+## Batched correctness groups
+
+Settings, build-filter and output-policy checks accept ordered comma-separated
+case groups through the same runner locally and in CI. For example:
+
+```bash
+SETTINGS_CASE_GROUP=values,watch-default bash scripts/correctness_settings.sh
+BUILD_FILTER_CASE_GROUP=selection-source,selection-cache bash scripts/correctness_build_filter.sh
+OUTPUT_POLICY_CASE_GROUP=failure,routing bash scripts/correctness_output_policies.sh
+```
+
+Each invocation prepares the shell harness once. Each group gets a separate
+workspace, runs its transitions sequentially and reports elapsed seconds. An
+invalid, duplicate or empty selection fails before group preparation. A failed
+group stops the batch, retains its workspaces and prints the selection for a
+focused rerun. `all` retains settings' existing combined lifecycle sequence;
+the other two suites run every group in declaration order.
+
+For the full output-policy suite, `VERIFY_CASE_TIMEOUT_SECONDS` remains a
+per-group deadline (1200 seconds by default), while
+`VERIFY_SUITE_TIMEOUT_SECONDS` bounds the entire batch (1800 seconds by default).
+The shell guard monitors atomic group-start records and uses the existing
+process-tree cleanup when a group expires.
+
+Within an invocation, these suites resolve one pristine fixture template and
+compile the stock package CLI once, then copy its sources, lockfile, Pub package
+metadata and CLI snapshot into fresh case workspaces. The CLI imports only
+dependency packages; fixture builders still compile in their own workspaces.
+Copies preserve source mtimes and symlinks; external dependency URIs retain their
+resolved locations and packages inside the fixture point at each destination. Build outputs,
+graphs, recovery state, generated build scripts and native worker assets are
+not copied from the template.
+The template lives only for the invocation, so reuse never crosses SDK or
+resolution changes. Set `VERIFY_PREPARED_FIXTURES=0` to compare fresh per-case Pub
+preparation. Settings' dedicated compilation sequence still uses a fresh native
+cache. Native compilation assets may share an explicitly supplied
+`BUILD_RUNNER_ACCELERATOR_CACHE`, as in the existing settings CI jobs.
+
 ## SDK lifecycle comparison
 
 The existing SDK/dependency jobs run both package analysis/tests and a real

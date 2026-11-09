@@ -55,6 +55,12 @@ existing compatible caches without creating branch-scoped cache entries.
 Do not share mutable scenario state or relax assertions and deadlines to
 hide scheduling or setup problems.
 
+The settings and output-policy lanes batch consecutive groups through the same
+correctness runner used locally. Preserve group assignments when batching;
+groups share dependency preparation and explicitly configured compilation
+caches, while each group owns its mutable workspace. See
+[batched correctness groups](development.md#batched-correctness-groups).
+
 ## Verification and measurement
 
 ### Workflow dependencies

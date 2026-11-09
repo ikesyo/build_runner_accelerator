@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compare build-filter bytes, deletion, status and real builder invocation history."""
+from correctness_groups import PreparedFixture, run_groups
 from collections import Counter
 import json
 import os
@@ -8,7 +9,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from correctness_cli import REPO, DART, ENV, NATIVE, descendants, launcher, live
 
@@ -111,7 +111,31 @@ def copy_fixture(root):
     file.write_text(file.read_text().replace('path: ../..', f'path: {REPO}'))
 
 
+_prepared_fixture = None
+
+
+def configure_prepared_fixture(tmp):
+    """Select a process-local fixture template or explicit fresh preparation."""
+    global _prepared_fixture
+    _prepared_fixture = (PreparedFixture(tmp / 'prepared-fixture', warm=warm_stock_cli)
+                         if os.environ.get('VERIFY_PREPARED_FIXTURES', '1') != '0' else None)
+
+
+def warm_stock_cli(root):
+    """Compile only the stock package CLI, without running fixture builders."""
+    code, log = execute([DART, 'run', 'build_runner', '--help'], root)
+    assert code == 0, log
+
+
 def prepare(root):
+    """Copy a pristine fixture, reusing invocation-local preparation when enabled."""
+    if _prepared_fixture is None:
+        return prepare_fresh(root)
+    _prepared_fixture.copy(root, prepare_fresh)
+
+
+def prepare_fresh(root):
+    """Create fixture sources and resolve their dependencies without sharing build state."""
     copy_fixture(root)
     code, log = execute([DART, 'pub', 'get', '--offline'], root)
     assert code == 0, log
@@ -609,7 +633,9 @@ def watch_comparison(tmp, cache=False):
                 wait(lambda root=root: value.encode() in (root / pattern).read_bytes(), handle[0], handle[1])
             assert outputs(stock) == outputs(native) != before, (pattern, before, outputs(stock), outputs(native))
             name = pattern.split('/')[-1].split('.')[0]
-            assert history(stock) == history(native) == Counter({'lib/common.txt': 1, f'lib/{name}.mid': 1}), (pattern, history(stock), history(native))
+            assert history(stock) == history(native) == Counter({'lib/common.txt': 1, f'lib/{name}.mid': 1}), (
+                'shared input edit', pattern, history(stock), history(native),
+                handles[0][1].read_text(), handles[1][1].read_text())
             for root in (stock, native): history_path(root).unlink(missing_ok=True)
             positions = [handle[1].stat().st_size for handle in handles]
             for root in (stock, native): (root / 'lib/common.txt').unlink()
@@ -621,7 +647,9 @@ def watch_comparison(tmp, cache=False):
                     and not any(path.endswith('/lib/common.' + suffix) or path == 'lib/common.' + suffix
                         for path in outputs(root) for suffix in ('side', 'mid')), handle[0], handle[1])
             assert outputs(stock) == outputs(native), (pattern, outputs(stock), outputs(native))
-            assert history(stock) == history(native) == Counter({f'lib/{name}.mid': 1}), (pattern, history(stock), history(native))
+            assert history(stock) == history(native) == Counter({f'lib/{name}.mid': 1}), (
+                'shared input deletion', pattern, history(stock), history(native),
+                handles[0][1].read_text(), handles[1][1].read_text())
             for root in (stock, native): (root / f'lib/{name}.txt').unlink()
             for root, handle in zip((stock, native), handles):
                 wait(lambda root=root: not (root / pattern).exists(), handle[0], handle[1])
@@ -2270,18 +2298,14 @@ GROUPS = {
 
 
 def main():
-    selected = os.environ.get('BUILD_FILTER_CASE_GROUP', 'all')
-    if selected != 'all' and selected not in GROUPS:
-        raise ValueError(f'unknown build-filter case group: {selected}')
-    groups = GROUPS if selected == 'all' else {selected: GROUPS[selected]}
-    with tempfile.TemporaryDirectory(prefix='build-filter-') as temporary:
-        tmp = Path(temporary)
+    """Run the selected isolated correctness groups with shared preparation."""
+    def setup(tmp):
+        """Configure invocation-local fixture and compilation caches."""
+        configure_prepared_fixture(tmp)
         ENV.setdefault('BUILD_RUNNER_ACCELERATOR_CACHE', str(tmp / 'accelerator-cache'))
-        for name, run_group in groups.items():
-            started = time.monotonic()
-            print(f'build-filter: start group={name}', flush=True)
-            run_group(tmp)
-            print(f'build-filter: PASS group={name} elapsed={time.monotonic() - started:.1f}s', flush=True)
+
+    run_groups('build-filter', 'BUILD_FILTER_CASE_GROUP', GROUPS,
+               lambda name, tmp: GROUPS[name](tmp), setup=setup)
     print('build-filter stock/native comparisons passed', flush=True)
 
 
