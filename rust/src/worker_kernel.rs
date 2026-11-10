@@ -798,6 +798,7 @@ fn prepare_worker_aot(
         .current_dir(&context.workspace.root)
         .output()
         .map_err(|error| aot_compile_error(&context.worker_path, error))?;
+    relay_compiler_stderr(&output.stderr);
     drop(analysis_prewarm);
     if env::var("BUILD_RUNNER_ACCELERATOR_METRICS").as_deref() == Ok("1") {
         eprintln!(
@@ -806,7 +807,6 @@ fn prepare_worker_aot(
         );
     }
     if !output.status.success() {
-        relay_compiler_stderr(&output.stderr);
         remove_if_present(&temp_aot);
         remove_if_present(&temp_depfile);
         remove_if_present(&temp_sdk_metadata);
@@ -1410,8 +1410,8 @@ fn prepare_worker_kernel(
         .current_dir(root)
         .output()
         .map_err(|error| kernel_compile_error(&worker_path, error))?;
+    relay_compiler_stderr(&output.stderr);
     if !output.status.success() {
-        relay_compiler_stderr(&output.stderr);
         remove_if_present(&temp_kernel);
         remove_if_present(&temp_depfile);
         return Err(kernel_compile_status_error(&worker_path, output.status));
@@ -1557,11 +1557,12 @@ fn remove_if_present(path: &Path) {
 
 /// Relays captured compiler diagnostics to this process's stderr.
 ///
-/// Worker compiles capture the compiler's output instead of inheriting it:
-/// on success `dart compile` prints a `Generated: ...` line naming the
+/// Worker compiles capture the compiler's output instead of inheriting it
+/// because `dart compile` prints a `Generated: ...` line naming the
 /// temporary artifact (renamed before use) on stdout, which is internal
-/// noise in the build output. On failure the captured stderr is relayed so
-/// the diagnostics behind the compile status error are not lost.
+/// noise in the build output. Only stdout is suppressed: the captured
+/// stderr is relayed on success and failure alike, preserving the
+/// diagnostics and warnings the inherited stream used to show.
 fn relay_compiler_stderr(stderr: &[u8]) {
     use std::io::Write;
     let mut err = io::stderr().lock();
