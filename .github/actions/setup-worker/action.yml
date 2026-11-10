@@ -181,7 +181,7 @@ runs:
         esac
 
     - name: Prepare complete integration Pub downloads
-      if: (github.ref == 'refs/heads/main' || ((github.event_name == 'pull_request' && github.event.number == 173 && github.head_ref == 'ci/compiled-assets-and-pub-union') && github.run_attempt == 1)) && inputs.prepare-integration-cache == 'true'
+      if: github.ref == 'refs/heads/main' && inputs.prepare-integration-cache == 'true'
       shell: bash
       env:
         INTEGRATION_CACHE: ${{ inputs.integration-cache }}
@@ -190,7 +190,7 @@ runs:
         python3 scripts/prepare_ci_pub_cache.py --dart "$(command -v dart)" --pub-cache "$PUB_CACHE"
 
     - name: Save complete integration Pub downloads
-      if: (github.ref == 'refs/heads/main' || ((github.event_name == 'pull_request' && github.event.number == 173 && github.head_ref == 'ci/compiled-assets-and-pub-union') && github.run_attempt == 1)) && inputs.prepare-integration-cache == 'true' && steps.integration-pub.outputs.cache-hit != 'true'
+      if: github.ref == 'refs/heads/main' && inputs.prepare-integration-cache == 'true' && steps.integration-pub.outputs.cache-hit != 'true'
       uses: actions/cache/save@v6.1.0
       with:
         path: .pub-cache
@@ -207,7 +207,7 @@ runs:
         printf 'BUILD_RUNNER_ACCELERATOR_CACHE=%s/.dart_tool/ci-compiled-cache\n' "$GITHUB_WORKSPACE" >>"$GITHUB_ENV"
 
     - name: Cache validated compiled assets
-      if: inputs.integration-cache == 'true' && (github.ref == 'refs/heads/main' || ((github.event_name == 'pull_request' && github.event.number == 173 && github.head_ref == 'ci/compiled-assets-and-pub-union') && github.run_attempt == 1))
+      if: inputs.integration-cache == 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache@v6.1.0
       with:
         path: |
@@ -216,7 +216,7 @@ runs:
           .dart_tool/ci-compiled-cache/manifest-kernel
         key: compiled-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiled.outputs.identity }}-${{ steps.versions.outputs.digest }}-${{ hashFiles('lib/**', 'tool/**', 'rust/src/**', 'rust/patches/**', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rust-toolchain.toml', 'pubspec.yaml', 'pubspec.lock') }}
     - name: Restore validated compiled assets
-      if: inputs.integration-cache == 'true' && github.ref != 'refs/heads/main' && !((github.event_name == 'pull_request' && github.event.number == 173 && github.head_ref == 'ci/compiled-assets-and-pub-union') && github.run_attempt == 1)
+      if: inputs.integration-cache == 'true' && github.ref != 'refs/heads/main'
       uses: actions/cache/restore@v6.1.0
       with:
         path: |
