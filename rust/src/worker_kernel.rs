@@ -788,7 +788,7 @@ fn prepare_worker_aot(
     }
     let package_config = CompilerConfigSnapshot::create(&context.workspace)?;
     let compile_start = Instant::now();
-    let status = Command::new(dart_binary)
+    let output = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "exe"])
         .arg(format!("--packages={}", package_config.path.display()))
         .arg(format!("--depfile={}", temp_depfile.display()))
@@ -796,7 +796,7 @@ fn prepare_worker_aot(
         .arg("-o")
         .arg(&temp_aot)
         .current_dir(&context.workspace.root)
-        .status()
+        .output()
         .map_err(|error| aot_compile_error(&context.worker_path, error))?;
     drop(analysis_prewarm);
     if env::var("BUILD_RUNNER_ACCELERATOR_METRICS").as_deref() == Ok("1") {
@@ -805,11 +805,15 @@ fn prepare_worker_aot(
             compile_start.elapsed().as_micros()
         );
     }
-    if !status.success() {
+    if !output.status.success() {
+        relay_compiler_stderr(&output.stderr);
         remove_if_present(&temp_aot);
         remove_if_present(&temp_depfile);
         remove_if_present(&temp_sdk_metadata);
-        return Err(aot_compile_status_error(&context.worker_path, status));
+        return Err(aot_compile_status_error(
+            &context.worker_path,
+            output.status,
+        ));
     }
 
     let metadata = build_aot_metadata(
@@ -1395,7 +1399,7 @@ fn prepare_worker_kernel(
     let temp_depfile = temporary_sibling(&depfile_path, process_id, "d");
     let package_config = crate::runner_compatibility::package_config(root);
     let config_key = digest_file(&package_config)?;
-    let status = Command::new(dart_binary)
+    let output = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "kernel"])
         .arg("--no-embed-sources")
         .arg(format!("--packages={}", package_config.display()))
@@ -1404,12 +1408,13 @@ fn prepare_worker_kernel(
         .arg("-o")
         .arg(&temp_kernel)
         .current_dir(root)
-        .status()
+        .output()
         .map_err(|error| kernel_compile_error(&worker_path, error))?;
-    if !status.success() {
+    if !output.status.success() {
+        relay_compiler_stderr(&output.stderr);
         remove_if_present(&temp_kernel);
         remove_if_present(&temp_depfile);
-        return Err(kernel_compile_status_error(&worker_path, status));
+        return Err(kernel_compile_status_error(&worker_path, output.status));
     }
     if digest_file(&package_config)? != config_key {
         remove_if_present(&temp_kernel);
@@ -1548,6 +1553,20 @@ fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
 
 fn remove_if_present(path: &Path) {
     let _ = fs::remove_file(path);
+}
+
+/// Relays captured compiler diagnostics to this process's stderr.
+///
+/// Worker compiles capture the compiler's output instead of inheriting it:
+/// on success `dart compile` prints a `Generated: ...` line naming the
+/// temporary artifact (renamed before use) on stdout, which is internal
+/// noise in the build output. On failure the captured stderr is relayed so
+/// the diagnostics behind the compile status error are not lost.
+fn relay_compiler_stderr(stderr: &[u8]) {
+    use std::io::Write;
+    let mut err = io::stderr().lock();
+    let _ = err.write_all(stderr);
+    let _ = err.flush();
 }
 
 fn kernel_compile_error(worker: &Path, error: io::Error) -> io::Error {
