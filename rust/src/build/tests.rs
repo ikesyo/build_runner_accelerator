@@ -493,6 +493,7 @@ fn graph_identity_rejects_resolution_changes_before_build_actions() -> io::Resul
         super::LoadedGraph::resident(GraphState::default(), &graph),
         true,
         &crate::watch::WatchChanges::default(),
+        std::time::Instant::now(),
     );
     assert!(
         result

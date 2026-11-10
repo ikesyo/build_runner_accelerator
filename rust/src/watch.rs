@@ -269,6 +269,7 @@ fn run_watch_build_inner(
     reuse_configuration: bool,
     changed_paths: &WatchChanges,
 ) -> io::Result<()> {
+    let started = Instant::now();
     let mut cycle_metrics = WatchCycleMetrics {
         started: crate::metrics::runtime_metrics_enabled().then(Instant::now),
         success: false,
@@ -388,6 +389,7 @@ fn run_watch_build_inner(
         loaded_graph,
         session_start,
         changed_paths,
+        started,
     )?;
     // The owned working graph is returned only after successful publication.
     // Any earlier error drops it; the next attempt then reloads disk state.

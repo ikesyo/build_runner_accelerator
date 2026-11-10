@@ -17,6 +17,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io,
     path::Path,
+    time::Instant,
 };
 
 /// Executes selected output roots against the complete planned action graph.
@@ -45,6 +46,7 @@ pub(super) fn run(
     current_snapshot: &crate::snapshot::Snapshot,
     changed_paths: &BTreeSet<std::path::PathBuf>,
     retained_output_guard: bool,
+    started: Instant,
 ) -> io::Result<()> {
     let settings = &options.settings;
     let mut pool = pool;
@@ -358,7 +360,7 @@ pub(super) fn run(
             .filter(|(_, (location, _))| *location == crate::builder::BuildTo::Source)
             .map(|(asset, _)| asset.clone()),
     );
-    commit::commit(
+    let commit_metrics = commit::commit(
         state,
         commit::CommitInputs {
             only_check: settings.only_check,
@@ -382,6 +384,6 @@ pub(super) fn run(
     if runtime_metrics_enabled() {
         print_pool_metrics(pool_metrics);
     }
-    println!("Build completed (Rust frontend)");
+    super::print_result_line(false, commit_metrics.written_outputs, started);
     Ok(())
 }
