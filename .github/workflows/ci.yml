@@ -138,6 +138,7 @@ jobs:
       - uses: $/.github/actions/setup-worker
         with:
           cache-scope: ${{ github.job }}
+          integration-cache: 'true'
           cache-inputs: |
             fixtures/**/pubspec.lock
           build-frontend: 'true'
@@ -179,6 +180,7 @@ jobs:
       - uses: $/.github/actions/setup-worker
         with:
           cache-scope: ${{ github.job }}
+          integration-cache: 'true'
           cache-inputs: |
             fixtures/**/pubspec.lock
           build-frontend: 'true'
@@ -219,6 +221,7 @@ jobs:
       - uses: $/.github/actions/setup-worker
         with:
           cache-scope: ${{ github.job }}
+          integration-cache: 'true'
           cache-inputs: |
             fixtures/**/pubspec.lock
           build-frontend: 'true'
@@ -256,13 +259,13 @@ jobs:
     timeout-minutes: 15
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
-      BUILD_RUNNER_ACCELERATOR_CACHE: ${{ github.workspace }}/.dart_tool/ci-settings-compiled-cache
       SETTINGS_COMPARISON_MODE: aot
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: $/.github/actions/setup-worker
         with:
           cache-scope: ${{ github.job }}
+          integration-cache: 'true'
           cache-inputs: |
             fixtures/**/pubspec.lock
           build-frontend: 'true'
@@ -298,20 +301,20 @@ jobs:
     timeout-minutes: 15
     env:
       PUB_CACHE: ${{ github.workspace }}/.pub-cache
-      BUILD_RUNNER_ACCELERATOR_CACHE: ${{ github.workspace }}/.dart_tool/ci-settings-compiled-cache
       SETTINGS_COMPARISON_MODE: aot
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: $/.github/actions/setup-worker
         with:
           cache-scope: ${{ github.job }}
+          integration-cache: 'true'
           cache-inputs: |
             fixtures/**/pubspec.lock
           build-frontend: 'true'
       - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          for fixture in settings_builder_app trigger_builder_app post_process_builder_app; do
+          for fixture in settings_builder_app trigger_builder_app post_process_builder_app workspace_json_app; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
@@ -331,10 +334,11 @@ jobs:
               BUILD_RUNNER_ACCELERATOR_CACHE: ${{ runner.temp }}/settings-compile-cold-cache
             run: |
               SETTINGS_CASE_GROUP=compile bash scripts/correctness_settings.sh
-          - name: Trigger lifecycle
+          - name: Trigger lifecycle and JSON workspace
             shell: bash
             run: |
               bash scripts/correctness_trigger_builder.sh
+              bash scripts/correctness_workspace_json.sh
 
   integration-output-policies:
     name: 'Integration: output policies'
@@ -348,6 +352,7 @@ jobs:
       - uses: $/.github/actions/setup-worker
         with:
           cache-scope: ${{ github.job }}
+          integration-cache: 'true'
           cache-inputs: |
             fixtures/**/pubspec.lock
           build-frontend: 'true'
@@ -389,6 +394,7 @@ jobs:
       - uses: $/.github/actions/setup-worker
         with:
           cache-scope: ${{ github.job }}
+          integration-cache: 'true'
           cache-inputs: |
             fixtures/**/pubspec.lock
           build-frontend: 'true'
@@ -404,11 +410,10 @@ jobs:
             run: |
               SMOKE_SKIP_RUST_TESTS=1 bash scripts/smoke.sh
               bash scripts/correctness_single_package_scheduler.sh
-          - name: CLI and JSON workspace
+          - name: CLI compatibility
             shell: bash
             run: |
               bash scripts/correctness_cli.sh
-              bash scripts/correctness_workspace_json.sh
           - name: Workspace scheduler
             shell: bash
             run: |
@@ -429,6 +434,8 @@ jobs:
       - uses: $/.github/actions/setup-worker
         with:
           cache-scope: ${{ github.job }}
+          integration-cache: 'true'
+          prepare-integration-cache: 'true'
           cache-inputs: |
             fixtures/**/pubspec.lock
           build-frontend: 'true'
@@ -478,6 +485,7 @@ jobs:
       - uses: $/.github/actions/setup-worker
         with:
           cache-scope: ${{ github.job }}
+          integration-cache: 'true'
           cache-inputs: |
             fixtures/**/pubspec.lock
           build-frontend: 'true'
@@ -523,6 +531,7 @@ jobs:
       - uses: $/.github/actions/setup-worker
         with:
           cache-scope: ${{ github.job }}
+          integration-cache: 'true'
           cache-inputs: |
             fixtures/**/pubspec.lock
           build-frontend: 'true'
@@ -564,6 +573,7 @@ jobs:
       - uses: $/.github/actions/setup-worker
         with:
           cache-scope: ${{ github.job }}
+          integration-cache: 'true'
           cache-inputs: |
             fixtures/**/pubspec.lock
           build-frontend: 'true'

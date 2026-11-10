@@ -3,7 +3,7 @@ description: Set up the pinned worker SDK, Rust toolchain, cache, and optional f
 
 inputs:
   cache-scope:
-    description: Namespace for the job-specific Pub dependency set.
+    description: Namespace for resolution-specific Pub and compiled asset caches.
     required: true
   cache-inputs:
     description: Newline-separated lockfiles and inputs that affect the Pub dependency set.
@@ -11,6 +11,14 @@ inputs:
     default: |
       pubspec.yaml
       pubspec.lock
+  integration-cache:
+    description: Restore the complete default-SDK integration Pub set and validated compiled assets.
+    required: false
+    default: 'false'
+  prepare-integration-cache:
+    description: The sole existing main job responsible for preparing and saving the complete Pub set.
+    required: false
+    default: 'false'
   dart-version:
     description: Optional override for the worker Dart SDK.
     required: false
@@ -45,6 +53,8 @@ runs:
       env:
         DART_VERSION_INPUT: ${{ inputs.dart-version }}
         CACHE_INPUTS: ${{ inputs.cache-inputs }}
+        INTEGRATION_CACHE: ${{ inputs.integration-cache }}
+        DEPENDENCY_RESOLUTION: ${{ inputs.dependency-resolution }}
       run: |
         set -euo pipefail
         source .github/worker-toolchain.env
@@ -56,11 +66,17 @@ runs:
         printf 'rust=%s\n' "$rust_version" >>"$GITHUB_OUTPUT"
         printf 'PUB_CACHE=%s/.pub-cache\n' "$GITHUB_WORKSPACE" >>"$GITHUB_ENV"
 
-        # Each scope may resolve a different set of fixtures. Do not let one
-        # job publish its partial Pub cache as the union for other jobs.
+        # Resolution-specific jobs keep their own namespace. Integration jobs
+        # restore a union published only after every preparation has succeeded.
         files=(pubspec.yaml pubspec.lock)
         shopt -s globstar nullglob
         files+=(fixtures/**/pubspec.yaml)
+        if [[ "$INTEGRATION_CACHE" == true ]]; then
+          [[ "${RUNNER_OS:-}" == Linux && "$dart_version" == "$DART_WORKER_SDK_VERSION" && "$DEPENDENCY_RESOLUTION" == get ]] || {
+            echo 'The integration cache requires Linux, the default SDK and get resolution' >&2; exit 2;
+          }
+          files+=(fixtures/**/pubspec.lock scripts/prepare_ci_pub_cache.py scripts/correctness_dependency_window.py)
+        fi
         while IFS= read -r pattern; do
           [[ -n "$pattern" ]] || continue
           for path in $pattern; do
@@ -77,7 +93,7 @@ runs:
         printf 'digest=%s\n' "$digest" >>"$GITHUB_OUTPUT"
 
     - name: Cache Pub downloads
-      if: github.ref == 'refs/heads/main'
+      if: inputs.integration-cache != 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache@v6.1.0
       with:
         path: .pub-cache
@@ -85,13 +101,23 @@ runs:
         restore-keys: |
           pub-v2-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ inputs.dependency-resolution }}-
     - name: Restore Pub downloads
-      if: github.ref != 'refs/heads/main'
+      if: inputs.integration-cache != 'true' && github.ref != 'refs/heads/main'
       uses: actions/cache/restore@v6.1.0
       with:
         path: .pub-cache
         key: pub-v2-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ inputs.dependency-resolution }}-${{ steps.versions.outputs.digest }}
         restore-keys: |
           pub-v2-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ inputs.dependency-resolution }}-
+
+    - id: integration-pub
+      name: Restore complete integration Pub downloads
+      if: inputs.integration-cache == 'true'
+      uses: actions/cache/restore@v6.1.0
+      with:
+        path: .pub-cache
+        key: pub-integration-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ steps.versions.outputs.digest }}-${{ github.event.pull_request.base.sha || github.sha }}
+        restore-keys: |
+          pub-integration-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.dart }}-${{ steps.versions.outputs.digest }}-
 
     - name: Cache Cargo downloads
       if: inputs.setup-rust == 'true' && github.ref == 'refs/heads/main'
@@ -153,6 +179,63 @@ runs:
           downgrade|upgrade) dart --suppress-analytics pub "$DEPENDENCY_RESOLUTION" ;;
           *) echo 'Invalid dependency-resolution' >&2; exit 2 ;;
         esac
+
+    - name: Prepare complete integration Pub downloads
+      if: github.ref == 'refs/heads/main' && inputs.prepare-integration-cache == 'true'
+      shell: bash
+      env:
+        INTEGRATION_CACHE: ${{ inputs.integration-cache }}
+      run: |
+        [[ "$INTEGRATION_CACHE" == true ]] || { echo 'Pub producer must use the integration cache' >&2; exit 2; }
+        python3 scripts/prepare_ci_pub_cache.py --dart "$(command -v dart)" --pub-cache "$PUB_CACHE"
+
+    - name: Save complete integration Pub downloads
+      if: github.ref == 'refs/heads/main' && inputs.prepare-integration-cache == 'true' && steps.integration-pub.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6.1.0
+      with:
+        path: .pub-cache
+        key: ${{ steps.integration-pub.outputs.cache-primary-key }}
+
+    - id: compiled
+      name: Identify compiled asset inputs
+      if: inputs.integration-cache == 'true'
+      shell: bash
+      run: |
+        sdk=$(dirname "$(dirname "$(readlink -f "$(command -v dart)")")")
+        identity=$(python3 .github/scripts/compiled_cache_key.py --sdk "$sdk" --workspace "$GITHUB_WORKSPACE" --pub-cache "$PUB_CACHE")
+        printf 'identity=%s\n' "$identity" >>"$GITHUB_OUTPUT"
+        printf 'BUILD_RUNNER_ACCELERATOR_CACHE=%s/.dart_tool/ci-compiled-cache\n' "$GITHUB_WORKSPACE" >>"$GITHUB_ENV"
+
+    - name: Cache validated compiled assets
+      if: inputs.integration-cache == 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache@v6.1.0
+      with:
+        path: |
+          .dart_tool/ci-compiled-cache/byte_store
+          .dart_tool/ci-compiled-cache/worker-aot
+          .dart_tool/ci-compiled-cache/manifest-kernel
+        key: compiled-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiled.outputs.identity }}-${{ steps.versions.outputs.digest }}-${{ hashFiles('lib/**', 'tool/**', 'rust/src/**', 'rust/patches/**', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rust-toolchain.toml', 'pubspec.yaml', 'pubspec.lock') }}
+    - name: Restore validated compiled assets
+      if: inputs.integration-cache == 'true' && github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@v6.1.0
+      with:
+        path: |
+          .dart_tool/ci-compiled-cache/byte_store
+          .dart_tool/ci-compiled-cache/worker-aot
+          .dart_tool/ci-compiled-cache/manifest-kernel
+        key: compiled-${{ inputs.cache-scope }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiled.outputs.identity }}-${{ steps.versions.outputs.digest }}-${{ hashFiles('lib/**', 'tool/**', 'rust/src/**', 'rust/patches/**', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rust-toolchain.toml', 'pubspec.yaml', 'pubspec.lock') }}
+
+    - name: Discard restored byte-store leases before starting workers
+      if: inputs.integration-cache == 'true'
+      shell: bash
+      run: |
+        # OS locks do not survive cache transport. A copied lease can also
+        # carry a PID reused by this runner, which must never look live.
+        # Setup has not started any worker using this isolated cache yet.
+        cache="$GITHUB_WORKSPACE/.dart_tool/ci-compiled-cache/byte_store"
+        if [[ -d "$cache" ]]; then
+          find "$cache" -type f -name 'lease-*' -delete
+        fi
 
     - if: inputs.setup-rust == 'true'
       uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 1.98.1

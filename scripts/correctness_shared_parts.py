@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compare native librarySourceSink phases and publication with stock runner."""
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
@@ -36,9 +37,11 @@ def main():
     experiment_args = []
 
     def run(command, root, success=True):
+        """Retain individual stock/native process times separately from assertions."""
         nonlocal sequence
         sequence += 1
         log = results / f'{sequence:03d}-{root.name}.log'
+        started = time.monotonic()
         with log.open('w') as output:
             output.write(f'{command!r}\n'); output.flush()
             process = subprocess.Popen(command, cwd=root, env={**env, 'SHARED_OPTIONAL_HISTORY': str(results / f'{root.name}-optional.history'), 'SHARED_ACTION_HISTORY': str(results / f'{root.name}-actions.history')}, stdout=output,
@@ -48,6 +51,16 @@ def main():
             finally:
                 if process.poll() is None:
                     os.killpg(process.pid, signal.SIGKILL); process.wait()
+                elapsed = time.monotonic() - started
+                record = {'sequence': sequence, 'root': root.name, 'command': command,
+                          'status': process.returncode, 'expected_success': success,
+                          'seconds': elapsed}
+                with (results / 'process-timings.jsonl').open('a') as timings:
+                    timings.write(json.dumps(record) + '\n')
+                print(f'shared-parts: process sequence={sequence} root={root.name} '
+                      f'status={process.returncode} expected_success={success} '
+                      f'elapsed={elapsed:.3f}s command={command!r}',
+                      flush=True)
         assert (code == 0) == success, f'{command}: {code}, see {log}\n{log.read_text()}'
         return log.read_text()
 

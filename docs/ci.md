@@ -119,10 +119,48 @@ preserve.
 
 ### Cache layout and timing reports
 
-The shared setup action keeps Pub downloads, Cargo downloads and Rust build
-artifacts in separate caches. Pub retains dependency-set scopes because each
-job prepares a different subset of fixtures; concurrent saves do not merge
-partial package caches. Cargo downloads share platform/lockfile keys. Rust
+The shared setup action keeps Pub downloads, Cargo downloads, Rust build
+artifacts and validated Dart compilation assets in separate caches. Default-SDK
+integration jobs restore one complete Pub download set. The existing codegen
+job is its sole main-branch writer: before its parallel checks, it resolves the
+root, every tracked integration fixture package (including nested packages), and both native
+and stock dependency-window resolutions in disposable workspaces. It saves only
+after all resolutions succeed. Other integration jobs only restore; they never
+publish their partial downloads under the common key. No job waits for the
+producer in the same run. An initial miss downloads dependencies normally.
+
+The common Pub key includes SDK/platform, all fixture specifications/lockfiles,
+preparation code and the main source SHA. A compatible fallback requires the
+same preparation inputs. Each main commit can refresh the immutable cache;
+latest/minimum package jobs retain their distinct SDK/resolution scopes. SDK
+lifecycle and shared-part fixtures remain outside the integration union, in the
+SDK/native jobs: their unlocked latest solutions must not change fresh offline
+integration resolutions.
+Run
+`python3 scripts/prepare_ci_pub_cache.py --dart /path/to/dart --offline` against
+a restored Pub directory to check the entire declared set without running builders.
+
+Integration compilation caches contain only `byte_store`, `worker-aot` and
+`manifest-kernel`, under `.dart_tool/ci-compiled-cache`. They use exact keys
+containing the SDK library/compiler contents, absolute SDK/checkout/Pub paths,
+dependency inputs and accelerator sources, with a separate writer per job.
+PRs restore main entries; only main saves. AOT metadata and manifest-kernel
+dependency digests are still validated at use time. Analyzer keys include
+content/language/feature identities within their SDK-summary/Analyzer namespace.
+Fresh checkouts can change source mtimes without bypassing these checks.
+Restored byte-store lease files are discarded during setup before any worker
+uses the isolated cache: OS locks cannot be transported, and a new runner can
+reuse an old PID. Pack contents and generation pointers retain their normal
+validation and locking.
+
+Worker kernels are excluded: their depfiles contain absolute paths and freshness
+uses mtimes. SDK summaries remain workspace-local: stock validation tracks SDK
+version and Analyzer/build_runner paths rather than all source contents. Outputs,
+graphs, recovery state and local validation receipts are never persisted by the
+compiled cache. Tests that explicitly select cold or SDK-lifecycle caches keep
+those overrides. Cache restoration is an optimization, never a precondition.
+
+Cargo downloads share platform/lockfile keys. Rust
 artifacts use toolchain/profile/target/source keys with compatible fallback,
 so a source change can save its updated build rather than repeatedly restoring
 an immutable older snapshot. Cargo still checks freshness after restoration.
