@@ -34,7 +34,17 @@ mod workspace_mode;
 use std::env;
 use std::io;
 
-fn main() -> io::Result<()> {
+fn main() {
+    // Report errors as readable messages instead of returning them from
+    // `main`, which would print the `Debug` form of the error (for example
+    // `Error: Custom { kind: Other, error: "..." }`) as the final line.
+    if let Err(error) = run() {
+        eprintln!("build_runner_accelerator: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> io::Result<()> {
     if let Some(code) = process::supervise()? {
         std::process::exit(code);
     }
