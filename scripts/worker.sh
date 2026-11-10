@@ -52,6 +52,14 @@ worker_pub_get() {
   local directory=${1:-$root_package_dir}
   if (($# > 0)); then shift; fi
   if [[ ! -d "$directory" ]]; then worker_fail "pub workspace not found: $directory"; return 1; fi
+  local -a pub_get_args=("$@")
+  if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then
+    local argument offline=false
+    for argument in "$@"; do
+      [[ "$argument" != --offline ]] || offline=true
+    done
+    [[ "$offline" == true ]] || pub_get_args+=(--offline)
+  fi
   local lock_dir="$root_package_dir/.dart_tool"
   local lock_file="$lock_dir/worker-pub-get.lock"
   mkdir -p -- "$lock_dir" || { worker_fail "cannot create worker pub lock directory: $lock_dir"; return 1; }
@@ -61,7 +69,7 @@ worker_pub_get() {
     local log_path="${VERIFY_PUB_GET_LOG:-$directory/.dart_tool/build_runner_accelerator/verification/pub-get.log}"
     local timeout_seconds
     timeout_seconds=$(verification_timeout_seconds VERIFY_PUB_GET_TIMEOUT_SECONDS 180) || exit 2
-    verification_run_command_in_dir "$directory" "pub-get/$(basename "$directory")" "$log_path" "$timeout_seconds" env PUB_CACHE="$worker_pub_cache" "$worker_dart_bin" --suppress-analytics pub get "$@"
+    verification_run_command_in_dir "$directory" "pub-get/$(basename "$directory")" "$log_path" "$timeout_seconds" env PUB_CACHE="$worker_pub_cache" "$worker_dart_bin" --suppress-analytics pub get "${pub_get_args[@]}"
   )
 }
 
