@@ -366,8 +366,8 @@ pub(crate) fn run_with_config_session(
         && !state.was_filtered
         && cache_source_conflicts.is_empty()
     {
-        print_result_line(true, 0, started);
         if settings.only_check {
+            print_result_line(true, 0, started);
             return Ok(Some(state));
         }
         let graph_metrics = commit::save_no_work(
@@ -377,6 +377,7 @@ pub(crate) fn run_with_config_session(
             current_snapshot,
             graph_load_bytes,
         )?;
+        print_result_line(true, 0, started);
         if runtime_metrics_enabled() {
             print_filesystem_metrics(&filesystem_metrics);
             print_graph_metrics(
