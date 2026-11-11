@@ -28,7 +28,7 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'dart-lang/setup-dart@v1.8.1'
         - 'dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8'
-        - 'songmu/tagpr@v1.21.4'
+        - 'songmu/tagpr@v1.22.0'
 dependencies:
     'actions/attest@v4.2.2':
         ref: 'v4.2.2'
@@ -65,8 +65,8 @@ dependencies:
         commit: 'sha1-683b588c487a69d01f6c6ddf40f036ff682cc2c8'
         owner_id: 1940490
         repo_id: 260749683
-    'songmu/tagpr@v1.21.4':
-        ref: 'v1.21.4'
-        commit: 'sha1-e1250d6c84e4425db82b5e90549d62dfe23e9ebe'
+    'songmu/tagpr@v1.22.0':
+        ref: 'v1.22.0'
+        commit: 'sha1-047aec4b6c0ce166f52958b5a97f5a3d927fd65b'
         owner_id: 177122
         repo_id: 524603982
