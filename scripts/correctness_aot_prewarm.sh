@@ -199,7 +199,10 @@ run_runner "$workspace_b" "$build_log" build || fail 'invalidation build failed'
 cmp "$temporary_dir/expected-worker.dart" \
   "$workspace_b/.dart_tool/build_runner_accelerator/dynamic_worker.dart" || \
   fail 'invalidation input was replaced before AOT validation'
-[[ "$(aot_mtime_ns "$b_aot")" != "$b_mtime_before" ]] || \
+[[ -x "$b_aot" ]] || fail 'invalidation build did not publish an executable'
+b_mtime_after=$(aot_mtime_ns "$b_aot") || \
+  fail 'could not read invalidation AOT executable mtime'
+[[ "$b_mtime_after" != "$b_mtime_before" ]] || \
   fail 'changed worker did not invalidate AOT cache'
 
 printf 'aot-prewarm: build-sync-compile=yes output-delete-recovery=yes compile-wait=yes cache-key-portable=yes cache-reuse=yes invalidation=yes\n'
