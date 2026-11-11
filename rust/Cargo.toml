@@ -14,10 +14,10 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 
 # Shared telemetry code is compiled on every distribution target.
-opentelemetry = { version = "0.31", default-features = false, features = ["trace"] }
+opentelemetry = { version = "0.32", default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace"] }
 # Official OTLP JSON messages bring generated tonic/prost dependencies, without transport features.
-opentelemetry-proto = { version = "0.31", default-features = false, features = ["gen-tonic-messages", "trace", "with-serde"] }
+opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic-messages", "trace", "with-serde"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
