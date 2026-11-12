@@ -20,6 +20,10 @@ pub(super) struct GraphSaveMetrics {
     pub(super) graph_save_skipped: bool,
     pub(super) post_scan_us: u128,
     pub(super) post_assets_us: u128,
+    /// Builder outputs actually written to disk by this commit. Outputs
+    /// whose journaled change was already satisfied are not counted, and
+    /// neither are deletions or shared-part source edits.
+    pub(super) written_outputs: usize,
 }
 
 /// All plan and staged-state evidence needed to publish one successful build.
@@ -67,6 +71,7 @@ pub(super) fn save_no_work(
             graph_save_skipped: true,
             post_scan_us: 0,
             post_assets_us: 0,
+            written_outputs: 0,
         });
     }
     let graph_save_started = Instant::now();
@@ -79,6 +84,7 @@ pub(super) fn save_no_work(
         graph_save_skipped: false,
         post_scan_us: 0,
         post_assets_us: 0,
+        written_outputs: 0,
     })
 }
 
@@ -109,6 +115,7 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
             graph_save_skipped: true,
             post_scan_us: 0,
             post_assets_us: 0,
+            written_outputs: 0,
         });
     }
     let CommitInputs {
@@ -244,10 +251,12 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         state.actions.remove(&action_key);
     }
     boundary("after_deletions")?;
+    let mut published_outputs = 0;
     for (asset, output) in transaction.pending_outputs {
         let path = output_path(workspace, &output.builder, &asset)?;
         if mutations.contains(&path) {
             super::recovery::write_output(&path, &output.bytes)?;
+            published_outputs += 1;
             boundary("after_output")?;
         }
     }
@@ -394,6 +403,7 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         graph_save_skipped: false,
         post_scan_us,
         post_assets_us,
+        written_outputs: published_outputs,
     })
 }
 

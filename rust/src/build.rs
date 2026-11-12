@@ -105,7 +105,25 @@ impl Preflight {
     }
 }
 
+/// Prints the user-facing result line in the stock shape (elapsed time and
+/// written output count) while keeping the existing completion markers as
+/// prefixes, which the verification harness matches as substrings.
+fn print_result_line(no_work: bool, written_outputs: usize, started: Instant) {
+    let elapsed = started.elapsed().as_secs();
+    let noun = if written_outputs == 1 {
+        "output"
+    } else {
+        "outputs"
+    };
+    if no_work {
+        println!("No work to do (Rust frontend) in {elapsed}s; wrote {written_outputs} {noun}.");
+    } else {
+        println!("Build completed (Rust frontend) in {elapsed}s; wrote {written_outputs} {noun}.");
+    }
+}
+
 pub(crate) fn run(options: &Options) -> io::Result<()> {
+    let started = Instant::now();
     let load = crate::wall::Span::new("workspace_load");
     let workspace = Workspace::load(options.root.clone())?;
     drop(load);
@@ -124,10 +142,15 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         loaded_graph,
         true,
         &crate::watch::WatchChanges::default(),
+        started,
     )
     .map(|_| ())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Session entry point shared by one-shot and watch builds; the start instant is a session input like session_start and changed_paths"
+)]
 pub(crate) fn run_with_config_session(
     options: &Options,
     pool: Option<&mut WorkerPool>,
@@ -136,6 +159,7 @@ pub(crate) fn run_with_config_session(
     loaded_graph: LoadedGraph,
     session_start: bool,
     changed_paths: &crate::watch::WatchChanges,
+    started: Instant,
 ) -> io::Result<Option<GraphState>> {
     // Watch already resolved the workspace and manifest to initialize or
     // reuse its worker pool. Keep that resolution alive for the build itself.
@@ -287,6 +311,7 @@ pub(crate) fn run_with_config_session(
             &current_snapshot,
             &changed_paths.paths,
             retained_output_guard,
+            started,
         )?;
         return Ok((!settings.only_check).then_some(state));
     }
@@ -341,8 +366,8 @@ pub(crate) fn run_with_config_session(
         && !state.was_filtered
         && cache_source_conflicts.is_empty()
     {
-        println!("No work to do (Rust frontend)");
         if settings.only_check {
+            print_result_line(true, 0, started);
             return Ok(Some(state));
         }
         let graph_metrics = commit::save_no_work(
@@ -352,6 +377,7 @@ pub(crate) fn run_with_config_session(
             current_snapshot,
             graph_load_bytes,
         )?;
+        print_result_line(true, 0, started);
         if runtime_metrics_enabled() {
             print_filesystem_metrics(&filesystem_metrics);
             print_graph_metrics(
@@ -454,11 +480,7 @@ pub(crate) fn run_with_config_session(
             eprintln!("part_filtered={part_filtered_actions}");
         }
     }
-    if no_work {
-        println!("No work to do (Rust frontend)");
-    } else {
-        println!("Build completed (Rust frontend)");
-    }
+    print_result_line(no_work, graph_metrics.written_outputs, started);
     Ok(Some(state))
 }
 
