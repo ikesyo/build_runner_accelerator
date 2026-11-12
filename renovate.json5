@@ -6,6 +6,9 @@
   'github-actions': {
     enabled: false,
   },
+  // Fixture pubspecs pin exact versions on purpose for compatibility
+  // testing, so Renovate must not propose updates there.
+  ignorePaths: ['fixtures/**'],
   packageRules: [
     {
       description: 'Group OpenTelemetry crates',
