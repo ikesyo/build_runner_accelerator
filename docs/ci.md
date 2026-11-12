@@ -18,15 +18,22 @@ and toolchains so comparisons do not also change the execution environment.
 The workflow is the source of truth for individual test assignments.
 
 A lightweight classification job runs before the test jobs on pull requests.
-It counts separately from the 16 test jobs above. When every changed path is
-provably inert for the integration and native jobs (documentation, the Dart
-package tests, CI helper tests and tests of the CI tooling itself), those jobs
-are skipped and only the package jobs run. The classifier and the
-compiled-cache key helper always force a full run, as does anything
-unrecognized: classification must succeed with an explicit full level before
-any heavy job may skip, so failures fail safe toward running everything.
-Push, schedule and manual runs are always full, which keeps main's results
-and cache production complete.
+It counts separately from the 16 test jobs above. The classifier derives the
+set of gated jobs a change can affect from the tree itself: workflow lanes
+name the scripts they run, scripts name the fixtures and shared files they
+use, and fixture path-dependencies are followed in reverse. A fixture change
+therefore runs only the jobs exercising that fixture, and a harness change
+fans out to every job whose suites source it. Documentation, the Dart
+package tests and CI helper tests need only the always-on package jobs,
+which run unconditionally as the safety floor. Product code, the workflow
+and actions, the cache preparation and key helpers, and the classifier
+itself always force a full run, as does anything the derivation cannot
+account for: a gated job may skip only when classification succeeded and
+did not list it, so failures fail safe toward running everything. Every
+script and fixture must be accounted for by derivation or by an explicit
+bucket in the classifier; check_ci.py enforces that partition. Push,
+schedule and manual runs are always full, which keeps main's results and
+cache production complete.
 
 ## Coverage
 

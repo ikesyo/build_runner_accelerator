@@ -28,24 +28,23 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      level: ${{ steps.classify.outputs.level }}
+      jobs: ${{ steps.classify.outputs.jobs }}
     steps:
       - uses: actions/checkout@v7.0.1
-        with:
-          sparse-checkout: .github/scripts
-          sparse-checkout-cone-mode: false
       - id: classify
         name: Classify changed paths
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          level=full
+          jobs=',integration-selection,integration-filter-graph,integration-boundaries,integration-settings,integration-settings-watch,integration-output-policies,integration-core,integration-codegen,integration-lifecycle,integration-compilers,integration-builders,native-build,'
           if files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename'); then
-            level=$(printf '%s\n' "$files" | python3 .github/scripts/classify_changes.py | cut -d= -f2) || level=full
-            [[ "$level" == light || "$level" == full ]] || level=full
+            derived=$(printf '%s\n' "$files" | python3 .github/scripts/classify_changes.py "$GITHUB_WORKSPACE") || derived=''
+            if [[ "$derived" =~ ^jobs=,[a-z0-9,-]*,$ ]]; then
+              jobs=${derived#jobs=}
+            fi
           fi
-          printf 'level=%s\n' "$level" >>"$GITHUB_OUTPUT"
+          printf 'jobs=%s\n' "$jobs" >>"$GITHUB_OUTPUT"
 
   dart-package:
     name: Dart ${{ matrix.sdk }} (${{ matrix.resolution }})
@@ -157,7 +156,7 @@ jobs:
 
   integration-selection:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-selection,')) }}
     name: 'Integration: filter selection and graph'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -201,7 +200,7 @@ jobs:
 
   integration-filter-graph:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-filter-graph,')) }}
     name: 'Integration: filter resolver, state, and unsupported builders'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -244,7 +243,7 @@ jobs:
 
   integration-boundaries:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-boundaries,')) }}
     name: 'Integration: filter watch and boundaries'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -289,7 +288,7 @@ jobs:
 
   integration-settings:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-settings,')) }}
     name: 'Integration: build configuration'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -335,7 +334,7 @@ jobs:
 
   integration-settings-watch:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-settings-watch,')) }}
     name: 'Integration: configuration watch and AOT'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -384,7 +383,7 @@ jobs:
 
   integration-output-policies:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-output-policies,')) }}
     name: 'Integration: output policies'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -429,7 +428,7 @@ jobs:
 
   integration-core:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-core,')) }}
     name: 'Integration: baseline, CLI, and workspace scheduler'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -471,7 +470,7 @@ jobs:
 
   integration-codegen:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-codegen,')) }}
     name: 'Integration: code generators'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -525,7 +524,7 @@ jobs:
 
   integration-lifecycle:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-lifecycle,')) }}
     name: 'Integration: lifecycle, publication, and workspace'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -573,7 +572,7 @@ jobs:
 
   integration-compilers:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-compilers,')) }}
     name: 'Integration: published web compilers'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -617,7 +616,7 @@ jobs:
 
   integration-builders:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-builders,')) }}
     name: 'Integration: Drift, registry, and recovery'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -664,7 +663,7 @@ jobs:
 
   native-build:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',native-build,')) }}
     name: Native build (${{ matrix.target_id }})
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 20
