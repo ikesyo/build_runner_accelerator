@@ -19,6 +19,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Classify changed paths
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      level: ${{ steps.classify.outputs.level }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+      - id: classify
+        name: Classify changed paths
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          level=full
+          if files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename'); then
+            level=$(printf '%s\n' "$files" | python3 .github/scripts/classify_changes.py | cut -d= -f2) || level=full
+            [[ "$level" == light || "$level" == full ]] || level=full
+          fi
+          printf 'level=%s\n' "$level" >>"$GITHUB_OUTPUT"
+
   dart-package:
     name: Dart ${{ matrix.sdk }} (${{ matrix.resolution }})
     runs-on: ubuntu-24.04-arm
@@ -128,6 +156,8 @@ jobs:
           if-no-files-found: ignore
 
   integration-selection:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
     name: 'Integration: filter selection and graph'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -170,6 +200,8 @@ jobs:
               NESTED_PACKAGE_CASE_GROUP=recovery-state bash scripts/correctness_nested_packages.sh
 
   integration-filter-graph:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
     name: 'Integration: filter resolver, state, and unsupported builders'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -211,6 +243,8 @@ jobs:
               NESTED_PACKAGE_CASE_GROUP=source,glob bash scripts/correctness_nested_packages.sh
 
   integration-boundaries:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
     name: 'Integration: filter watch and boundaries'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -254,6 +288,8 @@ jobs:
               BUILD_FILTER_CASE_GROUP=routing bash scripts/correctness_build_filter.sh
 
   integration-settings:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
     name: 'Integration: build configuration'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -296,6 +332,8 @@ jobs:
               bash scripts/correctness_upgrade.sh
 
   integration-settings-watch:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
     name: 'Integration: configuration watch and AOT'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -341,6 +379,8 @@ jobs:
               bash scripts/correctness_workspace_json.sh
 
   integration-output-policies:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
     name: 'Integration: output policies'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -384,6 +424,8 @@ jobs:
               SETTINGS_CASE_GROUP=watch-backslash,watch-named bash scripts/correctness_settings.sh
 
   integration-core:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
     name: 'Integration: baseline, CLI, and workspace scheduler'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -424,6 +466,8 @@ jobs:
               bash scripts/correctness_prewarm.sh
 
   integration-codegen:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
     name: 'Integration: code generators'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -475,6 +519,8 @@ jobs:
               PUB_GET_OFFLINE=1 bash scripts/correctness_empty_input_mapping.sh
 
   integration-lifecycle:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
     name: 'Integration: lifecycle, publication, and workspace'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -521,6 +567,8 @@ jobs:
               bash scripts/correctness_workspace.sh
 
   integration-compilers:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
     name: 'Integration: published web compilers'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -563,6 +611,8 @@ jobs:
               OUTPUT_POLICY_CASE_GROUP=modes bash scripts/correctness_output_policies.sh
 
   integration-builders:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
     name: 'Integration: Drift, registry, and recovery'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -608,6 +658,8 @@ jobs:
               bash scripts/watch_smoke_registry_override.sh
 
   native-build:
+    needs: changes
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.level == 'full') }}
     name: Native build (${{ matrix.target_id }})
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 20
