@@ -53,9 +53,13 @@ class PrepareCiPubCacheTest(unittest.TestCase):
                         for runner in (native, stock)}
             self.assertEqual(len(calls), 1 + len(specs) + len(expected))
             self.assertTrue(all('--offline' in command for command, _, _ in calls))
-            self.assertIn('--enforce-lockfile', calls[0][0])
-            self.assertIn('--enforce-lockfile', calls[1][0])
-            self.assertNotIn('--enforce-lockfile', calls[2][0])
+            # Resolutions run in parallel, so key lockfile assertions by package.
+            by_cwd = {name: command for command, name, _ in calls}
+            root_command = next(command for command, _, spec in calls
+                                if spec == 'name: accelerator\n')
+            self.assertIn('--enforce-lockfile', root_command)
+            self.assertIn('--enforce-lockfile', by_cwd['json_serializable_app'])
+            self.assertNotIn('--enforce-lockfile', by_cwd['member'])
             for runner, analyzer in expected:
                 self.assertTrue(any(f'build_runner: {runner}\n' in spec and
                                     f'analyzer: {analyzer}\n' in spec and
@@ -74,9 +78,11 @@ class PrepareCiPubCacheTest(unittest.TestCase):
             cache.mkdir()
             receipt = cache / 'ci-integration-prepared.json'
             receipt.write_text('old receipt')
+            def fail_member(command, *, cwd, **kwargs):
+                if cwd.name == 'member':
+                    raise subprocess.CalledProcessError(1, command)
             with patch('prepare_ci_pub_cache.tracked_specs', return_value=specs), \
-                    patch('prepare_ci_pub_cache.subprocess.run', side_effect=[
-                        None, subprocess.CalledProcessError(1, ['dart', 'pub', 'get'])]):
+                    patch('prepare_ci_pub_cache.subprocess.run', side_effect=fail_member):
                 with self.assertRaises(subprocess.CalledProcessError):
                     prepare(repo, 'dart', cache)
             self.assertFalse(receipt.exists())
