@@ -1,0 +1,24 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: ['config:recommended'],
+  // Dependabot maintains the actions.lock entries, so it keeps GitHub
+  // Actions updates.
+  'github-actions': {
+    enabled: false,
+  },
+  // Fixture pubspecs pin exact versions on purpose for compatibility
+  // testing, so Renovate must not propose updates there.
+  ignorePaths: ['fixtures/**'],
+  packageRules: [
+    {
+      description: 'Group OpenTelemetry crates',
+      matchManagers: ['cargo'],
+      matchPackageNames: [
+        'opentelemetry',
+        'opentelemetry_sdk',
+        'opentelemetry-proto',
+      ],
+      groupName: 'opentelemetry',
+    },
+  ],
+}
