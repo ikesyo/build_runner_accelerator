@@ -1,51 +1,107 @@
+from pathlib import Path
+import tempfile
 import unittest
 
-from classify_changes import classify, is_light
+import classify_changes
+from classify_changes import ScopeIndex, derive_scope, format_jobs
+
+
+WORKFLOW = """
+jobs:
+  changes:
+    steps: []
+  dart-package:
+    steps:
+      - run: python3 -m unittest discover -s scripts
+  integration-a:
+    needs: changes
+    steps:
+      - parallel:
+          - run: bash scripts/suite_a.sh
+  integration-b:
+    needs: changes
+    steps:
+      - run: python3 scripts/suite_b.py
+"""
+
+SCRIPTS = {
+    'suite_a.sh': 'source "$script_dir/harness.sh"\n# uses fixtures/app_a\n',
+    'harness.sh': 'true\n',
+    'suite_b.py': 'import helper\n# uses fixtures/app_b\n',
+    'helper.py': 'VALUE = 1\n',
+    'orphan.sh': 'true\n',
+    'critical.py': 'VALUE = 2\n',
+}
+
+FIXTURES = {
+    'app_a': 'dependencies:\n  app_b:\n    path: ../app_b\n',
+    'app_b': 'dependencies: {}\n',
+}
 
 
 class ClassifyChangesTest(unittest.TestCase):
-    def test_empty_and_blank_input_fails_safe_to_full(self):
-        self.assertEqual(classify([]), 'full')
-        self.assertEqual(classify(['', '  ']), 'full')
+    def setUp(self):
+        self.addCleanup(setattr, classify_changes, 'NO_CI_SCRIPTS',
+                        classify_changes.NO_CI_SCRIPTS)
+        self.addCleanup(setattr, classify_changes, 'FULL_SCRIPTS',
+                        classify_changes.FULL_SCRIPTS)
+        classify_changes.NO_CI_SCRIPTS = {'orphan.sh'}
+        classify_changes.FULL_SCRIPTS = {'scripts/critical.py'}
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        (root / '.github/workflows').mkdir(parents=True)
+        (root / '.github/workflows/ci.yml').write_text(WORKFLOW)
+        (root / 'scripts').mkdir()
+        for name, source in SCRIPTS.items():
+            (root / 'scripts' / name).write_text(source)
+        for name, pubspec in FIXTURES.items():
+            fixture = root / 'fixtures' / name
+            fixture.mkdir(parents=True)
+            (fixture / 'pubspec.yaml').write_text(pubspec)
+        self.index = ScopeIndex(root)
 
-    def test_documentation_only_is_light(self):
-        self.assertEqual(
-            classify(['docs/ci.md', 'README.md', 'docs/benchmarks/x.md']),
-            'light')
+    def scope(self, *paths):
+        return derive_scope(self.index, list(paths))
 
-    def test_dart_tests_only_is_light(self):
-        self.assertEqual(
-            classify(['test/launcher_test.dart', 'test/helpers/fake.dart']),
-            'light')
+    def test_light_paths_need_no_gated_jobs(self):
+        self.assertEqual(self.scope('docs/ci.md', 'README.md'), set())
+        self.assertEqual(self.scope('test/worker_test.dart'), set())
+        self.assertEqual(self.scope('renovate.json5'), set())
+        self.assertEqual(self.scope('scripts/orphan.sh'), set())
 
-    def test_ci_helper_changes_are_light_except_cache_identity(self):
-        self.assertEqual(
-            classify(['.github/scripts/test_check_ci.py',
-                      '.github/scripts/check_ci.py']),
-            'light')
-        self.assertEqual(
-            classify(['.github/scripts/compiled_cache_key.py']), 'full')
+    def test_fixture_scope_follows_reverse_path_dependencies(self):
+        self.assertEqual(self.scope('fixtures/app_a/pubspec.yaml'),
+                         {'integration-a'})
+        self.assertEqual(self.scope('fixtures/app_b/lib/x.dart'),
+                         {'integration-a', 'integration-b'})
 
-    def test_classifier_change_forces_full(self):
-        self.assertEqual(
-            classify(['.github/scripts/classify_changes.py']), 'full')
+    def test_script_scope_follows_reverse_references(self):
+        self.assertEqual(self.scope('scripts/suite_a.sh'), {'integration-a'})
+        self.assertEqual(self.scope('scripts/harness.sh'), {'integration-a'})
+        self.assertEqual(self.scope('scripts/helper.py'), {'integration-b'})
 
-    def test_any_productive_path_forces_full(self):
-        for paths in (
-            ['lib/worker.dart'],
-            ['rust/src/build.rs'],
-            ['fixtures/json_serializable_app/pubspec.yaml'],
-            ['scripts/correctness_cli.sh'],
-            ['.github/workflows/ci.yml'],
-            ['.github/actions/setup-worker/action.yml'],
-            ['pubspec.yaml'],
-            ['docs/ci.md', 'lib/worker.dart'],
-        ):
+    def test_full_scope_cases(self):
+        for paths in (['rust/src/build.rs'], ['lib/worker.dart'],
+                      ['scripts/critical.py'], ['unknown/path.txt'], []):
             with self.subTest(paths=paths):
-                self.assertEqual(classify(paths), 'full')
+                self.assertIsNone(self.scope(*paths))
 
-    def test_renovate_config_is_light(self):
-        self.assertTrue(is_light('renovate.json5'))
+    def test_unions_across_paths(self):
+        self.assertEqual(
+            self.scope('fixtures/app_a/pubspec.yaml', 'scripts/helper.py'),
+            {'integration-a', 'integration-b'})
+
+    def test_format_jobs_wraps_tokens(self):
+        self.assertEqual(format_jobs(set()), 'jobs=,,')
+        self.assertEqual(format_jobs({'integration-b', 'integration-a'}),
+                         'jobs=,integration-a,integration-b,')
+
+    def test_unaccounted_is_clean_and_detects_contradictions(self):
+        self.assertEqual(self.index.unaccounted(), [])
+        classify_changes.NO_CI_SCRIPTS = {'orphan.sh', 'harness.sh'}
+        self.assertTrue(any('harness.sh' in problem
+                            for problem in self.index.unaccounted()))
 
 
 if __name__ == '__main__':

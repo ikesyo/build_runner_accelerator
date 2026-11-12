@@ -227,6 +227,16 @@ def check_group_coverage(workflow, repo):
     print('CI group coverage: every registered group is assigned exactly once')
 
 
+def check_scope_accounting(repo):
+    """Every script and fixture must be accounted for by the classifier."""
+    from classify_changes import ScopeIndex
+    problems = ScopeIndex(repo).unaccounted()
+    if problems:
+        raise ValueError('change classification accounting: '
+                         + '; '.join(problems))
+    print('CI change classification: every script and fixture is accounted for')
+
+
 def check(workflow):
     pr_jobs = 0
     full_jobs = 0
@@ -262,13 +272,26 @@ def check(workflow):
     if 'dart-package' in jobs and 'needs' in jobs['dart-package']:
         raise ValueError('dart-package: the always-on package jobs must not be '
                          'gated by change classification')
+    gated = set()
     for name, job in jobs.items():
         needs = job.get('needs')
         needs = [needs] if isinstance(needs, str) else (needs or [])
-        if 'changes' in needs and \
-                'needs.changes.outputs.level' not in str(job.get('if', '')):
+        if 'changes' not in needs:
+            continue
+        gated.add(name)
+        condition = str(job.get('if', ''))
+        if 'needs.changes.outputs.jobs' not in condition \
+                or f',{name},' not in condition:
             raise ValueError(f'{name}: jobs gated by the classifier must test '
-                             'needs.changes.outputs.level')
+                             'their own token in needs.changes.outputs.jobs')
+    if 'changes' in jobs and gated:
+        # The classification step must default to the full gated set, so a
+        # failed lookup runs everything instead of skipping it.
+        texts = '\n'.join(lane_run_texts({'jobs': {'changes': jobs['changes']}}))
+        match = re.search(r"jobs='(,[a-z0-9,-]+,)'", texts)
+        if not match or set(match.group(1).split(',')) - {''} != gated:
+            raise ValueError('changes: the default jobs value must list '
+                             'every gated job')
     print(f'CI runner budget: PR={pr_jobs}, main/schedule={full_jobs}, '
           f'reserved={RESERVED_JOBS}, limit={RUNNER_LIMIT}'
           + (f', plus {classifier_jobs} classifier' if classifier_jobs else ''))
@@ -278,6 +301,7 @@ if __name__ == '__main__':
     workflow = yaml.safe_load((REPO / '.github/workflows/ci.yml').read_text())
     check(workflow)
     check_group_coverage(workflow, REPO)
+    check_scope_accounting(REPO)
     for path in (REPO / '.github/actions').glob('*/action.y*ml'):
         source = path.read_text()
         if yaml.safe_load(source).get('runs', {}).get('using') == 'composite':

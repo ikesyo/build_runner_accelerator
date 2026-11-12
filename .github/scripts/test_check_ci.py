@@ -44,20 +44,35 @@ class CheckCiTest(unittest.TestCase):
         workflow = {'jobs': {
             'changes': {'steps': []},
             'dart-package': {'steps': [], 'needs': 'changes',
-                             'if': 'needs.changes.outputs.level'}}}
+                             'if': 'needs.changes.outputs.jobs'}}}
         with self.assertRaisesRegex(ValueError, 'must not be gated'):
             check(workflow)
 
-    def test_gated_jobs_must_test_the_classification_level(self):
+    def test_gated_jobs_must_test_their_token_in_the_job_scope(self):
         workflow = {'jobs': {
-            'changes': {'steps': []},
+            'changes': {'steps': [
+                {'run': "jobs=',integration,'\n"}]},
             'integration': {'steps': [], 'needs': 'changes',
                             'if': 'always()'}}}
         with self.assertRaisesRegex(ValueError, 'must test'):
             check(workflow)
         workflow['jobs']['integration']['if'] = (
-            'always() && needs.changes.outputs.level')
+            "always() && contains(needs.changes.outputs.jobs, "
+            "',integration,')")
         check(workflow)
+
+    def test_classifier_default_must_list_every_gated_job(self):
+        workflow = {'jobs': {
+            'changes': {'steps': [
+                {'run': "jobs=',integration,'\n"}]},
+            'integration': {'steps': [], 'needs': 'changes',
+                            'if': "contains(needs.changes.outputs.jobs, "
+                                  "',integration,')"},
+            'native-build': {'steps': [], 'needs': 'changes',
+                             'if': "contains(needs.changes.outputs.jobs, "
+                                   "',native-build,')"}}}
+        with self.assertRaisesRegex(ValueError, 'default jobs value'):
+            check(workflow)
 
 
 COVERAGE_SUITES = {
