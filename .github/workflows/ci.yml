@@ -39,9 +39,14 @@ jobs:
         run: |
           jobs=',integration-selection,integration-filter-graph,integration-boundaries,integration-settings,integration-settings-watch,integration-output-policies,integration-core,integration-codegen,integration-lifecycle,integration-compilers,integration-builders,native-build,'
           if files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename'); then
-            derived=$(printf '%s\n' "$files" | python3 .github/scripts/classify_changes.py "$GITHUB_WORKSPACE") || derived=''
-            if [[ "$derived" =~ ^jobs=,[a-z0-9,-]*,$ ]]; then
-              jobs=${derived#jobs=}
+            # The files endpoint returns at most 3,000 entries even with
+            # pagination; treat a capped list as incomplete and keep the
+            # full-run default rather than classifying a partial diff.
+            if [[ $(printf '%s\n' "$files" | grep -c '') -lt 3000 ]]; then
+              derived=$(printf '%s\n' "$files" | python3 .github/scripts/classify_changes.py "$GITHUB_WORKSPACE") || derived=''
+              if [[ "$derived" =~ ^jobs=,[a-z0-9,-]*,$ ]]; then
+                jobs=${derived#jobs=}
+              fi
             fi
           fi
           printf 'jobs=%s\n' "$jobs" >>"$GITHUB_OUTPUT"
@@ -156,7 +161,7 @@ jobs:
 
   integration-selection:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-selection,')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-selection,')) }}
     name: 'Integration: filter selection and graph'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -200,7 +205,7 @@ jobs:
 
   integration-filter-graph:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-filter-graph,')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-filter-graph,')) }}
     name: 'Integration: filter resolver, state, and unsupported builders'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -243,7 +248,7 @@ jobs:
 
   integration-boundaries:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-boundaries,')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-boundaries,')) }}
     name: 'Integration: filter watch and boundaries'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -288,7 +293,7 @@ jobs:
 
   integration-settings:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-settings,')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-settings,')) }}
     name: 'Integration: build configuration'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -334,7 +339,7 @@ jobs:
 
   integration-settings-watch:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-settings-watch,')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-settings-watch,')) }}
     name: 'Integration: configuration watch and AOT'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -383,7 +388,7 @@ jobs:
 
   integration-output-policies:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-output-policies,')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-output-policies,')) }}
     name: 'Integration: output policies'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -428,7 +433,7 @@ jobs:
 
   integration-core:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-core,')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-core,')) }}
     name: 'Integration: baseline, CLI, and workspace scheduler'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -470,7 +475,7 @@ jobs:
 
   integration-codegen:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-codegen,')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-codegen,')) }}
     name: 'Integration: code generators'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -524,7 +529,7 @@ jobs:
 
   integration-lifecycle:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-lifecycle,')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-lifecycle,')) }}
     name: 'Integration: lifecycle, publication, and workspace'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -572,7 +577,7 @@ jobs:
 
   integration-compilers:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-compilers,')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-compilers,')) }}
     name: 'Integration: published web compilers'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -616,7 +621,7 @@ jobs:
 
   integration-builders:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-builders,')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-builders,')) }}
     name: 'Integration: Drift, registry, and recovery'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -663,7 +668,7 @@ jobs:
 
   native-build:
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',native-build,')) }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',native-build,')) }}
     name: Native build (${{ matrix.target_id }})
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 20
