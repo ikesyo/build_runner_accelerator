@@ -38,11 +38,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           jobs=',integration-selection,integration-filter-graph,integration-boundaries,integration-settings,integration-settings-watch,integration-output-policies,integration-core,integration-codegen,integration-lifecycle,integration-compilers,integration-builders,native-build,'
-          if files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename'); then
+          if gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate >"$RUNNER_TEMP/pr-files.json"; then
             # The files endpoint returns at most 3,000 entries even with
             # pagination; treat a capped list as incomplete and keep the
             # full-run default rather than classifying a partial diff.
-            if [[ $(printf '%s\n' "$files" | grep -c '') -lt 3000 ]]; then
+            # Renames contribute their previous path as well: the lanes in
+            # this tree may still reference the old location, so a rename
+            # must classify by both identities.
+            if [[ $(jq -s 'add | length' "$RUNNER_TEMP/pr-files.json") -lt 3000 ]]; then
+              files=$(jq -r '.[] | .filename, (.previous_filename // empty)' "$RUNNER_TEMP/pr-files.json")
               derived=$(printf '%s\n' "$files" | python3 .github/scripts/classify_changes.py "$GITHUB_WORKSPACE") || derived=''
               if [[ "$derived" =~ ^jobs=,[a-z0-9,-]*,$ ]]; then
                 jobs=${derived#jobs=}
