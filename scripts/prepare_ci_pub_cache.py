@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prepare a complete integration Pub download set without running builders."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,10 @@ import time
 from correctness_dependency_window import CASES, dependency_pubspec
 
 REPO = Path(__file__).resolve().parents[1]
+# The producer resolves every package before its own checks start, and the
+# resolutions are independent downloads against one Pub cache, so run them
+# with the same four-way bound the workflow uses for parallel lanes.
+MAX_PARALLEL_RESOLUTIONS = 4
 # These jobs deliberately resolve newer/older dependencies in their own scopes.
 # Adding their unlocked latest solution to the integration set would also
 # change which versions fresh offline integration fixtures select.
@@ -33,7 +38,6 @@ def prepare(repo, dart, pub_cache, *, offline=False):
     receipt = pub_cache / 'ci-integration-prepared.json'
     receipt.unlink(missing_ok=True)
     env = {**os.environ, 'PUB_CACHE': str(pub_cache), 'DART_SUPPRESS_ANALYTICS': 'true'}
-    prepared = []
     with tempfile.TemporaryDirectory(prefix='ci-pub-') as directory:
         root = Path(directory)
         shutil.copy2(repo / 'pubspec.yaml', root / 'pubspec.yaml')
@@ -42,7 +46,8 @@ def prepare(repo, dart, pub_cache, *, offline=False):
         shutil.copytree(repo / 'fixtures', root / 'fixtures',
                         ignore=shutil.ignore_patterns('.dart_tool', '.cache'))
 
-        def resolve(package, label):
+        def resolve(task):
+            package, label = task
             started = time.monotonic()
             command = [dart, '--suppress-analytics', 'pub', 'get']
             if (package / 'pubspec.lock').is_file():
@@ -51,12 +56,12 @@ def prepare(repo, dart, pub_cache, *, offline=False):
                 command.append('--offline')
             print(f'ci-pub: start {label}', flush=True)
             subprocess.run(command, cwd=package, env=env, check=True, timeout=180)
-            prepared.append(label)
             print(f'ci-pub: PASS {label} elapsed={time.monotonic() - started:.1f}s', flush=True)
+            return label
 
-        resolve(root, 'root')
-        for spec in tracked_specs(repo):
-            resolve(root / spec.parent, str(spec.parent))
+        tasks = [(root, 'root')]
+        tasks.extend((root / spec.parent, str(spec.parent))
+                     for spec in tracked_specs(repo))
         resolutions = sorted({(runner, analyzer)
                               for native, analyzer, stock in CASES
                               for runner in (native, stock)})
@@ -64,7 +69,9 @@ def prepare(repo, dart, pub_cache, *, offline=False):
             package = root / f'window-{runner}-{analyzer}'
             package.mkdir()
             (package / 'pubspec.yaml').write_text(dependency_pubspec(repo, runner, analyzer))
-            resolve(package, package.name)
+            tasks.append((package, package.name))
+        with ThreadPoolExecutor(max_workers=MAX_PARALLEL_RESOLUTIONS) as executor:
+            prepared = sorted(executor.map(resolve, tasks))
     receipt.write_text(json.dumps({'prepared': prepared}, indent=2) + '\n')
     print(f'ci-pub: complete resolutions={len(prepared)} receipt={receipt}', flush=True)
 
