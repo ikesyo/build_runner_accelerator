@@ -17,6 +17,17 @@ Keep native distribution checks on their target architecture. Pin runner images
 and toolchains so comparisons do not also change the execution environment.
 The workflow is the source of truth for individual test assignments.
 
+A lightweight classification job runs before the test jobs on pull requests.
+It counts separately from the 16 test jobs above. When every changed path is
+provably inert for the integration and native jobs (documentation, the Dart
+package tests, CI helper tests and tests of the CI tooling itself), those jobs
+are skipped and only the package jobs run. The classifier and the
+compiled-cache key helper always force a full run, as does anything
+unrecognized: classification must succeed with an explicit full level before
+any heavy job may skip, so failures fail safe toward running everything.
+Push, schedule and manual runs are always full, which keeps main's results
+and cache production complete.
+
 ## Coverage
 
 Every integration scenario family runs on PRs. Retain stock/native byte
@@ -104,8 +115,11 @@ moved branch or partial tag requires reviewing upstream changes before running
 
 Run `python3 .github/scripts/check_ci.py` with PyYAML 6.0.3 after workflow changes.
 It checks matrix expansion, the PR runner budget, the four-lane limit and
-embedded Bash syntax. Update its finite expansion logic when adding a matrix
-shape, and run the relevant workflow/helper tests.
+embedded Bash syntax. It also checks that case-group partitions still cover
+every registered group exactly once: the group registries live in the suite
+sources, and a group no lane assigns would otherwise run only in the local
+gate. Update its finite expansion logic when adding a matrix shape, and run
+the relevant workflow/helper tests.
 
 Validate changes on GitHub Actions. Record the source SHA, toolchains, runner
 architecture, cache state, queue delay and longest lane alongside whole-workflow
