@@ -57,7 +57,7 @@ class CheckCiTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'must test'):
             check(workflow)
         workflow['jobs']['integration']['if'] = (
-            "always() && contains(needs.changes.outputs.jobs, "
+            "!cancelled() && contains(needs.changes.outputs.jobs, "
             "',integration,')")
         check(workflow)
 
@@ -82,8 +82,9 @@ COVERAGE_SUITES = {
         "WATCH_CONFIGS = {'watch-default': None}\n"
         "GROUPS = (*CASE_GROUPS, 'files', *WATCH_CONFIGS)\n"),
     'correctness_output_policies.py': (
+        "EXTRA_POLICIES = {'api': None}\n"
         "def run():\n"
-        "    groups = {'source': None, 'api': None}\n"),
+        "    groups = {'source': None, **EXTRA_POLICIES}\n"),
     'correctness_nested_packages.py': (
         "def case_groups(tmp):\n"
         "    return {'default-on': (), 'recovery-actions': ()}\n"
@@ -200,6 +201,27 @@ class CheckCiCoverageTest(unittest.TestCase):
                 registry_names(repo / 'scripts/correctness_nested_packages.py',
                                'function', 'case_groups'),
                 {'default-on', 'recovery-actions'})
+
+    def test_commented_out_assignment_does_not_count_as_coverage(self):
+        lanes = ['# BUILD_FILTER_CASE_GROUP=beta '
+                 'bash scripts/correctness_build_filter.sh'
+                 if 'beta' in lane else lane for lane in COVERAGE_LANES]
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, 'build-filter'):
+                check_group_coverage(coverage_workflow(lanes),
+                                     self.repo(directory))
+
+    def test_dict_unpacking_in_registry_resolves_or_fails_loudly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'suite.py'
+            path.write_text(
+                "EXTRA = {'beta': None}\n"
+                "GROUPS = {'alpha': None, **EXTRA}\n")
+            self.assertEqual(registry_names(path, 'module', 'GROUPS'),
+                             {'alpha', 'beta'})
+            path.write_text("GROUPS = {'alpha': None, **build_groups()}\n")
+            with self.assertRaisesRegex(ValueError, 'unsupported'):
+                registry_names(path, 'module', 'GROUPS')
 
 
 if __name__ == '__main__':

@@ -113,7 +113,11 @@ def _lane_texts(job):
     for step in job.get('steps', []):
         for lane in step.get('parallel', [step]):
             if lane.get('run'):
-                yield lane['run']
+                # Ignore full-line comments: a commented-out invocation
+                # does not exercise anything.
+                yield '\n'.join(
+                    line for line in lane['run'].splitlines()
+                    if not line.lstrip().startswith('#'))
 
 
 class ScopeIndex:

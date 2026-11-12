@@ -64,6 +64,16 @@ def _resolve_names(value, symbols, seen=frozenset()):
     names = set()
     if isinstance(value, ast.Dict):
         names.update(_dict_keys(value))
+        for key, item in zip(value.keys, value.values):
+            if key is not None:
+                continue
+            if isinstance(item, ast.Name) and item.id in symbols \
+                    and item.id not in seen:
+                names.update(_resolve_names(symbols[item.id], symbols,
+                                            seen | {item.id}))
+            else:
+                raise ValueError('unsupported ** entry in a group registry; '
+                                 'check_ci.py cannot resolve it')
     elif isinstance(value, (ast.Tuple, ast.List)):
         for item in value.elts:
             if isinstance(item, ast.Constant) and isinstance(item.value, str):
@@ -83,13 +93,13 @@ def registry_names(path, kind, target):
     """Read a suite's valid group names from its source without executing it."""
     tree = ast.parse(Path(path).read_text())
     names = set()
+    symbols = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    symbols[t.id] = node.value
     if kind == 'module':
-        symbols = {}
-        for node in tree.body:
-            if isinstance(node, ast.Assign):
-                for t in node.targets:
-                    if isinstance(t, ast.Name):
-                        symbols[t.id] = node.value
         if target not in symbols:
             raise ValueError(f'{path}: no {target} registry found; update check_ci.py')
         names = _resolve_names(symbols[target], symbols)
@@ -97,13 +107,13 @@ def registry_names(path, kind, target):
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and any(
                     isinstance(t, ast.Name) and t.id == target for t in node.targets):
-                names.update(_resolve_names(node.value, {}))
+                names.update(_resolve_names(node.value, symbols))
     elif kind == 'function':
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name == target:
                 for sub in ast.walk(node):
                     if isinstance(sub, (ast.Assign, ast.Return)):
-                        names.update(_resolve_names(sub.value, {}))
+                        names.update(_resolve_names(sub.value, symbols))
     else:
         raise ValueError(f'unknown registry kind: {kind}')
     if not names:
@@ -132,12 +142,19 @@ CASE_FILTER_SUITES = (
 )
 
 
+def _strip_comment_lines(text):
+    """Drop full-line shell comments so a commented-out command cannot
+    masquerade as an assignment or an invocation."""
+    return '\n'.join(line for line in text.splitlines()
+                     if not line.lstrip().startswith('#'))
+
+
 def lane_run_texts(workflow):
     for job in workflow['jobs'].values():
         for step in job.get('steps', []):
             for lane in step.get('parallel', [step]):
                 if lane.get('run'):
-                    yield lane['run']
+                    yield _strip_comment_lines(lane['run'])
 
 
 def assigned_values(texts, variable):
