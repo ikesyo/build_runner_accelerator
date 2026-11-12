@@ -312,15 +312,17 @@ jobs:
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Values, default watch, and arbitrary builder
+          - name: Values, default watch, and arbitrary builders
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=values,watch-default bash scripts/correctness_settings.sh
               PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_builder.sh
-          - name: Compact flags and reserved/topology watch
+              PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_package_target_builder.sh
+          - name: Compact flags, reserved/topology watch, and manifest snapshot
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=compact,watch-reserved,watch-topology bash scripts/correctness_settings.sh
+              bash scripts/correctness_manifest_snapshot.sh
           - name: Config paths and normalized dot/ancestor watch
             shell: bash
             run: |
@@ -352,7 +354,7 @@ jobs:
       - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          for fixture in settings_builder_app trigger_builder_app post_process_builder_app workspace_json_app; do
+          for fixture in settings_builder_app trigger_builder_app post_process_builder_app workspace_json_app arbitrary_builder_app; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
@@ -360,11 +362,13 @@ jobs:
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=errors,boundaries bash scripts/correctness_settings.sh
-          - name: Precedence and post-process lifecycle
+          - name: Precedence, post-process, arbitrary watch, and compile isolation
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=precedence bash scripts/correctness_settings.sh
               bash scripts/correctness_post_process_builder.sh
+              bash scripts/watch_smoke_arbitrary_builder.sh
+              python3 scripts/correctness_compile_isolation.py
           - name: JIT/AOT compile and publication recovery
             shell: bash
             # Keep prewarm and compile coverage cold, independent of other lanes.
@@ -505,11 +509,12 @@ jobs:
               bash scripts/correctness_multi_mapping_builder.sh
             env:
               PUB_GET_OFFLINE: '1'
-          - name: JSON Serializable shared baseline and capture mapping
+          - name: JSON Serializable shared baseline, capture mapping, and early catalog
             shell: bash
             run: |
               CASE_FILTER=shared-baseline bash scripts/correctness_json_serializable.sh
               bash scripts/correctness_capture_builder.sh
+              bash scripts/correctness_early_catalog.sh
             env:
               PUB_GET_OFFLINE: '1'
           - name: Freezed watch and generic mappings
@@ -638,7 +643,7 @@ jobs:
             shell: bash
             run: |
               CASE_FILTER=core bash scripts/correctness_drift_analyzer.sh
-              CASE_FILTER=core bash scripts/correctness_drift_not_shared.sh
+              bash scripts/correctness_drift_not_shared.sh
           - name: Drift rename and failure
             shell: bash
             run: |

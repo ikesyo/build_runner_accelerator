@@ -257,12 +257,14 @@ run_quick() {
   run_trigger_correctness
   if [[ "${VERIFY_ARBITRARY_BUILDER:-0}" == 1 ]]; then
     bash "$script_dir/correctness_arbitrary_builder.sh"
+    bash "$script_dir/correctness_arbitrary_package_target_builder.sh"
   fi
   if [[ "${VERIFY_WATCH:-0}" == 1 ]]; then
     bash "$script_dir/watch_smoke.sh"
     bash "$script_dir/watch_smoke_freezed.sh"
     bash "$script_dir/watch_smoke_riverpod.sh"
     bash "$script_dir/watch_smoke_trigger_builder.sh"
+    bash "$script_dir/watch_smoke_arbitrary_builder.sh"
   fi
 }
 
