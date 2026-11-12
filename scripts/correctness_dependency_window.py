@@ -15,6 +15,24 @@ from urllib.parse import unquote, urljoin, urlparse
 REPO = Path(__file__).resolve().parents[1]
 
 
+CASES = (
+    ('2.15.3', '13.3.0', '2.15.3'),
+    ('2.15.3', '14.5.0', '2.16.2'),
+    ('2.16.0', '13.3.0', '2.16.0'),
+    ('2.16.0', '14.5.0', '2.16.2'),
+    ('2.16.1', '14.5.0', '2.16.2'),
+)
+
+
+def dependency_pubspec(repo, runner, analyzer):
+    """Use the same complete resolution for cache preparation and comparisons."""
+    spec = (repo / 'fixtures/json_serializable_app/pubspec.yaml').read_text()
+    spec = spec.replace('build_runner: 2.16.2', f'build_runner: {runner}\n  analyzer: {analyzer}')
+    # 1.4.0 has ambiguous extensions on old Analyzer with this JSON generator.
+    spec += '\n  source_helper: 1.3.13\n'
+    return spec.replace('path: ../..', f'path: {repo.as_posix()}')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dart', default=os.environ.get('DART_BIN', 'dart'))
@@ -23,15 +41,8 @@ def main():
     parser.add_argument('--runner', action='append', choices=['2.15.3', '2.16.0', '2.16.1'])
     parser.add_argument('--analyzer', choices=['13.3.0', '14.5.0'])
     args = parser.parse_args()
-    cases = [
-        ('2.15.3', '13.3.0', '2.15.3'),
-        ('2.15.3', '14.5.0', '2.16.2'),
-        ('2.16.0', '13.3.0', '2.16.0'),
-        ('2.16.0', '14.5.0', '2.16.2'),
-        ('2.16.1', '14.5.0', '2.16.2'),
-    ]
     cases = [(runner, analyzer, stock_runner)
-             for runner, analyzer, stock_runner in cases
+             for runner, analyzer, stock_runner in CASES
              if (not args.runner or runner in args.runner)
              and (not args.analyzer or analyzer == args.analyzer)]
     if not cases:
@@ -57,13 +68,7 @@ def main():
         shutil.copytree(REPO / 'fixtures/json_serializable_app/lib', root / 'lib')
         for generated in (root / 'lib').glob('*.g.dart'):
             generated.unlink()
-        spec = (REPO / 'fixtures/json_serializable_app/pubspec.yaml').read_text()
-        spec = spec.replace('build_runner: 2.16.2', f'build_runner: {runner}\n  analyzer: {analyzer}')
-        # Keep the published JSON generator's tested helper; 1.4.0 has
-        # ambiguous extensions with json_serializable 6.14.1 on old Analyzer.
-        spec += '\n  source_helper: 1.3.13\n'
-        spec = spec.replace('path: ../..', f'path: {REPO.as_posix()}')
-        (root / 'pubspec.yaml').write_text(spec)
+        (root / 'pubspec.yaml').write_text(dependency_pubspec(REPO, runner, analyzer))
         run([args.dart, '--suppress-analytics', 'pub', 'get'], root, 'pub-get')
 
     def outputs(root):

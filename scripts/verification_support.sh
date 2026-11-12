@@ -36,7 +36,7 @@ verification_process_group_ids() {
   printf '%s\n' "$snapshot" | awk -v root="$root_pid" '
     {
       pid[NR] = $1
-      parent[NR] = $2
+      parent_by_pid[$1] = $2
       group[NR] = $3
     }
     END {
@@ -47,13 +47,9 @@ verification_process_group_ids() {
             if (group[i] ~ /^[0-9]+$/) print group[i]
             break
           }
-          next_current = ""
-          for (k = 1; k <= NR; k++) {
-            if (pid[k] == current) {
-              next_current = parent[k]
-              break
-            }
-          }
+          # Snapshot lookup must not rescan every unrelated process for
+          # each ancestor. Cleanup runs inside the enclosing watchdog budget.
+          next_current = parent_by_pid[current]
           if (next_current == "" || next_current == current) break
           current = next_current
         }
