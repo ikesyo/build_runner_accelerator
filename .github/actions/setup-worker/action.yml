@@ -204,6 +204,11 @@ runs:
         sdk=$(dirname "$(dirname "$(readlink -f "$(command -v dart)")")")
         identity=$(python3 .github/scripts/compiled_cache_key.py --sdk "$sdk" --workspace "$GITHUB_WORKSPACE" --pub-cache "$PUB_CACHE")
         printf 'identity=%s\n' "$identity" >>"$GITHUB_OUTPUT"
+        # This is the effective compiled-cache root for every integration
+        # job; GITHUB_ENV takes precedence over job-level env in later
+        # steps, so ci.yml does not set BUILD_RUNNER_ACCELERATOR_CACHE for
+        # these jobs. Lanes that need a different root (for example the
+        # settings cold lane) set it in their own step env.
         printf 'BUILD_RUNNER_ACCELERATOR_CACHE=%s/.dart_tool/ci-compiled-cache\n' "$GITHUB_WORKSPACE" >>"$GITHUB_ENV"
 
     - name: Cache validated compiled assets
