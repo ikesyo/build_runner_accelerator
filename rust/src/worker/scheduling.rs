@@ -141,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn large_phases_do_not_pay_setup_for_every_input() {
+    fn large_phases_with_action_timings_amortize_setup_cost() {
         for total in [3163, 26_000] {
             for workers in [2, 8] {
                 for overhead_ms in [129, 5000] {

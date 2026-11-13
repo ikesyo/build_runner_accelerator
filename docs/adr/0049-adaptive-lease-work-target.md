@@ -34,6 +34,13 @@ average. Keep immediate reaction to expensive samples, rapid decay on cheaper
 samples and application-local learning. Diagnostic workers without action
 timings use the conservative whole-round-trip-per-input fallback.
 
+An application here is one configured builder application, not the entire
+consumer app. Workspace queues are separate for each target/builder/phase;
+ordinary dispatch creates a fresh queue for each configured builder's request
+set. Different builders do not share learned costs. Variation among inputs of
+the same builder can still make the slowest-action estimate conservative;
+cheaper samples decay that estimate over subsequent leases.
+
 Raising the old target alone still leaves at least roughly 1,600 leases for
 26,000 cheap inputs with the sixteen-input cap. Pure proportional or balanced
 splits amortize overhead but give up the measured slow-input protection. The
@@ -49,11 +56,14 @@ visibility, resolver limits or publication semantics for this tuning fix.
 
 ## Validation
 
-Queue regression tests model thousands of cheap inputs with both 129ms and
-five-second fixed lease costs. They bound dispatch count independently of that
+Queue regression tests with action timings model thousands of cheap inputs with
+both 129ms and five-second fixed lease costs. They bound dispatch count independently of that
 overhead and check contiguous, complete coverage. Tests also cover a sixteen-
 second outlier inside a cheap batch, proportional tail balancing and missing
 timing fallback. Binary-protocol tests check preservation of action timing.
+The fixed-overhead-independent lease bound applies to results carrying action
+timings. The separate missing-timing test checks conservative round-trip sizing,
+which does not promise the same amortization when fixed overhead is large.
 
 The `single-large` profile in `scripts/benchmark_workspace_scheduler.py` uses
 2,048 inputs, two workers and a 25ms delay per action, including a resolver
