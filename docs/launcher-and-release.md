@@ -307,8 +307,10 @@ binary or run stock directly. Maintainers should use
 [distribution validation](distribution-validation.md) for signing setup,
 publication gates and workflow replay.
 
-Linux builds currently use Ubuntu 24.04 (glibc 2.39). They are GNU/glibc binaries;
-older glibc distributions and musl/Alpine are unverified. macOS/Windows minimum
+Linux builds are linked with cargo-zigbuild against a glibc 2.35 floor
+(Ubuntu 22.04 era) and the release workflow fails if a binary references a
+newer glibc symbol version. They are GNU/glibc binaries; glibc older than
+2.35 and musl/Alpine are unsupported. macOS/Windows minimum
 OS versions are also unverified beyond the named CI images. Producer artifacts
 record imported GLIBC symbols or macOS deployment metadata; see the
 [platform facts](distribution-validation.md#platform-facts-and-unverified-minimums).
