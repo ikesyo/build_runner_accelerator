@@ -21,6 +21,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-bin', '--wave-bin', dest='baseline_bin', required=True, type=Path)
     parser.add_argument('--candidate-bin', '--ready-bin', dest='candidate_bin', required=True, type=Path)
+    parser.add_argument('--comparison-bin', nargs=2, action='append', default=[],
+                        metavar=('NAME', 'PATH'), help='Additional native variant under the same conditions')
     parser.add_argument('--results', required=True, type=Path)
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--profiles', default='skew,balanced,inputs')
@@ -41,8 +43,12 @@ def main():
     dart = Path(os.environ['DART_BIN']).resolve()
     cargo = Path(os.environ['CARGO_BIN']).absolute()
     binaries = {'baseline': args.baseline_bin.resolve(), 'candidate': args.candidate_bin.resolve()}
+    for name, path in args.comparison_bin:
+        assert name.isidentifier() and name not in {'stock', *binaries}, 'Use a unique variant name'
+        binaries[name] = Path(path).resolve()
     assert all(path.is_file() for path in binaries.values())
-    assert digest(binaries['baseline'].read_bytes()) != digest(binaries['candidate'].read_bytes())
+    binary_digests = {name: digest(path.read_bytes()) for name, path in binaries.items()}
+    assert len(set(binary_digests.values())) == len(binaries), 'Scheduler variant binaries must differ'
     env = os.environ.copy()
     env.update(BUILD_RUNNER_ACCELERATOR_METRICS='0',
                BUILD_RUNNER_ACCELERATOR_WORKER_AOT='force' if args.worker_mode == 'aot' else '0',
@@ -62,6 +68,11 @@ def main():
     profiles['many'] = {'jobs': 3, 'delays': {'schedule_a': 0}, 'inputs': 120}
     profiles['single-balanced'] = {'jobs': 3, 'delays': {'schedule_a': 0}, 'inputs': 120, 'single': True}
     profiles['single-inputs'] = {**profiles['inputs'], 'single': True}
+    # Thousands of inputs with nontrivial per-action time expose tiny leases
+    # that the sub-millisecond balanced fixtures do not. Both phases include
+    # this delay; the summary phase also uses the real Analyzer resolver.
+    profiles['single-large'] = {'jobs': 2, 'delays': {'schedule_a': 25},
+                                'inputs': 2048, 'single': True}
     # The reference is untimed; artificial fixture waits do not affect its
     # output bytes. Avoid paying those waits for every clean/broad reference.
     stock_delays = dict.fromkeys(['schedule_a', 'schedule_b', 'schedule_c'], 0)
@@ -81,7 +92,7 @@ def main():
         'cache_definition': 'Untimed preparation of both implementations; retain compiler/analysis caches; clean removes native graph/generated artifacts only.',
         'stock_role': 'Untimed output reference with identical lockfiles and source bytes.',
         'stock_artificial_delays_ms': stock_delays,
-        'binary_sha256': {name: digest(path.read_bytes()) for name, path in binaries.items()},
+        'binary_sha256': binary_digests,
         'profiles': {name: profiles[name] for name in requested}, 'repeat': args.repeat,
         'fixture_builder_sha256': digest((repo / 'fixtures/workspace_scheduler_app/gen/lib/builder.dart').read_bytes()),
         'source_dart_sha256': digest(json.dumps({str(path.relative_to(repo)): digest(path.read_bytes())
@@ -156,7 +167,7 @@ def main():
         print(f'preparing {profile_name}', flush=True)
         settings = profiles[profile_name]
         roots = {}
-        for variant in ['stock', 'baseline', 'candidate']:
+        for variant in ['stock', *binaries]:
             root = workspace / 'fixtures' / f'{profile_name}-{variant}'
             shutil.copytree(repo / 'fixtures/workspace_scheduler_app', root,
                             ignore=shutil.ignore_patterns('.dart_tool', '.cache'))
@@ -212,7 +223,7 @@ def main():
                         (root / ('lib/input.seed' if single else 'a/lib/input.seed')).write_text(f'input repeat {repeat} case edit\n')
                 run(stock_command, execution_roots['stock'], results / f'{profile_name}-{repeat}-{case}-stock.log', stock_extra)
                 reference = inventory(roots['stock'], stock=True, single=single)
-                order = ['baseline', 'candidate'] if repeat % 2 == 0 else ['candidate', 'baseline']
+                order = list(binaries) if repeat % 2 == 0 else list(reversed(binaries))
                 for variant in order:
                     if case == 'clean':
                         clean(execution_roots[variant])

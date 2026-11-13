@@ -30,6 +30,8 @@ pub struct GlobRead {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_us: Option<u64>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_part: Option<SharedPart>,
@@ -239,6 +241,8 @@ struct BinaryBuildOutput {
 #[derive(Debug, Deserialize)]
 struct BinaryBuildResultMetadata {
     #[serde(default)]
+    execution_us: Option<u64>,
+    #[serde(default)]
     shared_part: Option<SharedPart>,
     v: u32,
     #[serde(rename = "type")]
@@ -306,6 +310,7 @@ impl BinaryBuildResultMetadata {
         }
 
         Ok(BuildResult {
+            execution_us: self.execution_us,
             shared_part: self.shared_part,
             message_type: self.message_type,
             id: self.id,
@@ -482,6 +487,7 @@ mod tests {
             "type": "build_result",
             "id": 2,
             "status": "success",
+            "execution_us": 23000,
             "encoding": "raw",
             "outputs": [{"asset": "app|lib/model.g.dart", "length": 7}],
             "reads": [],
@@ -512,6 +518,7 @@ mod tests {
 
         let result = decode_build_result_frame(frame).expect("decode build result");
         assert_eq!(result.id, 2);
+        assert_eq!(result.execution_us, Some(23000));
         assert_eq!(result.outputs[0].asset, "app|lib/model.g.dart");
         assert_eq!(result.outputs[0].bytes.as_ref(), raw_bytes);
         assert!(result.resolver_used);

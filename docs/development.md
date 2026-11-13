@@ -262,6 +262,7 @@ output bytes. Keep metrics and traces out of timed runs.
 | Current launcher-inclusive comparison and user-reported examples | [benchmarks.md](benchmarks.md) |
 | Build-filter and supported-builder comparisons | `scripts/benchmark_matrix.sh`; `BUILDERS=optional bash scripts/benchmark_matrix.sh` |
 | Freezed/Riverpod fixture benchmarks | `scripts/benchmark_freezed.sh`, `scripts/benchmark_riverpod.sh` |
+| Adaptive dispatch on thousands of single-package inputs | `scripts/benchmark_workspace_scheduler.py --profiles single-large`; supply baseline/candidate release binaries and a fresh results directory |
 | Cold start or cache investigation | Historical implementation measurements in `docs/benchmarks/`; design decisions in [ADRs](adr/README.md) |
 | Per-worker diagnostic trace | `BUILD_RUNNER_ACCELERATOR_METRICS=1` and, where needed, `BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=1` |
 

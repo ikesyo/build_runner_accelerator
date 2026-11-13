@@ -1,0 +1,53 @@
+{
+  "dart": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+  "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+  "platform": "Linux/x86_64",
+  "cpu_quota": "200000 100000",
+  "pub_cache": "/workspace/build_runner_accelerator/.pub-cache",
+  "native_cache": "/tmp/accelerator-regression/final-comparison/shared-native-cache",
+  "worker_mode": "JIT",
+  "frontend_profile": "release",
+  "metrics": false,
+  "diagnostics_after_timing": true,
+  "cache_definition": "Untimed preparation of both implementations; retain compiler/analysis caches; clean removes native graph/generated artifacts only.",
+  "stock_role": "Untimed output reference with identical lockfiles and source bytes.",
+  "stock_artificial_delays_ms": {
+    "schedule_a": 0,
+    "schedule_b": 0,
+    "schedule_c": 0
+  },
+  "binary_sha256": {
+    "baseline": "4fe4cadbb2f58addd7447b0c30988e89fb9e49e29565eed9afb166188269c1fc",
+    "candidate": "6763a1a262f233a9674e7716b0e88485f8386b7c6c380dde74dbc3b407be73c4",
+    "two_seconds": "c555fe0334e977bb5910e7fb2a217d8af864f6a365edc34d6a27385649ab46ab",
+    "proportional": "e173bac8b7369e0b93af4b8e694248e435d7fe2adf4d4eee4a5a74cda7dfd0a9",
+    "balanced": "99f71161a4d6885129cc073825ca212a8e8ce94f09929fcc48f7ad9e188a92a0",
+    "uncapped": "2499c314e873fd85ac2a0c08578014e1a10e7fcb083aa6b3714fdc397d7c9202"
+  },
+  "profiles": {
+    "single-large": {
+      "jobs": 2,
+      "delays": {
+        "schedule_a": 25
+      },
+      "inputs": 2048,
+      "single": true
+    },
+    "single-inputs": {
+      "jobs": 3,
+      "delays": {
+        "schedule_a": 200,
+        "schedule_a|lib/input.seed": 2000,
+        "schedule_a|lib/input_01.seed": 2000,
+        "schedule_a|lib/input_02.seed": 2000
+      },
+      "single": true
+    }
+  },
+  "repeat": 1,
+  "fixture_builder_sha256": "2a4942b1f317e082106cc9764c5491eb888848e65967aed6b6b582fa96635b4d",
+  "source_dart_sha256": "066930851cbc8fa99cb5460f48ebc1aea4e25d755197933a8c6f267b98294e07",
+  "source_head": "5069081c7780fb864acf16f443fb5ef77f50d5f8",
+  "source_rust_sha256": "f2bd3daa84fed8a2517b91eb3024c0fc12d4d82024fe85b1c1cc80dfdf7561b4",
+  "aot_artifacts": {}
+}

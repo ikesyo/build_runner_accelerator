@@ -60,6 +60,7 @@ Benchmarks and mechanical refactors do not need one.
 | [0046](0046-workspace-action-scheduler.md) | Adaptive input dispatch, workspace readiness, state reuse and global worker budget |
 | [0047](0047-experimental-compile-isolation.md) | Opt-in compiler dependency isolation and cache separation |
 | [0048](0048-build-telemetry.md) | Bounded opt-in OpenTelemetry build spans and worker timing bridge |
+| [0049](0049-adaptive-lease-work-target.md) | Proportional leases with action-time straggler protection |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
 artifacts and launcher behavior are in

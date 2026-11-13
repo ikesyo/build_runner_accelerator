@@ -291,7 +291,7 @@ impl Schedule<'_> {
                 self.state.resolver_dep_graph.extend(completed.dep_graph);
                 ready.inputs.remove(completed.application);
                 let app = &mut applications[completed.application];
-                app.inputs.observe(completed.elapsed, completed.range.len());
+                app.inputs.observe_results(completed.elapsed, &results);
                 let prepared = app.prepared.as_ref().unwrap();
                 for (spec, result) in prepared.specs[completed.range.clone()].iter().zip(results) {
                     record_build_result(

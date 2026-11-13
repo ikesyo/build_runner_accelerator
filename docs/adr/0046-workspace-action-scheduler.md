@@ -31,9 +31,10 @@ Prioritize applications without active participants, then package affinity and
 remaining input count.
 
 Share an adaptive input queue with ordinary single-package parallel execution.
-Start with one-input probes, then target 100ms batches using observed time per
-input (excluding initialization/reset), capped at sixteen inputs. This amortizes
-worker/IPC latency that can itself approach the former 20ms target. Also cap each
+Start with one-input probes, then use proportional leases bounded by a two-
+second estimate of input work, without a fixed input-count cap. Learn from
+the slowest worker-reported action duration, excluding batch setup and IPC;
+see [ADR 0049](0049-adaptive-lease-work-target.md). Cap each
 lease at `max(1, floor(unassigned inputs / (2 * eligible workers)))`; expensive
 work and the tail use single inputs. Costs are learned within the current application, not across packages or
 builders. A sudden cost increase immediately reduces subsequent batches; cheaper
