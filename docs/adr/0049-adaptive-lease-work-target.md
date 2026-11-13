@@ -57,9 +57,9 @@ visibility, resolver limits or publication semantics for this tuning fix.
 ## Validation
 
 Queue regression tests with action timings model thousands of cheap inputs with
-both 129ms and five-second fixed lease costs. They bound dispatch count independently of that
-overhead and check contiguous, complete coverage. Tests also cover a sixteen-
-second outlier inside a cheap batch, proportional tail balancing and missing
+both 129ms and five-second fixed lease costs. They bound dispatch count
+independently of that overhead and check contiguous, complete coverage. Tests
+also cover a sixteen-second outlier inside a cheap batch, proportional tail balancing and missing
 timing fallback. Binary-protocol tests check preservation of action timing.
 The fixed-overhead-independent lease bound applies to results carrying action
 timings. The separate missing-timing test checks conservative round-trip sizing,

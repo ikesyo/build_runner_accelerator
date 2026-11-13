@@ -82,9 +82,11 @@ inputs are observed. Raising the old target alone leaves a fixed sixteen-input
 ceiling and continues learning from overhead-contaminated timings. Removing
 only that ceiling leaves the short time target as the bottleneck.
 
-Queue regression tests separately model 3,163 and 26,000 cheap inputs with both
-129ms and 5s of fixed lease overhead, independent of action timing. Both overhead
-levels must use fewer than 150 leases with jobs=2/8. A sixteen-second outlier in
+Queue regression tests supply 2ms action timings for 3,163 and 26,000 cheap
+inputs while varying fixed lease overhead between 129ms and 5s. Both overhead
+levels must use fewer than 150 leases with jobs=2/8. This bound requires action
+timings; the separate missing-timing test checks conservative round-trip sizing
+and does not promise fixed-overhead-independent amortization. A sixteen-second outlier in
 a 39-input otherwise cheap batch must collapse the next lease to one input.
 For the deterministic 26,000-input / 2ms-per-input model, worker-count arguments
 2 and 8 use 53 and 143 leases respectively at either fixed-overhead level. These
@@ -163,8 +165,9 @@ A first Dart unit run under competing compiler load hit its default 30s test
 timeout; the complete final run above used one test worker and a 2m timeout.
 
 The full release/compatibility matrix, Freezed/Riverpod-specific watch scripts
-and private-project cold/AOT performance were not run. No release was published. These measurements and checks were collected before
-the PR commit and subsequent integration with the latest main branch.
+and private-project cold/AOT performance were not run. No release was published.
+These measurements and checks were collected before the PR commit and subsequent
+integration with the latest main branch.
 
 ### Integration with current main
 
@@ -172,6 +175,29 @@ The draft PR was rebased onto main `c5751ca` after the measurements above.
 After integration, Rust tests passed (255 passed, three existing ignored tests),
 Rust formatting and clippy passed, Dart analysis of `lib/src/worker.dart` passed,
 and `dart test test/protocol_test.dart --timeout 2m --concurrency 1` passed all
-14 tests. The full 392-test Dart run, six correctness groups and performance
-comparison above were not repeated on the rebased tree. The retained source
-hashes and dependency lock intentionally describe the original benchmark tree.
+14 tests. The full 392-test Dart run, scheduler/watch/Freezed/Riverpod groups and
+performance comparison above were not repeated on the rebased tree. The retained
+benchmark source hashes and dependency lock intentionally describe the original
+benchmark tree. The required verification wrappers were subsequently rerun as
+recorded below.
+
+### Post-rebase verification completion
+
+Both required wrappers passed on `57efdeb`, based on main `c5751ca`, using a
+freshly rebuilt v0.19.1 release frontend:
+
+```bash
+bash scripts/verify.sh
+VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
+```
+
+The scheduling tests also passed (five tests), including the renamed
+`large_phases_with_action_timings_amortize_setup_cost`. See the retained
+[verification record](adaptive-input-leases-2026-11/post-rebase-verification.json)
+for the exact tested commit, binary hash, SDK, command results and timestamps.
+The follow-up commit only records this evidence and clarifies documentation.
+
+Cost learning is separate for each configured builder application, including
+separate target/builder/phase queues in workspace builds. Different builders'
+samples are not pooled. Conservative sizing when inputs of the same builder
+have variable costs remains a real-project measurement consideration.
