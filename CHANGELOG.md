@@ -1,5 +1,18 @@
 # Changelog
 
+## [v0.19.1](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.0...v0.19.1) - 2026-11-13
+
+- perf(ci): share build caches and bound local verification by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/169
+- perf(ci): batch correctness groups and reuse stock CLI setup by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/171
+- fix(rust): readable final error line and no compiler output leak by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/172
+- build(deps): bump Songmu/tagpr from 1.21.4 to 1.22.0 by @dependabot[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/174
+- build(deps): bump opentelemetry_sdk from 0.31.0 to 0.32.1 in /rust in the cargo group across 1 directory by @dependabot[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/167
+- chore: Configure Renovate by @renovate[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/176
+- feat(rust): report elapsed time and written outputs in the result line by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/175
+- perf(ci): reuse validated assets and share complete Pub caches by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/173
+- perf(ci): prepare the integration Pub cache in parallel by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/182
+- ci: complete PR verification coverage, guard group assignments, and classify light PRs by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/185
+
 ## [v0.19.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.18.0...v0.19.0) - 2026-11-08
 
 - perf: reuse SIMD keyword search and skip empty resolver closures by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/163
