@@ -19,6 +19,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Classify changed paths
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      jobs: ${{ steps.classify.outputs.jobs }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - id: classify
+        name: Classify changed paths
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          jobs=',integration-selection,integration-filter-graph,integration-boundaries,integration-settings,integration-settings-watch,integration-output-policies,integration-core,integration-codegen,integration-lifecycle,integration-compilers,integration-builders,native-build,'
+          if gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate >"$RUNNER_TEMP/pr-files.json"; then
+            # The files endpoint returns at most 3,000 entries even with
+            # pagination; treat a capped list as incomplete and keep the
+            # full-run default rather than classifying a partial diff.
+            # Renames contribute their previous path as well: the lanes in
+            # this tree may still reference the old location, so a rename
+            # must classify by both identities.
+            if [[ $(jq -s 'add | length' "$RUNNER_TEMP/pr-files.json") -lt 3000 ]]; then
+              files=$(jq -r '.[] | .filename, (.previous_filename // empty)' "$RUNNER_TEMP/pr-files.json")
+              derived=$(printf '%s\n' "$files" | python3 .github/scripts/classify_changes.py "$GITHUB_WORKSPACE") || derived=''
+              if [[ "$derived" =~ ^jobs=,[a-z0-9,-]*,$ ]]; then
+                jobs=${derived#jobs=}
+              fi
+            fi
+          fi
+          printf 'jobs=%s\n' "$jobs" >>"$GITHUB_OUTPUT"
+
   dart-package:
     name: Dart ${{ matrix.sdk }} (${{ matrix.resolution }})
     runs-on: ubuntu-24.04-arm
@@ -128,6 +164,8 @@ jobs:
           if-no-files-found: ignore
 
   integration-selection:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-selection,')) }}
     name: 'Integration: filter selection and graph'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -170,6 +208,8 @@ jobs:
               NESTED_PACKAGE_CASE_GROUP=recovery-state bash scripts/correctness_nested_packages.sh
 
   integration-filter-graph:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-filter-graph,')) }}
     name: 'Integration: filter resolver, state, and unsupported builders'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -211,6 +251,8 @@ jobs:
               NESTED_PACKAGE_CASE_GROUP=source,glob bash scripts/correctness_nested_packages.sh
 
   integration-boundaries:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-boundaries,')) }}
     name: 'Integration: filter watch and boundaries'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -254,6 +296,8 @@ jobs:
               BUILD_FILTER_CASE_GROUP=routing bash scripts/correctness_build_filter.sh
 
   integration-settings:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-settings,')) }}
     name: 'Integration: build configuration'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -276,15 +320,17 @@ jobs:
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Values, default watch, and arbitrary builder
+          - name: Values, default watch, and arbitrary builders
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=values,watch-default bash scripts/correctness_settings.sh
               PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_builder.sh
-          - name: Compact flags and reserved/topology watch
+              PUB_GET_OFFLINE=1 bash scripts/correctness_arbitrary_package_target_builder.sh
+          - name: Compact flags, reserved/topology watch, and manifest snapshot
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=compact,watch-reserved,watch-topology bash scripts/correctness_settings.sh
+              bash scripts/correctness_manifest_snapshot.sh
           - name: Config paths and normalized dot/ancestor watch
             shell: bash
             run: |
@@ -296,6 +342,8 @@ jobs:
               bash scripts/correctness_upgrade.sh
 
   integration-settings-watch:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-settings-watch,')) }}
     name: 'Integration: configuration watch and AOT'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -314,7 +362,7 @@ jobs:
       - name: Resolve fixture dependencies once before parallel checks
         shell: bash
         run: |
-          for fixture in settings_builder_app trigger_builder_app post_process_builder_app workspace_json_app; do
+          for fixture in settings_builder_app trigger_builder_app post_process_builder_app workspace_json_app arbitrary_builder_app; do
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
@@ -322,11 +370,13 @@ jobs:
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=errors,boundaries bash scripts/correctness_settings.sh
-          - name: Precedence and post-process lifecycle
+          - name: Precedence, post-process, arbitrary watch, and compile isolation
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=precedence bash scripts/correctness_settings.sh
               bash scripts/correctness_post_process_builder.sh
+              bash scripts/watch_smoke_arbitrary_builder.sh
+              python3 scripts/correctness_compile_isolation.py
           - name: JIT/AOT compile and publication recovery
             shell: bash
             # Keep prewarm and compile coverage cold, independent of other lanes.
@@ -341,6 +391,8 @@ jobs:
               bash scripts/correctness_workspace_json.sh
 
   integration-output-policies:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-output-policies,')) }}
     name: 'Integration: output policies'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -384,6 +436,8 @@ jobs:
               SETTINGS_CASE_GROUP=watch-backslash,watch-named bash scripts/correctness_settings.sh
 
   integration-core:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-core,')) }}
     name: 'Integration: baseline, CLI, and workspace scheduler'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -424,6 +478,8 @@ jobs:
               bash scripts/correctness_prewarm.sh
 
   integration-codegen:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-codegen,')) }}
     name: 'Integration: code generators'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -461,11 +517,12 @@ jobs:
               bash scripts/correctness_multi_mapping_builder.sh
             env:
               PUB_GET_OFFLINE: '1'
-          - name: JSON Serializable shared baseline and capture mapping
+          - name: JSON Serializable shared baseline, capture mapping, and early catalog
             shell: bash
             run: |
               CASE_FILTER=shared-baseline bash scripts/correctness_json_serializable.sh
               bash scripts/correctness_capture_builder.sh
+              bash scripts/correctness_early_catalog.sh
             env:
               PUB_GET_OFFLINE: '1'
           - name: Freezed watch and generic mappings
@@ -475,6 +532,8 @@ jobs:
               PUB_GET_OFFLINE=1 bash scripts/correctness_empty_input_mapping.sh
 
   integration-lifecycle:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-lifecycle,')) }}
     name: 'Integration: lifecycle, publication, and workspace'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -521,6 +580,8 @@ jobs:
               bash scripts/correctness_workspace.sh
 
   integration-compilers:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-compilers,')) }}
     name: 'Integration: published web compilers'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -563,6 +624,8 @@ jobs:
               OUTPUT_POLICY_CASE_GROUP=modes bash scripts/correctness_output_policies.sh
 
   integration-builders:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',integration-builders,')) }}
     name: 'Integration: Drift, registry, and recovery'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
@@ -588,7 +651,7 @@ jobs:
             shell: bash
             run: |
               CASE_FILTER=core bash scripts/correctness_drift_analyzer.sh
-              CASE_FILTER=core bash scripts/correctness_drift_not_shared.sh
+              bash scripts/correctness_drift_not_shared.sh
           - name: Drift rename and failure
             shell: bash
             run: |
@@ -608,6 +671,8 @@ jobs:
               bash scripts/watch_smoke_registry_override.sh
 
   native-build:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.jobs == '' || contains(needs.changes.outputs.jobs, ',native-build,')) }}
     name: Native build (${{ matrix.target_id }})
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 20

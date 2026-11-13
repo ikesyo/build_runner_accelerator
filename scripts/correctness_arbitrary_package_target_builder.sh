@@ -91,7 +91,7 @@ write_package_pubspec() {
     '  sdk: ">=3.13.0 <4.0.0"' \
     '' \
     'dependencies:' \
-    '  build: 4.0.0' \
+    '  build: ">=4.0.9 <5.1.0"' \
     '  dependency_builder_package:' \
     '    path: packages/dependency_builder_package' \
     '' \
@@ -111,7 +111,7 @@ write_dependency_pubspec() {
     '  sdk: ">=3.13.0 <4.0.0"' \
     '' \
     'dependencies:' \
-    '  build: 4.0.0' >"$directory/pubspec.yaml"
+    '  build: ">=4.0.9 <5.1.0"' >"$directory/pubspec.yaml"
 }
 
 write_dependency_build_yaml() {

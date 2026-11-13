@@ -17,6 +17,24 @@ Keep native distribution checks on their target architecture. Pin runner images
 and toolchains so comparisons do not also change the execution environment.
 The workflow is the source of truth for individual test assignments.
 
+A lightweight classification job runs before the test jobs on pull requests.
+It counts separately from the 16 test jobs above. The classifier derives the
+set of gated jobs a change can affect from the tree itself: workflow lanes
+name the scripts they run, scripts name the fixtures and shared files they
+use, and fixture path-dependencies are followed in reverse. A fixture change
+therefore runs only the jobs exercising that fixture, and a harness change
+fans out to every job whose suites source it. Documentation, the Dart
+package tests and CI helper tests need only the always-on package jobs,
+which run unconditionally as the safety floor. Product code, the workflow
+and actions, the cache preparation and key helpers, and the classifier
+itself always force a full run, as does anything the derivation cannot
+account for: a gated job may skip only when classification succeeded and
+did not list it, so failures fail safe toward running everything. Every
+script and fixture must be accounted for by derivation or by an explicit
+bucket in the classifier; check_ci.py enforces that partition. Push,
+schedule and manual runs are always full, which keeps main's results and
+cache production complete.
+
 ## Coverage
 
 Every integration scenario family runs on PRs. Retain stock/native byte
@@ -104,8 +122,11 @@ moved branch or partial tag requires reviewing upstream changes before running
 
 Run `python3 .github/scripts/check_ci.py` with PyYAML 6.0.3 after workflow changes.
 It checks matrix expansion, the PR runner budget, the four-lane limit and
-embedded Bash syntax. Update its finite expansion logic when adding a matrix
-shape, and run the relevant workflow/helper tests.
+embedded Bash syntax. It also checks that case-group partitions still cover
+every registered group exactly once: the group registries live in the suite
+sources, and a group no lane assigns would otherwise run only in the local
+gate. Update its finite expansion logic when adding a matrix shape, and run
+the relevant workflow/helper tests.
 
 Validate changes on GitHub Actions. Record the source SHA, toolchains, runner
 architecture, cache state, queue delay and longest lane alongside whole-workflow
