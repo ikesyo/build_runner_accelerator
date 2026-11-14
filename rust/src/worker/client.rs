@@ -166,27 +166,45 @@ pub(super) struct BuildWire<'a> {
     pub(super) otel_report_id: Option<u64>,
 }
 
-pub(super) fn batch_request_wires(requests: &[BuildRequest]) -> Vec<BatchRequestWire<'_>> {
-    // Mirror the generic send path: one message-level telemetry context,
-    // consumed by the first request; later requests draw fresh contexts.
-    let mut first_context = crate::telemetry::request_context();
+/// Per-request telemetry fields, mirroring the generic send path: one
+/// message-level context, consumed by the first request; later requests
+/// draw fresh contexts. All `None` when no session is active. The provider
+/// is a parameter so tests can script contexts without a live session.
+fn telemetry_contexts_with(
+    count: usize,
+    mut provider: impl FnMut() -> Option<(String, u64)>,
+) -> Vec<(Option<String>, Option<u64>)> {
+    let mut first_context = provider();
     let inject = first_context.is_some();
-    requests
-        .iter()
-        .enumerate()
-        .map(|(index, request)| {
-            let (traceparent, otel_report_id) = if inject {
-                match first_context
-                    .take()
-                    .or_else(crate::telemetry::request_context)
-                {
+    (0..count)
+        .map(|_| {
+            if inject {
+                match first_context.take().or_else(&mut provider) {
                     Some((parent, report_id)) => (Some(parent), Some(report_id)),
                     None => (None, None),
                 }
             } else {
                 (None, None)
-            };
-            BatchRequestWire {
+            }
+        })
+        .collect()
+}
+
+pub(super) fn batch_request_wires(requests: &[BuildRequest]) -> Vec<BatchRequestWire<'_>> {
+    batch_request_wires_with(requests, crate::telemetry::request_context)
+}
+
+pub(super) fn batch_request_wires_with(
+    requests: &[BuildRequest],
+    provider: impl FnMut() -> Option<(String, u64)>,
+) -> Vec<BatchRequestWire<'_>> {
+    let contexts = telemetry_contexts_with(requests.len(), provider);
+    requests
+        .iter()
+        .enumerate()
+        .zip(contexts)
+        .map(
+            |((index, request), (traceparent, otel_report_id))| BatchRequestWire {
                 id: index as u64,
                 builder: &request.builder,
                 input: &request.input,
@@ -204,8 +222,8 @@ pub(super) fn batch_request_wires(requests: &[BuildRequest]) -> Vec<BatchRequest
                 triggers: &request.triggers,
                 traceparent,
                 otel_report_id,
-            }
-        })
+            },
+        )
         .collect()
 }
 

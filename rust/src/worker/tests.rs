@@ -2,8 +2,8 @@ use super::asset_rpc::{
     batch_asset_request_context, missing_asset_response, validate_asset_request_context,
 };
 use super::client::{
-    BatchWire, batch_request_wires, build_wire, has_capability, is_worker_script,
-    require_overlay_blob_capability,
+    BatchWire, batch_request_wires, batch_request_wires_with, build_wire, has_capability,
+    is_worker_script, require_overlay_blob_capability,
 };
 use super::pool::{
     homogeneous_resolver_usage_key, remember_resolver_usage, target_worker_count,
@@ -343,6 +343,52 @@ fn typed_build_wires_match_the_json_message_shape() {
         serde_json::to_string(&single).unwrap(),
         serde_json::to_string(&single_value).unwrap(),
     );
+}
+
+#[test]
+fn batch_wires_carry_telemetry_contexts_in_order() {
+    let requests = vec![
+        build_request(2, false),
+        build_request(2, false),
+        build_request(2, false),
+    ];
+    let mut scripted = vec![
+        Some(("parent-0".to_owned(), 10u64)),
+        Some(("parent-1".to_owned(), 11u64)),
+    ]
+    .into_iter();
+    let mut calls = 0usize;
+    let wires = batch_request_wires_with(&requests, || {
+        calls += 1;
+        scripted.next().unwrap_or(None)
+    });
+    // One message-level draw, then one fresh draw per later request.
+    assert_eq!(calls, 3);
+    let values: Vec<serde_json::Value> = wires
+        .iter()
+        .map(|wire| serde_json::to_value(wire).unwrap())
+        .collect();
+    assert_eq!(values[0]["traceparent"].as_str(), Some("parent-0"));
+    assert_eq!(values[0]["otel_report_id"].as_u64(), Some(10));
+    assert_eq!(values[1]["traceparent"].as_str(), Some("parent-1"));
+    assert_eq!(values[1]["otel_report_id"].as_u64(), Some(11));
+    // The provider is exhausted: the fields are omitted, not null.
+    assert!(values[2].get("traceparent").is_none());
+    assert!(values[2].get("otel_report_id").is_none());
+
+    // Without a session the provider is probed exactly once and no
+    // telemetry fields are emitted.
+    let mut calls = 0usize;
+    let wires = batch_request_wires_with(&requests, || {
+        calls += 1;
+        None
+    });
+    assert_eq!(calls, 1);
+    for wire in &wires {
+        let value = serde_json::to_value(wire).unwrap();
+        assert!(value.get("traceparent").is_none());
+        assert!(value.get("otel_report_id").is_none());
+    }
 }
 
 #[test]
