@@ -30,16 +30,12 @@ pub(super) fn build_request_kind(request: &BuildRequest) -> BuilderKind {
     }
 }
 
-/// Produces the one batch-level visibility hint shared by all requests.
-/// Mixed phases or normal/post-process kinds are rejected because one blocked
-/// set cannot describe two visibility policies.
-pub(super) fn batch_blocked_assets(
-    requests: &[BuildRequest],
-    visibility: &AssetVisibility,
-    deleted_overlay: &BTreeSet<String>,
-) -> io::Result<Vec<String>> {
+/// The one visibility context shared by every request in a batch, or `None`
+/// for an empty batch. Mixed phases or normal/post-process kinds are
+/// rejected because one blocked set cannot describe two visibility policies.
+pub(super) fn batch_context(requests: &[BuildRequest]) -> io::Result<Option<(u32, BuilderKind)>> {
     let Some(first) = requests.first() else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
     if requests
         .iter()
@@ -49,7 +45,19 @@ pub(super) fn batch_blocked_assets(
             "build batch requests must share phase and builder kind",
         ));
     }
-    Ok(visibility.blocked_assets(first.phase, build_request_kind(first), deleted_overlay))
+    Ok(Some((first.phase, build_request_kind(first))))
+}
+
+/// Produces the one batch-level visibility hint shared by all requests.
+pub(super) fn batch_blocked_assets(
+    requests: &[BuildRequest],
+    visibility: &AssetVisibility,
+    deleted_overlay: &BTreeSet<String>,
+) -> io::Result<Vec<String>> {
+    let Some((phase, kind)) = batch_context(requests)? else {
+        return Ok(Vec::new());
+    };
+    Ok(visibility.blocked_assets(phase, kind, deleted_overlay))
 }
 
 /// Forms the v1 JSON representation used only to report comparison size in

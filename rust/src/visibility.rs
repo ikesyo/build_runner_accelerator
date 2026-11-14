@@ -141,6 +141,56 @@ impl AssetVisibility {
         blocked.into_iter().collect()
     }
 
+    /// Checks that the list [`Self::blocked_assets`] would produce equals
+    /// `expected`, without rebuilding the list or cloning asset strings:
+    /// streams the merged, deduplicated union in sorted order and compares
+    /// element by element, stopping at the first difference. The only
+    /// allocations are the merge bookkeeping, proportional to the number of
+    /// source sets rather than the number of assets. Lets the batch
+    /// dispatcher verify a reuse candidate cheaply.
+    pub(crate) fn blocked_assets_eq(
+        &self,
+        phase: u32,
+        kind: BuilderKind,
+        deleted: &BTreeSet<String>,
+        expected: &[String],
+    ) -> bool {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+
+        let mut streams: Vec<std::collections::btree_set::Iter<'_, String>> =
+            vec![deleted.iter(), self.post_process_outputs.iter()];
+        if kind == BuilderKind::Normal {
+            streams.extend(
+                self.normal_output_phases
+                    .range(phase..)
+                    .map(|(_, assets)| assets.iter()),
+            );
+        }
+        let mut heap = BinaryHeap::new();
+        for (index, stream) in streams.iter_mut().enumerate() {
+            if let Some(value) = stream.next() {
+                heap.push(Reverse((value, index)));
+            }
+        }
+        let mut expected = expected.iter();
+        let mut last: Option<&str> = None;
+        while let Some(Reverse((value, index))) = heap.pop() {
+            if let Some(next) = streams[index].next() {
+                heap.push(Reverse((next, index)));
+            }
+            if last == Some(value.as_str()) {
+                continue;
+            }
+            last = Some(value.as_str());
+            match expected.next() {
+                Some(candidate) if candidate == value => {}
+                _ => return false,
+            }
+        }
+        expected.next().is_none()
+    }
+
     pub(crate) fn is_blocked(
         &self,
         asset: &str,
@@ -250,5 +300,68 @@ mod tests {
             visibility.blocked_assets(1, BuilderKind::Normal, &empty),
             vec!["app|lib/input.source".to_owned()]
         );
+    }
+
+    #[test]
+    fn blocked_assets_eq_matches_the_materialized_list() {
+        let specs = vec![
+            spec("app:cache", 0, BuildTo::Cache, "app|lib/input.cache"),
+            spec("app:source", 1, BuildTo::Source, "app|lib/input.source"),
+            spec("app:late", 2, BuildTo::Source, "app|lib/late.source"),
+        ];
+        let config = RustBuildConfig {
+            asset_sources: None,
+            builders: Vec::new(),
+            worker_entrypoint: None,
+            manifest_signature: None,
+            trigger_digest: None,
+            definitions: BTreeMap::new(),
+        };
+        let visibility = AssetVisibility::from_specs(&specs, &GraphState::default(), &config);
+        // The deleted overlay overlaps a phase output (deduplication) and
+        // adds an asset of its own.
+        let deleted: BTreeSet<String> = [
+            "app|lib/deleted.dart".to_owned(),
+            "app|lib/input.source".to_owned(),
+        ]
+        .into_iter()
+        .collect();
+
+        for (phase, kind) in [
+            (0, BuilderKind::Normal),
+            (1, BuilderKind::Normal),
+            (2, BuilderKind::Normal),
+            (3, BuilderKind::Normal),
+            (0, BuilderKind::PostProcess),
+        ] {
+            let mut expected = visibility.blocked_assets(phase, kind, &deleted);
+            assert!(
+                visibility.blocked_assets_eq(phase, kind, &deleted, &expected),
+                "exact list must match at phase {phase} {kind:?}",
+            );
+            let mut shortened = expected.clone();
+            shortened.pop();
+            assert!(
+                !visibility.blocked_assets_eq(phase, kind, &deleted, &shortened),
+                "missing element must not match at phase {phase} {kind:?}",
+            );
+            let mut extended = expected.clone();
+            extended.push("app|lib/zzz.dart".to_owned());
+            assert!(
+                !visibility.blocked_assets_eq(phase, kind, &deleted, &extended),
+                "extra element must not match at phase {phase} {kind:?}",
+            );
+            if let Some(first) = expected.first_mut() {
+                *first = "app|lib/aaa.dart".to_owned();
+                assert!(
+                    !visibility.blocked_assets_eq(phase, kind, &deleted, &expected),
+                    "changed element must not match at phase {phase} {kind:?}",
+                );
+            }
+        }
+
+        // A different deleted overlay changes the list even at the same phase.
+        let expected = visibility.blocked_assets(0, BuilderKind::Normal, &deleted);
+        assert!(!visibility.blocked_assets_eq(0, BuilderKind::Normal, &BTreeSet::new(), &expected));
     }
 }
