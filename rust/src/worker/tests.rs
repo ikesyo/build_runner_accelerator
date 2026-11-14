@@ -2,8 +2,9 @@ use super::asset_rpc::{
     batch_asset_request_context, missing_asset_response, validate_asset_request_context,
 };
 use super::client::{
-    BatchWire, batch_request_wires, batch_request_wires_with, build_wire, has_capability,
-    is_worker_script, require_overlay_blob_capability,
+    BatchWire, batch_request_wires, batch_request_wires_with, batch_shared_fields,
+    batch_shared_request_wires, build_wire, has_capability, is_worker_script,
+    require_overlay_blob_capability,
 };
 use super::pool::{
     homogeneous_resolver_usage_key, remember_resolver_usage, target_worker_count,
@@ -292,6 +293,7 @@ fn typed_build_wires_match_the_json_message_shape() {
         id: 9,
         blocked_assets: &blocked,
         blocked_assets_reuse: false,
+        shared: None,
         requests: &wires,
     };
     let value = json!({
@@ -389,6 +391,102 @@ fn batch_wires_carry_telemetry_contexts_in_order() {
         assert!(value.get("traceparent").is_none());
         assert!(value.get("otel_report_id").is_none());
     }
+}
+
+#[test]
+fn shared_batch_fields_require_a_uniform_multi_request_batch() {
+    let requests = vec![build_request(2, false), build_request(2, false)];
+    assert!(batch_shared_fields(&requests).is_some());
+    assert!(
+        batch_shared_fields(&requests[..1]).is_none(),
+        "single request"
+    );
+    assert!(batch_shared_fields(&[]).is_none(), "empty batch");
+
+    let mixed_phase = vec![build_request(2, false), build_request(3, false)];
+    assert!(batch_shared_fields(&mixed_phase).is_none(), "mixed phase");
+
+    let mixed_kind = vec![build_request(2, false), build_request(2, true)];
+    assert!(batch_shared_fields(&mixed_kind).is_none(), "mixed kind");
+
+    let mut other_instance = build_request(2, false);
+    other_instance.instance_key = "other".to_owned();
+    let mixed_instance = vec![build_request(2, false), other_instance];
+    assert!(
+        batch_shared_fields(&mixed_instance).is_none(),
+        "mixed instance"
+    );
+
+    let mut other_root = build_request(2, false);
+    other_root.is_root = false;
+    let mixed_root = vec![build_request(2, false), other_root];
+    assert!(batch_shared_fields(&mixed_root).is_none(), "mixed is_root");
+
+    let mut other_part = build_request(2, false);
+    other_part.part_phase_index = Some(0);
+    let mixed_part = vec![build_request(2, false), other_part];
+    assert!(
+        batch_shared_fields(&mixed_part).is_none(),
+        "mixed part index"
+    );
+
+    let mut other_builder = build_request(2, false);
+    other_builder.builder = "example:other".to_owned();
+    let mixed_builder = vec![build_request(2, false), other_builder];
+    assert!(
+        batch_shared_fields(&mixed_builder).is_none(),
+        "mixed builder"
+    );
+}
+
+#[test]
+fn shared_batch_merges_back_to_the_full_batch_requests() {
+    // See typed_build_wires_match_the_json_message_shape for why telemetry
+    // must be inactive.
+    if crate::telemetry::request_context().is_some() {
+        return;
+    }
+    let requests = vec![build_request(2, false), build_request(2, false)];
+    let blocked = vec!["example|hidden.dart".to_owned()];
+    let shared = batch_shared_fields(&requests).expect("uniform batch lifts");
+    let wires = batch_shared_request_wires(&requests);
+    let value = serde_json::to_value(&BatchWire {
+        v: 1,
+        message_type: "build_batch",
+        id: 9,
+        blocked_assets: &blocked,
+        blocked_assets_reuse: false,
+        shared: Some(shared),
+        requests: &wires,
+    })
+    .unwrap();
+
+    // Simulate the worker-side merge: shared fields under each request,
+    // with request fields winning.
+    let shared_map = value["shared"].as_object().unwrap().clone();
+    let merged: Vec<serde_json::Value> = value["requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|request| {
+            let mut merged = shared_map.clone();
+            merged.extend(request.as_object().unwrap().clone());
+            serde_json::Value::Object(merged)
+        })
+        .collect();
+
+    let full_wires = batch_request_wires(&requests);
+    let full = serde_json::to_value(&BatchWire {
+        v: 1,
+        message_type: "build_batch",
+        id: 9,
+        blocked_assets: &blocked,
+        blocked_assets_reuse: false,
+        shared: None,
+        requests: &full_wires,
+    })
+    .unwrap();
+    assert_eq!(serde_json::Value::Array(merged), full["requests"]);
 }
 
 #[test]
