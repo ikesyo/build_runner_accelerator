@@ -116,6 +116,18 @@ pub fn write_frame<W: Write, T: Serialize>(writer: &mut W, message: &T) -> io::R
     write_payload(writer, &payload)
 }
 
+/// Serializes into a caller-owned buffer kept across calls, so repeated
+/// frames do not allocate a fresh payload vector each time.
+pub fn write_frame_buffered<W: Write, T: Serialize>(
+    writer: &mut W,
+    message: &T,
+    buffer: &mut Vec<u8>,
+) -> io::Result<usize> {
+    buffer.clear();
+    serde_json::to_writer(&mut *buffer, message).map_err(io::Error::other)?;
+    write_payload(writer, buffer)
+}
+
 pub fn write_binary_frame<W: Write, T: Serialize>(
     writer: &mut W,
     metadata: &T,

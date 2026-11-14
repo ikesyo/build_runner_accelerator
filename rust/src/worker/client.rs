@@ -6,6 +6,7 @@ use super::request::{
 use crate::protocol::{
     BINARY_BUILD_RESULT_MAGIC, BuildBatchResultCollector, BuildResult, IncomingFrame,
     decode_build_batch_result_frame, read_message_with_size, write_binary_frame, write_frame,
+    write_frame_buffered,
 };
 use crate::visibility::AssetVisibility;
 use crate::worker_kernel::WorkerArtifact;
@@ -37,6 +38,8 @@ pub(super) fn is_worker_script(worker_executable: &str) -> bool {
 pub struct WorkerClient {
     pub(super) shared_parts_capable: bool,
     pub(super) blocked_assets_cache: BlockedAssetsCache,
+    /// Reusable serialization buffer for typed build messages.
+    pub(super) send_buffer: Vec<u8>,
     child: Child,
     input: BufWriter<ChildStdin>,
     output: BufReader<ChildStdout>,
@@ -99,6 +102,143 @@ impl BlockedAssetsCache {
         }
         self.last = Some(assets.clone());
         (assets, false)
+    }
+}
+
+/// One build request in a batch, serialized directly from the borrowed
+/// [`BuildRequest`] fields instead of an intermediate JSON value tree.
+/// Field order matches the JSON shape the worker has always received;
+/// telemetry fields appear only while a telemetry context is active,
+/// exactly as the generic send path used to inject them.
+#[derive(serde::Serialize)]
+pub(super) struct BatchRequestWire<'a> {
+    id: u64,
+    builder: &'a str,
+    input: &'a str,
+    kind: &'a str,
+    allowed_outputs: &'a [String],
+    options: &'a serde_json::Map<String, Value>,
+    phase: u32,
+    part_phase_index: Option<u32>,
+    instance_key: &'a str,
+    is_root: bool,
+    triggers: &'a [crate::builder::BuilderTrigger],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    traceparent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    otel_report_id: Option<u64>,
+}
+
+/// The `build_batch` envelope. See [`BatchRequestWire`].
+#[derive(serde::Serialize)]
+pub(super) struct BatchWire<'a> {
+    pub(super) v: u32,
+    #[serde(rename = "type")]
+    pub(super) message_type: &'a str,
+    pub(super) id: u64,
+    pub(super) blocked_assets: &'a [String],
+    pub(super) blocked_assets_reuse: bool,
+    pub(super) requests: &'a [BatchRequestWire<'a>],
+}
+
+/// The single `build` envelope used by the lazy/nested path, carrying its
+/// own visibility hint. See [`BatchRequestWire`].
+#[derive(serde::Serialize)]
+pub(super) struct BuildWire<'a> {
+    pub(super) v: u32,
+    #[serde(rename = "type")]
+    pub(super) message_type: &'a str,
+    pub(super) id: u64,
+    pub(super) builder: &'a str,
+    pub(super) input: &'a str,
+    pub(super) kind: &'a str,
+    pub(super) allowed_outputs: &'a [String],
+    pub(super) options: &'a serde_json::Map<String, Value>,
+    pub(super) phase: u32,
+    pub(super) part_phase_index: Option<u32>,
+    pub(super) instance_key: &'a str,
+    pub(super) is_root: bool,
+    pub(super) blocked_assets: &'a [String],
+    pub(super) triggers: &'a [crate::builder::BuilderTrigger],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) traceparent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) otel_report_id: Option<u64>,
+}
+
+pub(super) fn batch_request_wires(requests: &[BuildRequest]) -> Vec<BatchRequestWire<'_>> {
+    // Mirror the generic send path: one message-level telemetry context,
+    // consumed by the first request; later requests draw fresh contexts.
+    let mut first_context = crate::telemetry::request_context();
+    let inject = first_context.is_some();
+    requests
+        .iter()
+        .enumerate()
+        .map(|(index, request)| {
+            let (traceparent, otel_report_id) = if inject {
+                match first_context
+                    .take()
+                    .or_else(crate::telemetry::request_context)
+                {
+                    Some((parent, report_id)) => (Some(parent), Some(report_id)),
+                    None => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+            BatchRequestWire {
+                id: index as u64,
+                builder: &request.builder,
+                input: &request.input,
+                kind: if request.post_process {
+                    "post_process"
+                } else {
+                    "normal"
+                },
+                allowed_outputs: &request.outputs,
+                options: &request.options,
+                phase: request.phase,
+                part_phase_index: request.part_phase_index,
+                instance_key: &request.instance_key,
+                is_root: request.is_root,
+                triggers: &request.triggers,
+                traceparent,
+                otel_report_id,
+            }
+        })
+        .collect()
+}
+
+pub(super) fn build_wire<'a>(
+    id: u64,
+    request: &'a BuildRequest,
+    blocked_assets: &'a [String],
+) -> BuildWire<'a> {
+    let (traceparent, otel_report_id) = match crate::telemetry::request_context() {
+        Some((parent, report_id)) => (Some(parent), Some(report_id)),
+        None => (None, None),
+    };
+    BuildWire {
+        v: 1,
+        message_type: "build",
+        id,
+        builder: &request.builder,
+        input: &request.input,
+        kind: if request.post_process {
+            "post_process"
+        } else {
+            "normal"
+        },
+        allowed_outputs: &request.outputs,
+        options: &request.options,
+        phase: request.phase,
+        part_phase_index: request.part_phase_index,
+        instance_key: &request.instance_key,
+        is_root: request.is_root,
+        blocked_assets,
+        triggers: &request.triggers,
+        traceparent,
+        otel_report_id,
     }
 }
 
@@ -224,6 +364,7 @@ impl WorkerClient {
             dep_graph: BTreeMap::new(),
             shared_parts_capable: false,
             blocked_assets_cache: BlockedAssetsCache::default(),
+            send_buffer: Vec::new(),
         })
     }
 
@@ -392,33 +533,15 @@ impl WorkerClient {
         let (blocked_assets, blocked_assets_reuse) =
             self.blocked_assets_cache
                 .prepare(requests, visibility, deleted_overlay)?;
-        let batch_requests = requests
-            .iter()
-            .enumerate()
-            .map(|(index, request)| {
-                json!({
-                    "id": index as u64,
-                    "builder": request.builder,
-                    "input": request.input,
-                    "kind": if request.post_process { "post_process" } else { "normal" },
-                    "allowed_outputs": request.outputs,
-                    "options": request.options,
-                    "phase": request.phase,
-                    "part_phase_index": request.part_phase_index,
-                    "instance_key": request.instance_key,
-                    "is_root": request.is_root,
-                    "triggers": request.triggers,
-                })
-            })
-            .collect::<Vec<_>>();
-        self.send(&json!({
-            "v": 1,
-            "type": "build_batch",
-            "id": id,
-            "blocked_assets": blocked_assets,
-            "blocked_assets_reuse": blocked_assets_reuse,
-            "requests": batch_requests,
-        }))?;
+        let batch_requests = batch_request_wires(requests);
+        self.send_serialized(&BatchWire {
+            v: 1,
+            message_type: "build_batch",
+            id,
+            blocked_assets: &blocked_assets,
+            blocked_assets_reuse,
+            requests: &batch_requests,
+        })?;
 
         drop(encoding);
         let mut batch_results = BuildBatchResultCollector::new(id, requests.len());
@@ -537,6 +660,17 @@ impl WorkerClient {
             message
         };
         let frame_size = write_frame(&mut self.input, message)?;
+        self.metrics.ipc_frames_sent += 1;
+        self.metrics.ipc_bytes_sent += frame_size as u64;
+        Ok(())
+    }
+
+    /// Sends a typed build message, serializing it once into the reusable
+    /// buffer instead of building an intermediate JSON value tree. Telemetry
+    /// context fields are populated by the wire constructors, so unlike
+    /// [`Self::send`] this path never clones the message.
+    pub(super) fn send_serialized<T: serde::Serialize>(&mut self, message: &T) -> io::Result<()> {
+        let frame_size = write_frame_buffered(&mut self.input, message, &mut self.send_buffer)?;
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
         Ok(())
