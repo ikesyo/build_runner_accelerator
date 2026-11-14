@@ -243,6 +243,53 @@ void main() {
       expect(batch.requests[1].blockedAssets, same(batch.blockedAssets));
     });
 
+    test('decodes build batches with shared fields merged per request', () {
+      final message = WorkerMessage.decode(<String, dynamic>{
+        'v': 1,
+        'type': 'build_batch',
+        'id': 20,
+        'blocked_assets': <dynamic>['app|lib/blocked.dart'],
+        'shared': <String, dynamic>{
+          'builder': 'app|one',
+          'phase': 0,
+          'kind': 'normal',
+          'part_phase_index': null,
+          'instance_key': 'one',
+          'is_root': true,
+        },
+        'requests': <dynamic>[
+          <String, dynamic>{
+            'id': 21,
+            'input': 'app|lib/one.dart',
+            'options': <String, dynamic>{},
+            'allowed_outputs': <String>[],
+            'triggers': <dynamic>[],
+          },
+          <String, dynamic>{
+            'id': 22,
+            'input': 'app|lib/two.dart',
+            'is_root': false,
+            'options': <String, dynamic>{},
+            'allowed_outputs': <String>[],
+            'triggers': <dynamic>[],
+          },
+        ],
+      });
+
+      expect(message, isA<WorkerBuildBatchMessage>());
+      final batch = message as WorkerBuildBatchMessage;
+      expect(batch.requests, hasLength(2));
+      expect(batch.requests[0].builder, 'app|one');
+      expect(batch.requests[0].phase, 0);
+      expect(batch.requests[0].instanceKey, 'one');
+      expect(batch.requests[0].isRoot, isTrue);
+      expect(batch.requests[0].input, 'app|lib/one.dart');
+      expect(batch.requests[0].blockedAssets, ['app|lib/blocked.dart']);
+      // A field present on the request itself wins over the shared value.
+      expect(batch.requests[1].isRoot, isFalse);
+      expect(batch.requests[1].builder, 'app|one');
+    });
+
     test('batch reuse preserves the prior list without global state', () {
       final full = <String, dynamic>{
         'v': 1,

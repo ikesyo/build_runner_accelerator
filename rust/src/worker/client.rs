@@ -25,6 +25,7 @@ const BINARY_BUILD_RESULT_CAPABILITY: &str = "build-result-binary-v1";
 const OPTIONAL_BUILD_CAPABILITY: &str = "optional-builder-demand-v1";
 const OVERLAY_BLOB_CAPABILITY: &str = "reset-overlay-blob-v1";
 const SHARED_BLOCKED_ASSETS_CAPABILITY: &str = "shared-blocked-assets-v1";
+const BATCH_SHARED_FIELDS_CAPABILITY: &str = "batch-shared-fields-v1";
 
 /// Distinguishes a path to a Dart source script from a package executable name
 /// so the launcher can select the correct Dart invocation form.
@@ -37,6 +38,7 @@ pub(super) fn is_worker_script(worker_executable: &str) -> bool {
 /// reserves stdout for IPC; worker diagnostics are inherited from stderr.
 pub struct WorkerClient {
     pub(super) shared_parts_capable: bool,
+    pub(super) batch_shared_fields_capable: bool,
     pub(super) blocked_assets_cache: BlockedAssetsCache,
     /// Reusable serialization buffer for typed build messages.
     pub(super) send_buffer: Vec<u8>,
@@ -129,16 +131,47 @@ pub(super) struct BatchRequestWire<'a> {
     otel_report_id: Option<u64>,
 }
 
+/// Batch-level fields shared by every request in a batch, sent once under
+/// `shared` when the worker advertises `batch-shared-fields-v1` and the
+/// batch is uniform in them. The worker merges them into each child
+/// request before decoding it; see ADR 0052.
+#[derive(serde::Serialize)]
+pub(super) struct BatchSharedWire<'a> {
+    builder: &'a str,
+    phase: u32,
+    kind: &'a str,
+    part_phase_index: Option<u32>,
+    instance_key: &'a str,
+    is_root: bool,
+}
+
+/// A batch request in shared-fields form: the fields that
+/// [`BatchSharedWire`] does not carry. See [`BatchRequestWire`].
+#[derive(serde::Serialize)]
+pub(super) struct BatchSharedRequestWire<'a> {
+    id: u64,
+    input: &'a str,
+    allowed_outputs: &'a [String],
+    options: &'a serde_json::Map<String, Value>,
+    triggers: &'a [crate::builder::BuilderTrigger],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    traceparent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    otel_report_id: Option<u64>,
+}
+
 /// The `build_batch` envelope. See [`BatchRequestWire`].
 #[derive(serde::Serialize)]
-pub(super) struct BatchWire<'a> {
+pub(super) struct BatchWire<'a, R> {
     pub(super) v: u32,
     #[serde(rename = "type")]
     pub(super) message_type: &'a str,
     pub(super) id: u64,
     pub(super) blocked_assets: &'a [String],
     pub(super) blocked_assets_reuse: bool,
-    pub(super) requests: &'a [BatchRequestWire<'a>],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) shared: Option<BatchSharedWire<'a>>,
+    pub(super) requests: &'a [R],
 }
 
 /// The single `build` envelope used by the lazy/nested path, carrying its
@@ -168,8 +201,13 @@ pub(super) struct BuildWire<'a> {
 
 /// Per-request telemetry fields, mirroring the generic send path: one
 /// message-level context, consumed by the first request; later requests
-/// draw fresh contexts. All `None` when no session is active. The provider
-/// is a parameter so tests can script contexts without a live session.
+/// draw fresh contexts. All `None` when no session is active.
+fn telemetry_contexts(count: usize) -> Vec<(Option<String>, Option<u64>)> {
+    telemetry_contexts_with(count, crate::telemetry::request_context)
+}
+
+/// The provider-taking core of [`telemetry_contexts`], split out so tests
+/// can script the contexts without a live telemetry session.
 fn telemetry_contexts_with(
     count: usize,
     mut provider: impl FnMut() -> Option<(String, u64)>,
@@ -225,6 +263,58 @@ pub(super) fn batch_request_wires_with(
             },
         )
         .collect()
+}
+
+pub(super) fn batch_shared_request_wires(
+    requests: &[BuildRequest],
+) -> Vec<BatchSharedRequestWire<'_>> {
+    let contexts = telemetry_contexts(requests.len());
+    requests
+        .iter()
+        .enumerate()
+        .zip(contexts)
+        .map(
+            |((index, request), (traceparent, otel_report_id))| BatchSharedRequestWire {
+                id: index as u64,
+                input: &request.input,
+                allowed_outputs: &request.outputs,
+                options: &request.options,
+                triggers: &request.triggers,
+                traceparent,
+                otel_report_id,
+            },
+        )
+        .collect()
+}
+
+/// The shared-fields form of a batch, when every request agrees on the
+/// fields it lifts. Single-request batches keep the full form: there is
+/// nothing to deduplicate.
+pub(super) fn batch_shared_fields(requests: &[BuildRequest]) -> Option<BatchSharedWire<'_>> {
+    let first = requests.first()?;
+    if requests.len() < 2 {
+        return None;
+    }
+    let uniform = requests.iter().all(|request| {
+        request.builder == first.builder
+            && request.phase == first.phase
+            && request.post_process == first.post_process
+            && request.part_phase_index == first.part_phase_index
+            && request.instance_key == first.instance_key
+            && request.is_root == first.is_root
+    });
+    uniform.then(|| BatchSharedWire {
+        builder: &first.builder,
+        phase: first.phase,
+        kind: if first.post_process {
+            "post_process"
+        } else {
+            "normal"
+        },
+        part_phase_index: first.part_phase_index,
+        instance_key: &first.instance_key,
+        is_root: first.is_root,
+    })
 }
 
 pub(super) fn build_wire<'a>(
@@ -381,6 +471,7 @@ impl WorkerClient {
             },
             dep_graph: BTreeMap::new(),
             shared_parts_capable: false,
+            batch_shared_fields_capable: false,
             blocked_assets_cache: BlockedAssetsCache::default(),
             send_buffer: Vec::new(),
         })
@@ -421,6 +512,8 @@ impl WorkerClient {
         self.blocked_assets_cache =
             BlockedAssetsCache::new(has_capability(&response, "blocked-assets-reuse-v1"));
         self.shared_parts_capable = has_capability(&response, "shared-library-parts-v1");
+        self.batch_shared_fields_capable =
+            has_capability(&response, BATCH_SHARED_FIELDS_CAPABILITY);
         if retained_output_guard && !has_capability(&response, "retained-output-guard-v1") {
             return Err(io::Error::other("worker lacks retained-output-guard-v1"));
         }
@@ -551,15 +644,7 @@ impl WorkerClient {
         let (blocked_assets, blocked_assets_reuse) =
             self.blocked_assets_cache
                 .prepare(requests, visibility, deleted_overlay)?;
-        let batch_requests = batch_request_wires(requests);
-        self.send_serialized(&BatchWire {
-            v: 1,
-            message_type: "build_batch",
-            id,
-            blocked_assets: &blocked_assets,
-            blocked_assets_reuse,
-            requests: &batch_requests,
-        })?;
+        self.send_batch(id, requests, &blocked_assets, blocked_assets_reuse)?;
 
         drop(encoding);
         let mut batch_results = BuildBatchResultCollector::new(id, requests.len());
@@ -692,6 +777,42 @@ impl WorkerClient {
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
         Ok(())
+    }
+
+    /// Sends one `build_batch` envelope, using the shared-fields form when
+    /// this connection's worker advertised the capability and the batch is
+    /// uniform in the lifted fields.
+    pub(super) fn send_batch(
+        &mut self,
+        id: u64,
+        requests: &[BuildRequest],
+        blocked_assets: &[String],
+        blocked_assets_reuse: bool,
+    ) -> io::Result<()> {
+        if self.batch_shared_fields_capable
+            && let Some(shared) = batch_shared_fields(requests)
+        {
+            let wires = batch_shared_request_wires(requests);
+            return self.send_serialized(&BatchWire {
+                v: 1,
+                message_type: "build_batch",
+                id,
+                blocked_assets,
+                blocked_assets_reuse,
+                shared: Some(shared),
+                requests: &wires,
+            });
+        }
+        let wires = batch_request_wires(requests);
+        self.send_serialized(&BatchWire {
+            v: 1,
+            message_type: "build_batch",
+            id,
+            blocked_assets,
+            blocked_assets_reuse,
+            shared: None,
+            requests: &wires,
+        })
     }
 
     pub(super) fn send_binary(&mut self, metadata: &Value, bytes: &[u8]) -> io::Result<()> {

@@ -901,15 +901,7 @@ impl WorkerClient {
         let (blocked_assets, blocked_assets_reuse) =
             self.blocked_assets_cache
                 .prepare(requests, visibility, deleted_overlay)?;
-        let batch_requests = super::client::batch_request_wires(requests);
-        self.send_serialized(&super::client::BatchWire {
-            v: 1,
-            message_type: "build_batch",
-            id,
-            blocked_assets: &blocked_assets,
-            blocked_assets_reuse,
-            requests: &batch_requests,
-        })?;
+        self.send_batch(id, requests, &blocked_assets, blocked_assets_reuse)?;
 
         let mut batch_results = BuildBatchResultCollector::new(id, requests.len());
         loop {

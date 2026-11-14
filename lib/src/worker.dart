@@ -159,6 +159,7 @@ Future<void> runWorker({
                 'optional-builder-demand-v1',
                 'shared-blocked-assets-v1',
                 'blocked-assets-reuse-v1',
+                'batch-shared-fields-v1',
                 'reset-overlay-blob-v1',
                 'build-runner-current-v1',
                 'retained-output-guard-v1',

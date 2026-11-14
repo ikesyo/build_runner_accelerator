@@ -212,10 +212,19 @@ class WorkerBuildBatchMessage extends WorkerMessage {
     if (rawRequests is! List) {
       throw const FormatException('build_batch requests must be a list');
     }
+    final rawShared = message['shared'];
+    final sharedFields = rawShared == null
+        ? null
+        : _jsonMap(rawShared, 'build_batch shared');
     final requests = [
       for (final rawRequest in rawRequests)
         WorkerBuildRequest.fromJson(
-          _jsonMap(rawRequest, 'build_batch request'),
+          sharedFields == null
+              ? _jsonMap(rawRequest, 'build_batch request')
+              : <String, dynamic>{
+                  ...sharedFields,
+                  ..._jsonMap(rawRequest, 'build_batch request'),
+                },
           blockedAssets: blockedAssets,
         ),
     ];
