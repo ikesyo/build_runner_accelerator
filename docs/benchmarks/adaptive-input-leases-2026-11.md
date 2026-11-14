@@ -93,17 +93,11 @@ For the deterministic 26,000-input / 2ms-per-input model, worker-count arguments
 are sequential queue-model counts, not concurrent scheduler counts or elapsed-
 time measurements of the private project.
 
-## Evidence and replay
+## Replay
 
-Retained [metadata](adaptive-input-leases-2026-11/metadata.json),
-[samples](adaptive-input-leases-2026-11/samples.jsonl) and
-[diagnostics](adaptive-input-leases-2026-11/diagnostics.jsonl) contain binary
-hashes, exact commands, cache definitions, elapsed times, output equality and
-worker/IPC counters. Both profiles use the retained
-[dependency resolution](adaptive-input-leases-2026-11/dependency-resolution.yaml).
-The Rust source digest describes the combined candidate;
-experimental binaries use the checkout's original runtime with the sizing
-changes listed above. Every variant uses the same updated Dart worker.
+The policies above can be compared with locally built binaries and the shared
+benchmark script. Measurement artifacts are generated locally rather than
+committed to the repository. Every variant uses the same Dart worker.
 
 The benchmark used the repository's Dart CLI shim, located outside SDK/bin.
 Optional manifest snapshots were consequently unavailable during untimed
@@ -111,7 +105,7 @@ preparation. Timed cases retained the prepared manifest and worker kernel;
 these measurements do not evaluate cold manifest generation or worker AOT.
 Correctness verification uses a shim inside SDK/bin for proper SDK discovery.
 
-With the retained binary paths (or rebuilt equivalents), the comparison was:
+With local binaries for the policies above, the comparison command is:
 
 ```bash
 DART_BIN="$PWD/.toolchains/dart-wrapper" \
@@ -176,9 +170,7 @@ After integration, Rust tests passed (255 passed, three existing ignored tests),
 Rust formatting and clippy passed, Dart analysis of `lib/src/worker.dart` passed,
 and `dart test test/protocol_test.dart --timeout 2m --concurrency 1` passed all
 14 tests. The full 392-test Dart run, scheduler/watch/Freezed/Riverpod groups and
-performance comparison above were not repeated on the rebased tree. The retained
-benchmark source hashes and dependency lock intentionally describe the original
-benchmark tree. The required verification wrappers were subsequently rerun as
+performance comparison above were not repeated on the rebased tree. The performance figures above describe the original benchmark tree. The required verification wrappers were subsequently rerun as
 recorded below.
 
 ### Post-rebase verification completion
@@ -192,10 +184,9 @@ VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
 ```
 
 The scheduling tests also passed (five tests), including the renamed
-`large_phases_with_action_timings_amortize_setup_cost`. See the retained
-[verification record](adaptive-input-leases-2026-11/post-rebase-verification.json)
-for the exact tested commit, binary hash, SDK, command results and timestamps.
-The follow-up commit only records this evidence and clarifies documentation.
+`large_phases_with_action_timings_amortize_setup_cost`. The runtime and test
+logic are unchanged from the verified commit; subsequent updates only clarify
+documentation and remove measurement artifacts from the repository.
 
 Cost learning is separate for each configured builder application, including
 separate target/builder/phase queues in workspace builds. Different builders'
