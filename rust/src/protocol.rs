@@ -30,6 +30,8 @@ pub struct GlobRead {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_us: Option<u64>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_part: Option<SharedPart>,
@@ -239,6 +241,8 @@ struct BinaryBuildOutput {
 #[derive(Debug, Deserialize)]
 struct BinaryBuildResultMetadata {
     #[serde(default)]
+    execution_us: Option<u64>,
+    #[serde(default)]
     shared_part: Option<SharedPart>,
     v: u32,
     #[serde(rename = "type")]
@@ -306,6 +310,7 @@ impl BinaryBuildResultMetadata {
         }
 
         Ok(BuildResult {
+            execution_us: self.execution_us,
             shared_part: self.shared_part,
             message_type: self.message_type,
             id: self.id,
@@ -368,6 +373,7 @@ struct BinaryBuildBatchResultMetadata {
 
 pub struct DecodedBuildBatchResult {
     pub id: u64,
+    pub more: bool,
     pub results: Vec<BuildResult>,
     pub dep_graph: std::collections::BTreeMap<String, Vec<String>>,
 }
@@ -387,12 +393,16 @@ pub fn decode_build_batch_result_frame(frame: BinaryFrame) -> io::Result<Decoded
     } = frame;
     let metadata: BinaryBuildBatchResultMetadata =
         serde_json::from_value(metadata).map_err(io::Error::other)?;
-    if metadata.message_type != "build_batch_result" {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "binary frame is not a build batch result",
-        ));
-    }
+    let more = match metadata.message_type.as_str() {
+        "build_batch_result" => false,
+        "build_batch_chunk" => true,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "binary frame is not a build batch result",
+            ));
+        }
+    };
     if metadata.encoding.as_deref() != Some("raw") {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -415,9 +425,72 @@ pub fn decode_build_batch_result_frame(frame: BinaryFrame) -> io::Result<Decoded
     }
     Ok(DecodedBuildBatchResult {
         id: metadata.id,
+        more,
         results,
         dep_graph: metadata.dep_graph,
     })
+}
+
+/// Validate transport fragments without copying results on the ordinary
+/// single-frame path. Nothing is exposed to the caller before the final frame.
+pub struct BuildBatchResultCollector {
+    id: u64,
+    expected: usize,
+    partial: Option<DecodedBuildBatchResult>,
+}
+
+impl BuildBatchResultCollector {
+    pub fn new(id: u64, expected: usize) -> Self {
+        Self {
+            id,
+            expected,
+            partial: None,
+        }
+    }
+
+    pub fn accept(
+        &mut self,
+        mut next: DecodedBuildBatchResult,
+    ) -> io::Result<Option<DecodedBuildBatchResult>> {
+        if next.id != self.id {
+            return Err(io::Error::other("worker batch response id mismatch"));
+        }
+        let offset = self.partial.as_ref().map_or(0, |p| p.results.len());
+        if next.results.len() > self.expected.saturating_sub(offset)
+            || (!next.more && offset + next.results.len() != self.expected)
+        {
+            return Err(io::Error::other("worker batch result count mismatch"));
+        }
+        if next
+            .results
+            .iter()
+            .enumerate()
+            .any(|(index, r)| r.id != (offset + index) as u64)
+        {
+            return Err(io::Error::other("worker batch result id mismatch"));
+        }
+        if next.more && next.results.is_empty() && next.dep_graph.is_empty() {
+            return Err(io::Error::other("worker batch chunk made no progress"));
+        }
+        if let Some(mut partial) = self.partial.take() {
+            for (asset, deps) in next.dep_graph {
+                if partial.dep_graph.insert(asset, deps).is_some() {
+                    return Err(io::Error::other(
+                        "duplicate dependency entry in batch chunks",
+                    ));
+                }
+            }
+            partial.results.append(&mut next.results);
+            partial.more = next.more;
+            next = partial;
+        }
+        if next.more {
+            self.partial = Some(next);
+            Ok(None)
+        } else {
+            Ok(Some(next))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -482,6 +555,7 @@ mod tests {
             "type": "build_result",
             "id": 2,
             "status": "success",
+            "execution_us": 23000,
             "encoding": "raw",
             "outputs": [{"asset": "app|lib/model.g.dart", "length": 7}],
             "reads": [],
@@ -512,6 +586,7 @@ mod tests {
 
         let result = decode_build_result_frame(frame).expect("decode build result");
         assert_eq!(result.id, 2);
+        assert_eq!(result.execution_us, Some(23000));
         assert_eq!(result.outputs[0].asset, "app|lib/model.g.dart");
         assert_eq!(result.outputs[0].bytes.as_ref(), raw_bytes);
         assert!(result.resolver_used);
@@ -620,5 +695,114 @@ mod tests {
         let error = read_message_with_size(&mut Cursor::new(length))
             .expect_err("oversized frame must be rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    fn batch_fragment(
+        id: u64,
+        ids: &[u64],
+        more: bool,
+        graph: Value,
+    ) -> super::DecodedBuildBatchResult {
+        let metadata = json!({
+            "v": 1, "type": if more { "build_batch_chunk" } else { "build_batch_result" },
+            "id": id, "encoding": "raw", "dep_graph": graph,
+            "results": ids.iter().map(|id| json!({
+                "v": 1, "type": "build_result", "id": id, "status": "success",
+                "encoding": "raw", "execution_us": 5000, "outputs": [],
+                "deleted": [], "reads": [], "resolver_reads": [],
+                "resolver_entrypoints": [], "resolver_used": false,
+                "glob_reads": [], "diagnostics": []
+            })).collect::<Vec<_>>()
+        });
+        let mut bytes = Vec::new();
+        write_binary_frame_with_magic(&mut bytes, BINARY_BUILD_RESULT_MAGIC, &metadata, &[])
+            .unwrap();
+        let IncomingFrame::Binary(frame) = read_message_with_size(&mut Cursor::new(bytes))
+            .unwrap()
+            .unwrap()
+            .0
+        else {
+            panic!("expected binary result");
+        };
+        decode_build_batch_result_frame(frame).unwrap()
+    }
+
+    #[test]
+    fn batch_result_collector_keeps_the_single_frame_allocation() {
+        let decoded = batch_fragment(42, &[0, 1], false, json!({}));
+        let original = decoded.results.as_ptr();
+        let mut collector = super::BuildBatchResultCollector::new(42, 2);
+        let result = collector.accept(decoded).unwrap().unwrap();
+        assert_eq!(result.results.as_ptr(), original);
+        assert!(!result.more);
+    }
+
+    #[test]
+    fn batch_chunks_are_not_exposed_until_results_and_graph_are_complete() {
+        let mut collector = super::BuildBatchResultCollector::new(42, 3);
+        assert!(
+            collector
+                .accept(batch_fragment(42, &[0, 1], true, json!({})))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            collector
+                .accept(batch_fragment(42, &[2], true, json!({"app|a": ["app|b"]})))
+                .unwrap()
+                .is_none()
+        );
+        let result = collector
+            .accept(batch_fragment(42, &[], false, json!({"app|c": []})))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            result.results.iter().map(|r| r.id).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert!(result.results.iter().all(|r| r.execution_us == Some(5000)));
+        assert_eq!(result.dep_graph.len(), 2);
+        assert!(!result.more);
+    }
+
+    #[test]
+    fn batch_chunks_reject_wrong_ids_counts_and_empty_progress() {
+        for (id, ids, more) in [
+            (43, vec![1], false),
+            (42, vec![0], false),
+            (42, vec![2], false),
+            (42, vec![1, 2], false),
+            (42, vec![], false),
+            (42, vec![], true),
+        ] {
+            let mut collector = super::BuildBatchResultCollector::new(42, 2);
+            assert!(
+                collector
+                    .accept(batch_fragment(42, &[0], true, json!({})))
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                collector
+                    .accept(batch_fragment(id, &ids, more, json!({})))
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn batch_chunks_reject_duplicate_dependency_entries() {
+        let mut collector = super::BuildBatchResultCollector::new(42, 1);
+        assert!(
+            collector
+                .accept(batch_fragment(42, &[0], true, json!({"app|a": []})))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            collector
+                .accept(batch_fragment(42, &[], false, json!({"app|a": ["app|b"]})))
+                .is_err()
+        );
     }
 }

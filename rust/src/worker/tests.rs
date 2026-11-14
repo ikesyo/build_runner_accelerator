@@ -12,6 +12,136 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+#[cfg(unix)]
+mod batch_transport {
+    use super::*;
+    use crate::protocol::{BINARY_BUILD_RESULT_MAGIC, write_binary_frame_with_magic};
+    use crate::worker::{LazyBuildState, WorkerClient};
+    use crate::worker_kernel::WorkerArtifact;
+    use crate::workspace::Workspace;
+    use std::io;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    struct TemporaryRoot(PathBuf);
+
+    impl Drop for TemporaryRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn check_response(lazy: bool, terminal: Option<u64>) -> io::Result<()> {
+        let root = TemporaryRoot(std::env::temp_dir().join(format!(
+            "batch-transport-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )));
+        std::fs::create_dir_all(root.0.join(".dart_tool"))?;
+        std::fs::write(root.0.join("pubspec.yaml"), "name: example\n")?;
+        std::fs::write(
+            root.0.join(".dart_tool/package_config.json"),
+            r#"{"configVersion":2,"packages":[{"name":"example","rootUri":"../"}]}"#,
+        )?;
+        let workspace = Workspace::load(root.0.clone())?;
+        let mut response = Vec::new();
+        for (id, more) in std::iter::once((0, true)).chain(terminal.map(|id| (id, false))) {
+            write_binary_frame_with_magic(
+                &mut response,
+                BINARY_BUILD_RESULT_MAGIC,
+                &json!({
+                    "v": 1, "id": 1, "encoding": "raw",
+                    "type": if more {"build_batch_chunk"} else {"build_batch_result"},
+                    "results": [{
+                        "v": 1, "type": "build_result", "id": id, "status": "success",
+                        "encoding": "raw", "execution_us": 5000,
+                        "outputs": [{"asset": format!("example|{id}.bin"), "length": 3}],
+                        "deleted": [], "reads": [], "resolver_reads": [],
+                        "resolver_entrypoints": [], "resolver_used": false,
+                        "glob_reads": [], "diagnostics": []
+                    }],
+                    "dep_graph": {format!("example|entry{id}.dart"): ["example|dep.dart"]}
+                }),
+                &[0, 255, id as u8],
+            )?;
+        }
+        std::fs::write(root.0.join("response.bin"), response)?;
+        let executable = root.0.join("worker.sh");
+        // Replay real binary frames, then close stdout to test interruption too.
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\ndd bs=1 count=4 of=/dev/null 2>/dev/null\ncat response.bin\n",
+        )?;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))?;
+        let mut worker = WorkerClient::start(
+            &workspace.root,
+            "unused",
+            "unused",
+            &WorkerArtifact::Aot(executable),
+        )?;
+        worker
+            .dep_graph
+            .insert("example|existing.dart".to_owned(), vec![]);
+        let requests = [build_request(0, false), build_request(0, false)];
+        let mut overlay = BTreeMap::new();
+        let mut deleted = BTreeSet::new();
+        let visibility = AssetVisibility::default();
+        let result = if lazy {
+            worker.build_batch_lazy(
+                &workspace,
+                &requests,
+                &mut overlay,
+                &mut deleted,
+                &visibility,
+                &BTreeMap::new(),
+                &mut LazyBuildState::new(BTreeSet::new()),
+            )
+        } else {
+            worker.build_batch(&workspace, &requests, &overlay, &deleted, &visibility)
+        };
+        if terminal == Some(1) {
+            let results = result?;
+            assert_eq!(results.len(), 2);
+            for (id, result) in results.iter().enumerate() {
+                assert_eq!(result.id, id as u64);
+                assert_eq!(result.execution_us, Some(5000));
+                assert_eq!(result.outputs[0].bytes.as_ref(), &[0, 255, id as u8]);
+                assert!(
+                    worker
+                        .dep_graph
+                        .contains_key(&format!("example|entry{id}.dart"))
+                );
+            }
+            assert_eq!(worker.dep_graph.len(), 3);
+        } else {
+            assert!(result.is_err());
+            assert_eq!(worker.dep_graph.len(), 1, "partial dependencies escaped");
+            assert!(worker.dep_graph.contains_key("example|existing.dart"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn normal_and_lazy_clients_receive_complete_fragmented_batches() -> io::Result<()> {
+        for lazy in [false, true] {
+            check_response(lazy, Some(1))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn normal_and_lazy_clients_discard_invalid_or_interrupted_batches() -> io::Result<()> {
+        for lazy in [false, true] {
+            check_response(lazy, None)?;
+            check_response(lazy, Some(0))?;
+        }
+        Ok(())
+    }
+}
+
 fn build_request(phase: u32, post_process: bool) -> BuildRequest {
     BuildRequest {
         part_phase_index: None,

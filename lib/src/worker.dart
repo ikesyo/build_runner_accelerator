@@ -1198,6 +1198,8 @@ Future<JsonMap> _runBuild(
       'type': 'build_result',
       'id': request.id,
       'status': profile.status,
+      // Exclude batch preparation and IPC from scheduler cost learning.
+      'execution_us': profile._total.elapsedMicroseconds,
       'outputs': outputs,
       if (sharedPart != null) 'shared_part': sharedPart,
       'deleted': <String>[for (final asset in deleted) asset.toString()]

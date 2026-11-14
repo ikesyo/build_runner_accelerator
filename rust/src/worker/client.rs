@@ -4,8 +4,8 @@ use super::request::{
     json_build_result_frame_size,
 };
 use crate::protocol::{
-    BINARY_BUILD_RESULT_MAGIC, BuildResult, IncomingFrame, decode_build_batch_result_frame,
-    read_message_with_size, write_binary_frame, write_frame,
+    BINARY_BUILD_RESULT_MAGIC, BuildBatchResultCollector, BuildResult, IncomingFrame,
+    decode_build_batch_result_frame, read_message_with_size, write_binary_frame, write_frame,
 };
 use crate::visibility::AssetVisibility;
 use crate::worker_kernel::WorkerArtifact;
@@ -340,6 +340,7 @@ impl WorkerClient {
         }))?;
 
         drop(encoding);
+        let mut batch_results = BuildBatchResultCollector::new(id, requests.len());
         loop {
             match self.receive()? {
                 IncomingFrame::Json(response) => match response.get("type").and_then(Value::as_str)
@@ -358,7 +359,7 @@ impl WorkerClient {
                             None,
                         )?
                     }
-                    Some("build_batch_result") => {
+                    Some("build_batch_result" | "build_batch_chunk") => {
                         return Err(io::Error::other(
                             "worker sent JSON build batch result; binary capability is required",
                         ));
@@ -370,21 +371,11 @@ impl WorkerClient {
                     let _decode = self.wall_span("result_decode_validate", Some(id));
                     let decoded = decode_build_batch_result_frame(frame)?;
                     self.record_json_build_batch_result_size(decoded.id, &decoded.results)?;
-                    if decoded.id != id {
-                        return Err(io::Error::other("worker batch response id mismatch"));
-                    }
+                    let Some(decoded) = batch_results.accept(decoded)? else {
+                        continue;
+                    };
                     self.dep_graph.extend(decoded.dep_graph);
                     let results = decoded.results;
-                    if results.len() != requests.len() {
-                        return Err(io::Error::other("worker batch result count mismatch"));
-                    }
-                    if results
-                        .iter()
-                        .enumerate()
-                        .any(|(index, result)| result.id != index as u64)
-                    {
-                        return Err(io::Error::other("worker batch result id mismatch"));
-                    }
                     self.metrics.build_us += started.elapsed().as_micros() as u64;
                     self.trace_metrics(&_wall, metrics_before);
                     return Ok(results);

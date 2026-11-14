@@ -169,6 +169,7 @@ mod bench;
 
 pub(super) fn empty_build_result(spec: &BuildSpec) -> BuildResult {
     BuildResult {
+        execution_us: None,
         shared_part: None,
         stock_inputs: Some(Vec::new()),
         stock_globs: Some(BTreeMap::new()),

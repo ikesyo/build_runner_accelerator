@@ -485,9 +485,18 @@ WorkerBuildRequest _decodeBuildRequest(JsonMap message) {
 }
 
 class FrameWriter {
-  FrameWriter(this._output);
+  FrameWriter(this._output, {int maxBuildResultFrameLength = _maxFrameLength})
+    : _maxBuildResultFrameLength = maxBuildResultFrameLength {
+    // A lower limit makes boundary tests cheap; callers cannot raise the
+    // protocol's production safety limit.
+    if (maxBuildResultFrameLength < 8 ||
+        maxBuildResultFrameLength > _maxFrameLength) {
+      throw RangeError.range(maxBuildResultFrameLength, 8, _maxFrameLength);
+    }
+  }
 
   final IOSink _output;
+  final int _maxBuildResultFrameLength;
   Future<void> _pending = Future<void>.value();
 
   /// Enqueues a JSON frame without interleaving it with another send's flush.
@@ -505,6 +514,64 @@ class FrameWriter {
     final metadata = _binaryBuildResultMetadata(message, outputBytes);
     await _sendBinary(_binaryBuildResultMagic, metadata, outputBytes);
   }
+
+  // Only oversized replies take this path. Keep the execution lease intact;
+  // splitting results does not rerun builders or repeat batch preparation.
+  Future<void> _sendSplitBatch(
+    JsonMap message,
+    List<Uint8List> outputBytes,
+  ) async {
+    if (message['type'] != 'build_batch_result' &&
+        message['type'] != 'build_batch_chunk') {
+      throw StateError('IPC frame exceeds the 256 MiB safety limit');
+    }
+    final results = message['results'] as List;
+    final graph = _asJsonMap(message['dep_graph'], 'dependency graph');
+    if (results.length > 1) {
+      final middle = results.length ~/ 2;
+      final rawMiddle = results
+          .take(middle)
+          .fold<int>(
+            0,
+            (count, item) => count + (item['outputs'] as List).length,
+          );
+      await _sendBatchPart({
+        ...message,
+        'results': results.sublist(0, middle),
+        'dep_graph': <String, dynamic>{},
+        'type': 'build_batch_chunk',
+      }, outputBytes.sublist(0, rawMiddle));
+      await _sendBatchPart({
+        ...message,
+        'results': results.sublist(middle),
+      }, outputBytes.sublist(rawMiddle));
+    } else if (results.isNotEmpty && graph.isNotEmpty) {
+      await _sendBatchPart({
+        ...message,
+        'dep_graph': <String, dynamic>{},
+        'type': 'build_batch_chunk',
+      }, outputBytes);
+      await _sendBatchPart({...message, 'results': <dynamic>[]}, const []);
+    } else if (graph.length > 1) {
+      final entries = graph.entries.toList(growable: false);
+      final middle = entries.length ~/ 2;
+      await _sendBatchPart({
+        ...message,
+        'dep_graph': Map<String, dynamic>.fromEntries(entries.take(middle)),
+        'type': 'build_batch_chunk',
+      }, const []);
+      await _sendBatchPart({
+        ...message,
+        'dep_graph': Map<String, dynamic>.fromEntries(entries.skip(middle)),
+      }, const []);
+    } else {
+      // An individual action result or dependency entry must itself fit.
+      throw StateError('IPC frame exceeds the 256 MiB safety limit');
+    }
+  }
+
+  Future<void> _sendBatchPart(JsonMap metadata, List<Uint8List> outputBytes) =>
+      _sendBinary(_binaryBuildResultMagic, metadata, outputBytes);
 
   JsonMap _binaryBuildResultMetadata(
     JsonMap message,
@@ -591,8 +658,9 @@ class FrameWriter {
       rawLength += chunk.length;
     }
     final payloadLength = magic.length + 4 + metadataPayload.length + rawLength;
-    if (payloadLength > _maxFrameLength) {
-      throw StateError('IPC frame exceeds the 256 MiB safety limit');
+    if (payloadLength > _maxBuildResultFrameLength) {
+      await _sendSplitBatch(metadata, rawChunks);
+      return;
     }
     final header = ByteData(4)..setUint32(0, payloadLength, Endian.big);
     final metadataLength = ByteData(4)

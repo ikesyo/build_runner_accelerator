@@ -785,7 +785,7 @@ impl WorkerPool {
                             ));
                         }
                     }
-                    inputs.observe(elapsed, range.len());
+                    inputs.observe_results(elapsed, &batch);
                     finished += range.len();
                     for (index, result) in range.zip(batch) {
                         results[index] = Some(result);
