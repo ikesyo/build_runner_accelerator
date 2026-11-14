@@ -109,7 +109,7 @@ mod batch_transport {
         worker.blocked_assets_cache = super::super::client::BlockedAssetsCache::new(true);
         worker
             .blocked_assets_cache
-            .prepare(vec!["example|old.dart".to_owned()]);
+            .prepare_list(vec!["example|old.dart".to_owned()]);
         let blocked_assets = vec!["example|hidden.dart".to_owned()];
         worker
             .dep_graph
@@ -147,7 +147,9 @@ mod batch_transport {
             assert_eq!(worker.dep_graph.len(), 3);
             // Both ordinary and lazy batches prime the same connection cache.
             assert_eq!(
-                worker.blocked_assets_cache.prepare(blocked_assets.clone()),
+                worker
+                    .blocked_assets_cache
+                    .prepare_list(blocked_assets.clone()),
                 (vec![], true)
             );
         } else {
@@ -155,7 +157,9 @@ mod batch_transport {
             // A retry must send a full list, including after rejection, malformed
             // results, or interruption. Successful calls above still reuse it.
             assert_eq!(
-                worker.blocked_assets_cache.prepare(blocked_assets.clone()),
+                worker
+                    .blocked_assets_cache
+                    .prepare_list(blocked_assets.clone()),
                 (blocked_assets, false)
             );
             assert_eq!(worker.dep_graph.len(), 1, "partial dependencies escaped");
@@ -377,15 +381,15 @@ fn blocked_assets_reuse_tracks_exact_lists_per_connection() {
     let assets = vec!["example|lib/hidden.dart".to_owned()];
     let mut cache = BlockedAssetsCache::default();
     // A worker without the capability always receives the full list.
-    assert_eq!(cache.prepare(assets.clone()), (assets.clone(), false));
-    assert_eq!(cache.prepare(assets.clone()), (assets.clone(), false));
+    assert_eq!(cache.prepare_list(assets.clone()), (assets.clone(), false));
+    assert_eq!(cache.prepare_list(assets.clone()), (assets.clone(), false));
     cache.capable = true;
-    assert_eq!(cache.prepare(assets.clone()), (assets.clone(), false));
-    assert_eq!(cache.prepare(assets.clone()), (vec![], true));
+    assert_eq!(cache.prepare_list(assets.clone()), (assets.clone(), false));
+    assert_eq!(cache.prepare_list(assets.clone()), (vec![], true));
     // Phase/deletion/context changes replace the cache, including an empty list.
-    assert_eq!(cache.prepare(vec![]), (vec![], false));
-    assert_eq!(cache.prepare(vec![]), (vec![], true));
-    assert_eq!(cache.prepare(assets.clone()), (assets.clone(), false));
+    assert_eq!(cache.prepare_list(vec![]), (vec![], false));
+    assert_eq!(cache.prepare_list(vec![]), (vec![], true));
+    assert_eq!(cache.prepare_list(assets.clone()), (assets.clone(), false));
     let mut other = BlockedAssetsCache::new(true);
-    assert_eq!(other.prepare(assets.clone()), (assets, false));
+    assert_eq!(other.prepare_list(assets.clone()), (assets, false));
 }

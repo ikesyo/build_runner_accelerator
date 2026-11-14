@@ -1,6 +1,6 @@
 use super::asset_rpc::batch_asset_request_context;
 use super::request::{
-    BuildRequest, batch_blocked_assets, json_build_batch_result_frame_size,
+    BuildRequest, batch_blocked_assets, batch_context, json_build_batch_result_frame_size,
     json_build_result_frame_size,
 };
 use crate::protocol::{
@@ -66,7 +66,31 @@ impl BlockedAssetsCache {
         self.last = None;
     }
 
-    pub(super) fn prepare(&mut self, assets: Vec<String>) -> (Vec<String>, bool) {
+    /// Decides the visibility hint for one batch. When the candidate equals
+    /// the list last sent on this connection, the equality is verified
+    /// against the cached list without rebuilding the candidate
+    /// ([`AssetVisibility::blocked_assets_eq`]) and the reuse form is sent.
+    pub(super) fn prepare(
+        &mut self,
+        requests: &[BuildRequest],
+        visibility: &AssetVisibility,
+        deleted_overlay: &BTreeSet<String>,
+    ) -> io::Result<(Vec<String>, bool)> {
+        let Some((phase, kind)) = batch_context(requests)? else {
+            return Ok(self.prepare_list(Vec::new()));
+        };
+        let reuse = self.capable
+            && self.last.as_ref().is_some_and(|last| {
+                visibility.blocked_assets_eq(phase, kind, deleted_overlay, last)
+            });
+        if reuse {
+            return Ok((Vec::new(), true));
+        }
+        let assets = batch_blocked_assets(requests, visibility, deleted_overlay)?;
+        Ok(self.prepare_list(assets))
+    }
+
+    pub(super) fn prepare_list(&mut self, assets: Vec<String>) -> (Vec<String>, bool) {
         if !self.capable {
             return (assets, false);
         }
@@ -365,9 +389,9 @@ impl WorkerClient {
         // Every request in this batch has the same phase and kind. Keep the
         // visibility hint at the batch level instead of copying the full
         // blocked-asset list into every request.
-        let blocked_assets = batch_blocked_assets(requests, visibility, deleted_overlay)?;
         let (blocked_assets, blocked_assets_reuse) =
-            self.blocked_assets_cache.prepare(blocked_assets);
+            self.blocked_assets_cache
+                .prepare(requests, visibility, deleted_overlay)?;
         let batch_requests = requests
             .iter()
             .enumerate()
