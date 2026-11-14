@@ -15,7 +15,7 @@ use std::sync::Arc;
 #[cfg(unix)]
 mod batch_transport {
     use super::*;
-    use crate::protocol::{BINARY_BUILD_RESULT_MAGIC, write_binary_frame_with_magic};
+    use crate::protocol::{BINARY_BUILD_RESULT_MAGIC, write_binary_frame_with_magic, write_frame};
     use crate::worker::{LazyBuildState, WorkerClient};
     use crate::worker_kernel::WorkerArtifact;
     use crate::workspace::Workspace;
@@ -31,7 +31,20 @@ mod batch_transport {
         }
     }
 
-    fn check_response(lazy: bool, terminal: Option<u64>) -> io::Result<()> {
+    #[derive(Clone, Copy)]
+    enum BatchReply {
+        Complete,
+        Interrupted,
+        DuplicateResult,
+        Rejected,
+    }
+
+    fn check_response(lazy: bool, reply: BatchReply) -> io::Result<()> {
+        let terminal = match reply {
+            BatchReply::Complete => Some(1),
+            BatchReply::DuplicateResult => Some(0),
+            _ => None,
+        };
         let root = TemporaryRoot(std::env::temp_dir().join(format!(
             "batch-transport-{}-{}",
             std::process::id(),
@@ -48,25 +61,36 @@ mod batch_transport {
         )?;
         let workspace = Workspace::load(root.0.clone())?;
         let mut response = Vec::new();
-        for (id, more) in std::iter::once((0, true)).chain(terminal.map(|id| (id, false))) {
-            write_binary_frame_with_magic(
+        if matches!(reply, BatchReply::Rejected) {
+            // Rejected before the worker accepts the new visibility hint.
+            write_frame(
                 &mut response,
-                BINARY_BUILD_RESULT_MAGIC,
                 &json!({
-                    "v": 1, "id": 1, "encoding": "raw",
-                    "type": if more {"build_batch_chunk"} else {"build_batch_result"},
-                    "results": [{
-                        "v": 1, "type": "build_result", "id": id, "status": "success",
-                        "encoding": "raw", "execution_us": 5000,
-                        "outputs": [{"asset": format!("example|{id}.bin"), "length": 3}],
-                        "deleted": [], "reads": [], "resolver_reads": [],
-                        "resolver_entrypoints": [], "resolver_used": false,
-                        "glob_reads": [], "diagnostics": []
-                    }],
-                    "dep_graph": {format!("example|entry{id}.dart"): ["example|dep.dart"]}
+                    "v": 1, "type": "error", "id": 1,
+                    "error": "invalid build_batch child instance_key"
                 }),
-                &[0, 255, id as u8],
             )?;
+        } else {
+            for (id, more) in std::iter::once((0, true)).chain(terminal.map(|id| (id, false))) {
+                write_binary_frame_with_magic(
+                    &mut response,
+                    BINARY_BUILD_RESULT_MAGIC,
+                    &json!({
+                        "v": 1, "id": 1, "encoding": "raw",
+                        "type": if more {"build_batch_chunk"} else {"build_batch_result"},
+                        "results": [{
+                            "v": 1, "type": "build_result", "id": id, "status": "success",
+                            "encoding": "raw", "execution_us": 5000,
+                            "outputs": [{"asset": format!("example|{id}.bin"), "length": 3}],
+                            "deleted": [], "reads": [], "resolver_reads": [],
+                            "resolver_entrypoints": [], "resolver_used": false,
+                            "glob_reads": [], "diagnostics": []
+                        }],
+                        "dep_graph": {format!("example|entry{id}.dart"): ["example|dep.dart"]}
+                    }),
+                    &[0, 255, id as u8],
+                )?;
+            }
         }
         std::fs::write(root.0.join("response.bin"), response)?;
         let executable = root.0.join("worker.sh");
@@ -84,11 +108,15 @@ mod batch_transport {
         )?;
         worker.blocked_assets_cache = super::super::client::BlockedAssetsCache::new(true);
         worker
+            .blocked_assets_cache
+            .prepare(vec!["example|old.dart".to_owned()]);
+        let blocked_assets = vec!["example|hidden.dart".to_owned()];
+        worker
             .dep_graph
             .insert("example|existing.dart".to_owned(), vec![]);
         let requests = [build_request(0, false), build_request(0, false)];
         let mut overlay = BTreeMap::new();
-        let mut deleted = BTreeSet::new();
+        let mut deleted = blocked_assets.iter().cloned().collect();
         let visibility = AssetVisibility::default();
         let result = if lazy {
             worker.build_batch_lazy(
@@ -119,11 +147,17 @@ mod batch_transport {
             assert_eq!(worker.dep_graph.len(), 3);
             // Both ordinary and lazy batches prime the same connection cache.
             assert_eq!(
-                worker.blocked_assets_cache.prepare(Vec::new()),
+                worker.blocked_assets_cache.prepare(blocked_assets.clone()),
                 (vec![], true)
             );
         } else {
             assert!(result.is_err());
+            // A retry must send a full list, including after rejection, malformed
+            // results, or interruption. Successful calls above still reuse it.
+            assert_eq!(
+                worker.blocked_assets_cache.prepare(blocked_assets.clone()),
+                (blocked_assets, false)
+            );
             assert_eq!(worker.dep_graph.len(), 1, "partial dependencies escaped");
             assert!(worker.dep_graph.contains_key("example|existing.dart"));
         }
@@ -133,7 +167,15 @@ mod batch_transport {
     #[test]
     fn normal_and_lazy_clients_receive_complete_fragmented_batches() -> io::Result<()> {
         for lazy in [false, true] {
-            check_response(lazy, Some(1))?;
+            check_response(lazy, BatchReply::Complete)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn normal_and_lazy_clients_resend_full_hint_after_rejection() -> io::Result<()> {
+        for lazy in [false, true] {
+            check_response(lazy, BatchReply::Rejected)?;
         }
         Ok(())
     }
@@ -141,8 +183,9 @@ mod batch_transport {
     #[test]
     fn normal_and_lazy_clients_discard_invalid_or_interrupted_batches() -> io::Result<()> {
         for lazy in [false, true] {
-            check_response(lazy, None)?;
-            check_response(lazy, Some(0))?;
+            for reply in [BatchReply::DuplicateResult, BatchReply::Interrupted] {
+                check_response(lazy, reply)?;
+            }
         }
         Ok(())
     }

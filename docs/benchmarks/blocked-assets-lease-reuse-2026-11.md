@@ -31,6 +31,28 @@ Set `DART_BIN`, `CARGO_BIN` and toolchain/cache overrides as described in
 [development](../development.md). The local run used a temporary copy with
 a stdin barrier between warm-up and timing; the measured loop was unchanged.
 
+## Recorded artifacts and build identity
+
+The measured candidate is commit `57e52672c659362f9b729ecd89e2ed44e77ff417`,
+before the subsequent review fix that invalidates the cache on batch errors.
+The original run recorded a dirty checkout based on `5b2b597` in `source_head`;
+that field identifies its base, not the candidate revision. The candidate binary
+SHA-256 is `a3591773e1e93bd18be6b60541c4ca5ccc639b702e0bfb76d7f9b441f0ce7a45`.
+Source and baseline binary hashes are preserved in the original metadata.
+
+- [metadata.json](blocked-assets-lease-reuse-2026-11/metadata.json)
+- [samples.json](blocked-assets-lease-reuse-2026-11/samples.json)
+- [diagnostics.json](blocked-assets-lease-reuse-2026-11/diagnostics.json)
+- [Exact invocation and environment overrides](blocked-assets-lease-reuse-2026-11/invocation.sh)
+- [Temporary driver patch](blocked-assets-lease-reuse-2026-11/pause-before-timing.patch)
+
+The three JSON files are unchanged copies from the original run. The harness
+sets its own cache, worker mode, metrics and trace settings, as recorded in
+metadata and the per-sample commands. CPU model was not captured at measurement
+time; a later query in the retained environment reported
+`INTEL(R) XEON(R) PLATINUM 8573C`. This later observation is not an original run
+measurement. The original CPU quota remains recorded in metadata.
+
 ## Wall time
 
 Seconds, both samples followed by their median. Every sample and warm-up
@@ -87,6 +109,17 @@ the isolated size of the hint. Scheduling policy was unchanged.
   single-package lifecycle, jobs limits, phase/context isolation, failure,
   worker-exit recovery and same-phase resolver-baseline reuse comparisons.
 - `python3 scripts/test_benchmark_workspace_scheduler.py`: passed.
+
+## Review follow-up
+
+The later review fix clears the native reuse cache on every ordinary or lazy
+batch error. Regression coverage verifies full-list retransmission after worker
+rejection, malformed results and interruption, while successful batches retain
+reuse. The rejection/retry assertion failed before the fix and passed afterward.
+The updated Rust suite passed 263 tests (3 ignored), with Clippy and formatting
+checks passing. The timing and IPC tables still describe the original measured
+candidate identified above; performance was not remeasured after this error-path
+change.
 
 ## Limits
 

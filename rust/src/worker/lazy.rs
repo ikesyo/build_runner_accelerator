@@ -876,6 +876,37 @@ impl WorkerClient {
         lazy_specs: &BTreeMap<String, BuildSpec>,
         lazy: &mut LazyBuildState,
     ) -> io::Result<Vec<BuildResult>> {
+        let result = self.build_batch_lazy_inner(
+            workspace,
+            requests,
+            overlay,
+            deleted_overlay,
+            visibility,
+            lazy_specs,
+            lazy,
+        );
+        // A worker can reject a batch before accepting its visibility hint.
+        // Forget on every error so a retry cannot reuse an unaccepted list.
+        if result.is_err() {
+            self.blocked_assets_cache.forget_last();
+        }
+        result
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "IPC operations pass workspace, visibility, and transaction state explicitly"
+    )]
+    fn build_batch_lazy_inner(
+        &mut self,
+        workspace: &Workspace,
+        requests: &[BuildRequest],
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
+        deleted_overlay: &mut BTreeSet<String>,
+        visibility: &AssetVisibility,
+        lazy_specs: &BTreeMap<String, BuildSpec>,
+        lazy: &mut LazyBuildState,
+    ) -> io::Result<Vec<BuildResult>> {
         let started = Instant::now();
         let id = self.next_id();
         let _wall = self.wall_span("worker_batch_lazy", Some(id));

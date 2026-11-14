@@ -24,6 +24,11 @@ parse its assets before replacing runtime state. Nested single builds carry
 their own visibility and never replace the batch cache. Both ordinary and lazy
 batch clients share the same transport state.
 
+Any ordinary or lazy batch error clears the native connection's remembered
+list. A worker may reject child requests or asset IDs before accepting the hint;
+the next batch must send a full list to synchronize both sides again. Successful
+batches keep reuse enabled.
+
 Initialization clears both endpoints' caches. Build and resolver resets retain
 them: reuse explicitly names the last batch list, not current resolver state.
 Changed visibility, logical deletions or phase contexts still construct and

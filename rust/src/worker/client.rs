@@ -62,6 +62,10 @@ impl BlockedAssetsCache {
         }
     }
 
+    pub(super) fn forget_last(&mut self) {
+        self.last = None;
+    }
+
     pub(super) fn prepare(&mut self, assets: Vec<String>) -> (Vec<String>, bool) {
         if !self.capable {
             return (assets, false);
@@ -328,6 +332,24 @@ impl WorkerClient {
     /// Rust visibility plus pending deletions; JSON result fallback, wrong IDs,
     /// and result-count mismatches fail the request.
     pub fn build_batch(
+        &mut self,
+        workspace: &Workspace,
+        requests: &[BuildRequest],
+        overlay: &BTreeMap<String, Arc<[u8]>>,
+        deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
+    ) -> io::Result<Vec<BuildResult>> {
+        let result =
+            self.build_batch_inner(workspace, requests, overlay, deleted_overlay, visibility);
+        // A worker can reject a batch before accepting its visibility hint.
+        // Forget on every error so a retry cannot reuse an unaccepted list.
+        if result.is_err() {
+            self.blocked_assets_cache.forget_last();
+        }
+        result
+    }
+
+    fn build_batch_inner(
         &mut self,
         workspace: &Workspace,
         requests: &[BuildRequest],

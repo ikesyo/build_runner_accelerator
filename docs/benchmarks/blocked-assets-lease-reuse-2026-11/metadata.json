@@ -1,0 +1,39 @@
+{
+  "dart": "Dart SDK version: 3.13.3 (stable) (Tue Sep 1 01:07:17 2026 -0700) on \"linux_x64\"",
+  "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+  "platform": "Linux/x86_64",
+  "cpu_quota": "200000 100000",
+  "pub_cache": "/workspace/build_runner_accelerator/.pub-cache",
+  "native_cache": "/tmp/blocked-assets-benchmark/shared-native-cache",
+  "worker_mode": "JIT",
+  "frontend_profile": "release",
+  "metrics": false,
+  "diagnostics_after_timing": true,
+  "cache_definition": "Untimed preparation of both implementations; retain compiler/analysis caches; clean removes native graph/generated artifacts only.",
+  "stock_role": "Untimed output reference with identical lockfiles and source bytes.",
+  "stock_artificial_delays_ms": {
+    "schedule_a": 0,
+    "schedule_b": 0,
+    "schedule_c": 0
+  },
+  "binary_sha256": {
+    "baseline": "e162d711b9cafa5f11bfd43d69e9e441780f6eed0deb545fad7b09235bd5a719",
+    "candidate": "a3591773e1e93bd18be6b60541c4ca5ccc639b702e0bfb76d7f9b441f0ce7a45"
+  },
+  "profiles": {
+    "single-visibility": {
+      "jobs": 2,
+      "delays": {
+        "schedule_a": 0
+      },
+      "inputs": 8192,
+      "single": true
+    }
+  },
+  "repeat": 2,
+  "fixture_builder_sha256": "2a4942b1f317e082106cc9764c5491eb888848e65967aed6b6b582fa96635b4d",
+  "source_dart_sha256": "bdf50e840a1eb0a40889769ec498b667ef200c3569ef9b5854c63e8afdec926c",
+  "source_head": "5b2b597100a434cae77a9a731d48f945c23e67e2",
+  "source_rust_sha256": "339e0f69c586b8df27e03f0ab3562c55b23f7675b4ea0c86b7c8ded3fef624aa",
+  "aot_artifacts": {}
+}
