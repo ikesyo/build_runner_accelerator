@@ -789,22 +789,7 @@ impl WorkerClient {
         };
         let blocked_assets =
             visibility.blocked_assets(request.phase, build_request_kind(request), deleted);
-        self.send(&json!({
-            "v": 1,
-            "type": "build",
-            "id": id,
-            "builder": request.builder,
-            "input": request.input,
-            "kind": if request.post_process { "post_process" } else { "normal" },
-            "allowed_outputs": request.outputs,
-            "options": request.options,
-            "phase": request.phase,
-                    "part_phase_index": request.part_phase_index,
-            "instance_key": request.instance_key,
-            "is_root": request.is_root,
-            "blocked_assets": blocked_assets,
-            "triggers": request.triggers,
-        }))?;
+        self.send_serialized(&super::client::build_wire(id, request, &blocked_assets))?;
 
         loop {
             match self.receive()? {
@@ -916,33 +901,15 @@ impl WorkerClient {
         let (blocked_assets, blocked_assets_reuse) =
             self.blocked_assets_cache
                 .prepare(requests, visibility, deleted_overlay)?;
-        let batch_requests = requests
-            .iter()
-            .enumerate()
-            .map(|(index, request)| {
-                json!({
-                    "id": index as u64,
-                    "builder": request.builder,
-                    "input": request.input,
-                    "kind": if request.post_process { "post_process" } else { "normal" },
-                    "allowed_outputs": request.outputs,
-                    "options": request.options,
-                    "phase": request.phase,
-                    "part_phase_index": request.part_phase_index,
-                    "instance_key": request.instance_key,
-                    "is_root": request.is_root,
-                    "triggers": request.triggers,
-                })
-            })
-            .collect::<Vec<_>>();
-        self.send(&json!({
-            "v": 1,
-            "type": "build_batch",
-            "id": id,
-            "blocked_assets": blocked_assets,
-            "blocked_assets_reuse": blocked_assets_reuse,
-            "requests": batch_requests,
-        }))?;
+        let batch_requests = super::client::batch_request_wires(requests);
+        self.send_serialized(&super::client::BatchWire {
+            v: 1,
+            message_type: "build_batch",
+            id,
+            blocked_assets: &blocked_assets,
+            blocked_assets_reuse,
+            requests: &batch_requests,
+        })?;
 
         let mut batch_results = BuildBatchResultCollector::new(id, requests.len());
         loop {

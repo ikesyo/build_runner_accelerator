@@ -1,7 +1,10 @@
 use super::asset_rpc::{
     batch_asset_request_context, missing_asset_response, validate_asset_request_context,
 };
-use super::client::{has_capability, is_worker_script, require_overlay_blob_capability};
+use super::client::{
+    BatchWire, batch_request_wires, batch_request_wires_with, build_wire, has_capability,
+    is_worker_script, require_overlay_blob_capability,
+};
 use super::pool::{
     homogeneous_resolver_usage_key, remember_resolver_usage, target_worker_count,
     validate_memory_overlay,
@@ -264,6 +267,128 @@ fn batch_blocked_assets_requires_one_visibility_context() {
 
     let mixed = vec![build_request(0, false), build_request(1, false)];
     assert!(batch_blocked_assets(&mixed, &visibility, &deleted).is_err());
+}
+
+#[test]
+fn typed_build_wires_match_the_json_message_shape() {
+    // Telemetry injection adds fields to the typed wires only while a
+    // session is active; unit tests run without one.
+    if crate::telemetry::request_context().is_some() {
+        return;
+    }
+    let mut normal = build_request(2, false);
+    normal.part_phase_index = Some(1);
+    normal.outputs = vec!["example|lib/input.out".to_owned()];
+    normal.options =
+        serde_json::Map::from_iter([("flag".to_owned(), serde_json::Value::Bool(true))]);
+    let post = build_request(2, true);
+    let requests = vec![normal, post];
+    let blocked = vec!["example|hidden.dart".to_owned()];
+
+    let wires = batch_request_wires(&requests);
+    let wire = BatchWire {
+        v: 1,
+        message_type: "build_batch",
+        id: 9,
+        blocked_assets: &blocked,
+        blocked_assets_reuse: false,
+        requests: &wires,
+    };
+    let value = json!({
+        "v": 1,
+        "type": "build_batch",
+        "id": 9,
+        "blocked_assets": blocked,
+        "blocked_assets_reuse": false,
+        "requests": requests.iter().enumerate().map(|(index, request)| json!({
+            "id": index as u64,
+            "builder": request.builder,
+            "input": request.input,
+            "kind": if request.post_process { "post_process" } else { "normal" },
+            "allowed_outputs": request.outputs,
+            "options": request.options,
+            "phase": request.phase,
+            "part_phase_index": request.part_phase_index,
+            "instance_key": request.instance_key,
+            "is_root": request.is_root,
+            "triggers": request.triggers,
+        })).collect::<Vec<_>>(),
+    });
+    assert_eq!(serde_json::to_value(&wire).unwrap(), value);
+    assert_eq!(
+        serde_json::to_string(&wire).unwrap(),
+        serde_json::to_string(&value).unwrap(),
+        "serialized bytes keep the historical key order",
+    );
+
+    let single = build_wire(7, &requests[0], &blocked);
+    let single_value = json!({
+        "v": 1,
+        "type": "build",
+        "id": 7,
+        "builder": requests[0].builder,
+        "input": requests[0].input,
+        "kind": "normal",
+        "allowed_outputs": requests[0].outputs,
+        "options": requests[0].options,
+        "phase": requests[0].phase,
+        "part_phase_index": requests[0].part_phase_index,
+        "instance_key": requests[0].instance_key,
+        "is_root": requests[0].is_root,
+        "blocked_assets": blocked,
+        "triggers": requests[0].triggers,
+    });
+    assert_eq!(serde_json::to_value(&single).unwrap(), single_value);
+    assert_eq!(
+        serde_json::to_string(&single).unwrap(),
+        serde_json::to_string(&single_value).unwrap(),
+    );
+}
+
+#[test]
+fn batch_wires_carry_telemetry_contexts_in_order() {
+    let requests = vec![
+        build_request(2, false),
+        build_request(2, false),
+        build_request(2, false),
+    ];
+    let mut scripted = vec![
+        Some(("parent-0".to_owned(), 10u64)),
+        Some(("parent-1".to_owned(), 11u64)),
+    ]
+    .into_iter();
+    let mut calls = 0usize;
+    let wires = batch_request_wires_with(&requests, || {
+        calls += 1;
+        scripted.next().unwrap_or(None)
+    });
+    // One message-level draw, then one fresh draw per later request.
+    assert_eq!(calls, 3);
+    let values: Vec<serde_json::Value> = wires
+        .iter()
+        .map(|wire| serde_json::to_value(wire).unwrap())
+        .collect();
+    assert_eq!(values[0]["traceparent"].as_str(), Some("parent-0"));
+    assert_eq!(values[0]["otel_report_id"].as_u64(), Some(10));
+    assert_eq!(values[1]["traceparent"].as_str(), Some("parent-1"));
+    assert_eq!(values[1]["otel_report_id"].as_u64(), Some(11));
+    // The provider is exhausted: the fields are omitted, not null.
+    assert!(values[2].get("traceparent").is_none());
+    assert!(values[2].get("otel_report_id").is_none());
+
+    // Without a session the provider is probed exactly once and no
+    // telemetry fields are emitted.
+    let mut calls = 0usize;
+    let wires = batch_request_wires_with(&requests, || {
+        calls += 1;
+        None
+    });
+    assert_eq!(calls, 1);
+    for wire in &wires {
+        let value = serde_json::to_value(wire).unwrap();
+        assert!(value.get("traceparent").is_none());
+        assert!(value.get("otel_report_id").is_none());
+    }
 }
 
 #[test]
