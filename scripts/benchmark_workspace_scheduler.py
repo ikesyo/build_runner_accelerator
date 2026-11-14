@@ -30,6 +30,12 @@ def main():
     parser.add_argument('--diagnostics', action='store_true', help='Separate untimed worker/IPC diagnostics after each profile')
     args = parser.parse_args()
     assert args.repeat > 0
+    binaries = {'baseline': args.baseline_bin.resolve(), 'candidate': args.candidate_bin.resolve()}
+    reserved_names = {'stock', 'profile', 'case', 'baseline_over_candidate'}
+    for name, path in args.comparison_bin:
+        if not name.isidentifier() or name in reserved_names or name in binaries:
+            parser.error(f'Invalid, reserved or duplicate variant name: {name!r}')
+        binaries[name] = Path(path).resolve()
     repo = Path(__file__).resolve().parents[1]
     results = args.results.resolve()
     results.mkdir(parents=True, exist_ok=True)
@@ -42,10 +48,6 @@ def main():
     (workspace / 'fixtures').mkdir()
     dart = Path(os.environ['DART_BIN']).resolve()
     cargo = Path(os.environ['CARGO_BIN']).absolute()
-    binaries = {'baseline': args.baseline_bin.resolve(), 'candidate': args.candidate_bin.resolve()}
-    for name, path in args.comparison_bin:
-        assert name.isidentifier() and name not in {'stock', *binaries}, 'Use a unique variant name'
-        binaries[name] = Path(path).resolve()
     assert all(path.is_file() for path in binaries.values())
     binary_digests = {name: digest(path.read_bytes()) for name, path in binaries.items()}
     assert len(set(binary_digests.values())) == len(binaries), 'Scheduler variant binaries must differ'
