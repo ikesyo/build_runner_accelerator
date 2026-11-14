@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "build_runner_accelerator"
-version = "0.19.1"
+version = "0.19.2"
 dependencies = [
  "blake3",
  "libc",

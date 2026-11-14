@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.19.2](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.1...v0.19.2) - 2026-11-14
+
+- build(release): link Linux binaries against a glibc 2.35 floor by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/186
+- fix: avoid tiny worker leases caused by batch overhead by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/188
+
 ## [v0.19.1](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.0...v0.19.1) - 2026-11-13
 
 - perf(ci): share build caches and bound local verification by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/169
