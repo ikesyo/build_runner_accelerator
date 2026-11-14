@@ -31,39 +31,20 @@ Set `DART_BIN`, `CARGO_BIN` and toolchain/cache overrides as described in
 [development](../development.md). The local run used a temporary copy with
 a stdin barrier between warm-up and timing; the measured loop was unchanged.
 
-## Recorded artifacts and build identity
-
-The measured candidate is commit `57e52672c659362f9b729ecd89e2ed44e77ff417`,
-before the subsequent review fix that invalidates the cache on batch errors.
-The original run recorded a dirty checkout based on `5b2b597` in `source_head`;
-that field identifies its base, not the candidate revision. The candidate binary
-SHA-256 is `a3591773e1e93bd18be6b60541c4ca5ccc639b702e0bfb76d7f9b441f0ce7a45`.
-Source and baseline binary hashes are preserved in the original metadata.
-
-- [metadata.json](blocked-assets-lease-reuse-2026-11/metadata.json)
-- [samples.json](blocked-assets-lease-reuse-2026-11/samples.json)
-- [diagnostics.json](blocked-assets-lease-reuse-2026-11/diagnostics.json)
-- [Exact invocation and environment overrides](blocked-assets-lease-reuse-2026-11/invocation.sh)
-- [Temporary driver patch](blocked-assets-lease-reuse-2026-11/pause-before-timing.patch)
-
-The three JSON files are unchanged copies from the original run. The harness
-sets its own cache, worker mode, metrics and trace settings, as recorded in
-metadata and the per-sample commands. CPU model was not captured at measurement
-time; a later query in the retained environment reported
-`INTEL(R) XEON(R) PLATINUM 8573C`. This later observation is not an original run
-measurement. The original CPU quota remains recorded in metadata.
+The measured candidate is commit `57e5267`, before the review fix that clears
+reuse state on batch errors. Performance was not remeasured after that fix.
 
 ## Wall time
 
-Seconds, both samples followed by their median. Every sample and warm-up
-matched all 16,384 stock-generated files byte for byte.
+Median seconds over two repeats. All measured cases and warm-ups matched
+all 16,384 stock-generated files byte for byte.
 
 | Lane | Baseline | Reuse |
 | --- | ---: | ---: |
-| clean | 39.245 / 32.448 (**35.846**) | 25.233 / 29.427 (**27.330**) |
-| noop | 0.777 / 0.565 (**0.671**) | 0.515 / 0.666 (**0.591**) |
-| one-file | 2.180 / 2.073 (**2.127**) | 1.942 / 2.427 (**2.184**) |
-| broad | 36.061 / 32.552 (**34.306**) | 25.403 / 28.021 (**26.712**) |
+| clean | 35.85 | 27.33 |
+| noop | 0.67 | 0.59 |
+| one-file | 2.13 | 2.18 |
+| broad | 34.31 | 26.71 |
 
 Clean and broad-edit medians improved by approximately 24% and 22%.
 No-op and one-file results are too close and variable to establish a change.
@@ -85,14 +66,13 @@ table above.
 | cumulative `build_us` (seconds) | 112.738 | 70.332 |
 
 Sent IPC bytes fell by **91.4%**, from 145.6 MB to 12.6 MB.
-Batch counts differ slightly because adaptive scheduling observes action time;
-mean total sent bytes per batch response fell from 446,688
-to 41,071. This includes asset RPC traffic and is not
-the isolated size of the hint. Scheduling policy was unchanged.
+Batch counts differ slightly because adaptive scheduling observes action time.
+Scheduling policy was unchanged.
 
 ## Correctness and checks
 
-- `cargo test --locked --manifest-path rust/Cargo.toml`: 262 passed, 3 ignored.
+- `cargo test --locked --manifest-path rust/Cargo.toml`: 263 passed, 3 ignored,
+  including rejection/retry coverage for ordinary and lazy batches.
 - `cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings`: passed.
 - Dart analysis and Dart/Rust formatting checks passed.
 - `dart test --timeout 3m`: 396 passed in the full run; six environment-dependent
@@ -109,17 +89,6 @@ the isolated size of the hint. Scheduling policy was unchanged.
   single-package lifecycle, jobs limits, phase/context isolation, failure,
   worker-exit recovery and same-phase resolver-baseline reuse comparisons.
 - `python3 scripts/test_benchmark_workspace_scheduler.py`: passed.
-
-## Review follow-up
-
-The later review fix clears the native reuse cache on every ordinary or lazy
-batch error. Regression coverage verifies full-list retransmission after worker
-rejection, malformed results and interruption, while successful batches retain
-reuse. The rejection/retry assertion failed before the fix and passed afterward.
-The updated Rust suite passed 263 tests (3 ignored), with Clippy and formatting
-checks passing. The timing and IPC tables still describe the original measured
-candidate identified above; performance was not remeasured after this error-path
-change.
 
 ## Limits
 
