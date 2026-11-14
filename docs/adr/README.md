@@ -62,6 +62,7 @@ Benchmarks and mechanical refactors do not need one.
 | [0048](0048-build-telemetry.md) | Bounded opt-in OpenTelemetry build spans and worker timing bridge |
 | [0049](0049-adaptive-lease-work-target.md) | Proportional leases with action-time straggler protection |
 | [0050](0050-bounded-batch-result-transport.md) | Frame-safe oversized batch responses without shrinking execution leases |
+| [0051](0051-blocked-assets-lease-reuse.md) | Per-worker reuse of batch visibility hints across adaptive leases |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
 artifacts and launcher behavior are in

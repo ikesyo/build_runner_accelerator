@@ -243,6 +243,88 @@ void main() {
       expect(batch.requests[1].blockedAssets, same(batch.blockedAssets));
     });
 
+    test('batch reuse preserves the prior list without global state', () {
+      final full = <String, dynamic>{
+        'v': 1,
+        'type': 'build_batch',
+        'id': 20,
+        'blocked_assets': ['app|lib/hidden.dart'],
+        'requests': <dynamic>[],
+      };
+      final first = WorkerMessage.decode(full) as WorkerBuildBatchMessage;
+      final reuse = {
+        ...full,
+        'blocked_assets': <String>[],
+        'blocked_assets_reuse': true,
+      };
+      final second =
+          WorkerMessage.decode(
+                reuse,
+                previousBatchBlockedAssets: first.blockedAssets,
+              )
+              as WorkerBuildBatchMessage;
+      expect(second.blockedAssets, same(first.blockedAssets));
+      expect(() => WorkerMessage.decode(reuse), throwsFormatException);
+      expect(
+        () => first.blockedAssets.add('app|lib/other.dart'),
+        throwsUnsupportedError,
+      );
+      final empty =
+          WorkerMessage.decode({...full, 'blocked_assets': <String>[]})
+              as WorkerBuildBatchMessage;
+      final reusedEmpty =
+          WorkerMessage.decode(
+                reuse,
+                previousBatchBlockedAssets: empty.blockedAssets,
+              )
+              as WorkerBuildBatchMessage;
+      expect(reusedEmpty.blockedAssets, isEmpty);
+      expect(reusedEmpty.blockedAssets, same(empty.blockedAssets));
+      final changed =
+          WorkerMessage.decode({
+                ...full,
+                'blocked_assets': ['app|lib/new-phase.dart'],
+                'blocked_assets_reuse': false,
+              }, previousBatchBlockedAssets: first.blockedAssets)
+              as WorkerBuildBatchMessage;
+      expect(changed.blockedAssets, ['app|lib/new-phase.dart']);
+      final reusedChanged =
+          WorkerMessage.decode(
+                reuse,
+                previousBatchBlockedAssets: changed.blockedAssets,
+              )
+              as WorkerBuildBatchMessage;
+      expect(reusedChanged.blockedAssets, same(changed.blockedAssets));
+      expect(first.blockedAssets, ['app|lib/hidden.dart']);
+    });
+
+    test('batch reuse rejects malformed flags and conflicting lists', () {
+      final full = <String, dynamic>{
+        'v': 1,
+        'type': 'build_batch',
+        'id': 20,
+        'blocked_assets': <String>[],
+        'requests': <dynamic>[],
+      };
+      for (final flag in [null, 'true', 1, <dynamic>[]]) {
+        expect(
+          () => WorkerMessage.decode({
+            ...full,
+            'blocked_assets_reuse': flag,
+          }, previousBatchBlockedAssets: const []),
+          throwsFormatException,
+        );
+      }
+      expect(
+        () => WorkerMessage.decode({
+          ...full,
+          'blocked_assets': ['app|lib/conflict.dart'],
+          'blocked_assets_reuse': true,
+        }, previousBatchBlockedAssets: const []),
+        throwsFormatException,
+      );
+    });
+
     test('retains unsupported messages for the worker error response', () {
       final message = WorkerMessage.decode(<String, dynamic>{
         'v': 1,

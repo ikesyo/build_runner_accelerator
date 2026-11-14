@@ -82,6 +82,7 @@ mod batch_transport {
             "unused",
             &WorkerArtifact::Aot(executable),
         )?;
+        worker.blocked_assets_cache = super::super::client::BlockedAssetsCache::new(true);
         worker
             .dep_graph
             .insert("example|existing.dart".to_owned(), vec![]);
@@ -116,6 +117,11 @@ mod batch_transport {
                 );
             }
             assert_eq!(worker.dep_graph.len(), 3);
+            // Both ordinary and lazy batches prime the same connection cache.
+            assert_eq!(
+                worker.blocked_assets_cache.prepare(Vec::new()),
+                (vec![], true)
+            );
         } else {
             assert!(result.is_err());
             assert_eq!(worker.dep_graph.len(), 1, "partial dependencies escaped");
@@ -320,4 +326,23 @@ fn memory_transport_rejects_missing_source_and_cache_updates() {
         assert!(validate_memory_overlay(&overlay, &sources, &caches).is_ok());
     }
     assert!(validate_memory_overlay(&BTreeMap::new(), &BTreeSet::new(), &BTreeSet::new()).is_ok());
+}
+
+#[test]
+fn blocked_assets_reuse_tracks_exact_lists_per_connection() {
+    use super::client::BlockedAssetsCache;
+    let assets = vec!["example|lib/hidden.dart".to_owned()];
+    let mut cache = BlockedAssetsCache::default();
+    // A worker without the capability always receives the full list.
+    assert_eq!(cache.prepare(assets.clone()), (assets.clone(), false));
+    assert_eq!(cache.prepare(assets.clone()), (assets.clone(), false));
+    cache.capable = true;
+    assert_eq!(cache.prepare(assets.clone()), (assets.clone(), false));
+    assert_eq!(cache.prepare(assets.clone()), (vec![], true));
+    // Phase/deletion/context changes replace the cache, including an empty list.
+    assert_eq!(cache.prepare(vec![]), (vec![], false));
+    assert_eq!(cache.prepare(vec![]), (vec![], true));
+    assert_eq!(cache.prepare(assets.clone()), (assets.clone(), false));
+    let mut other = BlockedAssetsCache::new(true);
+    assert_eq!(other.prepare(assets.clone()), (assets, false));
 }

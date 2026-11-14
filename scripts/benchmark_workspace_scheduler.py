@@ -75,6 +75,10 @@ def main():
     # this delay; the summary phase also uses the real Analyzer resolver.
     profiles['single-large'] = {'jobs': 2, 'delays': {'schedule_a': 25},
                                 'inputs': 2048, 'single': True}
+    # Large visibility hints with cheap actions isolate repeated per-lease
+    # transport/parsing overhead from the action-time sizing experiment.
+    profiles['single-visibility'] = {'jobs': 2, 'delays': {'schedule_a': 0},
+                                     'inputs': 8192, 'single': True}
     # The reference is untimed; artificial fixture waits do not affect its
     # output bytes. Avoid paying those waits for every clean/broad reference.
     stock_delays = dict.fromkeys(['schedule_a', 'schedule_b', 'schedule_c'], 0)

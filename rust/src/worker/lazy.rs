@@ -883,6 +883,8 @@ impl WorkerClient {
         // Lazy batches have the same visibility context as ordinary batches;
         // the nested build path still carries its own single-action hint.
         let blocked_assets = batch_blocked_assets(requests, visibility, deleted_overlay)?;
+        let (blocked_assets, blocked_assets_reuse) =
+            self.blocked_assets_cache.prepare(blocked_assets);
         let batch_requests = requests
             .iter()
             .enumerate()
@@ -907,6 +909,7 @@ impl WorkerClient {
             "type": "build_batch",
             "id": id,
             "blocked_assets": blocked_assets,
+            "blocked_assets_reuse": blocked_assets_reuse,
             "requests": batch_requests,
         }))?;
 

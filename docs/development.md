@@ -263,6 +263,7 @@ output bytes. Keep metrics and traces out of timed runs.
 | Build-filter and supported-builder comparisons | `scripts/benchmark_matrix.sh`; `BUILDERS=optional bash scripts/benchmark_matrix.sh` |
 | Freezed/Riverpod fixture benchmarks | `scripts/benchmark_freezed.sh`, `scripts/benchmark_riverpod.sh` |
 | Adaptive dispatch on thousands of single-package inputs | `scripts/benchmark_workspace_scheduler.py --profiles single-large`; supply baseline/candidate release binaries and a fresh results directory |
+| Repeated visibility hints on cheap single-package actions | `scripts/benchmark_workspace_scheduler.py --profiles single-visibility --diagnostics`; 8,192 inputs, two workers, stock byte reference; [local measurement](benchmarks/blocked-assets-lease-reuse-2026-11.md) |
 | Cold start or cache investigation | Historical implementation measurements in `docs/benchmarks/`; design decisions in [ADRs](adr/README.md) |
 | Per-worker diagnostic trace | `BUILD_RUNNER_ACCELERATOR_METRICS=1` and, where needed, `BUILD_RUNNER_ACCELERATOR_ANALYSIS_TRACE=1` |
 
