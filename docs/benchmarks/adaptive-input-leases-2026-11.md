@@ -1,16 +1,18 @@
 # Adaptive input lease comparison (2026-11)
 
-Two user reports bisected a large single-package regression to the shared
-adaptive input queue, whose current work target is 100ms. This comparison evaluates the concrete sizing alternatives and
-the combined policy in [ADR 0049](../adr/0049-adaptive-lease-work-target.md).
+Two user reports identified a large single-package regression caused by the
+shared adaptive input queue learning from a 100ms round-trip target. This
+comparison evaluates the sizing alternatives and the combined policy in
+[ADR 0049](../adr/0049-adaptive-lease-work-target.md).
 
 ## Conditions
 
 - Linux x86_64, cgroup CPU quota 2 cores; Dart 3.13.3, Cargo 1.98.1.
 - build_runner 2.16.2, build 4.0.11, Analyzer 14.6.0; shared analysis byte store
   enabled.
-- Release native frontends, JIT Dart workers, identical Dart worker sources and
-  dependency lockfiles for all variants. Stock is an untimed byte reference.
+- Benchmark runtime: v0.17.1 with each sizing policy applied. Release native
+  frontends, JIT Dart workers, identical Dart worker sources and dependency
+  lockfiles for all variants. Stock is an untimed byte reference.
 - One sample per case. Compiler and analysis caches retained after untimed
   preparation; clean resets native graph and generated artifacts. These are
   warm-cache measurements, not fully cold/AOT measurements.
@@ -86,8 +88,9 @@ Queue regression tests supply 2ms action timings for 3,163 and 26,000 cheap
 inputs while varying fixed lease overhead between 129ms and 5s. Both overhead
 levels must use fewer than 150 leases with jobs=2/8. This bound requires action
 timings; the separate missing-timing test checks conservative round-trip sizing
-and does not promise fixed-overhead-independent amortization. A sixteen-second outlier in
-a 39-input otherwise cheap batch must collapse the next lease to one input.
+and does not promise fixed-overhead-independent amortization. A sixteen-second
+outlier in a 39-input otherwise cheap batch must collapse the next lease to one
+input.
 For the deterministic 26,000-input / 2ms-per-input model, worker-count arguments
 2 and 8 use 53 and 143 leases respectively at either fixed-overhead level. These
 are sequential queue-model counts, not concurrent scheduler counts or elapsed-
@@ -95,100 +98,54 @@ time measurements of the private project.
 
 ## Replay
 
-The policies above can be compared with locally built binaries and the shared
-benchmark script. Measurement artifacts are generated locally rather than
-committed to the repository. Every variant uses the same Dart worker.
-
-The benchmark used the repository's Dart CLI shim, located outside SDK/bin.
-Optional manifest snapshots were consequently unavailable during untimed
-preparation. Timed cases retained the prepared manifest and worker kernel;
-these measurements do not evaluate cold manifest generation or worker AOT.
-Correctness verification uses a shim inside SDK/bin for proper SDK discovery.
-
-With local binaries for the policies above, the comparison command is:
+Use local binaries implementing the policies above, all matching the same Dart
+package version. Set `DART_BIN`, `CARGO_BIN` and `PUB_CACHE` to the selected SDK,
+Cargo executable and pub cache, then run:
 
 ```bash
-DART_BIN="$PWD/.toolchains/dart-wrapper" \
-CARGO_BIN="$PWD/.toolchains/cargo/bin/cargo" \
-RUSTUP_HOME="$PWD/.toolchains/rustup" \
-CARGO_HOME="$PWD/.toolchains/cargo" \
-PUB_CACHE="$PWD/.pub-cache" \
 python3 scripts/benchmark_workspace_scheduler.py \
-  --baseline-bin /tmp/accelerator-regression-baseline \
-  --candidate-bin /tmp/accelerator-regression/hybrid \
-  --comparison-bin two_seconds /tmp/accelerator-regression-candidate \
-  --comparison-bin proportional /tmp/accelerator-regression/proportional \
-  --comparison-bin balanced /tmp/accelerator-regression/balanced \
-  --comparison-bin uncapped /tmp/accelerator-regression/uncapped \
+  --baseline-bin /path/to/baseline \
+  --candidate-bin /path/to/combined \
+  --comparison-bin two_seconds /path/to/two_seconds \
+  --comparison-bin proportional /path/to/proportional \
+  --comparison-bin balanced /path/to/balanced \
+  --comparison-bin uncapped /path/to/uncapped \
   --profiles single-large,single-inputs --repeat 1 \
-  --results /tmp/accelerator-regression/final-comparison --diagnostics
+  --results /tmp/lease-comparison --diagnostics
 ```
 
-Replay needs a fresh results directory. The binary paths above are session
-artifacts, not published release downloads.
+Choose a fresh results directory. The script writes measurement artifacts
+locally; they are not committed to the repository. Timed cases reuse prepared
+manifests and worker kernels, so this comparison excludes cold manifest
+generation and worker compilation.
 
 ## Verification
 
-On the original benchmark base (`5069081`), the combined implementation passed:
+Validation of the v0.19.1 implementation passed:
 
 ```bash
 cargo fmt --all --manifest-path rust/Cargo.toml -- --check
 cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
 cargo test --locked --manifest-path rust/Cargo.toml
-dart test --timeout 2m --concurrency 1
+cargo test --locked --manifest-path rust/Cargo.toml worker::scheduling::tests
+dart analyze lib/src/worker.dart
+dart test test/protocol_test.dart --timeout 2m --concurrency 1
 bash scripts/verify.sh
 VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
-bash scripts/correctness_workspace_scheduler.sh
-bash scripts/watch_smoke.sh
-bash scripts/correctness_freezed.sh
-bash scripts/correctness_riverpod.sh
 git diff --check
 ```
 
-Rust: 206 passed, one existing ignored test. Dart: 392 passed. Verification used
-the repository toolchains/pub cache, the SDK/bin Dart shim described above and
-`BUILD_RUNNER_ACCELERATOR_BIN` pointing to the local release candidate.
-The quick wrappers also ran Dart analysis and formatting, manifest/cache/AOT
-checks, upgrade checks and trigger-builder comparisons. The scheduler comparison
-includes single-package lifecycle, failure admission, worker exit/recovery and
-same-phase resolver reuse. Freezed and Riverpod used their complete case groups.
-
-An initial wrapper outside SDK/bin failed manifest-snapshot discovery; that
-setup issue was corrected before rerunning both verification wrappers to success.
-A first Dart unit run under competing compiler load hit its default 30s test
-timeout; the complete final run above used one test worker and a 2m timeout.
-
-The full release/compatibility matrix, Freezed/Riverpod-specific watch scripts
-and private-project cold/AOT performance were not run. No release was published.
-These measurements and checks were collected before the PR commit and subsequent
-integration with the latest main branch.
-
-### Integration with current main
-
-The draft PR was rebased onto main `c5751ca` after the measurements above.
-After integration, Rust tests passed (255 passed, three existing ignored tests),
-Rust formatting and clippy passed, Dart analysis of `lib/src/worker.dart` passed,
-and `dart test test/protocol_test.dart --timeout 2m --concurrency 1` passed all
-14 tests. The full 392-test Dart run, scheduler/watch/Freezed/Riverpod groups and
-performance comparison above were not repeated on the rebased tree. The performance figures above describe the original benchmark tree. The required verification wrappers were subsequently rerun as
-recorded below.
-
-### Post-rebase verification completion
-
-Both required wrappers passed on `57efdeb`, based on main `c5751ca`, using a
-freshly rebuilt v0.19.1 release frontend:
-
-```bash
-bash scripts/verify.sh
-VERIFY_ARBITRARY_BUILDER=1 bash scripts/verify.sh
-```
-
-The scheduling tests also passed (five tests), including the renamed
-`large_phases_with_action_timings_amortize_setup_cost`. The runtime and test
-logic are unchanged from the verified commit; subsequent updates only clarify
-documentation and remove measurement artifacts from the repository.
+Rust: 255 passed, three existing ignored tests. All five scheduling tests and
+all 14 Dart protocol tests passed. The verification wrappers also checked Dart
+analysis and formatting, stock/native output equality and no-op behavior,
+manifest/cache/AOT paths, upgrades, trigger builders and arbitrary builders.
 
 Cost learning is separate for each configured builder application, including
 separate target/builder/phase queues in workspace builds. Different builders'
 samples are not pooled. Conservative sizing when inputs of the same builder
 have variable costs remains a real-project measurement consideration.
+
+The full Dart suite, release/compatibility matrix, builder-specific watch suites
+and private-project cold/AOT performance were not part of this validation. The
+performance figures above describe the benchmark runtime and conditions listed
+under Conditions; they are not measurements of the v0.19.1 implementation.
