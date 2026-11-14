@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.19.3](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.2...v0.19.3) - 2026-11-14
+
+- Reuse blocked assets across adaptive worker leases by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/189
+
 ## [v0.19.2](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.1...v0.19.2) - 2026-11-14
 
 - build(release): link Linux binaries against a glibc 2.35 floor by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/186
