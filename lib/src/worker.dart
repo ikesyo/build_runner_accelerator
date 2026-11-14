@@ -126,7 +126,10 @@ Future<void> runWorker({
       final rawMessage = await reader.next();
       if (rawMessage == null) return;
       try {
-        final message = WorkerMessage.decode(rawMessage);
+        final message = WorkerMessage.decode(
+          rawMessage,
+          previousBatchBlockedAssets: runtime.batchBlockedAssets,
+        );
         switch (message) {
           case WorkerInitializeMessage initialize:
             if (Directory(initialize.root).resolveSymbolicLinksSync() !=
@@ -135,6 +138,8 @@ Future<void> runWorker({
                 'initialize root does not match worker workspace',
               );
             }
+            runtime.batchBlockedAssets = null;
+            runtime.batchBlockedAssetIds = null;
             runtime.retainedOutputGuard = initialize.retainedOutputGuard;
             await runtime.startBuild(
               initialize.package,
@@ -153,6 +158,7 @@ Future<void> runWorker({
                 'build-result-binary-v1',
                 'optional-builder-demand-v1',
                 'shared-blocked-assets-v1',
+                'blocked-assets-reuse-v1',
                 'reset-overlay-blob-v1',
                 'build-runner-current-v1',
                 'retained-output-guard-v1',
@@ -234,6 +240,11 @@ Future<void> runWorker({
 class _WorkerRuntime {
   _WorkerRuntime(this.packageConfig, this.resolverProfile)
     : resolver = createResolver(packageConfig, resolverProfile);
+
+  // Last accepted batch visibility hint, scoped to this worker context.
+  // Resolver/build resets and nested single builds leave transport state intact.
+  List<String>? batchBlockedAssets;
+  Set<AssetId>? batchBlockedAssetIds;
 
   final PackageConfig packageConfig;
   final ResolverInitializationProfile resolverProfile;
@@ -868,7 +879,14 @@ Future<void> _handleBuildBatch(
   Map<String, PostProcessBuilderFactory> postProcessCatalog,
 ) async {
   final results = <JsonMap>[];
-  final blockedAssets = message.blockedAssets.map(AssetId.parse).toSet();
+  if (!identical(runtime.batchBlockedAssets, message.blockedAssets)) {
+    final parsed = Set<AssetId>.unmodifiable(
+      message.blockedAssets.map(AssetId.parse),
+    );
+    runtime.batchBlockedAssets = message.blockedAssets;
+    runtime.batchBlockedAssetIds = parsed;
+  }
+  final blockedAssets = runtime.batchBlockedAssetIds!;
   runtime.batchResolverEntrypoints.clear();
   for (final request in message.requests) {
     results.add(

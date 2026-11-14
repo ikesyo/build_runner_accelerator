@@ -22,7 +22,10 @@ sealed class WorkerMessage {
 
   final Object? id;
 
-  static WorkerMessage decode(JsonMap message) {
+  static WorkerMessage decode(
+    JsonMap message, {
+    List<String>? previousBatchBlockedAssets,
+  }) {
     validateProtocolVersion(message);
     switch (message['type']) {
       case 'initialize':
@@ -34,7 +37,10 @@ sealed class WorkerMessage {
       case 'build':
         return WorkerBuildMessage(_decodeBuildRequest(message));
       case 'build_batch':
-        return WorkerBuildBatchMessage.fromJson(message);
+        return WorkerBuildBatchMessage.fromJson(
+          message,
+          previousBlockedAssets: previousBatchBlockedAssets,
+        );
       default:
         return UnsupportedWorkerMessage(
           id: message['id'],
@@ -183,11 +189,25 @@ class WorkerBuildBatchMessage extends WorkerMessage {
     required this.requests,
   }) : super(id: id);
 
-  factory WorkerBuildBatchMessage.fromJson(JsonMap message) {
-    final blockedAssets = _stringList(
+  factory WorkerBuildBatchMessage.fromJson(
+    JsonMap message, {
+    List<String>? previousBlockedAssets,
+  }) {
+    final reuse = message.containsKey('blocked_assets_reuse')
+        ? _requiredBool(message, 'blocked_assets_reuse', 'build_batch')
+        : false;
+    final suppliedAssets = _stringList(
       message['blocked_assets'],
       'build_batch blocked_assets',
     );
+    if (reuse && (previousBlockedAssets == null || suppliedAssets.isNotEmpty)) {
+      throw const FormatException(
+        'blocked_assets_reuse requires a prior batch list and an empty list',
+      );
+    }
+    final blockedAssets = reuse
+        ? previousBlockedAssets!
+        : List<String>.unmodifiable(suppliedAssets);
     final rawRequests = message['requests'];
     if (rawRequests is! List) {
       throw const FormatException('build_batch requests must be a list');

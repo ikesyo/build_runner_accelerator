@@ -36,6 +36,7 @@ pub(super) fn is_worker_script(worker_executable: &str) -> bool {
 /// reserves stdout for IPC; worker diagnostics are inherited from stderr.
 pub struct WorkerClient {
     pub(super) shared_parts_capable: bool,
+    pub(super) blocked_assets_cache: BlockedAssetsCache,
     child: Child,
     input: BufWriter<ChildStdin>,
     output: BufReader<ChildStdout>,
@@ -43,6 +44,38 @@ pub struct WorkerClient {
     pub(super) metrics: WorkerClientMetrics,
     /// Resolver dependency edges reported with this client's batch or single results.
     pub(super) dep_graph: BTreeMap<String, Vec<String>>,
+}
+
+/// Transport state belongs to one worker connection. Resets and single builds
+/// do not replace the last batch list; initialization starts a fresh context.
+#[derive(Default)]
+pub(super) struct BlockedAssetsCache {
+    pub(super) capable: bool,
+    last: Option<Vec<String>>,
+}
+
+impl BlockedAssetsCache {
+    pub(super) fn new(capable: bool) -> Self {
+        Self {
+            capable,
+            last: None,
+        }
+    }
+
+    pub(super) fn forget_last(&mut self) {
+        self.last = None;
+    }
+
+    pub(super) fn prepare(&mut self, assets: Vec<String>) -> (Vec<String>, bool) {
+        if !self.capable {
+            return (assets, false);
+        }
+        if self.last.as_ref() == Some(&assets) {
+            return (Vec::new(), true);
+        }
+        self.last = Some(assets.clone());
+        (assets, false)
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -166,6 +199,7 @@ impl WorkerClient {
             },
             dep_graph: BTreeMap::new(),
             shared_parts_capable: false,
+            blocked_assets_cache: BlockedAssetsCache::default(),
         })
     }
 
@@ -201,6 +235,8 @@ impl WorkerClient {
             return Err(protocol_error("worker initialization failed", &response));
         }
         validate_initialized(&response, id)?;
+        self.blocked_assets_cache =
+            BlockedAssetsCache::new(has_capability(&response, "blocked-assets-reuse-v1"));
         self.shared_parts_capable = has_capability(&response, "shared-library-parts-v1");
         if retained_output_guard && !has_capability(&response, "retained-output-guard-v1") {
             return Err(io::Error::other("worker lacks retained-output-guard-v1"));
@@ -303,6 +339,24 @@ impl WorkerClient {
         deleted_overlay: &BTreeSet<String>,
         visibility: &AssetVisibility,
     ) -> io::Result<Vec<BuildResult>> {
+        let result =
+            self.build_batch_inner(workspace, requests, overlay, deleted_overlay, visibility);
+        // A worker can reject a batch before accepting its visibility hint.
+        // Forget on every error so a retry cannot reuse an unaccepted list.
+        if result.is_err() {
+            self.blocked_assets_cache.forget_last();
+        }
+        result
+    }
+
+    fn build_batch_inner(
+        &mut self,
+        workspace: &Workspace,
+        requests: &[BuildRequest],
+        overlay: &BTreeMap<String, Arc<[u8]>>,
+        deleted_overlay: &BTreeSet<String>,
+        visibility: &AssetVisibility,
+    ) -> io::Result<Vec<BuildResult>> {
         let started = Instant::now();
         let id = self.next_id();
         let _wall = self.wall_span("worker_batch", Some(id));
@@ -312,6 +366,8 @@ impl WorkerClient {
         // visibility hint at the batch level instead of copying the full
         // blocked-asset list into every request.
         let blocked_assets = batch_blocked_assets(requests, visibility, deleted_overlay)?;
+        let (blocked_assets, blocked_assets_reuse) =
+            self.blocked_assets_cache.prepare(blocked_assets);
         let batch_requests = requests
             .iter()
             .enumerate()
@@ -336,6 +392,7 @@ impl WorkerClient {
             "type": "build_batch",
             "id": id,
             "blocked_assets": blocked_assets,
+            "blocked_assets_reuse": blocked_assets_reuse,
             "requests": batch_requests,
         }))?;
 
