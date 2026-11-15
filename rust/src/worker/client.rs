@@ -1115,7 +1115,8 @@ impl WorkerClient {
         for (asset, digest) in delta {
             match digest {
                 Some(digest) => {
-                    self.sent_asset_digests.insert(asset.clone(), digest.clone());
+                    self.sent_asset_digests
+                        .insert(asset.clone(), digest.clone());
                 }
                 None => {
                     self.sent_asset_digests.remove(asset);
@@ -1151,9 +1152,7 @@ impl WorkerClient {
                 Some(
                     digest_delta
                         .iter()
-                        .map(|(asset, digest)| {
-                            (interner.intern(asset).to_string(), digest.clone())
-                        })
+                        .map(|(asset, digest)| (interner.intern(asset).to_string(), digest.clone()))
                         .collect::<BTreeMap<_, _>>(),
                 )
             };

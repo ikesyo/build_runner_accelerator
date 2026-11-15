@@ -69,10 +69,13 @@ mod tests {
         let snapshot = Snapshot::from([
             ("pkg|lib/a.dart".to_owned(), entry("b3-aaaa")),
             ("pkg|lib/out.g.dart".to_owned(), entry("b3-bbbb")),
-            (glob_asset_key(&crate::protocol::GlobRead {
-                package: "pkg".to_owned(),
-                pattern: "lib/**".to_owned(),
-            }), entry("b3-cccc")),
+            (
+                glob_asset_key(&crate::protocol::GlobRead {
+                    package: "pkg".to_owned(),
+                    pattern: "lib/**".to_owned(),
+                }),
+                entry("b3-cccc"),
+            ),
             ("pkg|lib/$lib$".to_owned(), entry("b3-dddd")),
             (
                 "pkg|lib/gone.dart".to_owned(),

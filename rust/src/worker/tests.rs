@@ -761,10 +761,7 @@ fn interned_batch_wire_carries_asset_digests_by_index() {
         requests: &wires,
     };
     let value = serde_json::to_value(&wire).unwrap();
-    assert_eq!(
-        value["asset_digests"],
-        json!({"0": "2cf24dba", "1": null})
-    );
+    assert_eq!(value["asset_digests"], json!({"0": "2cf24dba", "1": null}));
 }
 
 #[test]
