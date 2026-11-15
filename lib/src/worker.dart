@@ -1174,6 +1174,9 @@ Future<JsonMap> _runBuild(
         runtime.packageConfig,
         runtime.resolverDependencyCache,
         excludeReads: drainReads,
+        // The staged map holds no declared outputs and this build's own
+        // produced outputs are excluded here, so a digest only ever names
+        // snapshot content (ADR 0054, Snapshot semantics).
         frontendDigestFor: (asset) => runtime.producedOutputs.containsKey(asset)
             ? null
             : runtime.assetDigests[asset.toString()],

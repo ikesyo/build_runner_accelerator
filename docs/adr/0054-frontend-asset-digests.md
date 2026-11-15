@@ -117,7 +117,14 @@ unchanged.
 
 Digests describe the frontend's build snapshot, the same source of
 truth as dirty checking, and sources are already assumed stable while
-a build runs. If a source file is edited mid-build, a digest lookup
+a build runs. A hit is bound to the snapshot's bytes by construction:
+the staged map excludes every declared output of the build, so a
+digest is only ever supplied for an asset whose in-build bytes are
+its snapshot bytes, and an entry exists under a digest only because
+a worker stored it after computing the same digest over the bytes it
+read. On a dep-load hit the Analyzer still receives the asset's
+current bytes through `readPhased`; only the dep entry comes from
+the cache. If a source file is edited mid-build, a digest lookup
 can serve the snapshot's dep entry for an asset whose bytes the
 Analyzer later reads in their newer form, the same skew stock
 build_runner has between its dep parse and its analysis reads. The
@@ -128,9 +135,12 @@ the frontend's graph, whose source digests are these same values.
 
 ## Expected effect
 
-On the traced application, most of the per-worker first-action hashing
-(about 0.8 s) and the cycle walk's content reads for cache-warm files
-(about 1.1 s) disappear from every build, and additional workers stop
-re-paying them. The frontend pays nothing new: the digests are the
-ones its snapshot already computes, and the per-build transport cost
-is one digest delta keyed by interned asset ids.
+On the traced application, the per-worker resolver-read hashing
+(about 0.8 s of the trace) disappears from every build. Within the
+cycle walk (about 1.1 s of the trace), a cache-warm dep load no longer
+forms its key from the content or parses the file; the walk's
+`readPhased` calls remain, because they are also the Analyzer's
+content feed. Additional workers stop re-paying the removed parts.
+The frontend pays nothing new: the digests are the ones its snapshot
+already computes, and the per-build transport cost is one digest
+delta keyed by interned asset ids.
