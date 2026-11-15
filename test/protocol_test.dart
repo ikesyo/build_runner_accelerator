@@ -290,6 +290,116 @@ void main() {
       expect(batch.requests[1].builder, 'app|one');
     });
 
+    test('decodes interned batches by resolving dictionary indexes', () {
+      final dictionary = <String>[];
+      final message =
+          WorkerMessage.decode(<String, dynamic>{
+                'v': 1,
+                'type': 'build_batch',
+                'id': 30,
+                'asset_dict_add': [
+                  'app|lib/blocked.dart',
+                  'app|lib/one.dart',
+                  'app|lib/one.g.dart',
+                ],
+                'blocked_assets': [0],
+                'requests': <dynamic>[
+                  <String, dynamic>{
+                    'id': 31,
+                    'builder': 'app|one',
+                    'input': 1,
+                    'kind': 'normal',
+                    'allowed_outputs': [2],
+                    'options': <String, dynamic>{},
+                    'phase': 0,
+                    'part_phase_index': null,
+                    'instance_key': 'one',
+                    'is_root': true,
+                    'triggers': <dynamic>[],
+                  },
+                ],
+              }, assetDictionary: dictionary)
+              as WorkerBuildBatchMessage;
+      expect(dictionary, [
+        'app|lib/blocked.dart',
+        'app|lib/one.dart',
+        'app|lib/one.g.dart',
+      ]);
+      expect(message.blockedAssets, ['app|lib/blocked.dart']);
+      expect(message.requests.single.input, 'app|lib/one.dart');
+      expect(message.requests.single.allowedOutputs, ['app|lib/one.g.dart']);
+
+      // A later message with an empty addition list reuses the indexes.
+      final second =
+          WorkerMessage.decode(<String, dynamic>{
+                'v': 1,
+                'type': 'build_batch',
+                'id': 32,
+                'asset_dict_add': <String>[],
+                'blocked_assets': [0],
+                'requests': <dynamic>[],
+              }, assetDictionary: dictionary)
+              as WorkerBuildBatchMessage;
+      expect(second.blockedAssets, ['app|lib/blocked.dart']);
+      expect(dictionary, hasLength(3));
+    });
+
+    test('rejects interned messages with invalid references', () {
+      final batch = <String, dynamic>{
+        'v': 1,
+        'type': 'build_batch',
+        'id': 33,
+        'asset_dict_add': ['app|lib/one.dart'],
+        'blocked_assets': [1],
+        'requests': <dynamic>[],
+      };
+      // Index 1 is out of range for a one-entry dictionary.
+      expect(
+        () => WorkerMessage.decode(batch, assetDictionary: <String>[]),
+        throwsFormatException,
+      );
+      // asset_dict_add without a dictionary is an error.
+      expect(() => WorkerMessage.decode(batch), throwsFormatException);
+      // A string where an index is required is an error.
+      final stringRef = {
+        ...batch,
+        'blocked_assets': ['app|lib/one.dart'],
+      };
+      expect(
+        () => WorkerMessage.decode(stringRef, assetDictionary: <String>[]),
+        throwsFormatException,
+      );
+    });
+
+    test('decodes interned resolver resets and overlay indexes', () {
+      final dictionary = <String>[];
+      final reset =
+          WorkerMessage.decode(<String, dynamic>{
+                'v': 1,
+                'type': 'reset_resolver',
+                'id': 34,
+                'asset_dict_add': ['app|lib/a.dart', 'app|lib/b.dart'],
+                'updated_sources': [0],
+                'deleted_sources': <int>[],
+                'updated_cache': [1],
+                'deleted_cache': <int>[],
+                'incremental': false,
+                'overlay_blob': {
+                  'path': '/tmp/reset.blob',
+                  'length': 2,
+                  'index': {
+                    '1': {'offset': 0, 'length': 2},
+                  },
+                },
+              }, assetDictionary: dictionary)
+              as WorkerResetResolverMessage;
+      expect(reset.updatedSources, ['app|lib/a.dart']);
+      expect(reset.updatedCache, ['app|lib/b.dart']);
+      expect(reset.overlayBlob?['index'], {
+        'app|lib/b.dart': {'offset': 0, 'length': 2},
+      });
+    });
+
     test('batch reuse preserves the prior list without global state', () {
       final full = <String, dynamic>{
         'v': 1,

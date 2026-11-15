@@ -25,6 +25,7 @@ sealed class WorkerMessage {
   static WorkerMessage decode(
     JsonMap message, {
     List<String>? previousBatchBlockedAssets,
+    List<String>? assetDictionary,
   }) {
     validateProtocolVersion(message);
     switch (message['type']) {
@@ -33,13 +34,17 @@ sealed class WorkerMessage {
       case 'reset':
         return WorkerResetMessage.fromJson(message);
       case 'reset_resolver':
-        return WorkerResetResolverMessage.fromJson(message);
+        return WorkerResetResolverMessage.fromJson(
+          message,
+          dictionary: _messageDictionary(message, assetDictionary),
+        );
       case 'build':
         return WorkerBuildMessage(_decodeBuildRequest(message));
       case 'build_batch':
         return WorkerBuildBatchMessage.fromJson(
           message,
           previousBlockedAssets: previousBatchBlockedAssets,
+          dictionary: _messageDictionary(message, assetDictionary),
         );
       default:
         return UnsupportedWorkerMessage(
@@ -144,33 +149,43 @@ class WorkerResetResolverMessage extends WorkerMessage {
   final Map<String, Object?>? overlayBlob;
 
   /// Validates required reset fields and normalizes the nullable descriptor.
-  factory WorkerResetResolverMessage.fromJson(JsonMap message) {
+  factory WorkerResetResolverMessage.fromJson(
+    JsonMap message, {
+    List<String>? dictionary,
+  }) {
     if (!message.containsKey('overlay_blob')) {
       throw const FormatException('reset_resolver requires overlay_blob');
     }
     final overlayBlob = message['overlay_blob'];
     return WorkerResetResolverMessage(
       id: _requiredInt(message, 'id', 'reset_resolver'),
-      updatedSources: _stringList(
+      updatedSources: _assetList(
         message['updated_sources'],
+        dictionary,
         'reset_resolver updated_sources',
       ),
-      deletedSources: _stringList(
+      deletedSources: _assetList(
         message['deleted_sources'],
+        dictionary,
         'reset_resolver deleted_sources',
       ),
-      updatedCache: _stringList(
+      updatedCache: _assetList(
         message['updated_cache'],
+        dictionary,
         'reset_resolver updated_cache',
       ),
-      deletedCache: _stringList(
+      deletedCache: _assetList(
         message['deleted_cache'],
+        dictionary,
         'reset_resolver deleted_cache',
       ),
       incremental: _requiredBool(message, 'incremental', 'reset_resolver'),
       overlayBlob: overlayBlob == null
           ? null
-          : _jsonMap(overlayBlob, 'reset_resolver overlay_blob'),
+          : _resolveOverlayBlob(
+              _jsonMap(overlayBlob, 'reset_resolver overlay_blob'),
+              dictionary,
+            ),
     );
   }
 }
@@ -192,12 +207,14 @@ class WorkerBuildBatchMessage extends WorkerMessage {
   factory WorkerBuildBatchMessage.fromJson(
     JsonMap message, {
     List<String>? previousBlockedAssets,
+    List<String>? dictionary,
   }) {
     final reuse = message.containsKey('blocked_assets_reuse')
         ? _requiredBool(message, 'blocked_assets_reuse', 'build_batch')
         : false;
-    final suppliedAssets = _stringList(
+    final suppliedAssets = _assetList(
       message['blocked_assets'],
+      dictionary,
       'build_batch blocked_assets',
     );
     if (reuse && (previousBlockedAssets == null || suppliedAssets.isNotEmpty)) {
@@ -226,6 +243,7 @@ class WorkerBuildBatchMessage extends WorkerMessage {
                   ..._jsonMap(rawRequest, 'build_batch request'),
                 },
           blockedAssets: blockedAssets,
+          dictionary: dictionary,
         ),
     ];
     if (requests.isNotEmpty &&
@@ -277,6 +295,7 @@ class WorkerBuildRequest {
   factory WorkerBuildRequest.fromJson(
     JsonMap message, {
     required List<String> blockedAssets,
+    List<String>? dictionary,
   }) {
     final kind = _requiredString(message, 'kind', 'build');
     if (kind != 'normal' && kind != 'post_process') {
@@ -299,10 +318,13 @@ class WorkerBuildRequest {
     return WorkerBuildRequest(
       id: _requiredInt(message, 'id', 'build'),
       builder: _requiredString(message, 'builder', 'build'),
-      input: _requiredString(message, 'input', 'build'),
+      input: dictionary == null
+          ? _requiredString(message, 'input', 'build')
+          : _resolveAssetRef(message['input'], dictionary, 'build input'),
       kind: kind,
-      allowedOutputs: _stringList(
+      allowedOutputs: _assetList(
         message['allowed_outputs'],
+        dictionary,
         'build allowed_outputs',
       ),
       options: _stringKeyedMap(message['options'], 'build options'),
@@ -410,6 +432,62 @@ List<String> _stringList(Object? value, String label) {
     throw FormatException('$label must be a list');
   }
   return [for (final item in value) _requiredStringValue(item, '$label item')];
+}
+
+/// Applies a message's `asset_dict_add` list to the connection dictionary
+/// and returns the dictionary to resolve this message's id references
+/// with, or null when the message uses the plain string form. The
+/// additions are appended before any other field is interpreted, matching
+/// the sender's encoding order. See ADR 0053.
+List<String>? _messageDictionary(JsonMap message, List<String>? dictionary) {
+  if (!message.containsKey('asset_dict_add')) return null;
+  if (dictionary == null) {
+    throw const FormatException(
+      'asset_dict_add requires a worker asset dictionary',
+    );
+  }
+  dictionary.addAll(_stringList(message['asset_dict_add'], 'asset_dict_add'));
+  return dictionary;
+}
+
+String _resolveAssetRef(Object? value, List<String> dictionary, String label) {
+  if (value is! int || value < 0 || value >= dictionary.length) {
+    throw FormatException('$label requires an in-range dictionary index');
+  }
+  return dictionary[value];
+}
+
+/// Decodes an asset id list in either form: plain strings, or dictionary
+/// indexes when [dictionary] is the message's active dictionary.
+List<String> _assetList(Object? value, List<String>? dictionary, String label) {
+  if (dictionary == null) return _stringList(value, label);
+  if (value is! List) {
+    throw FormatException('$label must be a list');
+  }
+  return [
+    for (final item in value) _resolveAssetRef(item, dictionary, '$label item'),
+  ];
+}
+
+/// Rewrites an interned overlay blob descriptor's `index` keys, which are
+/// decimal dictionary indexes, back to asset ids. Other descriptors and
+/// fields pass through unchanged.
+Map<String, Object?> _resolveOverlayBlob(
+  Map<String, Object?> blob,
+  List<String>? dictionary,
+) {
+  if (dictionary == null) return blob;
+  final index = blob['index'];
+  if (index is! Map) return blob;
+  final resolved = <String, dynamic>{
+    for (final entry in index.entries)
+      _resolveAssetRef(
+        int.tryParse('${entry.key}'),
+        dictionary,
+        'reset_resolver overlay_blob index key',
+      ): entry.value,
+  };
+  return <String, Object?>{...blob, 'index': resolved};
 }
 
 List<WorkerBuildTrigger> _triggerList(Object? value, String label) {

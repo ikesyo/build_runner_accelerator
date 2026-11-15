@@ -12,7 +12,7 @@ use crate::visibility::AssetVisibility;
 use crate::worker_kernel::WorkerArtifact;
 use crate::workspace::Workspace;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
 use std::io::{self, BufReader, BufWriter};
 use std::path::Path;
@@ -26,6 +26,7 @@ const OPTIONAL_BUILD_CAPABILITY: &str = "optional-builder-demand-v1";
 const OVERLAY_BLOB_CAPABILITY: &str = "reset-overlay-blob-v1";
 const SHARED_BLOCKED_ASSETS_CAPABILITY: &str = "shared-blocked-assets-v1";
 const BATCH_SHARED_FIELDS_CAPABILITY: &str = "batch-shared-fields-v1";
+const ASSET_ID_INTERNING_CAPABILITY: &str = "asset-id-interning-v1";
 
 /// Distinguishes a path to a Dart source script from a package executable name
 /// so the launcher can select the correct Dart invocation form.
@@ -39,6 +40,12 @@ pub(super) fn is_worker_script(worker_executable: &str) -> bool {
 pub struct WorkerClient {
     pub(super) shared_parts_capable: bool,
     pub(super) batch_shared_fields_capable: bool,
+    pub(super) asset_interning_capable: bool,
+    /// Per-connection asset-id dictionary for `asset-id-interning-v1`; the
+    /// worker mirrors it by appending each message's `asset_dict_add` list.
+    /// Initialization starts a fresh dictionary on both sides.
+    pub(super) asset_dictionary: Vec<String>,
+    pub(super) asset_dictionary_index: HashMap<String, u32>,
     pub(super) blocked_assets_cache: BlockedAssetsCache,
     /// Reusable serialization buffer for typed build messages.
     pub(super) send_buffer: Vec<u8>,
@@ -197,6 +204,198 @@ pub(super) struct BuildWire<'a> {
     pub(super) traceparent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) otel_report_id: Option<u64>,
+}
+
+/// Assigns dictionary indexes for one outgoing message, recording the ids
+/// the message introduces so they can be sent as its `asset_dict_add` list.
+/// The client dictionary grows as messages are encoded and is never rolled
+/// back: a worker that accepted a message applied the same additions while
+/// decoding it. See ADR 0053.
+pub(super) struct AssetInterner<'a> {
+    dictionary: &'a mut Vec<String>,
+    index: &'a mut HashMap<String, u32>,
+    pub(super) additions: Vec<String>,
+}
+
+impl AssetInterner<'_> {
+    pub(super) fn new<'a>(
+        dictionary: &'a mut Vec<String>,
+        index: &'a mut HashMap<String, u32>,
+    ) -> AssetInterner<'a> {
+        AssetInterner {
+            dictionary,
+            index,
+            additions: Vec::new(),
+        }
+    }
+
+    pub(super) fn intern(&mut self, asset: &str) -> u32 {
+        if let Some(&existing) = self.index.get(asset) {
+            return existing;
+        }
+        let fresh = self.dictionary.len() as u32;
+        self.dictionary.push(asset.to_owned());
+        self.index.insert(asset.to_owned(), fresh);
+        self.additions.push(asset.to_owned());
+        fresh
+    }
+
+    pub(super) fn intern_list(&mut self, assets: &[String]) -> Vec<u32> {
+        assets.iter().map(|asset| self.intern(asset)).collect()
+    }
+}
+
+/// A batch request with its asset ids replaced by dictionary indexes.
+/// See [`BatchRequestWire`] and ADR 0053.
+#[derive(serde::Serialize)]
+pub(super) struct InternedBatchRequestWire<'a> {
+    id: u64,
+    builder: &'a str,
+    input: u32,
+    kind: &'a str,
+    allowed_outputs: Vec<u32>,
+    options: &'a serde_json::Map<String, Value>,
+    phase: u32,
+    part_phase_index: Option<u32>,
+    instance_key: &'a str,
+    is_root: bool,
+    triggers: &'a [crate::builder::BuilderTrigger],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    traceparent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    otel_report_id: Option<u64>,
+}
+
+/// A batch request in shared-fields form with interned asset ids.
+/// See [`BatchSharedRequestWire`] and ADR 0053.
+#[derive(serde::Serialize)]
+pub(super) struct InternedBatchSharedRequestWire<'a> {
+    id: u64,
+    input: u32,
+    allowed_outputs: Vec<u32>,
+    options: &'a serde_json::Map<String, Value>,
+    triggers: &'a [crate::builder::BuilderTrigger],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    traceparent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    otel_report_id: Option<u64>,
+}
+
+/// The interned `build_batch` envelope: `asset_dict_add` lists the ids this
+/// message appends to the connection dictionary, in order, and every id
+/// position carries a dictionary index. See ADR 0053.
+#[derive(serde::Serialize)]
+pub(super) struct InternedBatchWire<'a, R> {
+    pub(super) v: u32,
+    #[serde(rename = "type")]
+    pub(super) message_type: &'a str,
+    pub(super) id: u64,
+    pub(super) asset_dict_add: Vec<String>,
+    pub(super) blocked_assets: Vec<u32>,
+    pub(super) blocked_assets_reuse: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) shared: Option<BatchSharedWire<'a>>,
+    pub(super) requests: &'a [R],
+}
+
+/// Rewrites a JSON array of asset ids as dictionary indexes. Elements that
+/// are not strings pass through unchanged; the worker rejects them when it
+/// decodes the interned message, as it would any malformed list.
+pub(super) fn intern_asset_list(value: &Value, interner: &mut AssetInterner<'_>) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| match item {
+                    Value::String(asset) => Value::from(interner.intern(asset)),
+                    other => other.clone(),
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Rewrites the overlay blob descriptor's `index` keys as decimal
+/// dictionary indexes; JSON object keys cannot be integers. The descriptor
+/// itself and its offsets/lengths are unchanged.
+pub(super) fn intern_overlay_blob(value: &Value, interner: &mut AssetInterner<'_>) -> Value {
+    let Some(map) = value.as_object() else {
+        return value.clone();
+    };
+    let mut map = map.clone();
+    if let Some(index) = map.get("index").and_then(Value::as_object) {
+        let interned = index
+            .iter()
+            .map(|(asset, entry)| (interner.intern(asset).to_string(), entry.clone()))
+            .collect::<serde_json::Map<String, Value>>();
+        map.insert("index".to_owned(), Value::Object(interned));
+    }
+    Value::Object(map)
+}
+
+pub(super) fn interned_batch_request_wires<'a>(
+    requests: &'a [BuildRequest],
+    interner: &mut AssetInterner<'_>,
+) -> Vec<InternedBatchRequestWire<'a>> {
+    interned_batch_request_wires_with(requests, interner, crate::telemetry::request_context)
+}
+
+pub(super) fn interned_batch_request_wires_with<'a>(
+    requests: &'a [BuildRequest],
+    interner: &mut AssetInterner<'_>,
+    provider: impl FnMut() -> Option<(String, u64)>,
+) -> Vec<InternedBatchRequestWire<'a>> {
+    let contexts = telemetry_contexts_with(requests.len(), provider);
+    requests
+        .iter()
+        .enumerate()
+        .zip(contexts)
+        .map(
+            |((index, request), (traceparent, otel_report_id))| InternedBatchRequestWire {
+                id: index as u64,
+                builder: &request.builder,
+                input: interner.intern(&request.input),
+                kind: if request.post_process {
+                    "post_process"
+                } else {
+                    "normal"
+                },
+                allowed_outputs: interner.intern_list(&request.outputs),
+                options: &request.options,
+                phase: request.phase,
+                part_phase_index: request.part_phase_index,
+                instance_key: &request.instance_key,
+                is_root: request.is_root,
+                triggers: &request.triggers,
+                traceparent,
+                otel_report_id,
+            },
+        )
+        .collect()
+}
+
+pub(super) fn interned_batch_shared_request_wires<'a>(
+    requests: &'a [BuildRequest],
+    interner: &mut AssetInterner<'_>,
+) -> Vec<InternedBatchSharedRequestWire<'a>> {
+    let contexts = telemetry_contexts(requests.len());
+    requests
+        .iter()
+        .enumerate()
+        .zip(contexts)
+        .map(
+            |((index, request), (traceparent, otel_report_id))| InternedBatchSharedRequestWire {
+                id: index as u64,
+                input: interner.intern(&request.input),
+                allowed_outputs: interner.intern_list(&request.outputs),
+                options: &request.options,
+                triggers: &request.triggers,
+                traceparent,
+                otel_report_id,
+            },
+        )
+        .collect()
 }
 
 /// Per-request telemetry fields, mirroring the generic send path: one
@@ -472,6 +671,9 @@ impl WorkerClient {
             dep_graph: BTreeMap::new(),
             shared_parts_capable: false,
             batch_shared_fields_capable: false,
+            asset_interning_capable: false,
+            asset_dictionary: Vec::new(),
+            asset_dictionary_index: HashMap::new(),
             blocked_assets_cache: BlockedAssetsCache::default(),
             send_buffer: Vec::new(),
         })
@@ -514,6 +716,9 @@ impl WorkerClient {
         self.shared_parts_capable = has_capability(&response, "shared-library-parts-v1");
         self.batch_shared_fields_capable =
             has_capability(&response, BATCH_SHARED_FIELDS_CAPABILITY);
+        self.asset_interning_capable = has_capability(&response, ASSET_ID_INTERNING_CAPABILITY);
+        self.asset_dictionary.clear();
+        self.asset_dictionary_index.clear();
         if retained_output_guard && !has_capability(&response, "retained-output-guard-v1") {
             return Err(io::Error::other("worker lacks retained-output-guard-v1"));
         }
@@ -579,17 +784,40 @@ impl WorkerClient {
         let started = Instant::now();
         let id = self.next_id();
         let encoding = self.wall_span("reset_encode_send", Some(id));
-        self.send(&json!({
-            "v": 1,
-            "type": "reset_resolver",
-            "id": id,
-            "updated_sources": updated_sources,
-            "deleted_sources": deleted_sources,
-            "updated_cache": updated_cache,
-            "deleted_cache": deleted_cache,
-            "incremental": incremental,
-            "overlay_blob": overlay_blob,
-        }))?;
+        if self.asset_interning_capable {
+            let mut interner =
+                AssetInterner::new(&mut self.asset_dictionary, &mut self.asset_dictionary_index);
+            let updated_sources = intern_asset_list(updated_sources, &mut interner);
+            let deleted_sources = intern_asset_list(deleted_sources, &mut interner);
+            let updated_cache = intern_asset_list(updated_cache, &mut interner);
+            let deleted_cache = intern_asset_list(deleted_cache, &mut interner);
+            let overlay_blob = intern_overlay_blob(overlay_blob, &mut interner);
+            let message = json!({
+                "v": 1,
+                "type": "reset_resolver",
+                "id": id,
+                "asset_dict_add": interner.additions,
+                "updated_sources": updated_sources,
+                "deleted_sources": deleted_sources,
+                "updated_cache": updated_cache,
+                "deleted_cache": deleted_cache,
+                "incremental": incremental,
+                "overlay_blob": overlay_blob,
+            });
+            self.send(&message)?;
+        } else {
+            self.send(&json!({
+                "v": 1,
+                "type": "reset_resolver",
+                "id": id,
+                "updated_sources": updated_sources,
+                "deleted_sources": deleted_sources,
+                "updated_cache": updated_cache,
+                "deleted_cache": deleted_cache,
+                "incremental": incremental,
+                "overlay_blob": overlay_blob,
+            }))?;
+        }
         drop(encoding);
         let receive = self.wall_span("reset_receive", Some(id));
         let response = self.receive_json()?;
@@ -789,6 +1017,42 @@ impl WorkerClient {
         blocked_assets: &[String],
         blocked_assets_reuse: bool,
     ) -> io::Result<()> {
+        if self.asset_interning_capable {
+            let shared = if self.batch_shared_fields_capable {
+                batch_shared_fields(requests)
+            } else {
+                None
+            };
+            let mut interner =
+                AssetInterner::new(&mut self.asset_dictionary, &mut self.asset_dictionary_index);
+            let blocked = interner.intern_list(blocked_assets);
+            if let Some(shared) = shared {
+                let wires = interned_batch_shared_request_wires(requests, &mut interner);
+                let wire = InternedBatchWire {
+                    v: 1,
+                    message_type: "build_batch",
+                    id,
+                    asset_dict_add: interner.additions,
+                    blocked_assets: blocked,
+                    blocked_assets_reuse,
+                    shared: Some(shared),
+                    requests: &wires,
+                };
+                return self.send_serialized(&wire);
+            }
+            let wires = interned_batch_request_wires(requests, &mut interner);
+            let wire = InternedBatchWire {
+                v: 1,
+                message_type: "build_batch",
+                id,
+                asset_dict_add: interner.additions,
+                blocked_assets: blocked,
+                blocked_assets_reuse,
+                shared: None,
+                requests: &wires,
+            };
+            return self.send_serialized(&wire);
+        }
         if self.batch_shared_fields_capable
             && let Some(shared) = batch_shared_fields(requests)
         {
