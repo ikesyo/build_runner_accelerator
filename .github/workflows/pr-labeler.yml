@@ -1,0 +1,73 @@
+name: PR labeler
+
+# pull_request_target runs in the base repository context, where the
+# token stays writable for Dependabot pull requests. This workflow
+# never checks out or executes pull request code; it only reads pull
+# request metadata and calls the API.
+on:
+  pull_request_target:
+    types: [opened, edited, reopened]
+
+permissions:
+  pull-requests: write
+
+# Serialize reconciliation per pull request so an older event cannot
+# overwrite the result of a newer one.
+concurrency:
+  group: pr-labeler-${{ github.event.pull_request.number }}
+
+jobs:
+  label:
+    name: Apply release note label
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Reconcile the label matching the author or title prefix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          # Read the current title rather than the event payload's, so
+          # a run that starts late still reconciles against live state.
+          title="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json title --jq .title)"
+          desired=""
+          case "$PR_AUTHOR" in
+            dependabot\[bot\]|renovate\[bot\]) desired="dependencies" ;;
+          esac
+          if [ -z "$desired" ]; then
+            case "$title" in
+              build\(deps\)*) desired="dependencies" ;;
+            esac
+          fi
+          if [ -z "$desired" ]; then
+            # Reduce "feat(api)!:" and friends to their bare type.
+            type="${title%%:*}"
+            type="${type%%\(*}"
+            type="${type%!}"
+            case "$type" in
+              feat) desired="enhancement" ;;
+              fix) desired="bug" ;;
+              perf) desired="performance" ;;
+              docs) desired="documentation" ;;
+              deps) desired="dependencies" ;;
+            esac
+          fi
+          current="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name] | join(" ")')"
+          args=()
+          if [ -n "$desired" ]; then
+            case " $current " in
+              *" $desired "*) ;;
+              *) args+=(--add-label "$desired") ;;
+            esac
+          fi
+          for managed in enhancement bug performance dependencies documentation; do
+            if [ "$managed" != "$desired" ]; then
+              case " $current " in
+                *" $managed "*) args+=(--remove-label "$managed") ;;
+              esac
+            fi
+          done
+          if [ ${#args[@]} -gt 0 ]; then
+            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" "${args[@]}"
+          fi
