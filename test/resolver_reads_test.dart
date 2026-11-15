@@ -77,6 +77,70 @@ void main() {
   );
 
   test(
+    'frontend digests serve cached conditional reads without reading',
+    () async {
+      final main = AssetId('app', 'lib/main.dart');
+      final old = AssetId('app', 'lib/old.dart');
+      final mainBytes = utf8.encode(
+        "export 'old.dart' if (dart.library.io) 'dart:io';",
+      );
+      final reads = AssetReadCache({main: mainBytes, old: []});
+      final cache = _newTestCache();
+      final config = PackageConfig([]);
+      final digests = <AssetId, String>{
+        main: blake3Hex(mainBytes),
+        old: blake3Hex(const <int>[]),
+      };
+
+      Future<Set<AssetId>> collect({bool withDigests = false}) async {
+        final io = RemoteAssetReaderWriter(readCache: reads, readableCache: {});
+        io.beginAction(
+          rpc: _rpc(),
+          package: 'app',
+          primaryInput: null,
+          blockedAssets: {},
+        );
+        try {
+          io.observedReads.add(main);
+          await collectResolverReads(
+            io,
+            config,
+            cache,
+            frontendDigestFor: withDigests ? (asset) => digests[asset] : null,
+          );
+          return Set.of(io.observedReads);
+        } finally {
+          io.endAction();
+        }
+      }
+
+      // Populate the persistent store through the ordinary read path.
+      expect(await collect(), contains(old));
+      cache.clear();
+
+      // With the bytes gone, only the frontend-digest path can still expand
+      // the conditional export: both assets resolve from the persistent
+      // store under their frontend digests, with no digest computations.
+      reads.clear();
+      resolverActionMetrics.beginAction();
+      expect(await collect(withDigests: true), containsAll([main, old]));
+      expect(resolverActionMetrics.resolverReadsDigestComputations, 0);
+      expect(resolverActionMetrics.resolverReadsDigestReuses, 2);
+      expect(resolverActionMetrics.resolverReadsPersistentHits, 2);
+
+      // A frontend digest with no store entry falls back to reading the
+      // asset and computing its digest as before.
+      reads[main] = mainBytes;
+      reads[old] = [];
+      cache.clear();
+      digests[main] = blake3Hex(utf8.encode('unrelated'));
+      resolverActionMetrics.beginAction();
+      expect(await collect(withDigests: true), contains(old));
+      expect(resolverActionMetrics.resolverReadsDigestComputations, 1);
+    },
+  );
+
+  test(
     'persistent extraction remaps relative and file URIs after reset',
     () async {
       final directory = await Directory.systemTemp.createTemp('resolver-uris-');
