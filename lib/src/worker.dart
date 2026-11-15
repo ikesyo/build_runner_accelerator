@@ -129,6 +129,7 @@ Future<void> runWorker({
         final message = WorkerMessage.decode(
           rawMessage,
           previousBatchBlockedAssets: runtime.batchBlockedAssets,
+          assetDictionary: runtime.assetDictionary,
         );
         switch (message) {
           case WorkerInitializeMessage initialize:
@@ -140,6 +141,7 @@ Future<void> runWorker({
             }
             runtime.batchBlockedAssets = null;
             runtime.batchBlockedAssetIds = null;
+            runtime.assetDictionary.clear();
             runtime.retainedOutputGuard = initialize.retainedOutputGuard;
             await runtime.startBuild(
               initialize.package,
@@ -160,6 +162,7 @@ Future<void> runWorker({
                 'shared-blocked-assets-v1',
                 'blocked-assets-reuse-v1',
                 'batch-shared-fields-v1',
+                'asset-id-interning-v1',
                 'reset-overlay-blob-v1',
                 'build-runner-current-v1',
                 'retained-output-guard-v1',
@@ -246,6 +249,11 @@ class _WorkerRuntime {
   // Resolver/build resets and nested single builds leave transport state intact.
   List<String>? batchBlockedAssets;
   Set<AssetId>? batchBlockedAssetIds;
+
+  // Asset-id dictionary for `asset-id-interning-v1`, scoped to this worker
+  // context with the same lifetime as the batch visibility hint above.
+  // Initialization clears it; interned messages append to it in place.
+  final List<String> assetDictionary = <String>[];
 
   final PackageConfig packageConfig;
   final ResolverInitializationProfile resolverProfile;

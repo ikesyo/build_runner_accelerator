@@ -2,9 +2,10 @@ use super::asset_rpc::{
     batch_asset_request_context, missing_asset_response, validate_asset_request_context,
 };
 use super::client::{
-    BatchWire, batch_request_wires, batch_request_wires_with, batch_shared_fields,
-    batch_shared_request_wires, build_wire, has_capability, is_worker_script,
-    require_overlay_blob_capability,
+    AssetInterner, BatchWire, InternedBatchWire, batch_request_wires, batch_request_wires_with,
+    batch_shared_fields, batch_shared_request_wires, build_wire, has_capability, intern_asset_list,
+    intern_overlay_blob, interned_batch_request_wires_with, interned_batch_shared_request_wires,
+    is_worker_script, require_overlay_blob_capability, rollback_asset_dictionary,
 };
 use super::pool::{
     homogeneous_resolver_usage_key, remember_resolver_usage, target_worker_count,
@@ -615,4 +616,140 @@ fn blocked_assets_reuse_tracks_exact_lists_per_connection() {
     assert_eq!(cache.prepare_list(assets.clone()), (assets.clone(), false));
     let mut other = BlockedAssetsCache::new(true);
     assert_eq!(other.prepare_list(assets.clone()), (assets, false));
+}
+
+#[test]
+fn interner_rollback_restores_the_pre_message_dictionary() {
+    let mut dictionary = Vec::new();
+    let mut index = std::collections::HashMap::new();
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    assert_eq!(interner.intern("pkg|lib/kept.dart"), 0);
+    drop(interner);
+    let checkpoint = dictionary.len();
+
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    assert_eq!(interner.intern("pkg|lib/failed.dart"), 1);
+    assert_eq!(interner.additions, ["pkg|lib/failed.dart"]);
+    drop(interner);
+    rollback_asset_dictionary(&mut dictionary, &mut index, checkpoint);
+    assert_eq!(dictionary, ["pkg|lib/kept.dart"]);
+    assert_eq!(index.len(), 1);
+
+    // Re-interning after a rollback assigns the same indexes the failed
+    // message used, so the worker's dictionary stays aligned.
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    assert_eq!(interner.intern("pkg|lib/failed.dart"), 1);
+    assert_eq!(interner.intern("pkg|lib/kept.dart"), 0);
+}
+
+#[test]
+fn interned_batch_wire_replaces_ids_with_dictionary_indexes() {
+    let mut first = build_request(2, false);
+    first.outputs = vec!["example|lib/out.txt".to_owned()];
+    let mut second = build_request(2, false);
+    second.input = "example|lib/other.txt".to_owned();
+    let requests = vec![first, second];
+    let mut dictionary = Vec::new();
+    let mut index = std::collections::HashMap::new();
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    let blocked = interner.intern_list(&["example|lib/hidden.dart".to_owned()]);
+    let wires = interned_batch_request_wires_with(&requests, &mut interner, || None);
+    let wire = InternedBatchWire {
+        v: 1,
+        message_type: "build_batch",
+        id: 9,
+        asset_dict_add: interner.additions,
+        blocked_assets: blocked,
+        blocked_assets_reuse: false,
+        shared: None,
+        requests: &wires,
+    };
+    let value = serde_json::to_value(&wire).unwrap();
+    assert_eq!(
+        value["asset_dict_add"],
+        json!([
+            "example|lib/hidden.dart",
+            "example|lib/input.txt",
+            "example|lib/out.txt",
+            "example|lib/other.txt",
+        ])
+    );
+    assert_eq!(value["blocked_assets"], json!([0]));
+    assert_eq!(value["requests"][0]["input"], json!(1));
+    assert_eq!(value["requests"][0]["allowed_outputs"], json!([2]));
+    assert_eq!(value["requests"][1]["input"], json!(3));
+    assert_eq!(dictionary.len(), 4);
+
+    // A later message over the same dictionary adds nothing and reuses
+    // the established indexes.
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    let wires = interned_batch_request_wires_with(&requests, &mut interner, || None);
+    assert!(interner.additions.is_empty());
+    let value = serde_json::to_value(&wires[0]).unwrap();
+    assert_eq!(value["input"], json!(1));
+}
+
+#[test]
+fn interned_shared_batch_wire_keeps_indexes_outside_shared_fields() {
+    let requests = vec![build_request(2, false), build_request(2, false)];
+    let shared = batch_shared_fields(&requests).expect("uniform batch");
+    let mut dictionary = Vec::new();
+    let mut index = std::collections::HashMap::new();
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    let wires = interned_batch_shared_request_wires(&requests, &mut interner);
+    let wire = InternedBatchWire {
+        v: 1,
+        message_type: "build_batch",
+        id: 10,
+        asset_dict_add: interner.additions,
+        blocked_assets: Vec::new(),
+        blocked_assets_reuse: true,
+        shared: Some(shared),
+        requests: &wires,
+    };
+    let value = serde_json::to_value(&wire).unwrap();
+    assert_eq!(value["asset_dict_add"], json!(["example|lib/input.txt"]));
+    assert_eq!(value["shared"]["builder"], json!("example:builder"));
+    assert_eq!(value["requests"][0]["input"], json!(0));
+    assert_eq!(value["requests"][1]["input"], json!(0));
+    assert!(value["requests"][0].get("builder").is_none());
+}
+
+#[test]
+fn interned_reset_values_rewrite_lists_and_overlay_index() {
+    let mut dictionary = Vec::new();
+    let mut index = std::collections::HashMap::new();
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    let list = intern_asset_list(
+        &json!(["example|lib/a.dart", "example|lib/b.dart"]),
+        &mut interner,
+    );
+    assert_eq!(list, json!([0, 1]));
+    // The overlay index reuses the indexes the list just established, and
+    // its offsets and descriptor fields pass through unchanged.
+    let blob = intern_overlay_blob(
+        &json!({
+            "path": "blob.bin",
+            "length": 3,
+            "index": {"example|lib/b.dart": {"offset": 0, "length": 3}},
+        }),
+        &mut interner,
+    );
+    assert_eq!(blob["index"], json!({"1": {"offset": 0, "length": 3}}));
+    assert_eq!(blob["path"], json!("blob.bin"));
+    assert_eq!(blob["length"], json!(3));
+    // The blob introduced no additions beyond the list's own two ids.
+    assert_eq!(
+        interner.additions,
+        vec!["example|lib/a.dart", "example|lib/b.dart"]
+    );
+    // Null and index-less descriptors pass through untouched.
+    assert_eq!(
+        intern_overlay_blob(&serde_json::Value::Null, &mut interner),
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        intern_overlay_blob(&json!({"path": "blob.bin", "length": 0}), &mut interner),
+        json!({"path": "blob.bin", "length": 0})
+    );
 }
