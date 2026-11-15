@@ -70,10 +70,7 @@ fn run() -> io::Result<()> {
                 "--workspace is not supported with plan-only diagnostics",
             );
         }
-        Some(workspace_discovery::discover(
-            &original_root,
-            options.dart_binary.as_deref().unwrap_or("dart"),
-        )?)
+        Some(workspace_discovery::discover(&original_root)?)
     } else {
         None
     };
@@ -118,10 +115,7 @@ fn run() -> io::Result<()> {
     if matches!(options.command.as_str(), "build" | "watch") {
         if let Some(info) = &discovery {
             if info.build_workspace {
-                let checked = workspace_discovery::discover(
-                    &original_root,
-                    options.dart_binary.as_deref().unwrap_or("dart"),
-                )?;
+                let checked = workspace_discovery::discover(&original_root)?;
                 if checked != *info {
                     return frontend::unsupported(
                         "workspace configuration changed while acquiring locks; retry",

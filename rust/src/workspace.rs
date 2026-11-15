@@ -686,12 +686,27 @@ fn safe_relative_path(root: &Path, relative: &str) -> Option<PathBuf> {
     Some(root.join(relative))
 }
 
-fn package_name(path: &Path) -> io::Result<String> {
+pub(crate) fn package_name(path: &Path) -> io::Result<String> {
     let contents = fs::read_to_string(path)?;
     for line in contents.lines() {
         let trimmed = line.trim();
         if let Some(value) = trimmed.strip_prefix("name:") {
-            let value = value.trim().trim_matches(['\'', '"']);
+            let value = value.trim();
+            // A quoted scalar ends at its closing quote; a plain scalar
+            // ends before a trailing comment (`name: ws_a # comment`).
+            let value =
+                if let Some(rest) = value.strip_prefix('"').or_else(|| value.strip_prefix('\'')) {
+                    rest.split(['"', '\'']).next().unwrap_or("")
+                } else {
+                    let end = value
+                        .char_indices()
+                        .find(|(index, c)| {
+                            *c == '#' && value[..*index].ends_with(|p: char| p.is_whitespace())
+                        })
+                        .map(|(index, _)| index)
+                        .unwrap_or(value.len());
+                    value[..end].trim_end()
+                };
             if !value.is_empty() {
                 return Ok(value.to_owned());
             }

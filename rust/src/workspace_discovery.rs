@@ -1,14 +1,17 @@
-//! Read-only workspace discovery delegated to Pub/build_runner's Dart APIs.
-use crate::workspace::{canonicalize, resolve_uri};
-use serde::Deserialize;
-use std::collections::BTreeMap;
+//! Workspace discovery in the frontend (ADR 0055).
+//!
+//! Replicates the semantics of the Dart path it replaces: stock's
+//! `BuildPaths.load` decides the workspace root from
+//! `.dart_tool/pub/workspace_ref.json` and the current pubspec, and the
+//! output packages are the package-graph roots with paths taken from
+//! `package_config.json`.
+use crate::workspace::{canonicalize, package_name, resolve_uri};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct WorkspaceDiscovery {
     pub(crate) root: PathBuf,
     pub(crate) current_package: String,
@@ -18,45 +21,177 @@ pub(crate) struct WorkspaceDiscovery {
 
 /// Discovery is read-only. Re-run it after acquiring every returned lock before
 /// using its paths or state: Pub configuration can change during acquisition.
-pub(crate) fn discover(current: &Path, dart: &str) -> io::Result<WorkspaceDiscovery> {
+pub(crate) fn discover(current: &Path) -> io::Result<WorkspaceDiscovery> {
     let current = canonicalize(current)?;
-    let config = current
+    let current_pubspec = current.join("pubspec.yaml");
+    let current_package = package_name(&current_pubspec)?;
+    // BuildPaths.load: the workspace root applies only when the reference
+    // file exists and the current pubspec opts into the workspace (a member
+    // via `resolution: workspace`, the root via a `workspace:` section). A
+    // stale reference falls back to a single-package build at the current
+    // package, keeping the same graph/configuration identity as stock.
+    let mut workspace_root = None;
+    let reference = current.join(".dart_tool/pub/workspace_ref.json");
+    if reference.is_file() && pubspec_opts_into_workspace(&current_pubspec)? {
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(&reference)?)?;
+        let relative = value
+            .get("workspaceRoot")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| io::Error::other("workspace_ref.json has no workspaceRoot"))?;
+        workspace_root = Some(canonicalize(reference.parent().unwrap().join(relative))?);
+    }
+    let build_workspace = workspace_root.is_some();
+    let root = workspace_root.unwrap_or_else(|| current.clone());
+    let root_package = package_name(&root.join("pubspec.yaml"))?;
+    let config_path = root
         .ancestors()
         .map(|dir| dir.join(".dart_tool/package_config.json"))
         .find(|path| path.is_file())
         .ok_or_else(|| io::Error::other("package_config.json not found; run dart pub get"))?;
-    let value: serde_json::Value = serde_json::from_slice(&fs::read(&config)?)?;
-    let entry = value["packages"]
-        .as_array()
-        .and_then(|packages| {
-            packages
-                .iter()
-                .find(|entry| entry["name"] == "build_runner_accelerator")
-        })
-        .and_then(|entry| entry["rootUri"].as_str())
-        .ok_or_else(|| {
-            io::Error::other("build_runner_accelerator is absent from package_config.json")
-        })?;
-    let tool = resolve_uri(config.parent().unwrap(), entry).join("tool/resolve_workspace.dart");
-    if !tool.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "workspace discovery helper is unavailable",
-        ));
+    let config: serde_json::Value = serde_json::from_slice(&fs::read(&config_path)?)?;
+    let config_dir = config_path.parent().unwrap();
+    let mut package_paths = BTreeMap::new();
+    if let Some(packages) = config["packages"].as_array() {
+        for entry in packages {
+            if let (Some(name), Some(uri)) = (entry["name"].as_str(), entry["rootUri"].as_str()) {
+                package_paths.insert(name.to_owned(), resolve_uri(config_dir, uri));
+            }
+        }
     }
-    let output = Command::new(dart)
-        .arg(format!("--packages={}", config.display()))
-        .arg(tool)
-        .arg(&current)
-        .current_dir(&current)
-        .output()?;
-    if !output.status.success() {
+    let mut output_names = BTreeSet::from([root_package.clone()]);
+    if build_workspace {
+        let graph_path = root.join(".dart_tool/package_graph.json");
+        let graph: serde_json::Value = serde_json::from_slice(&fs::read(&graph_path)?)?;
+        let roots = graph["roots"]
+            .as_array()
+            .filter(|roots| roots.iter().all(|name| name.is_string()))
+            .ok_or_else(|| {
+                io::Error::other(format!(
+                    "invalid workspace package graph: {}",
+                    graph_path.display()
+                ))
+            })?;
+        if !roots
+            .iter()
+            .any(|name| name.as_str() == Some(&root_package))
+        {
+            return Err(io::Error::other(format!(
+                "workspace package graph does not contain {root_package}"
+            )));
+        }
+        output_names.extend(roots.iter().map(|name| name.as_str().unwrap().to_owned()));
+    }
+    let mut output_packages = BTreeMap::new();
+    for name in &output_names {
+        let path = package_paths.get(name).ok_or_else(|| {
+            io::Error::other(format!(
+                "package {name} is absent from package_config.json; run dart pub get"
+            ))
+        })?;
+        output_packages.insert(name.clone(), path.clone());
+    }
+    if build_workspace
+        && output_packages
+            .get(&current_package)
+            .map(canonicalize)
+            .transpose()?
+            .as_deref()
+            != Some(&current)
+    {
         return Err(io::Error::other(format!(
-            "workspace discovery failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            "workspace package graph does not contain the current package \
+             {current_package} at {}; run dart pub get first",
+            current.display()
         )));
     }
-    validate(serde_json::from_slice(&output.stdout)?, &current)
+    validate(
+        WorkspaceDiscovery {
+            root,
+            current_package,
+            build_workspace,
+            output_packages,
+        },
+        &current,
+    )
+}
+
+/// Whether a pubspec opts into its workspace, as the YAML-level check in
+/// stock's `BuildPaths.load`: `resolution: workspace`, or a `workspace:`
+/// section. Only top-level keys count, and a bare `workspace:` line is a
+/// section only when an indented block follows (a lone key parses as null).
+fn pubspec_opts_into_workspace(path: &Path) -> io::Result<bool> {
+    let contents = fs::read_to_string(path)?;
+    let lines: Vec<&str> = contents.lines().collect();
+    for (index, line) in lines.iter().enumerate() {
+        if line.starts_with(|c: char| c.is_whitespace()) {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        match key.trim().trim_matches(['\'', '"']) {
+            "resolution" => {
+                // The value may be inline (`resolution: workspace`), a
+                // block scalar (`resolution: >-` plus an indented line), or
+                // a plain scalar on the following indented line.
+                let value = value.split('#').next().unwrap_or("").trim();
+                // An anchor (`resolution: &mode workspace`) decorates the
+                // scalar without changing it.
+                let value = if value.starts_with('&') {
+                    value.split_whitespace().nth(1).unwrap_or("")
+                } else {
+                    value
+                };
+                let value = value.trim_matches(['\'', '"']);
+                if value == "workspace" {
+                    return Ok(true);
+                }
+                if value.is_empty() || matches!(value, ">" | ">-" | ">+" | "|" | "|-" | "|+") {
+                    let mut parts: Vec<&str> = Vec::new();
+                    for next in &lines[index + 1..] {
+                        let trimmed = next.trim();
+                        if trimmed.is_empty() || trimmed.starts_with('#') {
+                            continue;
+                        }
+                        if !next.starts_with(|c: char| c.is_whitespace()) {
+                            break;
+                        }
+                        parts.push(trimmed);
+                    }
+                    if parts.join(" ") == "workspace" {
+                        return Ok(true);
+                    }
+                }
+            }
+            "workspace" => {
+                // A trailing comment is not a value, and an explicit null
+                // (`workspace: null`, `workspace: ~`) parses as absent.
+                let value = value.split('#').next().unwrap_or("").trim();
+                if !value.is_empty() && !matches!(value, "null" | "Null" | "NULL" | "~") {
+                    return Ok(true);
+                }
+                // Otherwise the section exists only when a block follows
+                // before the next top-level key: indented content, or a
+                // block sequence, which YAML allows at the key's own
+                // indentation (`workspace:` then `- a` at column zero).
+                for next in &lines[index + 1..] {
+                    let trimmed = next.trim();
+                    if trimmed.is_empty() || trimmed.starts_with('#') {
+                        continue;
+                    }
+                    if next.starts_with(|c: char| c.is_whitespace())
+                        || trimmed == "-"
+                        || trimmed.starts_with("- ")
+                    {
+                        return Ok(true);
+                    }
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(false)
 }
 
 fn validate(mut result: WorkspaceDiscovery, current: &Path) -> io::Result<WorkspaceDiscovery> {
@@ -123,5 +258,210 @@ mod tests {
         external.insert("outside".into(), root.parent().unwrap().to_path_buf());
         assert!(validate(info(external), &member).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    struct Fixture {
+        root: PathBuf,
+    }
+
+    impl Fixture {
+        /// A pub workspace: root package `ws_root` with members `a` (ws_a)
+        /// and `b` (ws_b), plus a hosted dependency that is not a member.
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir()
+                .join(format!("workspace-discovery-{name}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&root);
+            for member in ["a", "b"] {
+                let dir = root.join(member);
+                fs::create_dir_all(dir.join(".dart_tool/pub")).unwrap();
+                fs::write(
+                    dir.join("pubspec.yaml"),
+                    format!("name: ws_{member}\nresolution: workspace\n"),
+                )
+                .unwrap();
+                fs::write(
+                    dir.join(".dart_tool/pub/workspace_ref.json"),
+                    "{\"workspaceRoot\": \"../../..\"}",
+                )
+                .unwrap();
+            }
+            fs::create_dir_all(root.join(".dart_tool/pub")).unwrap();
+            fs::write(
+                root.join("pubspec.yaml"),
+                "name: ws_root\nworkspace:\n  - a\n  - b\n",
+            )
+            .unwrap();
+            fs::write(
+                root.join(".dart_tool/pub/workspace_ref.json"),
+                "{\"workspaceRoot\": \"../..\"}",
+            )
+            .unwrap();
+            fs::write(
+                root.join(".dart_tool/package_graph.json"),
+                "{\"roots\": [\"ws_root\", \"ws_a\", \"ws_b\"]}",
+            )
+            .unwrap();
+            fs::write(
+                root.join(".dart_tool/package_config.json"),
+                "{\"configVersion\": 2, \"packages\": [
+                    {\"name\": \"ws_root\", \"rootUri\": \"../\"},
+                    {\"name\": \"ws_a\", \"rootUri\": \"../a/\"},
+                    {\"name\": \"ws_b\", \"rootUri\": \"../b/\"},
+                    {\"name\": \"dep\", \"rootUri\": \"file:///nonexistent/dep\"}
+                ]}",
+            )
+            .unwrap();
+            Self { root }
+        }
+
+        fn canonical_root(&self) -> PathBuf {
+            canonicalize(&self.root).unwrap()
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn discovery_from_member_resolves_workspace() {
+        let fixture = Fixture::new("member");
+        let root = fixture.canonical_root();
+        let info = discover(&fixture.root.join("a")).unwrap();
+        assert!(info.build_workspace);
+        assert_eq!(info.root, root);
+        assert_eq!(info.current_package, "ws_a");
+        assert_eq!(
+            info.output_packages.keys().collect::<Vec<_>>(),
+            vec!["ws_a", "ws_b", "ws_root"]
+        );
+        assert_eq!(info.output_packages["ws_b"], root.join("b"));
+    }
+
+    #[test]
+    fn discovery_from_root_resolves_workspace() {
+        let fixture = Fixture::new("root");
+        let root = fixture.canonical_root();
+        let info = discover(&fixture.root).unwrap();
+        assert!(info.build_workspace);
+        assert_eq!(info.root, root);
+        assert_eq!(info.current_package, "ws_root");
+        assert_eq!(info.output_packages.len(), 3);
+    }
+
+    #[test]
+    fn discovery_without_workspace_reference_is_single_package() {
+        let dir =
+            std::env::temp_dir().join(format!("workspace-discovery-solo-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join(".dart_tool")).unwrap();
+        fs::write(dir.join("pubspec.yaml"), "name: solo\n").unwrap();
+        fs::write(
+            dir.join(".dart_tool/package_config.json"),
+            "{\"configVersion\": 2, \"packages\": [{\"name\": \"solo\", \"rootUri\": \"../\"}]}",
+        )
+        .unwrap();
+        let info = discover(&dir).unwrap();
+        assert!(!info.build_workspace);
+        assert_eq!(info.root, canonicalize(&dir).unwrap());
+        assert_eq!(info.output_packages.len(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pubspec_workspace_opt_in_matches_yaml_shapes() {
+        let cases: &[(&str, bool)] = &[
+            ("name: x\nresolution: workspace\n", true),
+            ("name: x\nworkspace:\n  - a\n", true),
+            ("name: x\nworkspace:\n- a\n- b\n", true),
+            ("name: x\nworkspace: [a, b]\n", true),
+            ("name: x\nworkspace:\n", false),
+            ("name: x\nworkspace:\ndependencies:\n  y: 1\n", false),
+            ("name: x\nworkspace: null\n", false),
+            ("name: x\nworkspace: ~\n", false),
+            ("name: x\nworkspace: # members\n", false),
+            ("name: x\nworkspace: # members\n  - a\n", true),
+            ("name: x\nresolution: null\n", false),
+            ("name: x\nresolution:\n  workspace\n", true),
+            ("name: x\nresolution: >-\n  workspace\n", true),
+            ("name: x\nresolution: |\n  workspace\n", true),
+            ("name: x\nresolution: workspace # comment\n", true),
+            ("name: x\nresolution: 'workspace'\n", true),
+            ("name: x\nresolution: workspacefoo\n", false),
+            ("name: x\nresolution:\n  other\n", false),
+            ("name: x\nresolution: &mode workspace\n", true),
+            ("name: x\nresolution:\n  # comment\n  workspace\n", true),
+            ("name: x\n", false),
+        ];
+        for (index, (text, expected)) in cases.iter().enumerate() {
+            let dir = std::env::temp_dir().join(format!(
+                "build_runner_accelerator_opt_in_{}_{index}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("pubspec.yaml");
+            fs::write(&path, text).unwrap();
+            let actual = pubspec_opts_into_workspace(&path).unwrap();
+            let _ = fs::remove_dir_all(&dir);
+            assert_eq!(actual, *expected, "case {index}: {text:?}");
+        }
+    }
+
+    #[test]
+    fn package_name_strips_comment_and_quotes() {
+        let cases: &[(&str, &str)] = &[
+            ("name: ws_a\n", "ws_a"),
+            ("name: ws_a # package name\n", "ws_a"),
+            ("name: \"ws_a\"\n", "ws_a"),
+            ("name: 'ws_a' # comment\n", "ws_a"),
+        ];
+        for (index, (text, expected)) in cases.iter().enumerate() {
+            let dir = std::env::temp_dir().join(format!(
+                "build_runner_accelerator_pkg_name_{}_{index}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("pubspec.yaml");
+            fs::write(&path, text).unwrap();
+            let actual = package_name(&path).unwrap();
+            let _ = fs::remove_dir_all(&dir);
+            assert_eq!(actual, *expected, "case {index}: {text:?}");
+        }
+    }
+
+    #[test]
+    fn discovery_with_stale_reference_falls_back_to_single_package() {
+        let fixture = Fixture::new("stale");
+        // The reference file remains, but the member no longer opts in.
+        fs::write(fixture.root.join("a/pubspec.yaml"), "name: ws_a\n").unwrap();
+        fs::create_dir_all(fixture.root.join("a/.dart_tool")).unwrap();
+        fs::write(
+            fixture.root.join("a/.dart_tool/package_config.json"),
+            "{\"configVersion\": 2, \"packages\": [{\"name\": \"ws_a\", \"rootUri\": \"../../a/\"}]}",
+        )
+        .unwrap();
+        let info = discover(&fixture.root.join("a")).unwrap();
+        assert!(!info.build_workspace);
+        assert_eq!(info.current_package, "ws_a");
+        assert_eq!(info.output_packages.len(), 1);
+    }
+
+    #[test]
+    fn discovery_rejects_graph_without_root_or_current_member() {
+        let fixture = Fixture::new("graph");
+        fs::write(
+            fixture.root.join(".dart_tool/package_graph.json"),
+            "{\"roots\": [\"ws_a\", \"ws_b\"]}",
+        )
+        .unwrap();
+        assert!(discover(&fixture.root.join("a")).is_err());
+        fs::write(
+            fixture.root.join(".dart_tool/package_graph.json"),
+            "{\"roots\": [\"ws_root\", \"ws_b\"]}",
+        )
+        .unwrap();
+        assert!(discover(&fixture.root.join("a")).is_err());
     }
 }
