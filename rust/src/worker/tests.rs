@@ -5,7 +5,7 @@ use super::client::{
     AssetInterner, BatchWire, InternedBatchWire, batch_request_wires, batch_request_wires_with,
     batch_shared_fields, batch_shared_request_wires, build_wire, has_capability, intern_asset_list,
     intern_overlay_blob, interned_batch_request_wires_with, interned_batch_shared_request_wires,
-    is_worker_script, require_overlay_blob_capability,
+    is_worker_script, require_overlay_blob_capability, rollback_asset_dictionary,
 };
 use super::pool::{
     homogeneous_resolver_usage_key, remember_resolver_usage, target_worker_count,
@@ -616,6 +616,30 @@ fn blocked_assets_reuse_tracks_exact_lists_per_connection() {
     assert_eq!(cache.prepare_list(assets.clone()), (assets.clone(), false));
     let mut other = BlockedAssetsCache::new(true);
     assert_eq!(other.prepare_list(assets.clone()), (assets, false));
+}
+
+#[test]
+fn interner_rollback_restores_the_pre_message_dictionary() {
+    let mut dictionary = Vec::new();
+    let mut index = std::collections::HashMap::new();
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    assert_eq!(interner.intern("pkg|lib/kept.dart"), 0);
+    drop(interner);
+    let checkpoint = dictionary.len();
+
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    assert_eq!(interner.intern("pkg|lib/failed.dart"), 1);
+    assert_eq!(interner.additions, ["pkg|lib/failed.dart"]);
+    drop(interner);
+    rollback_asset_dictionary(&mut dictionary, &mut index, checkpoint);
+    assert_eq!(dictionary, ["pkg|lib/kept.dart"]);
+    assert_eq!(index.len(), 1);
+
+    // Re-interning after a rollback assigns the same indexes the failed
+    // message used, so the worker's dictionary stays aligned.
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    assert_eq!(interner.intern("pkg|lib/failed.dart"), 1);
+    assert_eq!(interner.intern("pkg|lib/kept.dart"), 0);
 }
 
 #[test]

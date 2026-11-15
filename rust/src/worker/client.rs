@@ -208,9 +208,11 @@ pub(super) struct BuildWire<'a> {
 
 /// Assigns dictionary indexes for one outgoing message, recording the ids
 /// the message introduces so they can be sent as its `asset_dict_add` list.
-/// The client dictionary grows as messages are encoded and is never rolled
-/// back: a worker that accepted a message applied the same additions while
-/// decoding it. See ADR 0053.
+/// The client dictionary grows as messages are encoded. If the send itself
+/// fails, the caller rolls the dictionary back to its pre-message length
+/// with [`rollback_asset_dictionary`], because the worker never received
+/// the additions; once the frame is written, the worker applies the same
+/// additions while decoding and they are never rolled back. See ADR 0053.
 pub(super) struct AssetInterner<'a> {
     dictionary: &'a mut Vec<String>,
     index: &'a mut HashMap<String, u32>,
@@ -296,6 +298,21 @@ pub(super) struct InternedBatchWire<'a, R> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) shared: Option<BatchSharedWire<'a>>,
     pub(super) requests: &'a [R],
+}
+
+/// Undoes every dictionary addition at or after `checkpoint`, the
+/// dictionary length before a message whose send failed. Additions are
+/// always a suffix of the dictionary, so truncating and dropping their
+/// index entries restores the exact pre-message state.
+pub(super) fn rollback_asset_dictionary(
+    dictionary: &mut Vec<String>,
+    index: &mut HashMap<String, u32>,
+    checkpoint: usize,
+) {
+    for asset in &dictionary[checkpoint..] {
+        index.remove(asset);
+    }
+    dictionary.truncate(checkpoint);
 }
 
 /// Rewrites a JSON array of asset ids as dictionary indexes. Elements that
@@ -785,6 +802,7 @@ impl WorkerClient {
         let id = self.next_id();
         let encoding = self.wall_span("reset_encode_send", Some(id));
         if self.asset_interning_capable {
+            let checkpoint = self.asset_dictionary.len();
             let mut interner =
                 AssetInterner::new(&mut self.asset_dictionary, &mut self.asset_dictionary_index);
             let updated_sources = intern_asset_list(updated_sources, &mut interner);
@@ -804,7 +822,14 @@ impl WorkerClient {
                 "incremental": incremental,
                 "overlay_blob": overlay_blob,
             });
-            self.send(&message)?;
+            if let Err(error) = self.send(&message) {
+                rollback_asset_dictionary(
+                    &mut self.asset_dictionary,
+                    &mut self.asset_dictionary_index,
+                    checkpoint,
+                );
+                return Err(error);
+            }
         } else {
             self.send(&json!({
                 "v": 1,
@@ -1018,6 +1043,7 @@ impl WorkerClient {
         blocked_assets_reuse: bool,
     ) -> io::Result<()> {
         if self.asset_interning_capable {
+            let checkpoint = self.asset_dictionary.len();
             let shared = if self.batch_shared_fields_capable {
                 batch_shared_fields(requests)
             } else {
@@ -1026,7 +1052,7 @@ impl WorkerClient {
             let mut interner =
                 AssetInterner::new(&mut self.asset_dictionary, &mut self.asset_dictionary_index);
             let blocked = interner.intern_list(blocked_assets);
-            if let Some(shared) = shared {
+            let result = if let Some(shared) = shared {
                 let wires = interned_batch_shared_request_wires(requests, &mut interner);
                 let wire = InternedBatchWire {
                     v: 1,
@@ -1038,20 +1064,29 @@ impl WorkerClient {
                     shared: Some(shared),
                     requests: &wires,
                 };
-                return self.send_serialized(&wire);
-            }
-            let wires = interned_batch_request_wires(requests, &mut interner);
-            let wire = InternedBatchWire {
-                v: 1,
-                message_type: "build_batch",
-                id,
-                asset_dict_add: interner.additions,
-                blocked_assets: blocked,
-                blocked_assets_reuse,
-                shared: None,
-                requests: &wires,
+                self.send_serialized(&wire)
+            } else {
+                let wires = interned_batch_request_wires(requests, &mut interner);
+                let wire = InternedBatchWire {
+                    v: 1,
+                    message_type: "build_batch",
+                    id,
+                    asset_dict_add: interner.additions,
+                    blocked_assets: blocked,
+                    blocked_assets_reuse,
+                    shared: None,
+                    requests: &wires,
+                };
+                self.send_serialized(&wire)
             };
-            return self.send_serialized(&wire);
+            if result.is_err() {
+                rollback_asset_dictionary(
+                    &mut self.asset_dictionary,
+                    &mut self.asset_dictionary_index,
+                    checkpoint,
+                );
+            }
+            return result;
         }
         if self.batch_shared_fields_capable
             && let Some(shared) = batch_shared_fields(requests)

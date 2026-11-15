@@ -35,11 +35,13 @@ may send `build_batch` and `reset_resolver` messages in interned form:
 The dictionary has the same lifetime as the ADR 0051 visibility cache:
 initialization clears it on both sides; build and resolver resets and
 single or nested builds leave it intact. The client appends additions
-when a message is sent and never rolls them back; a worker that accepted
-the message has applied the same additions during decode, and a decode
-failure is a protocol error that ends the connection, so the two sides
-cannot diverge on a live connection. Workers without the capability
-always receive the string form.
+as a message is encoded. If the send itself fails, the client rolls
+the dictionary back to its pre-message length, because the worker
+never received the additions. Once the frame is written, a worker
+that accepted the message has applied the same additions during
+decode, and a decode failure is a protocol error that ends the
+connection, so the two sides cannot diverge on a live connection.
+Workers without the capability always receive the string form.
 
 Single `build` messages and asset RPC traffic keep the string form: the
 census showed no asset ids in this profile's asset responses, and the
