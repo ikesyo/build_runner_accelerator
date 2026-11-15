@@ -168,10 +168,12 @@ class RemoteBuilderFilesystem implements BuilderFilesystem {
     required RemoteBuildState buildState,
     required RemoteAssetReaderWriter readerWriter,
     required Map<String, List<Glob>> inputRestrictions,
+    Map<String, String>? assetDigests,
   }) : _remoteState = buildState,
        buildState = buildState.analyzerState,
        _remoteReaderWriter = readerWriter,
-       _inputRestrictions = inputRestrictions;
+       _inputRestrictions = inputRestrictions,
+       _assetDigests = assetDigests;
 
   @override
   final BuildPackages buildPackages;
@@ -192,6 +194,18 @@ class RemoteBuilderFilesystem implements BuilderFilesystem {
 
   final RemoteAssetReaderWriter _remoteReaderWriter;
   final Map<String, List<Glob>> _inputRestrictions;
+
+  /// The connection's live `asset-digests-v1` map (ADR 0054), shared by
+  /// reference with the worker runtime; batch deltas mutate it in place.
+  final Map<String, String>? _assetDigests;
+
+  /// The frontend-supplied snapshot digest for [id], or null when the
+  /// frontend sent none or the asset has committed content in this build
+  /// (its current bytes are overlay state, not snapshot state).
+  String? frontendDigestFor(AssetId id) {
+    if (_remoteState.committedContentOf(id) != null) return null;
+    return _assetDigests?[id.toString()];
+  }
 
   void Function(AssetId, AssetContent?)? _contentListener;
 

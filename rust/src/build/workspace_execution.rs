@@ -331,6 +331,7 @@ pub(super) fn run(inputs: ExecutionInputs<'_>) -> io::Result<ExecutionResult> {
         plan,
         dirty_plan,
         retained_output_guard,
+        asset_digests,
         ..
     } = inputs;
     if build_config.builders.iter().any(|builder| {
@@ -357,6 +358,7 @@ pub(super) fn run(inputs: ExecutionInputs<'_>) -> io::Result<ExecutionResult> {
             options.worker.is_none(),
         )?;
         pool.set_retained_output_guard(retained_output_guard);
+        pool.set_asset_digests(asset_digests);
         let builders = build_config
             .builders
             .iter()

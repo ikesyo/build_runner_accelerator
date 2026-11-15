@@ -188,6 +188,14 @@ pub(super) fn run(
         drop(active.take_dep_graph());
         active.prepare_for_filtered_roots(workspace, dirty_roots.len())?;
         active.set_retained_output_guard(retained_output_guard);
+        let declared_outputs: std::collections::BTreeSet<String> = specs
+            .values()
+            .flat_map(|spec| spec.outputs.iter().cloned())
+            .collect();
+        active.set_asset_digests(crate::snapshot::asset_digests(
+            current_snapshot,
+            &declared_outputs,
+        ));
         active.initialize(
             workspace,
             &workspace.root_package,

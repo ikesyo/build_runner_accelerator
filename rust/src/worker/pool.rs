@@ -36,6 +36,10 @@ pub struct WorkerPool {
     initialized_workers: usize,
     input_restrictions: BTreeMap<String, Vec<String>>,
     resolver_usage: BTreeMap<(String, String), bool>,
+    /// The current build's `asset-digests-v1` map (ADR 0054), staged into
+    /// every worker client so each connection's next batch carries its
+    /// delta. Replaced wholesale per build.
+    asset_digests: Option<Arc<BTreeMap<String, String>>>,
     retired_metrics: WorkerClientMetrics,
     worker_starts: u64,
     worker_initializes: u64,
@@ -164,6 +168,7 @@ impl WorkerPool {
             initialized_workers: 0,
             input_restrictions: BTreeMap::new(),
             resolver_usage: BTreeMap::new(),
+            asset_digests: None,
             retired_metrics: WorkerClientMetrics::default(),
             worker_starts,
             worker_initializes: 0,
@@ -194,6 +199,18 @@ impl WorkerPool {
 
     pub(crate) fn set_native_overlay(&mut self, enabled: bool) {
         self.native_overlay = enabled;
+    }
+
+    /// Stages a build's `asset-digests-v1` map (ADR 0054) into every
+    /// current worker; workers started later are staged by
+    /// `prepare_for_requests`. Each client's next batch carries the delta
+    /// against what that connection has already received.
+    pub fn set_asset_digests(&mut self, digests: BTreeMap<String, String>) {
+        let digests = Arc::new(digests);
+        self.asset_digests = Some(digests.clone());
+        for worker in &mut self.workers {
+            worker.stage_asset_digests(Some(digests.clone()));
+        }
     }
 
     /// Reuses workers only for an identical workspace/configuration signature.
@@ -324,6 +341,9 @@ impl WorkerPool {
                 )
             })
             .collect::<io::Result<Vec<_>>>()?;
+        for worker in &mut self.workers {
+            worker.stage_asset_digests(self.asset_digests.clone());
+        }
         self.worker_starts += worker_count as u64;
         self.worker_artifact = Some(worker_artifact);
         self.initialized_workers = 0;
@@ -356,12 +376,14 @@ impl WorkerPool {
         // far more than keeping it resident. Retirement only happens on a full
         // restart (artifact upgrade or signature change).
         while self.workers.len() < target {
-            self.workers.push(WorkerClient::start(
+            let mut worker = WorkerClient::start(
                 root,
                 &self.dart_binary,
                 &self.worker_executable,
                 worker_artifact,
-            )?);
+            )?;
+            worker.stage_asset_digests(self.asset_digests.clone());
+            self.workers.push(worker);
             self.worker_starts += 1;
         }
         Ok(())

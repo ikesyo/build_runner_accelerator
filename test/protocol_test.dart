@@ -344,6 +344,69 @@ void main() {
       expect(dictionary, hasLength(3));
     });
 
+    test('decodes asset digests in plain and interned batches', () {
+      final plain =
+          WorkerMessage.decode(<String, dynamic>{
+                'v': 1,
+                'type': 'build_batch',
+                'id': 34,
+                'blocked_assets': <String>[],
+                'requests': <dynamic>[],
+                'asset_digests': <String, dynamic>{
+                  'app|lib/one.dart': 'aaaa',
+                  'app|lib/two.dart': null,
+                },
+              })
+              as WorkerBuildBatchMessage;
+      expect(plain.assetDigestUpdates, {
+        'app|lib/one.dart': 'aaaa',
+        'app|lib/two.dart': null,
+      });
+
+      final dictionary = <String>['app|lib/one.dart', 'app|lib/two.dart'];
+      final interned =
+          WorkerMessage.decode(<String, dynamic>{
+                'v': 1,
+                'type': 'build_batch',
+                'id': 35,
+                'asset_dict_add': <String>[],
+                'blocked_assets': <int>[],
+                'requests': <dynamic>[],
+                'asset_digests': <String, dynamic>{'0': 'bbbb', '1': null},
+              }, assetDictionary: dictionary)
+              as WorkerBuildBatchMessage;
+      expect(interned.assetDigestUpdates, {
+        'app|lib/one.dart': 'bbbb',
+        'app|lib/two.dart': null,
+      });
+
+      // A non-string digest value is a protocol error.
+      expect(
+        () => WorkerMessage.decode(<String, dynamic>{
+          'v': 1,
+          'type': 'build_batch',
+          'id': 36,
+          'blocked_assets': <String>[],
+          'requests': <dynamic>[],
+          'asset_digests': <String, dynamic>{'app|lib/one.dart': 42},
+        }),
+        throwsFormatException,
+      );
+      // An interned digest key outside the dictionary is a protocol error.
+      expect(
+        () => WorkerMessage.decode(<String, dynamic>{
+          'v': 1,
+          'type': 'build_batch',
+          'id': 37,
+          'asset_dict_add': <String>[],
+          'blocked_assets': <int>[],
+          'requests': <dynamic>[],
+          'asset_digests': <String, dynamic>{'9': 'cccc'},
+        }, assetDictionary: dictionary),
+        throwsFormatException,
+      );
+    });
+
     test('rejects interned messages with invalid references', () {
       final batch = <String, dynamic>{
         'v': 1,

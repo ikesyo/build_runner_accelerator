@@ -27,6 +27,7 @@ const OVERLAY_BLOB_CAPABILITY: &str = "reset-overlay-blob-v1";
 const SHARED_BLOCKED_ASSETS_CAPABILITY: &str = "shared-blocked-assets-v1";
 const BATCH_SHARED_FIELDS_CAPABILITY: &str = "batch-shared-fields-v1";
 const ASSET_ID_INTERNING_CAPABILITY: &str = "asset-id-interning-v1";
+const ASSET_DIGESTS_CAPABILITY: &str = "asset-digests-v1";
 
 /// Distinguishes a path to a Dart source script from a package executable name
 /// so the launcher can select the correct Dart invocation form.
@@ -46,6 +47,15 @@ pub struct WorkerClient {
     /// Initialization starts a fresh dictionary on both sides.
     pub(super) asset_dictionary: Vec<String>,
     pub(super) asset_dictionary_index: HashMap<String, u32>,
+    pub(super) asset_digests_capable: bool,
+    /// Digests the worker on this connection has been sent, asset id to bare
+    /// SHA-256 hex (`asset-digests-v1`, ADR 0054). Batch messages carry only
+    /// the delta against this map; initialization clears it.
+    pub(super) sent_asset_digests: HashMap<String, String>,
+    /// The current build's full digest map, staged by the pool. The next
+    /// batch computes its delta from this map; staging a newer build's map
+    /// replaces it wholesale.
+    pub(super) staged_asset_digests: Option<std::sync::Arc<BTreeMap<String, String>>>,
     pub(super) blocked_assets_cache: BlockedAssetsCache,
     /// Reusable serialization buffer for typed build messages.
     pub(super) send_buffer: Vec<u8>,
@@ -178,6 +188,10 @@ pub(super) struct BatchWire<'a, R> {
     pub(super) blocked_assets_reuse: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) shared: Option<BatchSharedWire<'a>>,
+    /// `asset-digests-v1` delta keyed by asset id; a null value removes the
+    /// id from the worker's digest map. See ADR 0054.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) asset_digests: Option<BTreeMap<String, Option<String>>>,
     pub(super) requests: &'a [R],
 }
 
@@ -297,7 +311,41 @@ pub(super) struct InternedBatchWire<'a, R> {
     pub(super) blocked_assets_reuse: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) shared: Option<BatchSharedWire<'a>>,
+    /// `asset-digests-v1` delta keyed by dictionary index in decimal string
+    /// form, as with the overlay blob index; a null value removes the id
+    /// from the worker's digest map. See ADR 0054.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) asset_digests: Option<BTreeMap<String, Option<String>>>,
     pub(super) requests: &'a [R],
+}
+
+/// The `asset-digests-v1` delta between the digests a connection has
+/// already sent and the current build's staged map: updates and removals
+/// (as `None`) keyed by asset id. Empty when the capability is off,
+/// nothing is staged, or the worker is already current. See ADR 0054.
+pub(super) fn compute_asset_digest_delta(
+    capable: bool,
+    sent: &HashMap<String, String>,
+    staged: Option<&BTreeMap<String, String>>,
+) -> Vec<(String, Option<String>)> {
+    if !capable {
+        return Vec::new();
+    }
+    let Some(staged) = staged else {
+        return Vec::new();
+    };
+    let mut delta = Vec::new();
+    for (asset, digest) in staged {
+        if sent.get(asset) != Some(digest) {
+            delta.push((asset.clone(), Some(digest.clone())));
+        }
+    }
+    for asset in sent.keys() {
+        if !staged.contains_key(asset) {
+            delta.push((asset.clone(), None));
+        }
+    }
+    delta
 }
 
 /// Undoes every dictionary addition at or after `checkpoint`, the
@@ -691,6 +739,9 @@ impl WorkerClient {
             asset_interning_capable: false,
             asset_dictionary: Vec::new(),
             asset_dictionary_index: HashMap::new(),
+            asset_digests_capable: false,
+            sent_asset_digests: HashMap::new(),
+            staged_asset_digests: None,
             blocked_assets_cache: BlockedAssetsCache::default(),
             send_buffer: Vec::new(),
         })
@@ -736,6 +787,8 @@ impl WorkerClient {
         self.asset_interning_capable = has_capability(&response, ASSET_ID_INTERNING_CAPABILITY);
         self.asset_dictionary.clear();
         self.asset_dictionary_index.clear();
+        self.asset_digests_capable = has_capability(&response, ASSET_DIGESTS_CAPABILITY);
+        self.sent_asset_digests.clear();
         if retained_output_guard && !has_capability(&response, "retained-output-guard-v1") {
             return Err(io::Error::other("worker lacks retained-output-guard-v1"));
         }
@@ -1032,6 +1085,45 @@ impl WorkerClient {
         Ok(())
     }
 
+    /// Stages the current build's digest map for `asset-digests-v1`. The
+    /// next batch on this connection carries the delta against what the
+    /// worker already has; staging a newer build's map replaces this one
+    /// wholesale. See ADR 0054.
+    pub(super) fn stage_asset_digests(
+        &mut self,
+        digests: Option<std::sync::Arc<BTreeMap<String, String>>>,
+    ) {
+        self.staged_asset_digests = digests;
+    }
+
+    /// The digest delta to attach to the next batch: updates and removals
+    /// (as `None`) keyed by asset id, against the digests this connection
+    /// has already sent. Empty when the capability is off, nothing is
+    /// staged, or the worker is already current.
+    fn asset_digest_delta(&self) -> Vec<(String, Option<String>)> {
+        compute_asset_digest_delta(
+            self.asset_digests_capable,
+            &self.sent_asset_digests,
+            self.staged_asset_digests.as_deref(),
+        )
+    }
+
+    /// Applies a delta a batch send has delivered, so this connection's
+    /// record mirrors the worker's digest map. A failed send applies
+    /// nothing, exactly like the asset dictionary rollback.
+    fn apply_asset_digest_delta(&mut self, delta: &[(String, Option<String>)]) {
+        for (asset, digest) in delta {
+            match digest {
+                Some(digest) => {
+                    self.sent_asset_digests.insert(asset.clone(), digest.clone());
+                }
+                None => {
+                    self.sent_asset_digests.remove(asset);
+                }
+            }
+        }
+    }
+
     /// Sends one `build_batch` envelope, using the shared-fields form when
     /// this connection's worker advertised the capability and the batch is
     /// uniform in the lifted fields.
@@ -1042,6 +1134,7 @@ impl WorkerClient {
         blocked_assets: &[String],
         blocked_assets_reuse: bool,
     ) -> io::Result<()> {
+        let digest_delta = self.asset_digest_delta();
         if self.asset_interning_capable {
             let checkpoint = self.asset_dictionary.len();
             let shared = if self.batch_shared_fields_capable {
@@ -1052,6 +1145,18 @@ impl WorkerClient {
             let mut interner =
                 AssetInterner::new(&mut self.asset_dictionary, &mut self.asset_dictionary_index);
             let blocked = interner.intern_list(blocked_assets);
+            let asset_digests = if digest_delta.is_empty() {
+                None
+            } else {
+                Some(
+                    digest_delta
+                        .iter()
+                        .map(|(asset, digest)| {
+                            (interner.intern(asset).to_string(), digest.clone())
+                        })
+                        .collect::<BTreeMap<_, _>>(),
+                )
+            };
             let result = if let Some(shared) = shared {
                 let wires = interned_batch_shared_request_wires(requests, &mut interner);
                 let wire = InternedBatchWire {
@@ -1062,6 +1167,7 @@ impl WorkerClient {
                     blocked_assets: blocked,
                     blocked_assets_reuse,
                     shared: Some(shared),
+                    asset_digests,
                     requests: &wires,
                 };
                 self.send_serialized(&wire)
@@ -1075,6 +1181,7 @@ impl WorkerClient {
                     blocked_assets: blocked,
                     blocked_assets_reuse,
                     shared: None,
+                    asset_digests,
                     requests: &wires,
                 };
                 self.send_serialized(&wire)
@@ -1085,33 +1192,47 @@ impl WorkerClient {
                     &mut self.asset_dictionary_index,
                     checkpoint,
                 );
+            } else {
+                self.apply_asset_digest_delta(&digest_delta);
             }
             return result;
         }
-        if self.batch_shared_fields_capable
+        let asset_digests = if digest_delta.is_empty() {
+            None
+        } else {
+            Some(digest_delta.iter().cloned().collect::<BTreeMap<_, _>>())
+        };
+        let result = if self.batch_shared_fields_capable
             && let Some(shared) = batch_shared_fields(requests)
         {
             let wires = batch_shared_request_wires(requests);
-            return self.send_serialized(&BatchWire {
+            self.send_serialized(&BatchWire {
                 v: 1,
                 message_type: "build_batch",
                 id,
                 blocked_assets,
                 blocked_assets_reuse,
                 shared: Some(shared),
+                asset_digests,
                 requests: &wires,
-            });
+            })
+        } else {
+            let wires = batch_request_wires(requests);
+            self.send_serialized(&BatchWire {
+                v: 1,
+                message_type: "build_batch",
+                id,
+                blocked_assets,
+                blocked_assets_reuse,
+                shared: None,
+                asset_digests,
+                requests: &wires,
+            })
+        };
+        if result.is_ok() {
+            self.apply_asset_digest_delta(&digest_delta);
         }
-        let wires = batch_request_wires(requests);
-        self.send_serialized(&BatchWire {
-            v: 1,
-            message_type: "build_batch",
-            id,
-            blocked_assets,
-            blocked_assets_reuse,
-            shared: None,
-            requests: &wires,
-        })
+        result
     }
 
     pub(super) fn send_binary(&mut self, metadata: &Value, bytes: &[u8]) -> io::Result<()> {
