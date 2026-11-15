@@ -1,5 +1,22 @@
 # Changelog
 
+## [v0.19.4](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.3...v0.19.4) - 2026-11-15
+
+### Bug Fixes
+- fix(ci): key the rust-toolchain lock entry by its pinned SHA by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/198
+### Performance
+- Verify blocked-assets reuse without rebuilding the candidate list by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/192
+- Serialize build messages with typed wire structs by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/193
+- Lift uniform batch fields into a batch-level shared object by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/194
+- perf(ipc): intern asset ids in batch and resolver-reset messages by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/196
+### Dependency Updates
+- chore(deps): update rust crate libc to v0.2.191 by @renovate[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/177
+- chore(deps): update rust crate serde_json to v1.0.154 by @renovate[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/180
+- fix(deps): update opentelemetry to 0.33 by @renovate[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/183
+- Update Rust crate notify to v8.2.2 by @renovate[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/178
+### Other Changes
+- chore: categorize generated release notes and label pull requests by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/197
+
 ## [v0.19.3](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.2...v0.19.3) - 2026-11-14
 
 - Reuse blocked assets across adaptive worker leases by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/189

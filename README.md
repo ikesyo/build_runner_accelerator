@@ -29,19 +29,19 @@ see [benchmarks](https://github.com/ikesyo/build_runner_accelerator/blob/main/do
 
 ## Installation
 
-The current package version is `0.19.3`.
+The current package version is `0.19.4`.
 
 Add the package to your application:
 
 ```bash
-dart pub add dev:build_runner_accelerator:^0.19.3
+dart pub add dev:build_runner_accelerator:^0.19.4
 ```
 
 Or add it to `pubspec.yaml`:
 
 ```yaml
 dev_dependencies:
-  build_runner_accelerator: ^0.19.3
+  build_runner_accelerator: ^0.19.4
 ```
 
 Then use the project-local command:
