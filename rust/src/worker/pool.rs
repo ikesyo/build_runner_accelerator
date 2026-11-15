@@ -627,6 +627,7 @@ impl WorkerPool {
             phase_count,
             restrictions: workspace.input_restrictions(),
             retained_output_guard: self.retained_output_guard,
+            asset_digests: self.asset_digests.clone(),
             visibility,
         };
         let (result, outcomes) = thread::scope(|scope| {

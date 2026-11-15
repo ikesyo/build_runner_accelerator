@@ -146,6 +146,7 @@ pub(super) struct WorkspaceWorkerFactory<'a> {
     pub(super) phase_count: usize,
     pub(super) restrictions: BTreeMap<String, Vec<String>>,
     pub(super) retained_output_guard: bool,
+    pub(super) asset_digests: Option<Arc<BTreeMap<String, String>>>,
     pub(super) visibility: &'a AssetVisibility,
 }
 
@@ -190,12 +191,14 @@ pub(super) fn run_worker(
                     })
                     .as_ref()
                     .map_err(|error| io::Error::new(error.kind(), error.to_string()))?;
-                outcome.worker = Some(WorkerClient::start(
+                let mut worker = WorkerClient::start(
                     &factory.workspace.root,
                     factory.dart_binary,
                     factory.worker_executable,
                     artifact,
-                )?);
+                )?;
+                worker.stage_asset_digests(factory.asset_digests.clone());
+                outcome.worker = Some(worker);
                 outcome.starts += 1;
             }
             let worker = outcome.worker.as_mut().expect("started worker");
