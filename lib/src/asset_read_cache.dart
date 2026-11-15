@@ -4,7 +4,9 @@ import 'dart:typed_data';
 import 'package:build/build.dart';
 import 'package:crypto/crypto.dart';
 
-/// Owned, immutable bytes and their lazily computed content-only SHA-256.
+import 'blake3.dart';
+
+/// Owned, immutable bytes and their lazily computed content-only BLAKE3.
 /// Public builder reads receive copies; neither input buffers nor callers can
 /// mutate the bytes after the digest has been computed.
 final class AssetReadContent {
@@ -16,7 +18,7 @@ final class AssetReadContent {
 
   String? get cachedContentDigest => _digest;
 
-  String get contentDigest => _digest ??= sha256.convert(bytes).toString();
+  String get contentDigest => _digest ??= blake3Hex(bytes);
 
   /// Uncached build_runner-compatible MD5 of content followed by asset ID.
   Digest digestFor(AssetId id) {

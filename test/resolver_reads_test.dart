@@ -5,7 +5,7 @@ import 'dart:isolate';
 
 import 'package:build/build.dart';
 import 'package:build_runner_accelerator/src/asset_read_cache.dart';
-import 'package:crypto/crypto.dart';
+import 'package:build_runner_accelerator/src/blake3.dart';
 import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:build_runner_accelerator/src/indexed_blob_store.dart';
 import 'package:build_runner_accelerator/src/resolver_metrics.dart';
@@ -174,7 +174,7 @@ void main() {
     final bytes = utf8.encode(
       "export 'base.dart' if (dart.library.io) 'io.dart';",
     );
-    store.put(sha256.convert(bytes).toString(), utf8.encode('[42]'));
+    store.put(blake3Hex(bytes), utf8.encode('[42]'));
     final io = RemoteAssetReaderWriter(
       readCache: AssetReadCache({
         main: bytes,

@@ -4,11 +4,11 @@ import 'dart:io';
 
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:build/build.dart';
-import 'package:crypto/crypto.dart' as crypto;
 import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as p;
 
 import 'asset_read_cache.dart';
+import 'blake3.dart';
 import 'cache_directory.dart';
 import 'indexed_blob_store.dart';
 import 'remote_build_step.dart';
@@ -46,7 +46,7 @@ class ResolverDependencyCache {
       p.join(
         acceleratorCacheDirectory(),
         'dep_parse',
-        'conditional-v1-${Platform.version.split(' ').first}',
+        'conditional-v2-${Platform.version.split(' ').first}',
         'store.bin',
       ),
     );
@@ -160,8 +160,7 @@ class _CachedResolverDependencies {
   final List<AssetId> dependencies;
 }
 
-String _contentDigest(List<int> bytes) =>
-    crypto.sha256.convert(bytes).toString();
+String _contentDigest(List<int> bytes) => blake3Hex(bytes);
 
 /// Adds conditional import/export candidates to the resolver dependency set.
 ///
