@@ -686,7 +686,34 @@ fn safe_relative_path(root: &Path, relative: &str) -> Option<PathBuf> {
     Some(root.join(relative))
 }
 
+/// Parses a pubspec as YAML and returns its first document (`BadValue`
+/// for an empty file). Pubspec reads go through a real parser so scalars
+/// follow the same YAML semantics as the Dart side (comments, anchors,
+/// block scalars, document-level indentation), not a line scan.
+pub(crate) fn pubspec_yaml(path: &Path) -> io::Result<yaml_rust2::Yaml> {
+    let contents = fs::read_to_string(path)?;
+    let docs = yaml_rust2::YamlLoader::load_from_str(&contents).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("could not parse {} as YAML: {error}", path.display()),
+        )
+    })?;
+    Ok(docs
+        .into_iter()
+        .next()
+        .unwrap_or(yaml_rust2::Yaml::BadValue))
+}
+
 pub(crate) fn package_name(path: &Path) -> io::Result<String> {
+    if let Ok(root) = pubspec_yaml(path)
+        && let Some(name) = root["name"].as_str()
+        && !name.is_empty()
+    {
+        return Ok(name.to_owned());
+    }
+    // Fall back to the line scan for a pubspec the YAML parser rejects or
+    // whose name is not a plain string, preserving what the scan could
+    // read before.
     let contents = fs::read_to_string(path)?;
     for line in contents.lines() {
         let trimmed = line.trim();

@@ -117,81 +117,24 @@ pub(crate) fn discover(current: &Path) -> io::Result<WorkspaceDiscovery> {
 
 /// Whether a pubspec opts into its workspace, as the YAML-level check in
 /// stock's `BuildPaths.load`: `resolution: workspace`, or a `workspace:`
-/// section. Only top-level keys count, and a bare `workspace:` line is a
-/// section only when an indented block follows (a lone key parses as null).
+/// section with a non-null value. The pubspec is parsed as YAML (see
+/// `workspace::pubspec_yaml`), so every shape pub accepts is honored.
 fn pubspec_opts_into_workspace(path: &Path) -> io::Result<bool> {
-    let contents = fs::read_to_string(path)?;
-    let lines: Vec<&str> = contents.lines().collect();
-    for (index, line) in lines.iter().enumerate() {
-        if line.starts_with(|c: char| c.is_whitespace()) {
-            continue;
-        }
-        let Some((key, value)) = line.split_once(':') else {
-            continue;
-        };
-        match key.trim().trim_matches(['\'', '"']) {
-            "resolution" => {
-                // The value may be inline (`resolution: workspace`), a
-                // block scalar (`resolution: >-` plus an indented line), or
-                // a plain scalar on the following indented line.
-                let value = value.split('#').next().unwrap_or("").trim();
-                // An anchor (`resolution: &mode workspace`) decorates the
-                // scalar without changing it.
-                let value = if value.starts_with('&') {
-                    value.split_whitespace().nth(1).unwrap_or("")
-                } else {
-                    value
-                };
-                let value = value.trim_matches(['\'', '"']);
-                if value == "workspace" {
-                    return Ok(true);
-                }
-                if value.is_empty() || matches!(value, ">" | ">-" | ">+" | "|" | "|-" | "|+") {
-                    let mut parts: Vec<&str> = Vec::new();
-                    for next in &lines[index + 1..] {
-                        let trimmed = next.trim();
-                        if trimmed.is_empty() || trimmed.starts_with('#') {
-                            continue;
-                        }
-                        if !next.starts_with(|c: char| c.is_whitespace()) {
-                            break;
-                        }
-                        parts.push(trimmed);
-                    }
-                    if parts.join(" ") == "workspace" {
-                        return Ok(true);
-                    }
-                }
-            }
-            "workspace" => {
-                // A trailing comment is not a value, and an explicit null
-                // (`workspace: null`, `workspace: ~`) parses as absent.
-                let value = value.split('#').next().unwrap_or("").trim();
-                if !value.is_empty() && !matches!(value, "null" | "Null" | "NULL" | "~") {
-                    return Ok(true);
-                }
-                // Otherwise the section exists only when a block follows
-                // before the next top-level key: indented content, or a
-                // block sequence, which YAML allows at the key's own
-                // indentation (`workspace:` then `- a` at column zero).
-                for next in &lines[index + 1..] {
-                    let trimmed = next.trim();
-                    if trimmed.is_empty() || trimmed.starts_with('#') {
-                        continue;
-                    }
-                    if next.starts_with(|c: char| c.is_whitespace())
-                        || trimmed == "-"
-                        || trimmed.starts_with("- ")
-                    {
-                        return Ok(true);
-                    }
-                    break;
-                }
-            }
-            _ => {}
-        }
+    let root = crate::workspace::pubspec_yaml(path)?;
+    let Some(map) = root.as_hash() else {
+        return Ok(false);
+    };
+    if map
+        .get(&yaml_rust2::Yaml::String("resolution".to_owned()))
+        .and_then(yaml_rust2::Yaml::as_str)
+        == Some("workspace")
+    {
+        return Ok(true);
     }
-    Ok(false)
+    Ok(!matches!(
+        map.get(&yaml_rust2::Yaml::String("workspace".to_owned())),
+        None | Some(yaml_rust2::Yaml::Null | yaml_rust2::Yaml::BadValue)
+    ))
 }
 
 fn validate(mut result: WorkspaceDiscovery, current: &Path) -> io::Result<WorkspaceDiscovery> {
@@ -386,13 +329,24 @@ mod tests {
             ("name: x\nresolution: null\n", false),
             ("name: x\nresolution:\n  workspace\n", true),
             ("name: x\nresolution: >-\n  workspace\n", true),
-            ("name: x\nresolution: |\n  workspace\n", true),
+            // Block scalars keep the trailing newline unless chomped, so
+            // unchomped forms are not the exact string `workspace`.
+            ("name: x\nresolution: |\n  workspace\n", false),
+            ("name: x\nresolution: |-\n  workspace\n", true),
+            ("name: x\nresolution: >\n  workspace\n", false),
             ("name: x\nresolution: workspace # comment\n", true),
             ("name: x\nresolution: 'workspace'\n", true),
             ("name: x\nresolution: workspacefoo\n", false),
             ("name: x\nresolution:\n  other\n", false),
             ("name: x\nresolution: &mode workspace\n", true),
             ("name: x\nresolution:\n  # comment\n  workspace\n", true),
+            ("  name: x\n  resolution: workspace\n", true),
+            ("{\"resolution\": \"workspace\"}\n", true),
+            (
+                "name: x\ndescription: &mode workspace\nresolution: *mode\n",
+                true,
+            ),
+            ("name: x\nworkspace: false\n", true),
             ("name: x\n", false),
         ];
         for (index, (text, expected)) in cases.iter().enumerate() {
@@ -416,6 +370,7 @@ mod tests {
             ("name: ws_a # package name\n", "ws_a"),
             ("name: \"ws_a\"\n", "ws_a"),
             ("name: 'ws_a' # comment\n", "ws_a"),
+            ("dependencies:\n  name: other\nname: ws_a\n", "ws_a"),
         ];
         for (index, (text, expected)) in cases.iter().enumerate() {
             let dir = std::env::temp_dir().join(format!(
