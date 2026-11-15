@@ -104,7 +104,15 @@ If another extension version is already installed, run
 `gh extension remove gh-actions-lock` and install it again with the command above
 to select the version used by CI. Commit the generated lockfile with the workflow and action changes;
 never edit it by hand. `gh actions-lock --verify-local` checks coverage offline,
-while CI uses `--verify` to check upstream provenance as well. Verification runs
+while CI uses `--verify` to check upstream provenance as well.
+
+One exception to regenerating blindly: the workflows pin
+`dtolnay/rust-toolchain` by commit SHA, but the generator canonicalizes that
+entry's key to `@v1` and rewrites `uses:` lines to match when applying.
+GitHub validates the lockfile against the literal `uses:` references when a
+workflow starts, so a `@v1` key makes every workflow fail with a startup
+failure. After regenerating, restore that entry's key to the SHA spelling
+used in the workflows; the recorded commit and identities do not change. Verification runs
 once in the current-SDK package job without adding runners to the CI budget.
 Dependabot checks workflow files and composite actions under `.github/actions/*`
 weekly and maintains existing lockfile entries with version updates. If an
