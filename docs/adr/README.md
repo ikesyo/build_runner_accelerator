@@ -65,6 +65,7 @@ Benchmarks and mechanical refactors do not need one.
 | [0051](0051-blocked-assets-lease-reuse.md) | Per-worker reuse of batch visibility hints across adaptive leases |
 | [0052](0052-batch-shared-fields.md) | Batch-level shared request fields for uniform leases |
 | [0053](0053-asset-id-interning.md) | Session asset-id interning for batch and resolver-reset messages |
+| [0054](0054-frontend-asset-digests.md) | Frontend asset digests for worker cache keying |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
 artifacts and launcher behavior are in
