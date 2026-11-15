@@ -4,11 +4,11 @@ import 'dart:io';
 
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:build/build.dart';
-import 'package:crypto/crypto.dart' as crypto;
 import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as p;
 
 import 'asset_read_cache.dart';
+import 'blake3.dart';
 import 'cache_directory.dart';
 import 'indexed_blob_store.dart';
 import 'remote_build_step.dart';
@@ -46,7 +46,7 @@ class ResolverDependencyCache {
       p.join(
         acceleratorCacheDirectory(),
         'dep_parse',
-        'conditional-v1-${Platform.version.split(' ').first}',
+        'conditional-v2-${Platform.version.split(' ').first}',
         'store.bin',
       ),
     );
@@ -59,7 +59,10 @@ class ResolverDependencyCache {
     }
   }
 
-  List<String> _conditionalUris(String digest, List<int> bytes) {
+  /// The stored conditional URI list for a content [digest], or null when
+  /// the persistent store has no valid entry for it. Does not count as a
+  /// persistent hit or miss; callers that resolve through it do.
+  List<String>? _storedConditionalUris(String digest) {
     final metrics = resolverActionMetrics;
     final lookupTimer = metrics.enabled ? (Stopwatch()..start()) : null;
     final cached = _directiveStore?.get(digest);
@@ -76,9 +79,15 @@ class ResolverDependencyCache {
     if (lookupTimer != null) {
       metrics.resolverReadsCacheUs += lookupTimer.elapsedMicroseconds;
     }
-    if (uris != null) {
+    return uris;
+  }
+
+  List<String> _conditionalUris(String digest, List<int> bytes) {
+    final metrics = resolverActionMetrics;
+    final stored = _storedConditionalUris(digest);
+    if (stored != null) {
       metrics.resolverReadsPersistentHits++;
-      return uris;
+      return stored;
     }
     metrics.resolverReadsPersistentMisses++;
     final decodeTimer = metrics.enabled ? (Stopwatch()..start()) : null;
@@ -89,7 +98,7 @@ class ResolverDependencyCache {
     if (decodeTimer != null) {
       metrics.resolverReadsDecodeUs += decodeTimer.elapsedMicroseconds;
     }
-    uris = <String>[];
+    final uris = <String>[];
     if (candidate) {
       final parseTimer = metrics.enabled ? (Stopwatch()..start()) : null;
       for (final directive in parseResolverDirectives(content)) {
@@ -160,8 +169,7 @@ class _CachedResolverDependencies {
   final List<AssetId> dependencies;
 }
 
-String _contentDigest(List<int> bytes) =>
-    crypto.sha256.convert(bytes).toString();
+String _contentDigest(List<int> bytes) => blake3Hex(bytes);
 
 /// Adds conditional import/export candidates to the resolver dependency set.
 ///
@@ -177,6 +185,7 @@ Future<void> collectResolverReads(
   PackageConfig packageConfig,
   ResolverDependencyCache cache, {
   Set<AssetId> excludeReads = const <AssetId>{},
+  String? Function(AssetId asset)? frontendDigestFor,
 }) async {
   cache._bindPackageConfig(packageConfig);
   final metrics = resolverActionMetrics;
@@ -188,9 +197,58 @@ Future<void> collectResolverReads(
   );
   final visited = <AssetId>{};
 
+  List<AssetId> resolveUris(List<String> uris, AssetId from) {
+    final resolveTimer = metrics.enabled ? (Stopwatch()..start()) : null;
+    final discovered = <AssetId>{};
+    for (final rawUri in uris) {
+      final dependency = _resolveDirectiveUri(rawUri, from, packageConfig);
+      if (dependency != null) discovered.add(dependency);
+    }
+    if (resolveTimer != null) {
+      metrics.resolverReadsResolveUs += resolveTimer.elapsedMicroseconds;
+    }
+    return discovered.toList(growable: false);
+  }
+
+  void expand(List<AssetId> dependencies) {
+    for (final dependency in dependencies) {
+      io.observedReads.add(dependency);
+      if (dependency.extension == '.dart' && !visited.contains(dependency)) {
+        pending.add(dependency);
+      }
+    }
+  }
+
   while (pending.isNotEmpty) {
     final asset = pending.removeFirst();
     if (!visited.add(asset)) continue;
+
+    // With a frontend-supplied digest (`asset-digests-v1`, ADR 0054) the
+    // caches can answer before the asset is read: the store is keyed by
+    // content digest, so a hit describes exactly the snapshot content the
+    // frontend hashed. The asset is already in this action's observed
+    // reads or was recorded when it was discovered, so skipping the read
+    // records the same dependency set. On any miss the read path below
+    // runs and stores under the worker-computed digest.
+    final frontendDigest = frontendDigestFor?.call(asset);
+    if (frontendDigest != null) {
+      var dependencies = cache._dependenciesForDigest(asset, frontendDigest);
+      if (dependencies != null) {
+        metrics.resolverReadsMemoryHits++;
+        metrics.resolverReadsDigestReuses++;
+        expand(dependencies);
+        continue;
+      }
+      final uris = cache._storedConditionalUris(frontendDigest);
+      if (uris != null) {
+        metrics.resolverReadsPersistentHits++;
+        metrics.resolverReadsDigestReuses++;
+        dependencies = resolveUris(uris, asset);
+        cache._rememberDigest(asset, frontendDigest, dependencies);
+        expand(dependencies);
+        continue;
+      }
+    }
 
     AssetReadContent content;
     final readTimer = metrics.enabled ? (Stopwatch()..start()) : null;
@@ -223,27 +281,13 @@ Future<void> collectResolverReads(
     var dependencies = cache._dependenciesForDigest(asset, digest);
     if (dependencies == null) {
       final uris = cache._conditionalUris(digest, bytes);
-      final resolveTimer = metrics.enabled ? (Stopwatch()..start()) : null;
-      final discovered = <AssetId>{};
-      for (final rawUri in uris) {
-        final dependency = _resolveDirectiveUri(rawUri, asset, packageConfig);
-        if (dependency != null) discovered.add(dependency);
-      }
-      dependencies = discovered.toList(growable: false);
+      dependencies = resolveUris(uris, asset);
       cache._rememberDigest(asset, digest, dependencies);
-      if (resolveTimer != null) {
-        metrics.resolverReadsResolveUs += resolveTimer.elapsedMicroseconds;
-      }
     } else {
       metrics.resolverReadsMemoryHits++;
     }
 
-    for (final dependency in dependencies) {
-      io.observedReads.add(dependency);
-      if (dependency.extension == '.dart' && !visited.contains(dependency)) {
-        pending.add(dependency);
-      }
-    }
+    expand(dependencies);
   }
 }
 

@@ -5,7 +5,7 @@ import 'dart:isolate';
 
 import 'package:build/build.dart';
 import 'package:build_runner_accelerator/src/asset_read_cache.dart';
-import 'package:crypto/crypto.dart';
+import 'package:build_runner_accelerator/src/blake3.dart';
 import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:build_runner_accelerator/src/indexed_blob_store.dart';
 import 'package:build_runner_accelerator/src/resolver_metrics.dart';
@@ -73,6 +73,70 @@ void main() {
       resolverActionMetrics.beginAction();
       expect(await collect(), contains(old));
       expect(resolverActionMetrics.resolverReadsDigestComputations, 2);
+    },
+  );
+
+  test(
+    'frontend digests serve cached conditional reads without reading',
+    () async {
+      final main = AssetId('app', 'lib/main.dart');
+      final old = AssetId('app', 'lib/old.dart');
+      final mainBytes = utf8.encode(
+        "export 'old.dart' if (dart.library.io) 'dart:io';",
+      );
+      final reads = AssetReadCache({main: mainBytes, old: []});
+      final cache = _newTestCache();
+      final config = PackageConfig([]);
+      final digests = <AssetId, String>{
+        main: blake3Hex(mainBytes),
+        old: blake3Hex(const <int>[]),
+      };
+
+      Future<Set<AssetId>> collect({bool withDigests = false}) async {
+        final io = RemoteAssetReaderWriter(readCache: reads, readableCache: {});
+        io.beginAction(
+          rpc: _rpc(),
+          package: 'app',
+          primaryInput: null,
+          blockedAssets: {},
+        );
+        try {
+          io.observedReads.add(main);
+          await collectResolverReads(
+            io,
+            config,
+            cache,
+            frontendDigestFor: withDigests ? (asset) => digests[asset] : null,
+          );
+          return Set.of(io.observedReads);
+        } finally {
+          io.endAction();
+        }
+      }
+
+      // Populate the persistent store through the ordinary read path.
+      expect(await collect(), contains(old));
+      cache.clear();
+
+      // With the bytes gone, only the frontend-digest path can still expand
+      // the conditional export: both assets resolve from the persistent
+      // store under their frontend digests, with no digest computations.
+      reads.clear();
+      resolverActionMetrics.beginAction();
+      expect(await collect(withDigests: true), containsAll([main, old]));
+      expect(resolverActionMetrics.resolverReadsDigestComputations, 0);
+      expect(resolverActionMetrics.resolverReadsDigestReuses, 2);
+      expect(resolverActionMetrics.resolverReadsPersistentHits, 2);
+
+      // A frontend digest with no store entry falls back to reading the
+      // asset and computing its digest as before.
+      reads[main] = mainBytes;
+      reads[old] = [];
+      cache.clear();
+      digests[main] = blake3Hex(utf8.encode('unrelated'));
+      resolverActionMetrics.beginAction();
+      expect(await collect(withDigests: true), contains(old));
+      expect(resolverActionMetrics.resolverReadsDigestComputations, 1);
     },
   );
 
@@ -174,7 +238,7 @@ void main() {
     final bytes = utf8.encode(
       "export 'base.dart' if (dart.library.io) 'io.dart';",
     );
-    store.put(sha256.convert(bytes).toString(), utf8.encode('[42]'));
+    store.put(blake3Hex(bytes), utf8.encode('[42]'));
     final io = RemoteAssetReaderWriter(
       readCache: AssetReadCache({
         main: bytes,

@@ -34,6 +34,7 @@ import 'package:build_runner/src/logging/timed_activities.dart';
 import 'package:pool/pool.dart';
 
 import 'asset_deps_cache.dart';
+import 'blake3.dart';
 import 'current_build_runtime.dart';
 import 'resolver_metrics.dart';
 
@@ -209,6 +210,25 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   @override
   Future<PhasedValue<AssetDeps>> load(AssetId id) async {
     resolverActionMetrics.cycleGraphFileLoads++;
+    // With a frontend-supplied digest (`asset-digests-v1`, ADR 0054) the
+    // content-keyed deps cache can answer for the snapshot content
+    // without parsing or hashing it here. `readPhased` below still runs:
+    // it is also the Analyzer's content feed, so skipping it would leave
+    // the driver without the library's content after a resolver reset.
+    final filesystem = _filesystem;
+    final cache = _cache;
+    String? frontendDigest;
+    AssetDeps? digestHit;
+    if (filesystem is RemoteBuilderFilesystem && cache != null) {
+      frontendDigest = filesystem.frontendDigestFor(id);
+      if (frontendDigest != null) {
+        digestHit = cache.lookup(cache.keyForDigest(id, frontendDigest));
+        if (digestHit != null) {
+          resolverActionMetrics.depParseCacheHits++;
+          resolverActionMetrics.depDigestLoads++;
+        }
+      }
+    }
     final traceLoads =
         resolverActionMetrics.enabled && resolverActionMetrics.traceEnabled;
     final readCacheHits = traceLoads
@@ -239,6 +259,16 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
         'read_rpc_calls': resolverActionMetrics.ipcReadCalls - readRpcCalls,
       });
     }
+    if (digestHit != null && content.isComplete) {
+      // The cached deps describe exactly the content `readPhased` just
+      // fed to the Analyzer, and a source asset's deps never change
+      // during a build, so the value is fixed. Prefetching the revealed
+      // deps mirrors the slow path below.
+      if (filesystem is RemoteBuilderFilesystem) {
+        await filesystem.prefetchDepReads(digestHit.deps);
+      }
+      return PhasedValue.fixed(digestHit);
+    }
     final result = PhasedValue<AssetDeps>((b) {
       for (final expiring in content.values) {
         b.values.add(
@@ -249,12 +279,21 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
         );
       }
     });
+    // Warm the frontend-digest key so later workers and builds can take
+    // the fast path above: store only when the digest computed here over
+    // the content actually read equals the frontend's, keeping every
+    // stored entry bound to bytes a worker hashed itself.
+    if (frontendDigest != null && cache != null && result.isComplete) {
+      final contentDigest = blake3Hex(utf8.encode(content.values.last.value));
+      if (contentDigest == frontendDigest) {
+        cache.store(cache.keyForDigest(id, frontendDigest), result.lastValue);
+      }
+    }
     // Batch-resolve the deps this file just revealed so the walk's upcoming
     // readPhased calls hit the shared read/readable caches warmed by a single
     // `resolve_assets` round-trip per dep frontier instead of a
     // `can_read` + `read` pair per asset. Unavailable values hold no deps to
     // read yet, so only complete results are prefetched.
-    final filesystem = _filesystem;
     if (result.isComplete && filesystem is RemoteBuilderFilesystem) {
       await filesystem.prefetchDepReads(result.lastValue.deps);
     }

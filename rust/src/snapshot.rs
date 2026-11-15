@@ -12,6 +12,36 @@ pub struct AssetSnapshot {
 }
 pub type Snapshot = BTreeMap<String, AssetSnapshot>;
 
+/// The per-build digest map staged for workers under `asset-digests-v1`
+/// (ADR 0054): bare BLAKE3 hex for every existing snapshot asset that is
+/// not a declared build output. Glob keys and placeholder primaries are not
+/// readable assets and are excluded; declared outputs are excluded because
+/// their current content is overlay state, not snapshot state.
+pub fn asset_digests(
+    snapshot: &Snapshot,
+    declared_outputs: &BTreeSet<String>,
+) -> BTreeMap<String, String> {
+    snapshot
+        .iter()
+        .filter(|(asset, entry)| {
+            entry.exists
+                && !asset.starts_with("__glob__|")
+                && !declared_outputs.contains(*asset)
+                && !crate::placeholders::is_placeholder_asset(asset)
+        })
+        .map(|(asset, entry)| {
+            (
+                asset.clone(),
+                entry
+                    .digest
+                    .strip_prefix("b3-")
+                    .unwrap_or(&entry.digest)
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
 /// A stable internal snapshot key for a `findAssets` query.
 ///
 /// This is intentionally not an `AssetId`: build_runner represents globs as
@@ -56,4 +86,44 @@ pub fn scan_packages(workspace: &Workspace, packages: &BTreeSet<String>) -> io::
         }
     }
     Ok(snapshot)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn asset_digests_exclude_outputs_globs_placeholders_and_missing() {
+        let entry = |digest: &str| AssetSnapshot {
+            exists: true,
+            digest: digest.to_owned(),
+            size: 1,
+        };
+        let snapshot = Snapshot::from([
+            ("pkg|lib/a.dart".to_owned(), entry("b3-aaaa")),
+            ("pkg|lib/out.g.dart".to_owned(), entry("b3-bbbb")),
+            (
+                glob_asset_key(&crate::protocol::GlobRead {
+                    package: "pkg".to_owned(),
+                    pattern: "lib/**".to_owned(),
+                }),
+                entry("b3-cccc"),
+            ),
+            ("pkg|lib/$lib$".to_owned(), entry("b3-dddd")),
+            (
+                "pkg|lib/gone.dart".to_owned(),
+                AssetSnapshot {
+                    exists: false,
+                    digest: "b3-eeee".to_owned(),
+                    size: 0,
+                },
+            ),
+        ]);
+        let declared = BTreeSet::from(["pkg|lib/out.g.dart".to_owned()]);
+        let digests = asset_digests(&snapshot, &declared);
+        assert_eq!(
+            digests,
+            BTreeMap::from([("pkg|lib/a.dart".to_owned(), "aaaa".to_owned())])
+        );
+    }
 }

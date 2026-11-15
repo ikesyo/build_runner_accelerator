@@ -33,6 +33,10 @@ final class ResolverActionMetrics {
   int depParseCacheMisses = 0;
   int depParseCacheUs = 0;
 
+  /// Dep loads served by a frontend-supplied digest (`asset-digests-v1`)
+  /// without reading the asset's content.
+  int depDigestLoads = 0;
+
   /// `BuilderFilesystem.readPhased` inside dep loads.
   int depReadPhasedUs = 0;
 
@@ -137,6 +141,7 @@ final class ResolverActionMetrics {
     depParseCacheHits = 0;
     depParseCacheMisses = 0;
     depParseCacheUs = 0;
+    depDigestLoads = 0;
     depReadPhasedUs = 0;
     depVisibilityUs = 0;
     depContentCalls = 0;
@@ -209,6 +214,7 @@ final class ResolverActionMetrics {
     'dep_parse_cache_hits': depParseCacheHits,
     'dep_parse_cache_misses': depParseCacheMisses,
     'dep_parse_cache_us': depParseCacheUs,
+    'dep_digest_loads': depDigestLoads,
     'dep_read_phased_us': depReadPhasedUs,
     'dep_visibility_us': depVisibilityUs,
     'dep_content_calls': depContentCalls,

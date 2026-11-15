@@ -4,9 +4,9 @@ import 'dart:io';
 import 'package:build/build.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/library_cycle_graph/asset_deps.dart';
-import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import 'blake3.dart';
 import 'cache_directory.dart';
 import 'indexed_blob_store.dart';
 
@@ -17,11 +17,13 @@ import 'indexed_blob_store.dart';
 /// That parse is the dominant per-worker startup cost and is identical across
 /// workers and builds: the result depends only on the file content and the
 /// importing asset's id (needed for relative URI resolution). This cache keys
-/// `AssetDeps` by `sha256(assetId + content)` so later workers and later
-/// builds reuse it instead of re-parsing.
+/// `AssetDeps` by `blake3(assetId + content)` so later workers and later
+/// builds reuse it instead of re-parsing. The key digest is BLAKE3, the
+/// same function the frontend uses, so a frontend-supplied content digest
+/// can address an entry directly (ADR 0054).
 ///
 /// Entries live in bounded pack generations per SDK under the shared
-/// accelerator cache directory (`v3-<sdk>/store.bin.generations`), read through
+/// accelerator cache directory (`v4-<sdk>/store.bin.generations`), read through
 /// an in-memory offset index — one metadata scan per worker instead of ~900 individual file
 /// opens during the dep walk. The store is namespaced by the running SDK
 /// version because directive parsing is grammar-dependent. Because the key
@@ -33,7 +35,7 @@ import 'indexed_blob_store.dart';
 final class AssetDepsCache {
   AssetDepsCache._(this._packed);
 
-  static const _packedVersion = 'v3';
+  static const _packedVersion = 'v4';
 
   /// The shared process-wide cache, or `null` when disabled.
   static AssetDepsCache? shared() {
@@ -58,7 +60,7 @@ final class AssetDepsCache {
   /// directive URIs resolve against [id], so identical content in different
   /// assets must not share an entry.
   String keyFor(AssetId id, String content) =>
-      sha256.convert(utf8.encode('$id\n$content')).toString();
+      blake3Hex(utf8.encode('$id\n$content'));
 
   /// Cache key reusing an already-computed content digest — the analyzer's
   /// own md5 `contentHash` — so the lookup path skips hashing ~8KB of source

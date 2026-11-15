@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:build/build.dart';
 import 'package:build_runner_accelerator/src/asset_read_cache.dart';
+import 'package:build_runner_accelerator/src/blake3.dart';
 import 'package:crypto/crypto.dart';
 import 'package:test/test.dart';
 
@@ -28,7 +29,7 @@ void main() {
     final cache = AssetReadCache({id: input});
     final content = cache.contentFor(id)!;
     expect(content.cachedContentDigest, isNull);
-    final expected = sha256.convert(input).toString();
+    final expected = blake3Hex(input);
     input[0] = 0;
     expect(content.contentDigest, expected);
     expect(() => cache[id]![0] = 0, throwsUnsupportedError);

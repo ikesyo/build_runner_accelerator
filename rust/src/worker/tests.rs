@@ -3,9 +3,10 @@ use super::asset_rpc::{
 };
 use super::client::{
     AssetInterner, BatchWire, InternedBatchWire, batch_request_wires, batch_request_wires_with,
-    batch_shared_fields, batch_shared_request_wires, build_wire, has_capability, intern_asset_list,
-    intern_overlay_blob, interned_batch_request_wires_with, interned_batch_shared_request_wires,
-    is_worker_script, require_overlay_blob_capability, rollback_asset_dictionary,
+    batch_shared_fields, batch_shared_request_wires, build_wire, compute_asset_digest_delta,
+    has_capability, intern_asset_list, intern_overlay_blob, interned_batch_request_wires_with,
+    interned_batch_shared_request_wires, is_worker_script, require_overlay_blob_capability,
+    rollback_asset_dictionary,
 };
 use super::pool::{
     homogeneous_resolver_usage_key, remember_resolver_usage, target_worker_count,
@@ -295,6 +296,7 @@ fn typed_build_wires_match_the_json_message_shape() {
         blocked_assets: &blocked,
         blocked_assets_reuse: false,
         shared: None,
+        asset_digests: None,
         requests: &wires,
     };
     let value = json!({
@@ -458,6 +460,7 @@ fn shared_batch_merges_back_to_the_full_batch_requests() {
         blocked_assets: &blocked,
         blocked_assets_reuse: false,
         shared: Some(shared),
+        asset_digests: None,
         requests: &wires,
     })
     .unwrap();
@@ -484,6 +487,7 @@ fn shared_batch_merges_back_to_the_full_batch_requests() {
         blocked_assets: &blocked,
         blocked_assets_reuse: false,
         shared: None,
+        asset_digests: None,
         requests: &full_wires,
     })
     .unwrap();
@@ -662,6 +666,7 @@ fn interned_batch_wire_replaces_ids_with_dictionary_indexes() {
         blocked_assets: blocked,
         blocked_assets_reuse: false,
         shared: None,
+        asset_digests: None,
         requests: &wires,
     };
     let value = serde_json::to_value(&wire).unwrap();
@@ -690,6 +695,76 @@ fn interned_batch_wire_replaces_ids_with_dictionary_indexes() {
 }
 
 #[test]
+fn asset_digest_delta_reports_updates_and_removals() {
+    let sent: std::collections::HashMap<String, String> = [
+        ("pkg|lib/same.dart".to_owned(), "aaa".to_owned()),
+        ("pkg|lib/changed.dart".to_owned(), "bbb".to_owned()),
+        ("pkg|lib/removed.dart".to_owned(), "ccc".to_owned()),
+    ]
+    .into_iter()
+    .collect();
+    let staged: std::collections::BTreeMap<String, String> = [
+        ("pkg|lib/same.dart".to_owned(), "aaa".to_owned()),
+        ("pkg|lib/changed.dart".to_owned(), "ddd".to_owned()),
+        ("pkg|lib/added.dart".to_owned(), "eee".to_owned()),
+    ]
+    .into_iter()
+    .collect();
+
+    // Capability off or nothing staged: no delta is ever attached.
+    assert!(compute_asset_digest_delta(false, &sent, Some(&staged)).is_empty());
+    assert!(compute_asset_digest_delta(true, &sent, None).is_empty());
+    // Already current: no delta.
+    let current: std::collections::BTreeMap<String, String> = sent
+        .iter()
+        .map(|(asset, digest)| (asset.clone(), digest.clone()))
+        .collect();
+    assert!(compute_asset_digest_delta(true, &sent, Some(&current)).is_empty());
+
+    let mut delta = compute_asset_digest_delta(true, &sent, Some(&staged));
+    delta.sort();
+    assert_eq!(
+        delta,
+        vec![
+            ("pkg|lib/added.dart".to_owned(), Some("eee".to_owned())),
+            ("pkg|lib/changed.dart".to_owned(), Some("ddd".to_owned())),
+            ("pkg|lib/removed.dart".to_owned(), None),
+        ]
+    );
+}
+
+#[test]
+fn interned_batch_wire_carries_asset_digests_by_index() {
+    let requests = vec![build_request(2, false)];
+    let mut dictionary = Vec::new();
+    let mut index = std::collections::HashMap::new();
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    let wires = interned_batch_request_wires_with(&requests, &mut interner, || None);
+    let digests: std::collections::BTreeMap<String, Option<String>> = [
+        (
+            interner.intern("example|lib/input.txt").to_string(),
+            Some("2cf24dba".to_owned()),
+        ),
+        (interner.intern("example|lib/gone.txt").to_string(), None),
+    ]
+    .into_iter()
+    .collect();
+    let wire = InternedBatchWire {
+        v: 1,
+        message_type: "build_batch",
+        id: 11,
+        asset_dict_add: interner.additions,
+        blocked_assets: Vec::new(),
+        blocked_assets_reuse: false,
+        shared: None,
+        asset_digests: Some(digests),
+        requests: &wires,
+    };
+    let value = serde_json::to_value(&wire).unwrap();
+    assert_eq!(value["asset_digests"], json!({"0": "2cf24dba", "1": null}));
+}
+
+#[test]
 fn interned_shared_batch_wire_keeps_indexes_outside_shared_fields() {
     let requests = vec![build_request(2, false), build_request(2, false)];
     let shared = batch_shared_fields(&requests).expect("uniform batch");
@@ -705,6 +780,7 @@ fn interned_shared_batch_wire_keeps_indexes_outside_shared_fields() {
         blocked_assets: Vec::new(),
         blocked_assets_reuse: true,
         shared: Some(shared),
+        asset_digests: None,
         requests: &wires,
     };
     let value = serde_json::to_value(&wire).unwrap();

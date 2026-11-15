@@ -202,6 +202,7 @@ class WorkerBuildBatchMessage extends WorkerMessage {
     required int id,
     required this.blockedAssets,
     required this.requests,
+    this.assetDigestUpdates = const <String, String?>{},
   }) : super(id: id);
 
   factory WorkerBuildBatchMessage.fromJson(
@@ -260,11 +261,20 @@ class WorkerBuildBatchMessage extends WorkerMessage {
       id: _requiredInt(message, 'id', 'build_batch'),
       blockedAssets: blockedAssets,
       requests: requests,
+      assetDigestUpdates: _assetDigestUpdates(
+        message['asset_digests'],
+        dictionary,
+      ),
     );
   }
 
   final List<String> blockedAssets;
   final List<WorkerBuildRequest> requests;
+
+  /// The `asset-digests-v1` delta carried by this batch, keyed by asset
+  /// id: a digest string updates the worker's digest map, a null removes
+  /// the id. Empty when the message carries no delta. See ADR 0054.
+  final Map<String, String?> assetDigestUpdates;
 }
 
 class UnsupportedWorkerMessage extends WorkerMessage {
@@ -455,6 +465,43 @@ String _resolveAssetRef(Object? value, List<String> dictionary, String label) {
     throw FormatException('$label requires an in-range dictionary index');
   }
   return dictionary[value];
+}
+
+/// Decodes an `asset_digests` delta in either form: keyed by asset id, or
+/// by decimal dictionary index when [dictionary] is the message's active
+/// dictionary. Values are digest strings, or null for a removal.
+Map<String, String?> _assetDigestUpdates(
+  Object? value,
+  List<String>? dictionary,
+) {
+  if (value == null) return const <String, String?>{};
+  if (value is! Map) {
+    throw const FormatException('build_batch asset_digests must be an object');
+  }
+  final updates = <String, String?>{};
+  for (final entry in value.entries) {
+    final key = entry.key;
+    if (key is! String) {
+      throw const FormatException(
+        'build_batch asset_digests key must be a string',
+      );
+    }
+    final asset = dictionary == null
+        ? key
+        : _resolveAssetRef(
+            int.tryParse(key),
+            dictionary,
+            'build_batch asset_digests key',
+          );
+    final digest = entry.value;
+    if (digest != null && digest is! String) {
+      throw const FormatException(
+        'build_batch asset_digests value must be a string or null',
+      );
+    }
+    updates[asset] = digest as String?;
+  }
+  return updates;
 }
 
 /// Decodes an asset id list in either form: plain strings, or dictionary

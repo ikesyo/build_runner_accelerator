@@ -142,6 +142,7 @@ Future<void> runWorker({
             runtime.batchBlockedAssets = null;
             runtime.batchBlockedAssetIds = null;
             runtime.assetDictionary.clear();
+            runtime.assetDigests.clear();
             runtime.retainedOutputGuard = initialize.retainedOutputGuard;
             await runtime.startBuild(
               initialize.package,
@@ -163,6 +164,7 @@ Future<void> runWorker({
                 'blocked-assets-reuse-v1',
                 'batch-shared-fields-v1',
                 'asset-id-interning-v1',
+                'asset-digests-v1',
                 'reset-overlay-blob-v1',
                 'build-runner-current-v1',
                 'retained-output-guard-v1',
@@ -210,6 +212,14 @@ Future<void> runWorker({
               postProcessCatalog,
             );
           case WorkerBuildBatchMessage buildBatch:
+            for (final entry in buildBatch.assetDigestUpdates.entries) {
+              final digest = entry.value;
+              if (digest == null) {
+                runtime.assetDigests.remove(entry.key);
+              } else {
+                runtime.assetDigests[entry.key] = digest;
+              }
+            }
             await _handleBuildBatch(
               buildBatch,
               reader,
@@ -254,6 +264,12 @@ class _WorkerRuntime {
   // context with the same lifetime as the batch visibility hint above.
   // Initialization clears it; interned messages append to it in place.
   final List<String> assetDictionary = <String>[];
+
+  // Frontend source digests for `asset-digests-v1` (ADR 0054), keyed by
+  // asset id string, with the same lifetime as the asset dictionary.
+  // Batch messages apply their deltas to it in place, so per-build
+  // holders of this map (the builder filesystem) see updates directly.
+  final Map<String, String> assetDigests = <String, String>{};
 
   final PackageConfig packageConfig;
   final ResolverInitializationProfile resolverProfile;
@@ -617,6 +633,7 @@ class _WorkerRuntime {
       buildState: buildState,
       readerWriter: io,
       inputRestrictions: inputRestrictions,
+      assetDigests: assetDigests,
     );
     await resolver.takeLockAndStartBuild(
       builderFilesystem: buildFilesystem,
@@ -1157,6 +1174,12 @@ Future<JsonMap> _runBuild(
         runtime.packageConfig,
         runtime.resolverDependencyCache,
         excludeReads: drainReads,
+        // The staged map holds no declared outputs and this build's own
+        // produced outputs are excluded here, so a digest only ever names
+        // snapshot content (ADR 0054, Snapshot semantics).
+        frontendDigestFor: (asset) => runtime.producedOutputs.containsKey(asset)
+            ? null
+            : runtime.assetDigests[asset.toString()],
       );
       profile.resolverReadsUs = resolverReadsTimer.elapsedMicroseconds;
     }

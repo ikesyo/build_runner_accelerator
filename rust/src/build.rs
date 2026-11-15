@@ -393,6 +393,11 @@ pub(crate) fn run_with_config_session(
     }
 
     let executing = crate::wall::Span::new("execution");
+    let declared_outputs: std::collections::BTreeSet<String> = plan
+        .specs
+        .iter()
+        .flat_map(|spec| spec.outputs.iter().cloned())
+        .collect();
     let execution = execution::run(
         pool,
         execution::ExecutionInputs {
@@ -404,6 +409,7 @@ pub(crate) fn run_with_config_session(
             plan: &plan,
             dirty_plan,
             retained_output_guard,
+            asset_digests: crate::snapshot::asset_digests(&current_snapshot, &declared_outputs),
         },
     )?;
     drop(executing);

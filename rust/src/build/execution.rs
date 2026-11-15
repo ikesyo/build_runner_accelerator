@@ -27,6 +27,9 @@ pub(super) struct ExecutionInputs<'a> {
     pub(super) plan: &'a PlannedActions,
     pub(super) dirty_plan: DirtyPlan,
     pub(super) retained_output_guard: bool,
+    /// The build's `asset-digests-v1` map (ADR 0054), staged into the pool
+    /// before workers are initialized.
+    pub(super) asset_digests: std::collections::BTreeMap<String, String>,
 }
 
 const MAX_DIRECTIVE_REPLAYS: usize = 8;
@@ -54,6 +57,7 @@ pub(super) fn run(
         plan,
         dirty_plan,
         retained_output_guard,
+        asset_digests,
     } = inputs;
     let DirtyPlan {
         dirty,
@@ -106,6 +110,7 @@ pub(super) fn run(
         let active_pool = worker_pool.expect("worker pool was just initialized");
         active_pool.set_retained_output_guard(retained_output_guard);
         active_pool.set_native_overlay(has_shared_parts);
+        active_pool.set_asset_digests(asset_digests);
         let first_package = dirty
             .first()
             .map(|spec| spec.instance.package.clone())
