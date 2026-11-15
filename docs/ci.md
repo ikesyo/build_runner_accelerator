@@ -83,7 +83,7 @@ caches, while each group owns its mutable workspace. See
 
 ### Workflow dependencies
 
-All four workflows are onboarded to `.github/workflows/actions.lock`, generated
+All five workflows are onboarded to `.github/workflows/actions.lock`, generated
 by the official `github/gh-actions-lock` CLI extension. Version tags stay readable
 in YAML while the lockfile records the exact commits and repository identities,
 including dependencies of the shared `$/` setup action. Unlike `./`, `$/` runs

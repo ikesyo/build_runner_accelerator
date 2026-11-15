@@ -9,6 +9,9 @@ changelog:
     - title: Bug Fixes
       labels:
         - bug
+    - title: Performance
+      labels:
+        - performance
     - title: Dependency Updates
       labels:
         - dependencies
