@@ -302,6 +302,21 @@ void main() {
       expect(cache.lookup(digest), isNull);
     });
 
+    test('entries and markers survive reopening the store', () {
+      final digest = blake3Hex(base.codeUnits);
+      final fingerprint = cache.fingerprintFor(digest, base);
+      const broken = 'class {';
+      final brokenDigest = blake3Hex(broken.codeUnits);
+      cache.fingerprintFor(brokenDigest, broken);
+
+      final reopened = ApiFingerprintCache(
+        store: IndexedBlobStore('${dir.path}/store.bin'),
+      );
+      expect(reopened.lookup(digest), fingerprint);
+      expect(reopened.contains(brokenDigest), isTrue);
+      expect(reopened.lookup(brokenDigest), isNull);
+    });
+
     test('environment-caused nulls are not cached as markers', () {
       debugSetAstModelSupported(false);
       addTearDown(() => debugSetAstModelSupported(null));
