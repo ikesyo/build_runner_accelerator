@@ -120,9 +120,35 @@ the changed units (and any unit whose library fingerprint they feed)
 and returns their fingerprints before planning. The fingerprint work
 itself is cheap (spike, throttled VM: parse about 0.7 ms and
 signature about 0.2 ms per file over a 2,055-file corpus); the real
-preflight cost is starting the worker, which is pure overhead only
-when every action ends up cut off, and is reused as a build worker
-otherwise. The frontend compares
+preflight cost is starting a Dart process, and the design keeps that
+off the critical path wherever possible:
+
+- The fingerprint request rides on a worker the build starts anyway.
+  A changed file's own actions and direct readers are dirty on
+  content rules regardless of any signature, so whenever they exist
+  the first worker spawn already happens; it answers the fingerprint
+  request before dependent actions are dispatched, and stays on as a
+  build worker. In watch mode the resident worker answers, making
+  the preflight a bare IPC round trip.
+- A dedicated short-lived worker is spawned only when cutoff is the
+  build's sole reason to start a process: a changed file consumed
+  purely through the resolver, whose API turns out unchanged. Even
+  then the comparison is one worker start against the downstream
+  re-runs it replaces, and when the API did change the preflight
+  worker simply becomes the first build worker.
+- The preflight runs only when a changed source file actually
+  reaches an opted-in action's closure. Unchanged builds and
+  unreachable edits keep today's fast no-op path untouched.
+
+What cannot be removed is the parse itself: whether new content
+changed the API is only knowable by looking at its declarations
+before planning, and the fingerprint must come from the real Dart
+parser (a hand-written declaration scanner in the frontend would
+repeat the line-scan failure mode rejected for pubspec parsing in
+ADR 0055). A further reduction, an AOT-compiled fingerprint helper
+with tens-of-milliseconds startup, is possible but deferred: it adds
+a per-platform artifact and an analyzer-version consistency burden
+that only measurements from the staged implementation can justify. The frontend compares
 effective signatures against the graph's stored values:
 
 - An asset whose content changed but whose effective signature did
