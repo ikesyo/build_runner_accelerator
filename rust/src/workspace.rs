@@ -686,12 +686,57 @@ fn safe_relative_path(root: &Path, relative: &str) -> Option<PathBuf> {
     Some(root.join(relative))
 }
 
-fn package_name(path: &Path) -> io::Result<String> {
+/// Parses a pubspec as YAML and returns its first document (`BadValue`
+/// for an empty file). Pubspec reads go through a real parser so scalars
+/// follow the same YAML semantics as the Dart side (comments, anchors,
+/// block scalars, document-level indentation), not a line scan.
+pub(crate) fn pubspec_yaml(path: &Path) -> io::Result<yaml_rust2::Yaml> {
+    let contents = fs::read_to_string(path)?;
+    let docs = yaml_rust2::YamlLoader::load_from_str(&contents).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("could not parse {} as YAML: {error}", path.display()),
+        )
+    })?;
+    Ok(docs
+        .into_iter()
+        .next()
+        .unwrap_or(yaml_rust2::Yaml::BadValue))
+}
+
+pub(crate) fn package_name(path: &Path) -> io::Result<String> {
+    // A pubspec YAML rejects is an error, not a line-scan fallback: the
+    // stock Dart path rejects it before loading the package graph, and the
+    // workspace opt-in check fails on the same file, so accepting it here
+    // would let single-package discovery succeed where the workspace path
+    // stops. The line scan remains only for a pubspec that parsed but
+    // whose name is not a plain string.
+    let root = pubspec_yaml(path)?;
+    if let Some(name) = root["name"].as_str()
+        && !name.is_empty()
+    {
+        return Ok(name.to_owned());
+    }
     let contents = fs::read_to_string(path)?;
     for line in contents.lines() {
         let trimmed = line.trim();
         if let Some(value) = trimmed.strip_prefix("name:") {
-            let value = value.trim().trim_matches(['\'', '"']);
+            let value = value.trim();
+            // A quoted scalar ends at its closing quote; a plain scalar
+            // ends before a trailing comment (`name: ws_a # comment`).
+            let value =
+                if let Some(rest) = value.strip_prefix('"').or_else(|| value.strip_prefix('\'')) {
+                    rest.split(['"', '\'']).next().unwrap_or("")
+                } else {
+                    let end = value
+                        .char_indices()
+                        .find(|(index, c)| {
+                            *c == '#' && value[..*index].ends_with(|p: char| p.is_whitespace())
+                        })
+                        .map(|(index, _)| index)
+                        .unwrap_or(value.len());
+                    value[..end].trim_end()
+                };
             if !value.is_empty() {
                 return Ok(value.to_owned());
             }
