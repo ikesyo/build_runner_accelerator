@@ -121,6 +121,13 @@ void main() {
       );
     });
 
+    test('doc line moved between documented declarations is visible', () {
+      expect(
+        fingerprintOf('/// A\n/// B\nclass A {}\n/// C\nclass B {}'),
+        isNot(fingerprintOf('/// A\nclass A {}\n/// B\n/// C\nclass B {}')),
+      );
+    });
+
     test('doc comment moved between members is visible', () {
       expect(
         fingerprintOf('class A {\n  /// Docs\n  void m() {}\n  void n() {}\n}'),

@@ -301,7 +301,10 @@ String _bodyTokens(FunctionBody body) {
 /// and fills the other, so the digest changes. Doc comments the
 /// traversal does not reach (for example inside executable bodies,
 /// which the walk does not descend into) are appended in token order
-/// as a backstop, so no doc comment is ever dropped entirely.
+/// as a backstop, so no doc comment is ever dropped entirely. The
+/// slots are JSON-encoded because doc text itself contains newlines:
+/// a plain join would blur slot boundaries, and moving one doc line
+/// between two documented declarations would go unnoticed.
 String _docCommentSlots(CompilationUnit unit, _UnitWalk walk) {
   final unattached = <String>[];
   Token? token = unit.beginToken;
@@ -319,7 +322,7 @@ String _docCommentSlots(CompilationUnit unit, _UnitWalk walk) {
     if (next == token) break;
     token = next;
   }
-  return '${walk.docSlots.join('\n')}\n@@\n${unattached.join('\n')}';
+  return jsonEncode([walk.docSlots, unattached]);
 }
 
 String _hex(Uint8List bytes) {
