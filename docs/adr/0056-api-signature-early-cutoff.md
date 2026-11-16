@@ -1,6 +1,6 @@
 # ADR 0056: API-signature early cutoff for resolver reads
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-16
 
 ## Context
