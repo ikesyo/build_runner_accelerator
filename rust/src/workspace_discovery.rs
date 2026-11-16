@@ -387,6 +387,35 @@ mod tests {
     }
 
     #[test]
+    fn package_name_rejects_unparsable_pubspec() {
+        // The line scan would still find `name:` in these files; a pubspec
+        // YAML rejects must fail instead, matching the stock Dart path.
+        let cases: &[&str] = &["name: ws_a\nbad: [1, 2\n", "name: ws_a\n\tfoo: bar\n"];
+        for (index, text) in cases.iter().enumerate() {
+            let dir = std::env::temp_dir().join(format!(
+                "build_runner_accelerator_pkg_name_bad_{}_{index}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("pubspec.yaml");
+            fs::write(&path, text).unwrap();
+            assert!(package_name(&path).is_err(), "case {index}: {text:?}");
+            let _ = fs::remove_dir_all(&dir);
+        }
+        // A pubspec that parses but whose name is not a plain string still
+        // falls back to the line scan.
+        let dir = std::env::temp_dir().join(format!(
+            "build_runner_accelerator_pkg_name_nonstring_{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pubspec.yaml");
+        fs::write(&path, "name: 42\n").unwrap();
+        assert_eq!(package_name(&path).unwrap(), "42");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn discovery_with_stale_reference_falls_back_to_single_package() {
         let fixture = Fixture::new("stale");
         // The reference file remains, but the member no longer opts in.

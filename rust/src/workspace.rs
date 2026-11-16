@@ -705,15 +705,18 @@ pub(crate) fn pubspec_yaml(path: &Path) -> io::Result<yaml_rust2::Yaml> {
 }
 
 pub(crate) fn package_name(path: &Path) -> io::Result<String> {
-    if let Ok(root) = pubspec_yaml(path)
-        && let Some(name) = root["name"].as_str()
+    // A pubspec YAML rejects is an error, not a line-scan fallback: the
+    // stock Dart path rejects it before loading the package graph, and the
+    // workspace opt-in check fails on the same file, so accepting it here
+    // would let single-package discovery succeed where the workspace path
+    // stops. The line scan remains only for a pubspec that parsed but
+    // whose name is not a plain string.
+    let root = pubspec_yaml(path)?;
+    if let Some(name) = root["name"].as_str()
         && !name.is_empty()
     {
         return Ok(name.to_owned());
     }
-    // Fall back to the line scan for a pubspec the YAML parser rejects or
-    // whose name is not a plain string, preserving what the scan could
-    // read before.
     let contents = fs::read_to_string(path)?;
     for line in contents.lines() {
         let trimmed = line.trim();
