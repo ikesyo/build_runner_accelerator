@@ -301,5 +301,14 @@ void main() {
       expect(cache.contains(digest), isTrue);
       expect(cache.lookup(digest), isNull);
     });
+
+    test('environment-caused nulls are not cached as markers', () {
+      debugSetAstModelSupported(false);
+      addTearDown(() => debugSetAstModelSupported(null));
+      const source = 'int f() => 1;';
+      final digest = blake3Hex(source.codeUnits);
+      expect(cache.fingerprintFor(digest, source), isNull);
+      expect(cache.contains(digest), isFalse);
+    });
   });
 }

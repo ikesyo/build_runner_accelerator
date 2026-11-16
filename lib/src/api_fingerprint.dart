@@ -115,6 +115,13 @@ bool? _astModelSupportedOverride;
 bool get _astModelSupported =>
     _astModelSupportedOverride ??= _selfTestAstModel();
 
+/// Test hook: overrides the AST model gate. Production code never
+/// calls this; tests use it to simulate an analyzer whose AST model
+/// the walk cannot read, and restore the self-test result with null.
+void debugSetAstModelSupported(bool? supported) {
+  _astModelSupportedOverride = supported;
+}
+
 const _selfTestSource = '''
 /// Sample class.
 abstract class Sample {
@@ -394,7 +401,14 @@ final class ApiFingerprintCache {
   String? fingerprintFor(String contentDigest, String content) {
     if (_entry(contentDigest) != null) return lookup(contentDigest);
     final fingerprint = apiFingerprintForContent(content);
-    store(contentDigest, fingerprint);
+    // A null fingerprint is only worth persisting when the content
+    // caused it (parse errors, augmentations). A null caused by the
+    // AST model being unavailable in this process is environmental:
+    // persisting it would mark valid content as unavailable for
+    // later builds whose model works.
+    if (fingerprint != null || _astModelSupported) {
+      store(contentDigest, fingerprint);
+    }
     return fingerprint;
   }
 
