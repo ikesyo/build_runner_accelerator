@@ -140,6 +140,16 @@ off the critical path wherever possible:
   reaches an opted-in action's closure. Unchanged builds and
   unreachable edits keep today's fast no-op path untouched.
 
+Clean builds never preflight: there are no stored signatures to
+compare against, so everything runs as today. Fingerprints are
+recorded opportunistically during ordinary builds, computed by
+whichever worker parses a unit for its dependency walk and cached
+in the persistent store under the unit's content digest, so the
+cost is paid once per content rather than once per worker or build.
+A graph that predates the capability holds no signatures and is
+treated as no evidence: invalidation stays content-keyed until
+signatures are recorded, with no forced clean build.
+
 What cannot be removed is the parse itself: whether new content
 changed the API is only knowable by looking at its declarations
 before planning, and the fingerprint must come from the real Dart
