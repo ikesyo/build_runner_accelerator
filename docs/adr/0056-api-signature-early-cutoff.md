@@ -90,7 +90,19 @@ fingerprint cannot, since a generator can observe the inferred type.
 Including the bodies of omitted-type executables (all visibilities:
 intra-library inference can chain a private helper's type into a
 public one) restores completeness at a small cost to cutoff power:
-edits to those bodies stay invalidating. The fingerprint of a library is the combination
+edits to those bodies stay invalidating.
+
+Implementation notes for the fingerprint walk (stage 1). Doc
+comments are slotted per annotated node (declarations, members, enum
+constants, type parameters and formal parameters), so moving a doc
+comment between any two of them changes the digest. The walk uses
+only the AST surface that is stable across the supported analyzer
+window (`AnnotatedNode`, `MethodDeclaration`, `FunctionDeclaration`,
+`FunctionBody`); the window's declaration class names differ between
+analyzer generations, so the walk avoids them. A self-test on first
+use verifies the walk's behavior on a sample library, and a mismatch
+makes fingerprints unavailable (the feature stays off) rather than
+wrong. The fingerprint of a library is the combination
 of its constituent units' fingerprints (the library unit and its
 parts, in directive order), so a part's API or doc change is an owner
 change, while a part's body-only edit is not.
