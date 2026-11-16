@@ -67,12 +67,30 @@ unit (no linking):
 
     fingerprint(unit) = BLAKE3(
       analyzer unlinked API signature bytes of the unit,
-      digest of the unit's doc comments in declaration order)
+      digest of the unit's doc comments in declaration order,
+      digest of the bodies of executables whose return type is
+        omitted, in declaration order)
 
 Doc comments are included because generators such as
 riverpod_generator copy them into their output; offsets and other
 informative bytes are excluded because the contract forbids
-position observation. The fingerprint of a library is the combination
+position observation.
+
+The third component closes a verified gap in the analyzer signature
+(spike against analyzer 14.6.0, 2026-11-16). The signature changes
+for API edits, constant initializers, annotations, parameter
+defaults and untyped variable initializers, and is stable across
+body-only edits, ordinary comments and offset shifts, as intended.
+But it is also stable when the body of an executable with an omitted
+return type changes the inferred type (`f() => 1` versus
+`f() => 'one'`), including through a private helper in the same
+library. The analyzer tolerates this because its unlinked entries
+are content-keyed and the owning cycle re-links; a build-level
+fingerprint cannot, since a generator can observe the inferred type.
+Including the bodies of omitted-type executables (all visibilities:
+intra-library inference can chain a private helper's type into a
+public one) restores completeness at a small cost to cutoff power:
+edits to those bodies stay invalidating. The fingerprint of a library is the combination
 of its constituent units' fingerprints (the library unit and its
 parts, in directive order), so a part's API or doc change is an owner
 change, while a part's body-only edit is not.
@@ -99,7 +117,12 @@ from an action that ran cannot justify skipping that action. When a
 build's snapshot contains changed source files and at least one
 opted-in action's closure reaches them, a worker preflight parses
 the changed units (and any unit whose library fingerprint they feed)
-and returns their fingerprints before planning. The frontend compares
+and returns their fingerprints before planning. The fingerprint work
+itself is cheap (spike, throttled VM: parse about 0.7 ms and
+signature about 0.2 ms per file over a 2,055-file corpus); the real
+preflight cost is starting the worker, which is pure overhead only
+when every action ends up cut off, and is reused as a build worker
+otherwise. The frontend compares
 effective signatures against the graph's stored values:
 
 - An asset whose content changed but whose effective signature did
