@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.19.5](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.4...v0.19.5) - 2026-11-16
+
+### Performance
+- perf: resolve worker caches by frontend asset digests by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/199
+- perf: resolve workspace discovery in the frontend by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/201
+### Dependency Updates
+- Update dependency built_collection to v6 by @renovate[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/184
+
 ## [v0.19.4](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.3...v0.19.4) - 2026-11-15
 
 ### Bug Fixes
