@@ -116,6 +116,19 @@ the per-action content-read split and the per-unit fingerprints; as
 with earlier schema bumps, an older graph is invalidated rather than
 migrated, which later stages see as no evidence.
 
+Implementation notes for the opt-in plumbing (stage 3). The opt-in
+surface is the frontend flag `--api-cutoff <builder-key>`,
+repeatable; there is no build.yaml surface yet. Keys are normalized
+like `--define` spells them and resolved against the configured
+builders at plan time: an unknown key is an error, since it could
+never apply and accepting it would silently leave the builder
+content-keyed. The plan marks opted-in builder instances; the mark
+joins the worker pool signature so a changed opt-in set restarts
+resident workers, and rides each build request (`api_cutoff`, sent
+only when true, lifted into batch `shared` when uniform) so result
+assembly knows which actions the safety net applies to. Recording
+stays unconditional. No classification changes in this stage.
+
 An asset's effective signature folds in its resolver dependencies,
 so an API change propagates exactly as far as element-model
 observation can reach:
