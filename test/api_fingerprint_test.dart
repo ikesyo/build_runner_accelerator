@@ -324,6 +324,15 @@ void main() {
       expect(reopened.lookup(brokenDigest), isNull);
     });
 
+    test('a disabled AST model bypasses stored fingerprints', () {
+      final digest = blake3Hex(base.codeUnits);
+      expect(cache.fingerprintFor(digest, base), isNotNull);
+
+      debugSetAstModelSupported(false);
+      addTearDown(() => debugSetAstModelSupported(null));
+      expect(cache.fingerprintFor(digest, base), isNull);
+    });
+
     test('environment-caused nulls are not cached as markers', () {
       debugSetAstModelSupported(false);
       addTearDown(() => debugSetAstModelSupported(null));

@@ -401,7 +401,12 @@ final class ApiFingerprintCache {
 
   /// The fingerprint for the unit with content digest [contentDigest]
   /// and source [content], computing and caching it on a miss.
+  ///
+  /// The AST-model gate applies to cache hits too: once the model is
+  /// known not to behave, stored fingerprints are no longer trusted,
+  /// because they were computed by the same walk.
   String? fingerprintFor(String contentDigest, String content) {
+    if (!_astModelSupported) return null;
     if (_entry(contentDigest) != null) return lookup(contentDigest);
     final fingerprint = apiFingerprintForContent(content);
     // A null fingerprint is only worth persisting when the content
