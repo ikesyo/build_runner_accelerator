@@ -180,9 +180,7 @@ class WorkerStepResolver implements ReleasableResolver {
     try {
       final uri = fragment.libraryFragment?.source.uri;
       if (uri == null || uri.scheme != 'package') return null;
-      final segments = uri.pathSegments;
-      if (segments.length < 2) return null;
-      return AssetId(segments.first, segments.skip(1).join('/'));
+      return AssetId.resolve(uri);
     } on Object {
       return null;
     }

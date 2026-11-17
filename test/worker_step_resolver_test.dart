@@ -232,12 +232,26 @@ void main() {
       final fragment = _RecordingFragment(
         _RecordingElement(_RecordingLibrary(primary)),
         libraryFragment: _RecordingLibraryFragment(
-          _RecordingSource(Uri.parse('package:app/lib/model_part.dart')),
+          _RecordingSource(Uri.parse('package:app/model_part.dart')),
         ),
       );
       await recording.astNodeFor(fragment);
       expect(recording.contentReads, <AssetId>{part});
     });
+
+    test(
+      'astNodeFor records nothing for a fragment in the primary unit',
+      () async {
+        final fragment = _RecordingFragment(
+          _RecordingElement(_RecordingLibrary(dep)),
+          libraryFragment: _RecordingLibraryFragment(
+            _RecordingSource(Uri.parse('package:app/main.dart')),
+          ),
+        );
+        await recording.astNodeFor(fragment);
+        expect(recording.contentReads, isEmpty);
+      },
+    );
 
     test(
       'astNodeFor falls back to the library for a non-package unit',
