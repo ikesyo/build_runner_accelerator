@@ -339,7 +339,13 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   }
 
   AssetDeps _depsFor(AssetId id, String content) {
-    if (content.isEmpty) return AssetDeps.empty;
+    if (content.isEmpty) {
+      // A unit that became empty still has a current fingerprint (or
+      // an unavailable marker); learning it replaces the fingerprint
+      // of its previous, nonempty content.
+      _learnApiFingerprint(id, content);
+      return AssetDeps.empty;
+    }
     final cache = _cache;
     if (cache == null) {
       final (deps, parsed) = _parseWithResult(id, content);

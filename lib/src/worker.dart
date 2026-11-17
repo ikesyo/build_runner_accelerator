@@ -599,6 +599,11 @@ class _WorkerRuntime {
     _resetDirectiveContents.clear();
     sentDepGraphValues.clear();
     sentApiFingerprints.clear();
+    // Learned fingerprints are keyed by asset, not by content, so an
+    // observation from an earlier build could overwrite a fresher one
+    // another worker reported in the meantime. Only this build's own
+    // observations may be reported.
+    resolver.learnedApiFingerprints().clear();
     batchResolverEntrypoints.clear();
     builders.clear();
     postProcessBuilders.clear();

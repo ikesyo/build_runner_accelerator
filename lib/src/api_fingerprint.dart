@@ -390,14 +390,19 @@ final class ApiFingerprintCache {
 
   /// Store directory segment for [sdk]: the packed version and SDK,
   /// plus the analyzer package's directory name (which carries its
-  /// version for hosted packages) when the root is known.
+  /// version for hosted packages) and a digest of the complete root
+  /// when the root is known. Distinct installs can share a directory
+  /// name (two checkouts of a path dependency, say), and the digest
+  /// keeps their fingerprints from mixing.
   static String _namespace(String sdk) {
     final base = '$_packedVersion-$sdk';
     final root = sharedAnalyzerRoot;
     if (root == null || root.isEmpty) return base;
     final segment = root.replaceAll(RegExp(r'/+$'), '').split('/').last;
     final sanitized = segment.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
-    return sanitized.isEmpty ? base : '$base-$sanitized';
+    if (sanitized.isEmpty) return base;
+    final rootDigest = blake3Hex(utf8.encode(root)).substring(0, 8);
+    return '$base-$sanitized-$rootDigest';
   }
 
   final IndexedBlobStore? _store;

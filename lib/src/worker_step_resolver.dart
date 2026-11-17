@@ -146,10 +146,15 @@ class WorkerStepResolver implements ReleasableResolver {
     );
   }
 
-  /// Records the library owning [fragment] as a content read, unless
-  /// it is the primary input's own library.
+  /// Records the asset [fragment] was read from as a content read,
+  /// unless it is the primary input itself.
   Future<void> _recordFragmentLibrary(Fragment fragment) async {
     try {
+      final unitAsset = _unitAsset(fragment);
+      if (unitAsset != null) {
+        if (unitAsset != primaryInput) contentReads.add(unitAsset);
+        return;
+      }
       final library = fragment.element.library;
       if (library == null) return;
       var asset = _libraryAssets[library];
@@ -162,6 +167,24 @@ class WorkerStepResolver implements ReleasableResolver {
       // Recording must never break the action: a library that is not
       // backed by a readable asset (SDK libraries, summaries) cannot
       // appear in the build graph, so there is nothing to record.
+    }
+  }
+
+  /// The asset of the compilation unit holding [fragment], when that
+  /// unit's source is a package URI; otherwise null. A declaration in
+  /// a part file lives in its own unit, and the library fallback in
+  /// [_recordFragmentLibrary] names the defining unit instead, which
+  /// would miss the part file entirely (or record nothing at all when
+  /// the defining unit is the primary input).
+  AssetId? _unitAsset(Fragment fragment) {
+    try {
+      final uri = fragment.libraryFragment?.source.uri;
+      if (uri == null || uri.scheme != 'package') return null;
+      final segments = uri.pathSegments;
+      if (segments.length < 2) return null;
+      return AssetId(segments.first, segments.skip(1).join('/'));
+    } on Object {
+      return null;
     }
   }
 

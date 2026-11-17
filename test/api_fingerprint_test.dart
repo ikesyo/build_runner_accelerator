@@ -374,7 +374,21 @@ void main() {
       ApiFingerprintCache.sharedAnalyzerRoot =
           'file:///home/user/.pub-cache/hosted/pub.dev/analyzer-14.6.0/';
       final sdk = Platform.version.split(' ').first;
-      expect(debugApiFingerprintStoreNamespace(), 'v1-$sdk-analyzer-14.6.0');
+      expect(
+        debugApiFingerprintStoreNamespace(),
+        startsWith('v1-$sdk-analyzer-14.6.0-'),
+      );
+    });
+
+    test('separates installs that share a directory name', () {
+      final sdk = Platform.version.split(' ').first;
+      ApiFingerprintCache.sharedAnalyzerRoot = 'file:///checkout-a/analyzer/';
+      final a = debugApiFingerprintStoreNamespace();
+      ApiFingerprintCache.sharedAnalyzerRoot = 'file:///checkout-b/analyzer/';
+      final b = debugApiFingerprintStoreNamespace();
+      expect(a, startsWith('v1-$sdk-analyzer-'));
+      expect(b, startsWith('v1-$sdk-analyzer-'));
+      expect(a, isNot(b));
     });
   });
 }

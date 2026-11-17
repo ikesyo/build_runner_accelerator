@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
+import 'package:analyzer/source/source.dart';
 import 'package:build/build.dart';
 import 'package:build_runner_accelerator/src/analysis_startup_gate.dart';
 import 'package:build_runner_accelerator/src/worker_step_resolver.dart';
@@ -226,6 +227,29 @@ void main() {
       expect(recording.contentReads, isEmpty);
     });
 
+    test('astNodeFor records the part file of a fragment in a part', () async {
+      final part = AssetId('app', 'lib/model_part.dart');
+      final fragment = _RecordingFragment(
+        _RecordingElement(_RecordingLibrary(primary)),
+        libraryFragment: _RecordingLibraryFragment(
+          _RecordingSource(Uri.parse('package:app/lib/model_part.dart')),
+        ),
+      );
+      await recording.astNodeFor(fragment);
+      expect(recording.contentReads, <AssetId>{part});
+    });
+
+    test('astNodeFor falls back to the library for a non-package unit', () async {
+      final fragment = _RecordingFragment(
+        _RecordingElement(_RecordingLibrary(dep)),
+        libraryFragment: _RecordingLibraryFragment(
+          _RecordingSource(Uri.parse('file:///app/lib/dep.dart')),
+        ),
+      );
+      await recording.astNodeFor(fragment);
+      expect(recording.contentReads, <AssetId>{dep});
+    });
+
     test('astNodeFor with an unresolvable library records nothing', () async {
       final sdkLibrary = _RecordingLibrary(AssetId('dart', 'lib/core.dart'));
       recordingDelegate.unresolvable.add(sdkLibrary);
@@ -263,10 +287,35 @@ class _RecordingElement implements Element {
 }
 
 class _RecordingFragment implements Fragment {
-  _RecordingFragment(this.element);
+  _RecordingFragment(this.element, {this.libraryFragment});
 
   @override
   final Element element;
+
+  @override
+  final LibraryFragment? libraryFragment;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
+class _RecordingLibraryFragment implements LibraryFragment {
+  _RecordingLibraryFragment(this.source);
+
+  @override
+  final Source source;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
+class _RecordingSource implements Source {
+  _RecordingSource(this.uri);
+
+  @override
+  final Uri uri;
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
