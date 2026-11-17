@@ -108,6 +108,10 @@ pub(super) fn run(
             worker_pool = owned_pool.as_mut();
         }
         let active_pool = worker_pool.expect("worker pool was just initialized");
+        // Drop fingerprints a failed earlier call left on a resident
+        // pool; they belong to a transaction that never committed. The
+        // filtered path does the same before its first pool operation.
+        drop(active_pool.take_api_fingerprints());
         active_pool.set_retained_output_guard(retained_output_guard);
         active_pool.set_native_overlay(has_shared_parts);
         active_pool.set_asset_digests(asset_digests);
