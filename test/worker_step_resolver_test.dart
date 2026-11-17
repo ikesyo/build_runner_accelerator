@@ -239,16 +239,19 @@ void main() {
       expect(recording.contentReads, <AssetId>{part});
     });
 
-    test('astNodeFor falls back to the library for a non-package unit', () async {
-      final fragment = _RecordingFragment(
-        _RecordingElement(_RecordingLibrary(dep)),
-        libraryFragment: _RecordingLibraryFragment(
-          _RecordingSource(Uri.parse('file:///app/lib/dep.dart')),
-        ),
-      );
-      await recording.astNodeFor(fragment);
-      expect(recording.contentReads, <AssetId>{dep});
-    });
+    test(
+      'astNodeFor falls back to the library for a non-package unit',
+      () async {
+        final fragment = _RecordingFragment(
+          _RecordingElement(_RecordingLibrary(dep)),
+          libraryFragment: _RecordingLibraryFragment(
+            _RecordingSource(Uri.parse('file:///app/lib/dep.dart')),
+          ),
+        );
+        await recording.astNodeFor(fragment);
+        expect(recording.contentReads, <AssetId>{dep});
+      },
+    );
 
     test('astNodeFor with an unresolvable library records nothing', () async {
       final sdkLibrary = _RecordingLibrary(AssetId('dart', 'lib/core.dart'));
