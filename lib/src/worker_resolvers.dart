@@ -22,6 +22,7 @@ import 'package:pool/pool.dart';
 import 'package:pub_semver/pub_semver.dart';
 
 import 'analysis_startup_gate.dart';
+import 'api_fingerprint.dart';
 import 'cache_directory.dart';
 import 'analysis_byte_store_fingerprint.dart';
 import 'packed_analysis_byte_store.dart';
@@ -76,6 +77,12 @@ class WorkerResolversImpl implements Resolvers {
   BuildResolver? _buildResolver;
   AnalysisStartupGate? _startupGate;
 
+  /// Step resolvers vended by [get], keyed by their build step, so a
+  /// finished action's recorded resolver content reads (ADR 0056) can
+  /// be collected at result assembly. Entries are removed on read.
+  final Map<BuildStep, WorkerStepResolver> _stepResolvers =
+      <BuildStep, WorkerStepResolver>{};
+
   /// State supporting the analysis driver.
   WorkerAnalysisDriverModel _analysisDriverModel;
 
@@ -119,6 +126,10 @@ class WorkerResolversImpl implements Resolvers {
       final loadedConfig = _packageConfig ??= await loadPackageConfigUri(
         Uri.parse(buildProcessState.packageConfigUri),
       );
+      // The fingerprint store is namespaced by the resolved analyzer,
+      // identified the same way as for the analysis byte store below.
+      ApiFingerprintCache.sharedAnalyzerRoot = loadedConfig['analyzer']?.root
+          .toString();
       // Concurrent worker processes take the same `.sdk-summary.lock` the
       // prewarm shards hold, so a cold workspace builds `sdk.sum` once
       // instead of once per worker.
@@ -170,15 +181,30 @@ class WorkerResolversImpl implements Resolvers {
       _buildResolver!,
       buildStep as BuildStepImpl,
     );
-    if (_profile?.enabled == true || _startupGate?.isReady == false) {
-      return WorkerStepResolver(
-        stepResolver,
-        startupGate: _startupGate,
-        timingEnabled: _profile?.enabled == true,
-      );
-    }
-    return stepResolver;
+    // The wrapper is unconditional: besides the startup gate and
+    // timing, it records the step's resolver content reads (ADR 0056),
+    // which must not depend on whether profiling happens to be on.
+    final wrapper = WorkerStepResolver(
+      stepResolver,
+      startupGate: _startupGate,
+      timingEnabled: _profile?.enabled == true,
+      primaryInput: buildStep.inputId,
+    );
+    _stepResolvers[buildStep] = wrapper;
+    return wrapper;
   }
+
+  /// The resolver content reads recorded for [buildStep]'s action
+  /// (ADR 0056), or an empty set when the step never touched the
+  /// resolver. Consumes the step's entry.
+  Set<AssetId> contentReadsFor(BuildStep buildStep) =>
+      _stepResolvers.remove(buildStep)?.contentReads ?? const <AssetId>{};
+
+  /// Unit fingerprints the dep walk has learned in this process
+  /// (ADR 0056), keyed by asset id string; a null value marks a unit
+  /// whose fingerprint is unavailable.
+  Map<String, String?> learnedApiFingerprints() =>
+      _analysisDriverModel.learnedApiFingerprints();
 
   /// Starts a build.
   ///
@@ -218,6 +244,9 @@ class WorkerResolversImpl implements Resolvers {
   /// With [clearGraph] false the library-cycle graph is kept for reuse by the
   /// next build started under this resolver.
   void reset({bool clearGraph = true}) {
+    // Entries for steps whose actions failed before result assembly
+    // are never consumed; a build boundary bounds their lifetime.
+    _stepResolvers.clear();
     _analysisDriverModel.endBuildAndUnlock(clearGraph: clearGraph);
   }
 }

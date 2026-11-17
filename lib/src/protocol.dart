@@ -681,6 +681,9 @@ class FrameWriter {
     }
     final results = message['results'] as List;
     final graph = _asJsonMap(message['dep_graph'], 'dependency graph');
+    // Batch-level evidence (dep graph, API fingerprints) rides with
+    // exactly one part; the other parts carry it empty so the
+    // frontend's merge never sees a key twice.
     if (results.length > 1) {
       final middle = results.length ~/ 2;
       final rawMiddle = results
@@ -693,6 +696,10 @@ class FrameWriter {
         ...message,
         'results': results.sublist(0, middle),
         'dep_graph': <String, dynamic>{},
+        // Blanked only when present: adding the key would grow a part
+        // past the size the split was computed from.
+        if (message.containsKey('api_fingerprints'))
+          'api_fingerprints': <String, dynamic>{},
         'type': 'build_batch_chunk',
       }, outputBytes.sublist(0, rawMiddle));
       await _sendBatchPart({
@@ -703,6 +710,8 @@ class FrameWriter {
       await _sendBatchPart({
         ...message,
         'dep_graph': <String, dynamic>{},
+        if (message.containsKey('api_fingerprints'))
+          'api_fingerprints': <String, dynamic>{},
         'type': 'build_batch_chunk',
       }, outputBytes);
       await _sendBatchPart({...message, 'results': <dynamic>[]}, const []);
@@ -712,6 +721,8 @@ class FrameWriter {
       await _sendBatchPart({
         ...message,
         'dep_graph': Map<String, dynamic>.fromEntries(entries.take(middle)),
+        if (message.containsKey('api_fingerprints'))
+          'api_fingerprints': <String, dynamic>{},
         'type': 'build_batch_chunk',
       }, const []);
       await _sendBatchPart({

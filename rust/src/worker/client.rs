@@ -28,6 +28,7 @@ const SHARED_BLOCKED_ASSETS_CAPABILITY: &str = "shared-blocked-assets-v1";
 const BATCH_SHARED_FIELDS_CAPABILITY: &str = "batch-shared-fields-v1";
 const ASSET_ID_INTERNING_CAPABILITY: &str = "asset-id-interning-v1";
 const ASSET_DIGESTS_CAPABILITY: &str = "asset-digests-v1";
+const API_FINGERPRINTS_CAPABILITY: &str = "api-fingerprints-v1";
 
 /// Distinguishes a path to a Dart source script from a package executable name
 /// so the launcher can select the correct Dart invocation form.
@@ -66,6 +67,11 @@ pub struct WorkerClient {
     pub(super) metrics: WorkerClientMetrics,
     /// Resolver dependency edges reported with this client's batch or single results.
     pub(super) dep_graph: BTreeMap<String, Vec<String>>,
+    pub(super) api_fingerprints_capable: bool,
+    /// Unit API fingerprints reported with this client's results
+    /// (ADR 0056); a `None` value marks a unit whose fingerprint is
+    /// unavailable.
+    pub(super) api_fingerprints: BTreeMap<String, Option<String>>,
 }
 
 /// Transport state belongs to one worker connection. Resets and single builds
@@ -734,6 +740,8 @@ impl WorkerClient {
                 ..WorkerClientMetrics::default()
             },
             dep_graph: BTreeMap::new(),
+            api_fingerprints_capable: false,
+            api_fingerprints: BTreeMap::new(),
             shared_parts_capable: false,
             batch_shared_fields_capable: false,
             asset_interning_capable: false,
@@ -788,6 +796,7 @@ impl WorkerClient {
         self.asset_dictionary.clear();
         self.asset_dictionary_index.clear();
         self.asset_digests_capable = has_capability(&response, ASSET_DIGESTS_CAPABILITY);
+        self.api_fingerprints_capable = has_capability(&response, API_FINGERPRINTS_CAPABILITY);
         self.sent_asset_digests.clear();
         if retained_output_guard && !has_capability(&response, "retained-output-guard-v1") {
             return Err(io::Error::other("worker lacks retained-output-guard-v1"));
@@ -988,6 +997,7 @@ impl WorkerClient {
                         continue;
                     };
                     self.dep_graph.extend(decoded.dep_graph);
+                    self.api_fingerprints.extend(decoded.api_fingerprints);
                     let results = decoded.results;
                     self.metrics.build_us += started.elapsed().as_micros() as u64;
                     self.trace_metrics(&_wall, metrics_before);

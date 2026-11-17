@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
+import 'package:analyzer/source/source.dart';
 import 'package:build/build.dart';
 import 'package:build_runner_accelerator/src/analysis_startup_gate.dart';
 import 'package:build_runner_accelerator/src/worker_step_resolver.dart';
@@ -90,6 +92,7 @@ void main() {
       delegate,
       startupGate: gate,
       timingEnabled: false,
+      primaryInput: asset,
     );
   });
   tearDown(() {
@@ -184,4 +187,187 @@ void main() {
     expect(await gate.acquire(), isNull);
     await iterator.cancel();
   });
+
+  group('resolver content read recording (ADR 0056)', () {
+    final primary = AssetId('app', 'lib/main.dart');
+    final dep = AssetId('app', 'lib/dep.dart');
+    late _RecordingResolver recordingDelegate;
+    late WorkerStepResolver recording;
+
+    setUp(() {
+      recordingDelegate = _RecordingResolver();
+      recording = WorkerStepResolver(
+        recordingDelegate,
+        timingEnabled: false,
+        primaryInput: primary,
+      );
+    });
+
+    test('compilationUnitFor records non-primary assets only', () async {
+      await recording.compilationUnitFor(dep);
+      await recording.compilationUnitFor(primary);
+      expect(recording.contentReads, <AssetId>{dep});
+    });
+
+    test('astNodeFor records the fragment library asset', () async {
+      final fragment = _RecordingFragment(
+        _RecordingElement(_RecordingLibrary(dep)),
+      );
+      await recording.astNodeFor(fragment);
+      await recording.astNodeFor(fragment);
+      expect(recording.contentReads, <AssetId>{dep});
+      expect(recordingDelegate.astNodeCalls, 2);
+    });
+
+    test('astNodeFor on the primary library records nothing', () async {
+      final fragment = _RecordingFragment(
+        _RecordingElement(_RecordingLibrary(primary)),
+      );
+      await recording.astNodeFor(fragment);
+      expect(recording.contentReads, isEmpty);
+    });
+
+    test('astNodeFor records the part file of a fragment in a part', () async {
+      final part = AssetId('app', 'lib/model_part.dart');
+      final fragment = _RecordingFragment(
+        _RecordingElement(_RecordingLibrary(primary)),
+        libraryFragment: _RecordingLibraryFragment(
+          _RecordingSource(Uri.parse('package:app/model_part.dart')),
+        ),
+      );
+      await recording.astNodeFor(fragment);
+      expect(recording.contentReads, <AssetId>{part});
+    });
+
+    test(
+      'astNodeFor records nothing for a fragment in the primary unit',
+      () async {
+        final fragment = _RecordingFragment(
+          _RecordingElement(_RecordingLibrary(dep)),
+          libraryFragment: _RecordingLibraryFragment(
+            _RecordingSource(Uri.parse('package:app/main.dart')),
+          ),
+        );
+        await recording.astNodeFor(fragment);
+        expect(recording.contentReads, isEmpty);
+      },
+    );
+
+    test(
+      'astNodeFor falls back to the library for a non-package unit',
+      () async {
+        final fragment = _RecordingFragment(
+          _RecordingElement(_RecordingLibrary(dep)),
+          libraryFragment: _RecordingLibraryFragment(
+            _RecordingSource(Uri.parse('file:///app/lib/dep.dart')),
+          ),
+        );
+        await recording.astNodeFor(fragment);
+        expect(recording.contentReads, <AssetId>{dep});
+      },
+    );
+
+    test('astNodeFor with an unresolvable library records nothing', () async {
+      final sdkLibrary = _RecordingLibrary(AssetId('dart', 'lib/core.dart'));
+      recordingDelegate.unresolvable.add(sdkLibrary);
+      final fragment = _RecordingFragment(_RecordingElement(sdkLibrary));
+      await recording.astNodeFor(fragment);
+      expect(recording.contentReads, isEmpty);
+    });
+  });
+}
+
+/// A library element whose only working member is the asset the fake
+/// resolver maps it to.
+class _RecordingLibrary implements LibraryElement {
+  _RecordingLibrary(this.asset);
+
+  final AssetId asset;
+
+  @override
+  LibraryElement get library => this;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
+class _RecordingElement implements Element {
+  _RecordingElement(this.library);
+
+  @override
+  final LibraryElement library;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
+class _RecordingFragment implements Fragment {
+  _RecordingFragment(this.element, {this.libraryFragment});
+
+  @override
+  final Element element;
+
+  @override
+  final LibraryFragment? libraryFragment;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
+class _RecordingLibraryFragment implements LibraryFragment {
+  _RecordingLibraryFragment(this.source);
+
+  @override
+  final Source source;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
+class _RecordingSource implements Source {
+  _RecordingSource(this.uri);
+
+  @override
+  final Uri uri;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
+class _RecordingResolver implements ReleasableResolver {
+  final Set<LibraryElement> unresolvable = <LibraryElement>{};
+  int astNodeCalls = 0;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+
+  @override
+  Future<AstNode?> astNodeFor(Fragment fragment, {bool resolve = false}) async {
+    astNodeCalls++;
+    return null;
+  }
+
+  @override
+  Future<CompilationUnit> compilationUnitFor(
+    AssetId assetId, {
+    bool allowSyntaxErrors = false,
+  }) async => parseString(content: 'class A {}').unit;
+
+  @override
+  Future<AssetId> assetIdForElement(Element element) async {
+    final library = element as _RecordingLibrary;
+    if (unresolvable.contains(library)) {
+      throw StateError('not backed by a readable asset');
+    }
+    return library.asset;
+  }
+
+  @override
+  void release() {}
 }

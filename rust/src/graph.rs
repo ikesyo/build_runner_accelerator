@@ -5,7 +5,14 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-pub const GRAPH_SCHEMA_VERSION: u32 = 8;
+pub const GRAPH_SCHEMA_VERSION: u32 = 9;
+
+/// Schema 9 added per-action resolver content reads and per-asset API
+/// fingerprints to the graph body. Schema 8 bodies lack both fields,
+/// so the codec writes and reads them only at this schema or later.
+/// Publication recovery validates pre-upgrade journals without the
+/// schema gate and relies on this dispatch.
+const GRAPH_SCHEMA_API_FINGERPRINTS: u32 = 9;
 const GRAPH_MAGIC: &[u8; 4] = b"BRAG";
 const GRAPH_FORMAT_VERSION: u8 = 3;
 const GRAPH_HEADER_LENGTH: usize = GRAPH_MAGIC.len() + 1 + 4;
@@ -21,6 +28,11 @@ pub struct ActionState {
     pub input: String,
     pub reads: Vec<String>,
     pub resolver_reads: Vec<String>,
+    /// Libraries the action touched as source text through the
+    /// resolver (ADR 0056): actions with a non-empty split observe
+    /// more than the API fingerprint covers, so later stages key
+    /// their resolver reads by content instead of by signature.
+    pub resolver_content_reads: Vec<String>,
     /// Entrypoints the action passed to the resolver. Dependency edges are
     /// expanded through [`GraphState::resolver_dep_graph`] at dirty-check
     /// time, mirroring stock build_runner's `previousLibraryCycleGraphLoader`.
@@ -46,6 +58,10 @@ pub struct GraphState {
     /// Actions that resolve an already-loaded library cycle observe no new
     /// IO, so their dependency edges cannot be recovered from reads alone.
     pub resolver_dep_graph: BTreeMap<String, Vec<String>>,
+    /// API fingerprints of source units, learned by the workers' dep
+    /// walks (ADR 0056). Absence means no evidence: later stages treat
+    /// such units as content-keyed.
+    pub asset_fingerprints: BTreeMap<String, String>,
     /// Actual output location at the successful commit (true means cache).
     pub output_locations: BTreeMap<String, bool>,
     /// Stock InputTracker input order, distinct from broader observed reads.
@@ -202,6 +218,23 @@ impl GraphState {
         contents.extend_from_slice(&payload);
         fs::write(&temporary, contents)?;
         fs::rename(temporary, path)
+    }
+
+    /// Merges API fingerprints reported by the workers (ADR 0056). A
+    /// reported fingerprint replaces the recorded one; a reported
+    /// unavailable marker removes the entry, so evidence recorded for
+    /// an earlier content of the asset is never kept.
+    pub fn merge_api_fingerprints(&mut self, reported: BTreeMap<String, Option<String>>) {
+        for (asset, fingerprint) in reported {
+            match fingerprint {
+                Some(fingerprint) => {
+                    self.asset_fingerprints.insert(asset, fingerprint);
+                }
+                None => {
+                    self.asset_fingerprints.remove(&asset);
+                }
+            }
+        }
     }
 
     /// Updates compatibility metadata and the filesystem snapshot together.
@@ -441,7 +474,7 @@ impl Encoder {
         Ok(())
     }
 
-    fn write_action(&mut self, action: &ActionState) -> io::Result<()> {
+    fn write_action(&mut self, action: &ActionState, schema_version: u32) -> io::Result<()> {
         self.write_u8(u8::from(action.shared_part.is_some()))?;
         if let Some(part) = &action.shared_part {
             // Source-edit candidates are transaction-only. Persist reusable
@@ -454,6 +487,9 @@ impl Encoder {
         self.write_string(&action.input)?;
         self.write_strings(&action.reads, "action reads")?;
         self.write_strings(&action.resolver_reads, "resolver reads")?;
+        if schema_version >= GRAPH_SCHEMA_API_FINGERPRINTS {
+            self.write_strings(&action.resolver_content_reads, "resolver content reads")?;
+        }
         self.write_strings(&action.resolver_entrypoints, "resolver entrypoints")?;
         self.write_count(action.glob_reads.len(), "glob reads")?;
         for glob in &action.glob_reads {
@@ -473,9 +509,12 @@ impl Encoder {
         self.write_count(state.actions.len(), "action graph")?;
         for (key, action) in &state.actions {
             self.write_string(key)?;
-            self.write_action(action)?;
+            self.write_action(action, state.schema_version)?;
         }
         self.write_string_list_map(&state.resolver_dep_graph)?;
+        if state.schema_version >= GRAPH_SCHEMA_API_FINGERPRINTS {
+            self.write_string_map(&state.asset_fingerprints)?;
+        }
         self.write_count(state.output_locations.len(), "output locations")?;
         for (asset, cache) in &state.output_locations {
             self.write_string(asset)?;
@@ -610,7 +649,7 @@ impl<'a> Decoder<'a> {
         Ok(snapshot)
     }
 
-    fn read_action(&mut self) -> io::Result<ActionState> {
+    fn read_action(&mut self, schema_version: u32) -> io::Result<ActionState> {
         let shared_part = if self.read_bool()? {
             Some(crate::shared_library::SharedContribution {
                 header: self.read_string()?,
@@ -624,6 +663,11 @@ impl<'a> Decoder<'a> {
         let input = self.read_string()?;
         let reads = self.read_strings("action reads")?;
         let resolver_reads = self.read_strings("resolver reads")?;
+        let resolver_content_reads = if schema_version >= GRAPH_SCHEMA_API_FINGERPRINTS {
+            self.read_strings("resolver content reads")?
+        } else {
+            Vec::new()
+        };
         let resolver_entrypoints = self.read_strings("resolver entrypoints")?;
         let glob_count = self.read_count("glob reads")?;
         let mut glob_reads = Vec::with_capacity(glob_count);
@@ -642,6 +686,7 @@ impl<'a> Decoder<'a> {
             input,
             reads,
             resolver_reads,
+            resolver_content_reads,
             resolver_entrypoints,
             glob_reads,
             outputs,
@@ -674,12 +719,17 @@ impl<'a> Decoder<'a> {
         let mut actions = BTreeMap::new();
         for _ in 0..action_count {
             let key = self.read_string()?;
-            let action = self.read_action()?;
+            let action = self.read_action(schema_version)?;
             if actions.insert(key, action).is_some() {
                 return Err(invalid_graph("graph contains a duplicate action key"));
             }
         }
         let resolver_dep_graph = self.read_string_list_map()?;
+        let asset_fingerprints = if schema_version >= GRAPH_SCHEMA_API_FINGERPRINTS {
+            self.read_string_map()?
+        } else {
+            BTreeMap::new()
+        };
         let mut output_locations = BTreeMap::new();
         let count = self.read_count("output locations")?;
         for _ in 0..count {
@@ -713,6 +763,7 @@ impl<'a> Decoder<'a> {
             assets,
             actions,
             resolver_dep_graph,
+            asset_fingerprints,
             output_locations,
             stock_input_order,
             stock_glob_members,
@@ -904,6 +955,7 @@ mod tests {
             assets,
             actions: BTreeMap::new(),
             resolver_dep_graph: BTreeMap::new(),
+            asset_fingerprints: BTreeMap::new(),
             output_locations: BTreeMap::new(),
             stock_input_order: BTreeMap::new(),
             stock_glob_members: BTreeMap::new(),
@@ -986,6 +1038,41 @@ mod tests {
     }
 
     #[test]
+    fn schema_8_graph_body_decodes_for_recovery_validation() {
+        // A journal written by the schema 8 binary lacks the schema 9
+        // fields. Publication recovery validates that body with
+        // decode_checked(.., false) before ordinary load invalidation
+        // can run, so it must decode with its own layout.
+        let previous = GraphState {
+            schema_version: 8,
+            config_digest: "previous configuration".to_owned(),
+            asset_fingerprints: BTreeMap::from([(
+                "app|lib/model.dart".to_owned(),
+                "fingerprint".to_owned(),
+            )]),
+            actions: BTreeMap::from([(
+                "step".to_owned(),
+                ActionState {
+                    resolver_content_reads: vec!["app|lib/dep.dart".to_owned()],
+                    ..ActionState::default()
+                },
+            )]),
+            ..GraphState::default()
+        };
+        let mut encoder = super::Encoder::new();
+        encoder.write_graph_state(&previous).unwrap();
+        let payload = encoder.finish();
+        let mut bytes = super::GRAPH_MAGIC.to_vec();
+        bytes.push(super::GRAPH_FORMAT_VERSION);
+        bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&payload);
+        let decoded = GraphState::decode_checked(&bytes, false).unwrap();
+        assert_eq!(decoded.config_digest, "previous configuration");
+        assert!(decoded.asset_fingerprints.is_empty());
+        assert!(decoded.actions["step"].resolver_content_reads.is_empty());
+    }
+
+    #[test]
     fn old_graph_schema_is_not_compatible() {
         let state = GraphState {
             schema_version: 1,
@@ -1030,6 +1117,10 @@ mod tests {
                 "app|lib/model.dart".to_owned(),
                 vec!["app|lib/conditional.dart".to_owned()],
             )]),
+            asset_fingerprints: BTreeMap::from([(
+                "app|lib/model.dart".to_owned(),
+                "fingerprint".to_owned(),
+            )]),
             actions: BTreeMap::from([(
                 "example:builder|app|lib/model.dart".to_owned(),
                 ActionState {
@@ -1044,6 +1135,7 @@ mod tests {
                     input: "app|lib/model.dart".to_owned(),
                     reads: vec!["app|lib/model.dart".to_owned()],
                     resolver_reads: vec!["app|lib/conditional.dart".to_owned()],
+                    resolver_content_reads: vec!["app|lib/other.dart".to_owned()],
                     resolver_entrypoints: vec!["app|lib/model.dart".to_owned()],
                     glob_reads: vec![GlobRead {
                         package: "app".to_owned(),
@@ -1078,6 +1170,30 @@ mod tests {
     }
 
     #[test]
+    fn merge_api_fingerprints_replaces_and_removes() {
+        let mut state = GraphState {
+            asset_fingerprints: BTreeMap::from([
+                ("app|lib/a.dart".to_owned(), "old".to_owned()),
+                ("app|lib/b.dart".to_owned(), "kept".to_owned()),
+            ]),
+            ..GraphState::default()
+        };
+        state.merge_api_fingerprints(BTreeMap::from([
+            ("app|lib/a.dart".to_owned(), Some("new".to_owned())),
+            ("app|lib/b.dart".to_owned(), None),
+            ("app|lib/c.dart".to_owned(), Some("added".to_owned())),
+            ("app|lib/d.dart".to_owned(), None),
+        ]));
+        assert_eq!(
+            state.asset_fingerprints,
+            BTreeMap::from([
+                ("app|lib/a.dart".to_owned(), "new".to_owned()),
+                ("app|lib/c.dart".to_owned(), "added".to_owned()),
+            ])
+        );
+    }
+
+    #[test]
     fn old_binary_format_and_schema_are_discarded_without_removing_files() {
         let root =
             std::env::temp_dir().join(format!("accelerator-old-graph-{}", std::process::id()));
@@ -1093,6 +1209,7 @@ mod tests {
             (99, super::GRAPH_SCHEMA_VERSION),
             (super::GRAPH_FORMAT_VERSION, 1),
             (super::GRAPH_FORMAT_VERSION, 7),
+            (super::GRAPH_FORMAT_VERSION, 8),
         ] {
             let previous = GraphState {
                 schema_version: schema,

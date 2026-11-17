@@ -104,6 +104,18 @@ of its constituent units' fingerprints (the library unit and its
 parts, in directive order), so a part's API or doc change is an owner
 change, while a part's body-only edit is not.
 
+Implementation notes for the recording stage (stage 2). The step
+resolver wrapper is unconditional, because the downgrade record must
+not depend on profiling being on. Recording itself never fails an
+action: a library with no readable asset leaves no record. The
+fingerprint store is namespaced by the resolved analyzer as well as
+the SDK, since the fingerprint is computed by that analyzer's AST
+model; the analyzer is identified by its package root, the same
+input the analysis byte store fingerprints. Graph schema 9 carries
+the per-action content-read split and the per-unit fingerprints; as
+with earlier schema bumps, an older graph is invalidated rather than
+migrated, which later stages see as no evidence.
+
 An asset's effective signature folds in its resolver dependencies,
 so an API change propagates exactly as far as element-model
 observation can reach:

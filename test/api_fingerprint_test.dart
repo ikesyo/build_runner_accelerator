@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:build_runner_accelerator/src/api_fingerprint.dart';
 import 'package:build_runner_accelerator/src/blake3.dart';
 import 'package:build_runner_accelerator/src/indexed_blob_store.dart';
@@ -324,6 +325,23 @@ void main() {
       expect(reopened.lookup(brokenDigest), isNull);
     });
 
+    test('fingerprintForParse reuses the caller parse and stores', () {
+      final digest = blake3Hex(base.codeUnits);
+      final parsed = parseString(content: base);
+      final fingerprint = cache.fingerprintForParse(digest, parsed);
+      expect(fingerprint, fingerprintOf(base));
+      expect(cache.lookup(digest), fingerprint);
+    });
+
+    test('fingerprintForParse stores unavailable markers', () {
+      const source = 'augment class A { augment void m() {} }';
+      final digest = blake3Hex(source.codeUnits);
+      final parsed = parseString(content: source, throwIfDiagnostics: false);
+      expect(cache.fingerprintForParse(digest, parsed), isNull);
+      expect(cache.contains(digest), isTrue);
+      expect(cache.lookup(digest), isNull);
+    });
+
     test('a disabled AST model bypasses stored fingerprints', () {
       final digest = blake3Hex(base.codeUnits);
       expect(cache.fingerprintFor(digest, base), isNotNull);
@@ -340,6 +358,37 @@ void main() {
       final digest = blake3Hex(source.codeUnits);
       expect(cache.fingerprintFor(digest, source), isNull);
       expect(cache.contains(digest), isFalse);
+    });
+  });
+
+  group('shared store namespace', () {
+    tearDown(() => ApiFingerprintCache.sharedAnalyzerRoot = null);
+
+    test('is SDK-only until the analyzer root is known', () {
+      ApiFingerprintCache.sharedAnalyzerRoot = null;
+      final sdk = Platform.version.split(' ').first;
+      expect(debugApiFingerprintStoreNamespace(), 'v1-$sdk');
+    });
+
+    test('carries the analyzer package directory once known', () {
+      ApiFingerprintCache.sharedAnalyzerRoot =
+          'file:///home/user/.pub-cache/hosted/pub.dev/analyzer-14.6.0/';
+      final sdk = Platform.version.split(' ').first;
+      expect(
+        debugApiFingerprintStoreNamespace(),
+        startsWith('v1-$sdk-analyzer-14.6.0-'),
+      );
+    });
+
+    test('separates installs that share a directory name', () {
+      final sdk = Platform.version.split(' ').first;
+      ApiFingerprintCache.sharedAnalyzerRoot = 'file:///checkout-a/analyzer/';
+      final a = debugApiFingerprintStoreNamespace();
+      ApiFingerprintCache.sharedAnalyzerRoot = 'file:///checkout-b/analyzer/';
+      final b = debugApiFingerprintStoreNamespace();
+      expect(a, startsWith('v1-$sdk-analyzer-'));
+      expect(b, startsWith('v1-$sdk-analyzer-'));
+      expect(a, isNot(b));
     });
   });
 }

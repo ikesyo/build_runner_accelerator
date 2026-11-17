@@ -165,6 +165,7 @@ Future<void> runWorker({
                 'batch-shared-fields-v1',
                 'asset-id-interning-v1',
                 'asset-digests-v1',
+                'api-fingerprints-v1',
                 'reset-overlay-blob-v1',
                 'build-runner-current-v1',
                 'retained-output-guard-v1',
@@ -291,6 +292,11 @@ class _WorkerRuntime {
   /// are re-sent only when a reset rebuilt them — identified by instance,
   /// not by content.
   final Map<AssetId, Object> sentDepGraphValues = <AssetId, Object>{};
+
+  /// API fingerprints already transmitted to Rust, keyed by asset id
+  /// string (ADR 0056). A null value is a transmitted unavailable
+  /// marker, distinct from never having sent the asset.
+  final Map<String, String?> sentApiFingerprints = <String, String?>{};
 
   /// Resolver entrypoints recorded by every `_runBuild` of the current
   /// batch, including nested builds whose results do not join `results`.
@@ -592,6 +598,12 @@ class _WorkerRuntime {
     _committedDartDirectives.clear();
     _resetDirectiveContents.clear();
     sentDepGraphValues.clear();
+    sentApiFingerprints.clear();
+    // Learned fingerprints are keyed by asset, not by content, so an
+    // observation from an earlier build could overwrite a fresher one
+    // another worker reported in the meantime. Only this build's own
+    // observations may be reported.
+    resolver.learnedApiFingerprints().clear();
     batchResolverEntrypoints.clear();
     builders.clear();
     postProcessBuilders.clear();
@@ -858,9 +870,11 @@ Future<void> _handleNestedBuild(
       'stock_inputs': <String>[],
       'stock_globs': <String, List<String>>{},
       'resolver_reads': <String>[],
+      'resolver_content_reads': <String>[],
       'resolver_entrypoints': <String>[],
       'resolver_used': false,
       'dep_graph': <String, List<String>>{},
+      'api_fingerprints': <String, String?>{},
       'glob_reads': <dynamic>[],
       'diagnostics': <dynamic>[],
       'error': '$error',
@@ -892,6 +906,10 @@ Future<JsonMap> _runSingleBuild(
     runtime.resolver.phasedAssetDeps(),
     (result['resolver_entrypoints'] as List<String>).map(AssetId.parse).toSet(),
     runtime.sentDepGraphValues,
+  );
+  result['api_fingerprints'] = _apiFingerprintsJson(
+    runtime.resolver.learnedApiFingerprints(),
+    runtime.sentApiFingerprints,
   );
   return result;
 }
@@ -936,6 +954,10 @@ Future<void> _handleBuildBatch(
       runtime.resolver.phasedAssetDeps(),
       runtime.batchResolverEntrypoints,
       runtime.sentDepGraphValues,
+    ),
+    'api_fingerprints': _apiFingerprintsJson(
+      runtime.resolver.learnedApiFingerprints(),
+      runtime.sentApiFingerprints,
     ),
   });
 }
@@ -1270,6 +1292,11 @@ Future<JsonMap> _runBuild(
           ],
       },
       'resolver_reads': resolverReads,
+      'resolver_content_reads': <String>[
+        if (step != null)
+          for (final id in runtime.resolver.contentReadsFor(step))
+            id.toString(),
+      ]..sort(),
       'resolver_entrypoints': <String>[
         for (final id in resolverEntrypoints) id.toString(),
       ],
@@ -1348,6 +1375,26 @@ Map<String, List<String>> _resolverDepGraphJson(
       for (final dep in assetDeps) dep.toString(),
     ];
     pending.addAll(assetDeps);
+  }
+  return result;
+}
+
+/// API fingerprints the dep walk learned that Rust has not been sent
+/// yet (ADR 0056): the delta of [learned] against [sent], which is
+/// updated in place. Units whose fingerprint is unavailable are sent
+/// as null so the frontend drops any fingerprint it recorded for an
+/// earlier content of the same asset.
+Map<String, String?> _apiFingerprintsJson(
+  Map<String, String?> learned,
+  Map<String, String?> sent,
+) {
+  final result = <String, String?>{};
+  for (final entry in learned.entries) {
+    if (sent.containsKey(entry.key) && sent[entry.key] == entry.value) {
+      continue;
+    }
+    sent[entry.key] = entry.value;
+    result[entry.key] = entry.value;
   }
   return result;
 }

@@ -65,6 +65,7 @@ pub(super) fn record_missing_primary_input(
             input: spec.input.clone(),
             reads: Vec::new(),
             resolver_reads: Vec::new(),
+            resolver_content_reads: Vec::new(),
             resolver_entrypoints: Vec::new(),
             glob_reads: Vec::new(),
             outputs: Vec::new(),
@@ -303,6 +304,7 @@ pub(super) fn record_build_result(
             input: spec.input.clone(),
             reads: result.reads,
             resolver_reads: result.resolver_reads,
+            resolver_content_reads: result.resolver_content_reads,
             resolver_entrypoints: result.resolver_entrypoints,
             glob_reads: result.glob_reads,
             outputs: result

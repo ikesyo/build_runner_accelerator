@@ -186,6 +186,16 @@ impl WorkerPool {
         dep_graph
     }
 
+    /// Unit API fingerprints reported by every worker in the pool
+    /// (ADR 0056); a `None` value marks an unavailable fingerprint.
+    pub fn take_api_fingerprints(&mut self) -> BTreeMap<String, Option<String>> {
+        let mut api_fingerprints = BTreeMap::new();
+        for worker in &mut self.workers {
+            api_fingerprints.append(&mut worker.api_fingerprints);
+        }
+        api_fingerprints
+    }
+
     /// Keep the initial worker artifact for the lifetime of a long-running
     /// session such as `watch`. A background AOT compile may finish mid-session,
     /// but replacing the resident worker would reset its state and counters.

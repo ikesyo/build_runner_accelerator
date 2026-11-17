@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
+import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 // ignore: implementation_imports
@@ -33,6 +34,7 @@ import 'package:build_runner/src/build_plan/build_inputs.dart';
 import 'package:build_runner/src/logging/timed_activities.dart';
 import 'package:pool/pool.dart';
 
+import 'api_fingerprint.dart';
 import 'asset_deps_cache.dart';
 import 'blake3.dart';
 import 'current_build_runtime.dart';
@@ -81,6 +83,12 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
 
   @override
   PhasedAssetDeps phasedAssetDeps() => _workerGraphLoader.phasedAssetDeps();
+
+  /// Unit fingerprints the dep walk has learned in this process
+  /// (ADR 0056), keyed by asset id string; a null value marks a unit
+  /// whose fingerprint is unavailable.
+  Map<String, String?> learnedApiFingerprints() =>
+      _CachingAssetDepsLoader.learnedApiFingerprints;
 
   /// Completes dep loads queued for [phase] or earlier.
   ///
@@ -207,6 +215,35 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   // `BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0` stays `null`.
   static final AssetDepsCache? _cache = AssetDepsCache.shared();
 
+  // Lazy like [_cache]; disabled by the same environment variable.
+  static final ApiFingerprintCache? _fingerprintCache =
+      ApiFingerprintCache.shared();
+
+  /// Unit fingerprints learned by dep walks in this process, keyed by
+  /// asset id string (ADR 0056); a null value marks a unit whose
+  /// fingerprint is unavailable. Reported to the frontend with the
+  /// build results, delta-encoded against what it already has, like
+  /// the dep graph.
+  static final Map<String, String?> learnedApiFingerprints =
+      <String, String?>{};
+
+  /// Records the API fingerprint of the unit [id] with source
+  /// [content] as learned. [parsed] reuses the dep walk's own parse
+  /// when it has one; without it the fingerprint cache answers, and
+  /// parses on a miss.
+  static void _learnApiFingerprint(
+    AssetId id,
+    String content, [
+    ParseStringResult? parsed,
+  ]) {
+    final cache = _fingerprintCache;
+    if (cache == null) return;
+    final digest = blake3Hex(utf8.encode(content));
+    learnedApiFingerprints[id.toString()] = parsed != null
+        ? cache.fingerprintForParse(digest, parsed)
+        : cache.fingerprintFor(digest, content);
+  }
+
   @override
   Future<PhasedValue<AssetDeps>> load(AssetId id) async {
     resolverActionMetrics.cycleGraphFileLoads++;
@@ -264,6 +301,7 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
       // fed to the Analyzer, and a source asset's deps never change
       // during a build, so the value is fixed. Prefetching the revealed
       // deps mirrors the slow path below.
+      _learnApiFingerprint(id, content.values.last.value);
       if (filesystem is RemoteBuilderFilesystem) {
         await filesystem.prefetchDepReads(digestHit.deps);
       }
@@ -301,9 +339,19 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   }
 
   AssetDeps _depsFor(AssetId id, String content) {
-    if (content.isEmpty) return AssetDeps.empty;
+    if (content.isEmpty) {
+      // A unit that became empty still has a current fingerprint (or
+      // an unavailable marker); learning it replaces the fingerprint
+      // of its previous, nonempty content.
+      _learnApiFingerprint(id, content);
+      return AssetDeps.empty;
+    }
     final cache = _cache;
-    if (cache == null) return _parse(id, content);
+    if (cache == null) {
+      final (deps, parsed) = _parseWithResult(id, content);
+      _learnApiFingerprint(id, content, parsed);
+      return deps;
+    }
     final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
     // `readPhased` just stored this exact `content` string instance in the
     // driver filesystem's `_data` along with its md5 `contentHash`; when the
@@ -319,30 +367,32 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
       if (timer != null) {
         resolverActionMetrics.depParseCacheUs += timer.elapsedMicroseconds;
       }
+      _learnApiFingerprint(id, content);
       return hit;
     }
     resolverActionMetrics.depParseCacheMisses++;
     final parseTimer = resolverActionMetrics.enabled
         ? (Stopwatch()..start())
         : null;
-    final deps = _parse(id, content);
+    final (deps, parsed) = _parseWithResult(id, content);
     if (parseTimer != null) {
       resolverActionMetrics.depParseUs += parseTimer.elapsedMicroseconds;
     }
     cache.store(key, deps);
+    _learnApiFingerprint(id, content, parsed);
     if (timer != null) {
       resolverActionMetrics.depParseCacheUs += timer.elapsedMicroseconds;
     }
     return deps;
   }
 
-  // Same directive scan as `AssetDepsLoader._parse`.
-  AssetDeps _parse(AssetId id, String content) {
+  // Same directive scan as `AssetDepsLoader._parse`. The parse result
+  // rides along so the API fingerprint (ADR 0056) reuses this parse
+  // instead of parsing the unit a second time.
+  (AssetDeps, ParseStringResult) _parseWithResult(AssetId id, String content) {
     final depsNodeBuilder = AssetDepsBuilder();
-    final parsed = parseString(
-      content: content,
-      throwIfDiagnostics: false,
-    ).unit;
+    final result = parseString(content: content, throwIfDiagnostics: false);
+    final parsed = result.unit;
     for (final directive in parsed.directives) {
       if (directive is! UriBasedDirective) continue;
       final uri = directive.uri.stringValue;
@@ -351,6 +401,6 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
       if (_ignoredSchemes.any(parsedUri.isScheme)) continue;
       depsNodeBuilder.deps.add(AssetId.resolve(parsedUri, from: id));
     }
-    return depsNodeBuilder.build();
+    return (depsNodeBuilder.build(), result);
   }
 }

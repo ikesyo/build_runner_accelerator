@@ -35,7 +35,7 @@ class Reader:
 
 def native_graph(root):
     r = Reader(root / '.dart_tool/build_runner_accelerator/graph-v3.bin')
-    assert r.u32() == 8, 'update the pinned native graph reader'
+    assert r.u32() == 9, 'update the pinned native graph reader'
     r.string()
     r.take(1)
     for _ in range(r.u32()):
@@ -48,15 +48,18 @@ def native_graph(root):
         if has_part == b'\x01':
             r.string(); r.string(); r.string()
         builder, primary = r.string(), r.string()
-        reads, resolver_reads, entrypoints = r.strings(), r.strings(), r.strings()
+        reads, resolver_reads = r.strings(), r.strings()
+        content_reads, entrypoints = r.strings(), r.strings()
         globs = [(r.string(), r.string()) for _ in range(r.u32())]
         outputs = r.strings()
         r.mapping(r.string)
         status = r.string()
         actions[key] = dict(builder=builder, input=primary, reads=reads,
-                            resolver_reads=resolver_reads, entrypoints=entrypoints,
+                            resolver_reads=resolver_reads,
+                            content_reads=content_reads, entrypoints=entrypoints,
                             globs=globs, outputs=outputs, status=status)
     r.mapping(r.strings)
+    r.mapping(r.string)
     r.mapping(lambda: r.take(1))
     inputs = r.mapping(r.strings)
     globs = r.mapping(lambda: r.mapping(r.strings))

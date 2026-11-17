@@ -108,6 +108,10 @@ pub(super) fn run(
             worker_pool = owned_pool.as_mut();
         }
         let active_pool = worker_pool.expect("worker pool was just initialized");
+        // Drop fingerprints a failed earlier call left on a resident
+        // pool; they belong to a transaction that never committed. The
+        // filtered path does the same before its first pool operation.
+        drop(active_pool.take_api_fingerprints());
         active_pool.set_retained_output_guard(retained_output_guard);
         active_pool.set_native_overlay(has_shared_parts);
         active_pool.set_asset_digests(asset_digests);
@@ -224,6 +228,7 @@ pub(super) fn run(
                             state
                                 .resolver_dep_graph
                                 .extend(active_pool.take_dep_graph());
+                            state.merge_api_fingerprints(active_pool.take_api_fingerprints());
                             for lazy_result in lazy_state.take_results() {
                                 record_build_result(
                                     workspace,
@@ -365,6 +370,7 @@ pub(super) fn run(
                 state
                     .resolver_dep_graph
                     .extend(active_pool.take_dep_graph());
+                state.merge_api_fingerprints(active_pool.take_api_fingerprints());
 
                 drop(merge);
                 let record = crate::wall::Span::new("results_record")

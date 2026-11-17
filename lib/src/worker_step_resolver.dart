@@ -18,11 +18,30 @@ class WorkerStepResolver implements ReleasableResolver {
     this._delegate, {
     this.startupGate,
     required this.timingEnabled,
+    required this.primaryInput,
   });
 
   final ReleasableResolver _delegate;
   final AnalysisStartupGate? startupGate;
   final bool timingEnabled;
+
+  /// The action's primary input asset.
+  final AssetId primaryInput;
+
+  /// Libraries this step touched as source text through
+  /// [compilationUnitFor] or [astNodeFor], excluding the primary
+  /// input itself: the downgrade evidence for API-signature early
+  /// cutoff (ADR 0056). Element-model access such as [libraryFor]
+  /// observes only API, so it is not recorded; AST access observes
+  /// source, including bodies and comments the API fingerprint does
+  /// not cover.
+  final Set<AssetId> contentReads = <AssetId>{};
+
+  /// Library element to asset memo for [astNodeFor] recording: a step
+  /// typically asks for many fragments of the same few libraries.
+  final Map<LibraryElement, AssetId> _libraryAssets =
+      <LibraryElement, AssetId>{};
+
   AnalysisStartupLease? _lease;
   Future<void>? _analysisStarted;
   int _linkingCalls = 0;
@@ -118,24 +137,69 @@ class WorkerStepResolver implements ReleasableResolver {
       _time('isLibrary', () => _delegate.isLibrary(assetId));
 
   @override
-  Future<AstNode?> astNodeFor(Fragment fragment, {bool resolve = false}) =>
-      _time(
-        'astNodeFor',
-        () => _delegate.astNodeFor(fragment, resolve: resolve),
-        links: resolve,
-      );
+  Future<AstNode?> astNodeFor(Fragment fragment, {bool resolve = false}) async {
+    await _recordFragmentLibrary(fragment);
+    return _time(
+      'astNodeFor',
+      () => _delegate.astNodeFor(fragment, resolve: resolve),
+      links: resolve,
+    );
+  }
+
+  /// Records the asset [fragment] was read from as a content read,
+  /// unless it is the primary input itself.
+  Future<void> _recordFragmentLibrary(Fragment fragment) async {
+    try {
+      final unitAsset = _unitAsset(fragment);
+      if (unitAsset != null) {
+        if (unitAsset != primaryInput) contentReads.add(unitAsset);
+        return;
+      }
+      final library = fragment.element.library;
+      if (library == null) return;
+      var asset = _libraryAssets[library];
+      if (asset == null) {
+        asset = await _delegate.assetIdForElement(library);
+        _libraryAssets[library] = asset;
+      }
+      if (asset != primaryInput) contentReads.add(asset);
+    } on Object {
+      // Recording must never break the action: a library that is not
+      // backed by a readable asset (SDK libraries, summaries) cannot
+      // appear in the build graph, so there is nothing to record.
+    }
+  }
+
+  /// The asset of the compilation unit holding [fragment], when that
+  /// unit's source is a package URI; otherwise null. A declaration in
+  /// a part file lives in its own unit, and the library fallback in
+  /// [_recordFragmentLibrary] names the defining unit instead, which
+  /// would miss the part file entirely (or record nothing at all when
+  /// the defining unit is the primary input).
+  AssetId? _unitAsset(Fragment fragment) {
+    try {
+      final uri = fragment.libraryFragment?.source.uri;
+      if (uri == null || uri.scheme != 'package') return null;
+      return AssetId.resolve(uri);
+    } on Object {
+      return null;
+    }
+  }
 
   @override
   Future<CompilationUnit> compilationUnitFor(
     AssetId assetId, {
     bool allowSyntaxErrors = false,
-  }) => _time(
-    'compilationUnitFor',
-    () => _delegate.compilationUnitFor(
-      assetId,
-      allowSyntaxErrors: allowSyntaxErrors,
-    ),
-  );
+  }) {
+    if (assetId != primaryInput) contentReads.add(assetId);
+    return _time(
+      'compilationUnitFor',
+      () => _delegate.compilationUnitFor(
+        assetId,
+        allowSyntaxErrors: allowSyntaxErrors,
+      ),
+    );
+  }
 
   @override
   Future<LibraryElement> libraryFor(
