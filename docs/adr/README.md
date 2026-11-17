@@ -67,6 +67,7 @@ Benchmarks and mechanical refactors do not need one.
 | [0053](0053-asset-id-interning.md) | Session asset-id interning for batch and resolver-reset messages |
 | [0054](0054-frontend-asset-digests.md) | Frontend asset digests for worker cache keying |
 | [0055](0055-rust-workspace-discovery.md) | Workspace discovery in the frontend |
+| [0056](0056-api-signature-early-cutoff.md) | API-signature early cutoff for resolver reads |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
 artifacts and launcher behavior are in
