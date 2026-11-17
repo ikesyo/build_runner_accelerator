@@ -81,6 +81,11 @@ String? _computeApiFingerprint(ParseStringResult result) {
   return blake3Hex(utf8.encode(components.toString()));
 }
 
+/// Test hook: the shared fingerprint store's directory segment for
+/// the current SDK and [ApiFingerprintCache.sharedAnalyzerRoot].
+String debugApiFingerprintStoreNamespace() =>
+    ApiFingerprintCache._namespace(Platform.version.split(' ').first);
+
 /// Parses [content] and computes its API fingerprint.
 ///
 /// This is the on-demand path; callers that already parse the unit for
@@ -338,7 +343,9 @@ String _hex(Uint8List bytes) {
 /// Keyed by the content digest alone: unlike directive resolution, a
 /// fingerprint depends only on the unit's own content. The store is
 /// namespaced by SDK version because parsing is grammar-dependent,
-/// and follows the same layout as the directive caches (ADR 0054).
+/// and by the resolved analyzer (see [sharedAnalyzerRoot]) because
+/// the fingerprint is computed by that analyzer's AST model; it
+/// follows the same layout as the directive caches (ADR 0054).
 /// A stored empty value marks a unit whose fingerprint is unavailable
 /// (augmentations), so the parse is not repeated for it either.
 ///
@@ -349,6 +356,14 @@ final class ApiFingerprintCache {
     : _store = store ?? _sharedStore();
 
   static const _packedVersion = 'v1';
+
+  /// Root URI of the resolved analyzer package, recorded from the
+  /// project's package configuration by the worker's resolver setup,
+  /// mirroring how the analysis byte store identifies the analyzer.
+  ///
+  /// Set before the first shared cache is built. A worker process
+  /// serves one project, so the value is stable for its lifetime.
+  static String? sharedAnalyzerRoot;
 
   /// The shared process-wide cache, or `null` when disabled.
   static ApiFingerprintCache? shared() {
@@ -367,10 +382,22 @@ final class ApiFingerprintCache {
       p.join(
         acceleratorCacheDirectory(),
         'api_fingerprint',
-        '$_packedVersion-$sdk',
+        _namespace(sdk),
         'store.bin',
       ),
     );
+  }
+
+  /// Store directory segment for [sdk]: the packed version and SDK,
+  /// plus the analyzer package's directory name (which carries its
+  /// version for hosted packages) when the root is known.
+  static String _namespace(String sdk) {
+    final base = '$_packedVersion-$sdk';
+    final root = sharedAnalyzerRoot;
+    if (root == null || root.isEmpty) return base;
+    final segment = root.replaceAll(RegExp(r'/+$'), '').split('/').last;
+    final sanitized = segment.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    return sanitized.isEmpty ? base : '$base-$sanitized';
   }
 
   final IndexedBlobStore? _store;
@@ -414,6 +441,20 @@ final class ApiFingerprintCache {
     // AST model being unavailable in this process is environmental:
     // persisting it would mark valid content as unavailable for
     // later builds whose model works.
+    if (fingerprint != null || _astModelSupported) {
+      store(contentDigest, fingerprint);
+    }
+    return fingerprint;
+  }
+
+  /// The fingerprint for a unit the caller already parsed, recorded
+  /// under [contentDigest]. Follows the same rules as [fingerprintFor]:
+  /// the AST-model gate applies before a stored entry is served, and
+  /// an environment-caused null is not persisted as a marker.
+  String? fingerprintForParse(String contentDigest, ParseStringResult result) {
+    if (!_astModelSupported) return null;
+    if (_entry(contentDigest) != null) return lookup(contentDigest);
+    final fingerprint = computeApiFingerprint(result);
     if (fingerprint != null || _astModelSupported) {
       store(contentDigest, fingerprint);
     }
