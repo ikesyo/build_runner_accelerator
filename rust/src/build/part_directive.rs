@@ -180,6 +180,7 @@ pub(super) fn empty_build_result(spec: &BuildSpec) -> BuildResult {
         deleted: Vec::new(),
         reads: vec![spec.input.clone()],
         resolver_reads: Vec::new(),
+        resolver_content_reads: Vec::new(),
         resolver_entrypoints: Vec::new(),
         resolver_used: false,
         glob_reads: Vec::new(),

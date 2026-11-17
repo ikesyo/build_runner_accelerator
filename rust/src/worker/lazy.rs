@@ -824,6 +824,12 @@ impl WorkerClient {
                             "filtered demand requires single-result resolver dependency metadata",
                         ));
                     }
+                    if let Some(fingerprints) = frame.metadata.get("api_fingerprints") {
+                        let learned: BTreeMap<String, Option<String>> =
+                            serde_json::from_value(fingerprints.clone())
+                                .map_err(io::Error::other)?;
+                        self.api_fingerprints.extend(learned);
+                    }
                     let result = decode_build_result_frame(frame)?;
                     if lazy.filtered_previous.is_some() && result.stock_inputs.is_none() {
                         return Err(io::Error::other(
@@ -939,6 +945,7 @@ impl WorkerClient {
                         continue;
                     };
                     self.dep_graph.extend(decoded.dep_graph);
+                    self.api_fingerprints.extend(decoded.api_fingerprints);
                     let results = decoded.results;
                     self.metrics.build_us += started.elapsed().as_micros() as u64;
                     self.trace_metrics(&_wall, metrics_before);

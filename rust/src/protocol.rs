@@ -51,6 +51,10 @@ pub struct BuildResult {
     pub stock_globs: Option<BTreeMap<String, Vec<String>>>,
     #[serde(default)]
     pub resolver_reads: Vec<String>,
+    /// Libraries the action touched as source text through the
+    /// resolver (ADR 0056), reported under `api-fingerprints-v1`.
+    #[serde(default)]
+    pub resolver_content_reads: Vec<String>,
     #[serde(default)]
     pub resolver_entrypoints: Vec<String>,
     pub resolver_used: bool,
@@ -270,6 +274,8 @@ struct BinaryBuildResultMetadata {
     #[serde(default)]
     stock_globs: Option<BTreeMap<String, Vec<String>>>,
     resolver_reads: Vec<String>,
+    #[serde(default)]
+    resolver_content_reads: Vec<String>,
     resolver_entrypoints: Vec<String>,
     resolver_used: bool,
     glob_reads: Vec<GlobRead>,
@@ -333,6 +339,7 @@ impl BinaryBuildResultMetadata {
             stock_inputs: self.stock_inputs,
             stock_globs: self.stock_globs,
             resolver_reads: self.resolver_reads,
+            resolver_content_reads: self.resolver_content_reads,
             resolver_entrypoints: self.resolver_entrypoints,
             resolver_used: self.resolver_used,
             glob_reads: self.glob_reads,
@@ -381,6 +388,12 @@ struct BinaryBuildBatchResultMetadata {
     /// Batch-level because every action's result expands through the same
     /// graph, like stock's `previousLibraryCycleGraphLoader`.
     dep_graph: std::collections::BTreeMap<String, Vec<String>>,
+    /// Unit API fingerprints the worker's dep walk learned (ADR 0056),
+    /// delta-encoded against what it already sent; a null value marks
+    /// a unit whose fingerprint is unavailable. Batch-level like the
+    /// dep graph: the walk evidence is shared by every action.
+    #[serde(default)]
+    api_fingerprints: std::collections::BTreeMap<String, Option<String>>,
 }
 
 pub struct DecodedBuildBatchResult {
@@ -388,6 +401,7 @@ pub struct DecodedBuildBatchResult {
     pub more: bool,
     pub results: Vec<BuildResult>,
     pub dep_graph: std::collections::BTreeMap<String, Vec<String>>,
+    pub api_fingerprints: std::collections::BTreeMap<String, Option<String>>,
 }
 
 pub fn decode_build_batch_result_frame(frame: BinaryFrame) -> io::Result<DecodedBuildBatchResult> {
@@ -440,6 +454,7 @@ pub fn decode_build_batch_result_frame(frame: BinaryFrame) -> io::Result<Decoded
         more,
         results,
         dep_graph: metadata.dep_graph,
+        api_fingerprints: metadata.api_fingerprints,
     })
 }
 
@@ -481,7 +496,11 @@ impl BuildBatchResultCollector {
         {
             return Err(io::Error::other("worker batch result id mismatch"));
         }
-        if next.more && next.results.is_empty() && next.dep_graph.is_empty() {
+        if next.more
+            && next.results.is_empty()
+            && next.dep_graph.is_empty()
+            && next.api_fingerprints.is_empty()
+        {
             return Err(io::Error::other("worker batch chunk made no progress"));
         }
         if let Some(mut partial) = self.partial.take() {
@@ -489,6 +508,17 @@ impl BuildBatchResultCollector {
                 if partial.dep_graph.insert(asset, deps).is_some() {
                     return Err(io::Error::other(
                         "duplicate dependency entry in batch chunks",
+                    ));
+                }
+            }
+            for (asset, fingerprint) in next.api_fingerprints {
+                if partial
+                    .api_fingerprints
+                    .insert(asset, fingerprint)
+                    .is_some()
+                {
+                    return Err(io::Error::other(
+                        "duplicate fingerprint entry in batch chunks",
                     ));
                 }
             }
@@ -715,13 +745,25 @@ mod tests {
         more: bool,
         graph: Value,
     ) -> super::DecodedBuildBatchResult {
+        batch_fragment_with_fingerprints(id, ids, more, graph, json!({}))
+    }
+
+    fn batch_fragment_with_fingerprints(
+        id: u64,
+        ids: &[u64],
+        more: bool,
+        graph: Value,
+        fingerprints: Value,
+    ) -> super::DecodedBuildBatchResult {
         let metadata = json!({
             "v": 1, "type": if more { "build_batch_chunk" } else { "build_batch_result" },
             "id": id, "encoding": "raw", "dep_graph": graph,
+            "api_fingerprints": fingerprints,
             "results": ids.iter().map(|id| json!({
                 "v": 1, "type": "build_result", "id": id, "status": "success",
                 "encoding": "raw", "execution_us": 5000, "outputs": [],
                 "deleted": [], "reads": [], "resolver_reads": [],
+                "resolver_content_reads": ["app|lib/dep.dart"],
                 "resolver_entrypoints": [], "resolver_used": false,
                 "glob_reads": [], "diagnostics": []
             })).collect::<Vec<_>>()
@@ -814,6 +856,81 @@ mod tests {
         assert!(
             collector
                 .accept(batch_fragment(42, &[], false, json!({"app|a": ["app|b"]})))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn batch_result_decodes_api_fingerprints_and_content_reads() {
+        let decoded = batch_fragment_with_fingerprints(
+            42,
+            &[0],
+            false,
+            json!({}),
+            json!({"app|lib/a.dart": "fp-a", "app|lib/b.dart": null}),
+        );
+        assert_eq!(
+            decoded.api_fingerprints,
+            std::collections::BTreeMap::from([
+                ("app|lib/a.dart".to_owned(), Some("fp-a".to_owned())),
+                ("app|lib/b.dart".to_owned(), None),
+            ])
+        );
+        assert_eq!(
+            decoded.results[0].resolver_content_reads,
+            vec!["app|lib/dep.dart".to_owned()]
+        );
+    }
+
+    #[test]
+    fn batch_chunks_merge_fingerprints_and_reject_duplicates() {
+        let mut collector = super::BuildBatchResultCollector::new(42, 1);
+        assert!(
+            collector
+                .accept(batch_fragment_with_fingerprints(
+                    42,
+                    &[0],
+                    true,
+                    json!({}),
+                    json!({"app|lib/a.dart": "fp-a"}),
+                ))
+                .unwrap()
+                .is_none()
+        );
+        let result = collector
+            .accept(batch_fragment_with_fingerprints(
+                42,
+                &[],
+                false,
+                json!({}),
+                json!({"app|lib/b.dart": null}),
+            ))
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.api_fingerprints.len(), 2);
+
+        let mut collector = super::BuildBatchResultCollector::new(42, 1);
+        assert!(
+            collector
+                .accept(batch_fragment_with_fingerprints(
+                    42,
+                    &[0],
+                    true,
+                    json!({}),
+                    json!({"app|lib/a.dart": "fp-a"}),
+                ))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            collector
+                .accept(batch_fragment_with_fingerprints(
+                    42,
+                    &[],
+                    false,
+                    json!({}),
+                    json!({"app|lib/a.dart": null}),
+                ))
                 .is_err()
         );
     }

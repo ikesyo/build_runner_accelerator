@@ -109,6 +109,7 @@ pub(crate) struct WorkspaceCompletion {
     pub(crate) range: Range<usize>,
     pub(crate) results: io::Result<Vec<BuildResult>>,
     pub(crate) dep_graph: BTreeMap<String, Vec<String>>,
+    pub(crate) api_fingerprints: BTreeMap<String, Option<String>>,
     pub(crate) elapsed: Duration,
 }
 
@@ -251,6 +252,11 @@ pub(super) fn run_worker(
             .as_mut()
             .map(|worker| std::mem::take(&mut worker.dep_graph))
             .unwrap_or_default();
+        let api_fingerprints = outcome
+            .worker
+            .as_mut()
+            .map(|worker| std::mem::take(&mut worker.api_fingerprints))
+            .unwrap_or_default();
         if completions
             .send(WorkspaceCompletion {
                 worker: index,
@@ -258,6 +264,7 @@ pub(super) fn run_worker(
                 range: lease.range,
                 results: result,
                 dep_graph,
+                api_fingerprints,
                 elapsed,
             })
             .is_err()

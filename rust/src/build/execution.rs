@@ -224,6 +224,7 @@ pub(super) fn run(
                             state
                                 .resolver_dep_graph
                                 .extend(active_pool.take_dep_graph());
+                            state.merge_api_fingerprints(active_pool.take_api_fingerprints());
                             for lazy_result in lazy_state.take_results() {
                                 record_build_result(
                                     workspace,
@@ -365,6 +366,7 @@ pub(super) fn run(
                 state
                     .resolver_dep_graph
                     .extend(active_pool.take_dep_graph());
+                state.merge_api_fingerprints(active_pool.take_api_fingerprints());
 
                 drop(merge);
                 let record = crate::wall::Span::new("results_record")

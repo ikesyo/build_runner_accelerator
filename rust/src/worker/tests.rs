@@ -92,7 +92,8 @@ mod batch_transport {
                             "resolver_entrypoints": [], "resolver_used": false,
                             "glob_reads": [], "diagnostics": []
                         }],
-                        "dep_graph": {format!("example|entry{id}.dart"): ["example|dep.dart"]}
+                        "dep_graph": {format!("example|entry{id}.dart"): ["example|dep.dart"]},
+                        "api_fingerprints": {format!("example|entry{id}.dart"): if id == 0 { json!("fp0") } else { json!(null) }}
                     }),
                     &[0, 255, id as u8],
                 )?;
@@ -151,6 +152,13 @@ mod batch_transport {
                 );
             }
             assert_eq!(worker.dep_graph.len(), 3);
+            assert_eq!(
+                worker.api_fingerprints,
+                BTreeMap::from([
+                    ("example|entry0.dart".to_owned(), Some("fp0".to_owned())),
+                    ("example|entry1.dart".to_owned(), None),
+                ])
+            );
             // Both ordinary and lazy batches prime the same connection cache.
             assert_eq!(
                 worker
@@ -170,6 +178,10 @@ mod batch_transport {
             );
             assert_eq!(worker.dep_graph.len(), 1, "partial dependencies escaped");
             assert!(worker.dep_graph.contains_key("example|existing.dart"));
+            assert!(
+                worker.api_fingerprints.is_empty(),
+                "partial fingerprints escaped"
+            );
         }
         Ok(())
     }

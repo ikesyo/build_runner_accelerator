@@ -186,6 +186,7 @@ pub(super) fn run(
         // committed by a later successful build. Drain it before any operation
         // on the resident pool can fail.
         drop(active.take_dep_graph());
+        drop(active.take_api_fingerprints());
         active.prepare_for_filtered_roots(workspace, dirty_roots.len())?;
         active.set_retained_output_guard(retained_output_guard);
         let declared_outputs: std::collections::BTreeSet<String> = specs
@@ -224,8 +225,10 @@ pub(super) fn run(
             &mut lazy,
         );
         let dep_graph = active.take_dep_graph();
+        let api_fingerprints = active.take_api_fingerprints();
         built?;
         state.resolver_dep_graph.extend(dep_graph);
+        state.merge_api_fingerprints(api_fingerprints);
         pool_metrics = active.metrics();
     } else if let Some(active) = pool.as_deref() {
         // A filtered watch pool may be resident but intentionally unstarted.

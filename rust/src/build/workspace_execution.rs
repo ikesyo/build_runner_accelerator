@@ -289,6 +289,8 @@ impl Schedule<'_> {
                     return Err(io::Error::other("workspace lease result count mismatch"));
                 }
                 self.state.resolver_dep_graph.extend(completed.dep_graph);
+                self.state
+                    .merge_api_fingerprints(completed.api_fingerprints);
                 ready.inputs.remove(completed.application);
                 let app = &mut applications[completed.application];
                 app.inputs.observe_results(completed.elapsed, &results);
