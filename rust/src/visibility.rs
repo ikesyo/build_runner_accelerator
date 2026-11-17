@@ -255,6 +255,7 @@ mod tests {
                 instance_key: id.to_owned(),
                 options: serde_json::Map::new(),
                 part_directive_suffix: None,
+                api_cutoff: false,
             }),
             input: "app|lib/input.txt".to_owned(),
             outputs: vec![output.to_owned()],

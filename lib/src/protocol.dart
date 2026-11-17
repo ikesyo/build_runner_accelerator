@@ -300,6 +300,7 @@ class WorkerBuildRequest {
     this.partPhaseIndex,
     this.traceparent,
     this.otelReportId,
+    this.apiCutoff = false,
   });
 
   factory WorkerBuildRequest.fromJson(
@@ -342,6 +343,7 @@ class WorkerBuildRequest {
       partPhaseIndex: partPhaseIndex as int?,
       instanceKey: instanceKey,
       isRoot: _requiredBool(message, 'is_root', 'build'),
+      apiCutoff: message['api_cutoff'] == true,
       blockedAssets: blockedAssets,
       triggers: _triggerList(message['triggers'], 'build triggers'),
       otelReportId:
@@ -369,6 +371,11 @@ class WorkerBuildRequest {
   final int? partPhaseIndex;
   final String? traceparent;
   final int? otelReportId;
+
+  /// Whether the builder opted into API-signature early cutoff
+  /// (ADR 0056). Carried for the result assembly; recording and
+  /// classification do not depend on it yet.
+  final bool apiCutoff;
 
   bool get isPostProcess => kind == 'post_process';
 }

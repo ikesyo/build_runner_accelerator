@@ -6,6 +6,10 @@ pub(crate) struct Options {
     pub(crate) root: PathBuf,
     pub(crate) dart_binary: Option<String>,
     pub(crate) worker: Option<String>,
+    /// Builders opted into API-signature early cutoff (ADR 0056), as
+    /// normalized builder keys. Validated against the configured builders
+    /// at plan time; an empty set keeps every builder content-keyed.
+    pub(crate) api_cutoff: std::collections::BTreeSet<String>,
     pub(crate) interval_ms: u64,
     pub(crate) jobs: usize,
     pub(crate) background: bool,
@@ -27,6 +31,7 @@ impl Options {
         let mut root = env::current_dir()?;
         let mut dart_binary = None;
         let mut worker = None;
+        let mut api_cutoff = std::collections::BTreeSet::new();
         let mut interval_ms = 200;
         // Use a conservative placeholder until the command and filter options
         // are known. Unfiltered work gets the machine-based default below.
@@ -49,7 +54,7 @@ impl Options {
                 });
             if matches!(
                 name,
-                "--root" | "--dart" | "--worker" | "--interval-ms" | "--jobs"
+                "--root" | "--dart" | "--worker" | "--interval-ms" | "--jobs" | "--api-cutoff"
             ) {
                 let value = inline
                     .map(str::to_owned)
@@ -60,6 +65,9 @@ impl Options {
                     "--root" => root = PathBuf::from(value),
                     "--dart" => dart_binary = Some(value),
                     "--worker" => worker = Some(value),
+                    "--api-cutoff" => {
+                        api_cutoff.insert(normalize_builder_key(&value));
+                    }
                     "--jobs" => {
                         jobs = value
                             .parse()
@@ -157,6 +165,7 @@ impl Options {
             root,
             dart_binary,
             worker,
+            api_cutoff,
             interval_ms,
             jobs,
             background,
@@ -178,6 +187,16 @@ impl Options {
             && (matches!(self.command.as_str(), "build" | "watch")
                 || (!settings.deletion_flag && settings.build_filters.is_empty()))
     }
+}
+
+/// Normalizes a builder key the way `--define` spells it: `pkg|name`
+/// becomes `pkg:name`, and a bare `name` becomes `name:name`.
+fn normalize_builder_key(key: &str) -> String {
+    let mut normalized = key.replacen('|', ":", 1);
+    if !normalized.contains(':') {
+        normalized = format!("{normalized}:{normalized}");
+    }
+    normalized
 }
 
 fn build_option_takes_value(argument: &str) -> bool {
@@ -644,6 +663,41 @@ mod tests {
                 .unwrap();
             assert!(error.to_string().contains(message), "{error}");
         }
+    }
+
+    #[test]
+    fn api_cutoff_collects_normalized_builder_keys() {
+        let options = super::Options::parse(
+            [
+                "build",
+                "--api-cutoff",
+                "json_serializable",
+                "--api-cutoff=source_gen|combining_builder",
+                "--api-cutoff",
+                "json_serializable:json_serializable",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        )
+        .unwrap();
+        assert_eq!(
+            options.api_cutoff,
+            [
+                "json_serializable:json_serializable".to_owned(),
+                "source_gen:combining_builder".to_owned(),
+            ]
+            .into_iter()
+            .collect()
+        );
+        // The flag is consumed by the frontend, never forwarded as a
+        // build argument.
+        assert!(options.build_arguments.is_empty());
+        let plain = super::Options::parse(["build"].into_iter().map(str::to_owned)).unwrap();
+        assert!(plain.api_cutoff.is_empty());
+        assert!(
+            super::Options::parse(["build", "--api-cutoff"].into_iter().map(str::to_owned))
+                .is_err()
+        );
     }
 
     #[test]

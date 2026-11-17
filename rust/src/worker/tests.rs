@@ -223,6 +223,7 @@ fn build_request(phase: u32, post_process: bool) -> BuildRequest {
         phase,
         instance_key: "example".to_owned(),
         is_root: true,
+        api_cutoff: false,
         post_process,
         triggers: Vec::new(),
     }
@@ -406,6 +407,34 @@ fn batch_wires_carry_telemetry_contexts_in_order() {
         assert!(value.get("traceparent").is_none());
         assert!(value.get("otel_report_id").is_none());
     }
+}
+
+#[test]
+fn api_cutoff_rides_requests_only_when_opted_in() {
+    let plain = build_request(0, false);
+    let wire = build_wire(1, &plain, &[]);
+    let value = serde_json::to_value(&wire).unwrap();
+    assert!(value.get("api_cutoff").is_none(), "absent unless opted in");
+
+    let mut opted = build_request(0, false);
+    opted.api_cutoff = true;
+    let wire = build_wire(2, &opted, &[]);
+    let value = serde_json::to_value(&wire).unwrap();
+    assert_eq!(value["api_cutoff"], serde_json::json!(true));
+
+    let wires = batch_request_wires(std::slice::from_ref(&opted));
+    let value = serde_json::to_value(&wires[0]).unwrap();
+    assert_eq!(value["api_cutoff"], serde_json::json!(true));
+
+    let opted_batch = [opted.clone(), opted];
+    let shared = batch_shared_fields(&opted_batch).expect("uniform opted batch");
+    let value = serde_json::to_value(&shared).unwrap();
+    assert_eq!(value["api_cutoff"], serde_json::json!(true));
+
+    let mut mixed_opted = build_request(2, false);
+    mixed_opted.api_cutoff = true;
+    let mixed = vec![build_request(2, false), mixed_opted];
+    assert!(batch_shared_fields(&mixed).is_none(), "mixed cutoff");
 }
 
 #[test]

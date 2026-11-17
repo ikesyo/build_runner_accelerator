@@ -79,6 +79,8 @@ const _workerOptions =
 
 const _buildOptions =
     '''  --build-filter PATTERN Select outputs; repeat or comma-separate
+  --api-cutoff BUILDER   Opt a builder into API-signature early cutoff
+                         (ADR 0056); repeatable
   -d, --delete-conflicting-outputs
                          Accepted retired stock flags; no effect
 ''';

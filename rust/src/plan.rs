@@ -35,6 +35,9 @@ pub(crate) struct BuilderInstance {
     pub(crate) options: serde_json::Map<String, Value>,
     /// `part` directive suffix required by this configured builder.
     pub(crate) part_directive_suffix: Option<String>,
+    /// Whether this builder opted into API-signature early cutoff
+    /// (ADR 0056) via `--api-cutoff`.
+    pub(crate) api_cutoff: bool,
 }
 
 impl BuildAction {
@@ -135,6 +138,7 @@ pub(crate) fn build_specs_for_kind_with_primary_inputs(
     config: &RustBuildConfig,
     kind: Option<BuilderKind>,
     primary_inputs: &BTreeMap<String, String>,
+    api_cutoff: &BTreeSet<String>,
 ) -> io::Result<Vec<BuildSpec>> {
     build_specs(
         workspace,
@@ -143,6 +147,7 @@ pub(crate) fn build_specs_for_kind_with_primary_inputs(
         kind,
         None,
         Some(primary_inputs),
+        api_cutoff,
     )
 }
 
@@ -157,6 +162,7 @@ pub(crate) fn build_specs_for_phase_with_primary_inputs(
     kind: BuilderKind,
     phase: u32,
     primary_inputs: &BTreeMap<String, String>,
+    api_cutoff: &BTreeSet<String>,
 ) -> io::Result<Vec<BuildSpec>> {
     build_specs(
         workspace,
@@ -165,6 +171,7 @@ pub(crate) fn build_specs_for_phase_with_primary_inputs(
         Some(kind),
         Some(phase),
         Some(primary_inputs),
+        api_cutoff,
     )
 }
 
@@ -175,6 +182,7 @@ fn build_specs(
     kind: Option<BuilderKind>,
     phase: Option<u32>,
     primary_inputs: Option<&BTreeMap<String, String>>,
+    api_cutoff: &BTreeSet<String>,
 ) -> io::Result<Vec<BuildSpec>> {
     let mut specs = Vec::new();
     let empty_primary_inputs = BTreeMap::new();
@@ -204,6 +212,7 @@ fn build_specs(
             ),
             part_directive_suffix: builder.part_directive_suffix.clone(),
             options: builder.options.clone(),
+            api_cutoff: api_cutoff.contains(definition.id.as_str()),
         });
         for input in inputs {
             let outputs = if definition.kind == BuilderKind::PostProcess {
@@ -220,6 +229,35 @@ fn build_specs(
     }
     validate_unique_outputs(&specs)?;
     Ok(specs)
+}
+
+/// Resolves `--api-cutoff` keys against the configured builders. A key
+/// naming no configured builder could never apply, so it is an error
+/// rather than a silent no-op that leaves the builder content-keyed.
+pub(crate) fn validate_api_cutoff(
+    config: &RustBuildConfig,
+    api_cutoff: &BTreeSet<String>,
+) -> io::Result<()> {
+    if api_cutoff.is_empty() {
+        return Ok(());
+    }
+    let configured: BTreeSet<&str> = config
+        .builders
+        .iter()
+        .map(|builder| builder.definition.id.as_str())
+        .collect();
+    let unknown: Vec<&str> = api_cutoff
+        .iter()
+        .map(String::as_str)
+        .filter(|key| !configured.contains(key))
+        .collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    Err(io::Error::other(format!(
+        "Unknown --api-cutoff builder: {}",
+        unknown.join(", ")
+    )))
 }
 
 pub(crate) fn validate_unique_outputs(specs: &[BuildSpec]) -> io::Result<()> {
@@ -564,6 +602,7 @@ mod tests {
                     instance_key: "first".to_owned(),
                     options: serde_json::Map::new(),
                     part_directive_suffix: None,
+                    api_cutoff: false,
                 }),
                 input: "app|lib/input.txt".to_owned(),
                 outputs: vec!["app|lib/generated.txt".to_owned()],
@@ -578,6 +617,7 @@ mod tests {
                     instance_key: "second".to_owned(),
                     options: serde_json::Map::new(),
                     part_directive_suffix: None,
+                    api_cutoff: false,
                 }),
                 input: "app|lib/input.txt".to_owned(),
                 outputs: vec!["app|lib/generated.txt".to_owned()],

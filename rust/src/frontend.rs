@@ -263,9 +263,16 @@ fn preflight_native_state(
             demand_policy,
             state,
             &mut preflight,
+            &options.api_cutoff,
         )?
     } else if matches!(options.command.as_str(), "build" | "watch") {
-        crate::build::dependency_output_conflict_reason(workspace, config, state, &mut preflight)?
+        crate::build::dependency_output_conflict_reason(
+            workspace,
+            config,
+            state,
+            &mut preflight,
+            &options.api_cutoff,
+        )?
     } else {
         None
     };
