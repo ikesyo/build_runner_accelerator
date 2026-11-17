@@ -17,10 +17,10 @@
  import 'package:build_runner/src/build/builder_filesystem.dart'
 --- a/build_runner_accelerator/lib/src/worker_analysis_driver_model.dart
 +++ b/build_runner_accelerator/lib/src/worker_analysis_driver_model.dart
-@@ -2,7 +2,7 @@
- import 'dart:convert';
+@@ -3,7 +3,7 @@
  import 'package:crypto/crypto.dart';
  
+ import 'package:analyzer/dart/analysis/results.dart';
 -import 'package:analyzer/dart/analysis/utilities.dart';
 +import 'package:analyzer/src/clients/build_resolvers/parse_utilities.dart';
  import 'package:analyzer/dart/ast/ast.dart';
