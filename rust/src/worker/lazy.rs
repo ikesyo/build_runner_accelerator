@@ -1629,6 +1629,7 @@ impl FilteredExecution<'_> {
             phase: spec.instance.phase,
             instance_key: spec.instance.instance_key.clone(),
             is_root: spec.instance.is_root,
+            api_cutoff: spec.instance.api_cutoff,
             post_process: false,
             triggers: spec.instance.builder.triggers.clone(),
         };

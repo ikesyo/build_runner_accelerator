@@ -69,7 +69,8 @@ pub(super) fn run(
         for asset in &state.watch_generated_sources {
             sources.remove(asset);
         }
-        super::planning::create(workspace, state, config, &sources)?.expected_outputs()
+        super::planning::create(workspace, state, config, &sources, &options.api_cutoff)?
+            .expected_outputs()
     } else {
         BTreeSet::new()
     };
@@ -203,6 +204,7 @@ pub(super) fn run(
             config_digest,
             config.phase_count(),
             true,
+            &options.api_cutoff,
         )?;
         // A watch worker must not expose an overlay retained from the preceding
         // build, including files that were generated but are no longer demanded.

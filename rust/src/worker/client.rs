@@ -130,6 +130,12 @@ impl BlockedAssetsCache {
     }
 }
 
+/// Serde skip predicate for fields that are only sent when set: an
+/// absent `api_cutoff` decodes as false on the worker.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// One build request in a batch, serialized directly from the borrowed
 /// [`BuildRequest`] fields instead of an intermediate JSON value tree.
 /// Field order matches the JSON shape the worker has always received;
@@ -147,6 +153,8 @@ pub(super) struct BatchRequestWire<'a> {
     part_phase_index: Option<u32>,
     instance_key: &'a str,
     is_root: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    api_cutoff: bool,
     triggers: &'a [crate::builder::BuilderTrigger],
     #[serde(skip_serializing_if = "Option::is_none")]
     traceparent: Option<String>,
@@ -166,6 +174,8 @@ pub(super) struct BatchSharedWire<'a> {
     part_phase_index: Option<u32>,
     instance_key: &'a str,
     is_root: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    api_cutoff: bool,
 }
 
 /// A batch request in shared-fields form: the fields that
@@ -218,6 +228,8 @@ pub(super) struct BuildWire<'a> {
     pub(super) part_phase_index: Option<u32>,
     pub(super) instance_key: &'a str,
     pub(super) is_root: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub(super) api_cutoff: bool,
     pub(super) blocked_assets: &'a [String],
     pub(super) triggers: &'a [crate::builder::BuilderTrigger],
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -281,6 +293,8 @@ pub(super) struct InternedBatchRequestWire<'a> {
     part_phase_index: Option<u32>,
     instance_key: &'a str,
     is_root: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    api_cutoff: bool,
     triggers: &'a [crate::builder::BuilderTrigger],
     #[serde(skip_serializing_if = "Option::is_none")]
     traceparent: Option<String>,
@@ -438,6 +452,7 @@ pub(super) fn interned_batch_request_wires_with<'a>(
                 part_phase_index: request.part_phase_index,
                 instance_key: &request.instance_key,
                 is_root: request.is_root,
+                api_cutoff: request.api_cutoff,
                 triggers: &request.triggers,
                 traceparent,
                 otel_report_id,
@@ -527,6 +542,7 @@ pub(super) fn batch_request_wires_with(
                 part_phase_index: request.part_phase_index,
                 instance_key: &request.instance_key,
                 is_root: request.is_root,
+                api_cutoff: request.api_cutoff,
                 triggers: &request.triggers,
                 traceparent,
                 otel_report_id,
@@ -572,6 +588,7 @@ pub(super) fn batch_shared_fields(requests: &[BuildRequest]) -> Option<BatchShar
             && request.part_phase_index == first.part_phase_index
             && request.instance_key == first.instance_key
             && request.is_root == first.is_root
+            && request.api_cutoff == first.api_cutoff
     });
     uniform.then(|| BatchSharedWire {
         builder: &first.builder,
@@ -584,6 +601,7 @@ pub(super) fn batch_shared_fields(requests: &[BuildRequest]) -> Option<BatchShar
         part_phase_index: first.part_phase_index,
         instance_key: &first.instance_key,
         is_root: first.is_root,
+        api_cutoff: first.api_cutoff,
     })
 }
 
@@ -613,6 +631,7 @@ pub(super) fn build_wire<'a>(
         part_phase_index: request.part_phase_index,
         instance_key: &request.instance_key,
         is_root: request.is_root,
+        api_cutoff: request.api_cutoff,
         blocked_assets,
         triggers: &request.triggers,
         traceparent,

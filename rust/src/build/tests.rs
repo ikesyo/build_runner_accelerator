@@ -67,6 +67,7 @@ fn build_spec(builder: &ConfiguredBuilder, input: &str, outputs: &[&str]) -> Bui
             ),
             options: builder.options.clone(),
             part_directive_suffix: None,
+            api_cutoff: false,
         }),
         input: input.to_owned(),
         outputs: outputs.iter().map(|output| (*output).to_owned()).collect(),
@@ -1394,6 +1395,47 @@ fn planning_fixture(
 }
 
 #[test]
+fn planning_marks_api_cutoff_instances_and_rejects_unknown_builders() -> io::Result<()> {
+    use super::planning;
+    let (_temporary, workspace, config, snapshot) = planning_fixture(1)?;
+    let state = GraphState::default();
+    let opted: BTreeSet<String> = ["app:factory".to_owned()].into_iter().collect();
+    let plan = planning::create(&workspace, &state, &config, &snapshot, &opted)?;
+    assert!(!plan.specs.is_empty());
+    assert!(
+        plan.specs.iter().any(|spec| spec.instance.api_cutoff),
+        "factory specs are marked"
+    );
+    assert!(
+        plan.specs
+            .iter()
+            .all(|spec| spec.instance.api_cutoff == (spec.instance.builder.id == "app:factory")),
+        "only the opted-in builder is marked"
+    );
+
+    // Root-relative keys resolve against the root package, as with
+    // `--define` spellings.
+    let relative: BTreeSet<String> = [":factory".to_owned()].into_iter().collect();
+    let plan = planning::create(&workspace, &state, &config, &snapshot, &relative)?;
+    assert!(plan.specs.iter().any(|spec| spec.instance.api_cutoff));
+
+    let unknown: BTreeSet<String> = ["app:missing".to_owned()].into_iter().collect();
+    let error = match planning::create(&workspace, &state, &config, &snapshot, &unknown) {
+        Ok(_) => panic!("unknown builder must be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("Unknown --api-cutoff builder: app:missing"),
+        "{error}"
+    );
+    // Terminal for watch: the command-line key set cannot heal.
+    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    Ok(())
+}
+
+#[test]
 fn undemanded_optional_stays_demandable_without_changing_successful_empty_reuse() -> io::Result<()>
 {
     use super::{dirty, planning};
@@ -1408,7 +1450,7 @@ fn undemanded_optional_stays_demandable_without_changing_successful_empty_reuse(
         assets: snapshot.clone(),
         ..GraphState::default()
     };
-    let plan = planning::create(&workspace, &state, &config, &snapshot)?;
+    let plan = planning::create(&workspace, &state, &config, &snapshot, &BTreeSet::new())?;
     let spec = &plan.specs[0];
     let key = spec.action_key();
     state.actions.insert(
@@ -1461,7 +1503,13 @@ fn planning_declared_outputs_feed_later_phases_with_absent_missing_or_present_ev
                 },
             );
         }
-        let plan = super::planning::create(&workspace, &GraphState::default(), &config, &current)?;
+        let plan = super::planning::create(
+            &workspace,
+            &GraphState::default(),
+            &config,
+            &current,
+            &BTreeSet::new(),
+        )?;
         assert_eq!(plan.specs.len(), 2);
         assert_eq!(plan.specs[1].input, intermediate);
         assert_eq!(plan.specs[1].instance.phase, 1);
@@ -1476,7 +1524,7 @@ fn planned_actions_share_only_their_configured_instance_and_release_with_the_bui
     use crate::metrics::FilesystemMetrics;
     let (_temporary, workspace, config, snapshot) = planning_fixture(2)?;
     let state = GraphState::default();
-    let plan = planning::create(&workspace, &state, &config, &snapshot)?;
+    let plan = planning::create(&workspace, &state, &config, &snapshot, &BTreeSet::new())?;
     assert_eq!(plan.specs.len(), 8);
     // Phase-first planning, then configured-entry and sorted input order.
     let expected = [
@@ -1567,7 +1615,7 @@ fn planning_retention_benchmark() -> io::Result<()> {
     let (_temporary, workspace, config, snapshot) = planning_fixture(inputs)?;
     let state = GraphState::default();
     let started = Instant::now();
-    let plan = planning::create(&workspace, &state, &config, &snapshot)?;
+    let plan = planning::create(&workspace, &state, &config, &snapshot, &BTreeSet::new())?;
     let planning_us = started.elapsed().as_micros();
     let dirty = dirty::analyze(
         &workspace,

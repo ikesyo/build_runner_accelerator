@@ -22,6 +22,20 @@ use std::thread;
 /// native build or watch session. Workers are kept alive when a later phase
 /// needs fewer of them; restart occurs only when the artifact or initialization
 /// signature changes, and dropping the pool kills and waits for every child.
+/// The workspace/configuration identity a resident pool was initialized
+/// with. Workers are reused only for an identical signature; a change
+/// restarts the resident processes.
+#[derive(Clone, PartialEq)]
+struct PoolSignature {
+    root: PathBuf,
+    package: String,
+    config_digest: String,
+    phase_count: usize,
+    requires_optional_builder: bool,
+    api_cutoff: BTreeSet<String>,
+    retained_output_guard: bool,
+}
+
 pub struct WorkerPool {
     workers: Vec<WorkerClient>,
     dart_binary: String,
@@ -30,7 +44,7 @@ pub struct WorkerPool {
     auto_worker_artifact: bool,
     allow_worker_artifact_upgrade: bool,
     max_jobs: usize,
-    initialized: Option<(PathBuf, String, String, usize, bool, bool)>,
+    initialized: Option<PoolSignature>,
     retained_output_guard: bool,
     native_overlay: bool,
     initialized_workers: usize,
@@ -233,6 +247,7 @@ impl WorkerPool {
         config_digest: &str,
         phase_count: usize,
         requires_optional_builder: bool,
+        api_cutoff: &BTreeSet<String>,
     ) -> io::Result<()> {
         let root = &workspace.root;
         // Deferred filtered-watch pools materialize only when a build actually
@@ -240,14 +255,15 @@ impl WorkerPool {
         if self.workers.is_empty() {
             self.prepare_for_requests(workspace, 1)?;
         }
-        let signature = (
-            root.to_path_buf(),
-            package.to_owned(),
-            config_digest.to_owned(),
+        let signature = PoolSignature {
+            root: root.to_path_buf(),
+            package: package.to_owned(),
+            config_digest: config_digest.to_owned(),
             phase_count,
             requires_optional_builder,
-            self.retained_output_guard,
-        );
+            api_cutoff: api_cutoff.to_owned(),
+            retained_output_guard: self.retained_output_guard,
+        };
         if self.initialized.as_ref() == Some(&signature) {
             if self.native_overlay
                 && self
@@ -511,7 +527,7 @@ impl WorkerPool {
             return Ok(Vec::new());
         }
         let (root, package) = match &self.initialized {
-            Some((root, package, _, _, _, _)) => (root.clone(), package.clone()),
+            Some(signature) => (signature.root.clone(), signature.package.clone()),
             None => {
                 return Err(io::Error::other(
                     "worker pool must be initialized before building",
@@ -521,7 +537,7 @@ impl WorkerPool {
         let phase_count = self
             .initialized
             .as_ref()
-            .map(|(_, _, _, phase_count, _, _)| *phase_count)
+            .map(|signature| signature.phase_count)
             .unwrap_or(1);
 
         // Serializing resolver-backed batches on one resident worker only pays
@@ -888,7 +904,7 @@ impl WorkerPool {
         }
         self.prepare_for_requests(workspace, 1)?;
         let (root, package) = match &self.initialized {
-            Some((root, package, _, _, _, _)) => (root.clone(), package.clone()),
+            Some(signature) => (signature.root.clone(), signature.package.clone()),
             None => {
                 return Err(io::Error::other(
                     "worker pool must be initialized before building",
@@ -898,7 +914,7 @@ impl WorkerPool {
         let phase_count = self
             .initialized
             .as_ref()
-            .map(|(_, _, _, phase_count, _, _)| *phase_count)
+            .map(|signature| signature.phase_count)
             .unwrap_or(1);
         self.initialize_pending_workers(&root, &package, phase_count, true)?;
         self.workers[0].build_batch_lazy(
@@ -966,10 +982,12 @@ impl WorkerPool {
             return Ok(());
         }
         self.prepare_for_filtered_roots(workspace, roots.len())?;
-        let (root, package, _, phase_count, _, _) = self
+        let signature = self
             .initialized
             .clone()
             .ok_or_else(|| io::Error::other("worker pool must be initialized"))?;
+        let (root, package, phase_count) =
+            (signature.root, signature.package, signature.phase_count);
         self.initialize_pending_workers(&root, &package, phase_count, true)?;
         let worker_count = self.workers.len().min(if shared_analysis_cache_enabled() {
             roots.len()
@@ -1332,6 +1350,7 @@ mod tests {
                 phase: 0,
                 instance_key: "app:default".to_owned(),
                 is_root: true,
+                api_cutoff: false,
                 post_process: false,
                 triggers: Vec::new(),
             })

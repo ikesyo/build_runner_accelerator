@@ -7,7 +7,7 @@ use crate::metrics::{
 };
 use crate::plan::{
     BuildSpec, build_specs_for_kind_with_primary_inputs, build_specs_for_phase_with_primary_inputs,
-    validate_unique_outputs,
+    resolve_api_cutoff_keys, validate_api_cutoff, validate_unique_outputs,
 };
 use crate::visibility::AssetVisibility;
 use crate::workspace::Workspace;
@@ -37,8 +37,11 @@ pub(super) fn create(
     state: &GraphState,
     build_config: &RustBuildConfig,
     current_snapshot: &BTreeMap<String, crate::snapshot::AssetSnapshot>,
+    api_cutoff: &BTreeSet<String>,
 ) -> io::Result<PlannedActions> {
     let _planning = crate::wall::Span::new("planning");
+    let api_cutoff = &resolve_api_cutoff_keys(api_cutoff, &workspace.root_package);
+    validate_api_cutoff(build_config, api_cutoff)?;
     // Post-process outputs are hidden from all normal Builder phases. Keep
     // them in the persisted snapshot for their own action bookkeeping, but
     // remove them from the candidate snapshot used by normal builders.
@@ -99,6 +102,7 @@ pub(super) fn create(
                 BuilderKind::Normal,
                 phase,
                 &primary_inputs,
+                api_cutoff,
             )?;
             for spec in &phase_specs {
                 for output in &spec.outputs {
@@ -160,6 +164,7 @@ pub(super) fn create(
         build_config,
         Some(BuilderKind::PostProcess),
         &normal_primary_inputs,
+        api_cutoff,
     )?;
     let generated_output_locations = normal_specs
         .iter()

@@ -80,6 +80,7 @@ impl Preflight {
         workspace: &Workspace,
         config: &crate::builder::RustBuildConfig,
         state: &GraphState,
+        api_cutoff: &std::collections::BTreeSet<String>,
     ) -> io::Result<&'a Self> {
         if slot.is_none() {
             let config_digest = snapshot::config_digest(workspace, config)?;
@@ -92,7 +93,7 @@ impl Preflight {
                 &packages,
                 &mut filesystem_metrics,
             )?;
-            let plan = planning::create(workspace, state, config, &current)?;
+            let plan = planning::create(workspace, state, config, &current, api_cutoff)?;
             *slot = Some(Self {
                 config_digest,
                 snapshot: current,
@@ -253,9 +254,14 @@ pub(crate) fn run_with_config_session(
             for asset in &state.watch_generated_sources {
                 previous_sources.remove(asset);
             }
-            let previous_declared =
-                planning::create(&workspace, &state, &build_config, &previous_sources)?
-                    .expected_outputs();
+            let previous_declared = planning::create(
+                &workspace,
+                &state,
+                &build_config,
+                &previous_sources,
+                &options.api_cutoff,
+            )?
+            .expected_outputs();
             state.watch_generated_sources.retain(|asset| {
                 let path = workspace
                     .path_for_asset(asset)
@@ -288,6 +294,7 @@ pub(crate) fn run_with_config_session(
             &state,
             &build_config,
             planning_snapshot.as_ref().unwrap_or(&current_snapshot),
+            &options.api_cutoff,
         )?,
     };
     planning::report_metrics(&plan, &state, &build_config);
@@ -502,6 +509,7 @@ pub(crate) fn filtered_transition_reason(
     output_policy: bool,
     state: &GraphState,
     preflight: &mut Option<Preflight>,
+    api_cutoff: &std::collections::BTreeSet<String>,
 ) -> io::Result<Option<&'static str>> {
     workspace.configure_sources(config.asset_sources.as_ref());
     if state.has_resolver_cycle() {
@@ -545,7 +553,9 @@ pub(crate) fn filtered_transition_reason(
             "output-policy configuration transitions are outside the supported subset",
         ));
     }
-    if let Some(reason) = dependency_output_conflict_reason(workspace, config, state, preflight)? {
+    if let Some(reason) =
+        dependency_output_conflict_reason(workspace, config, state, preflight, api_cutoff)?
+    {
         return Ok(Some(reason));
     }
     if state.config_digest.is_empty() || state.is_compatible(&digest) {
@@ -561,7 +571,7 @@ pub(crate) fn filtered_transition_reason(
             "filtered configuration change requires previous output locations missing from legacy state",
         ));
     }
-    let plan = &Preflight::prepare(preflight, workspace, config, state)?.plan;
+    let plan = &Preflight::prepare(preflight, workspace, config, state, api_cutoff)?.plan;
     let declared = plan.expected_outputs();
     if state
         .actions
@@ -593,9 +603,10 @@ pub(crate) fn dependency_output_conflict_reason(
     config: &crate::builder::RustBuildConfig,
     state: &GraphState,
     preflight: &mut Option<Preflight>,
+    api_cutoff: &std::collections::BTreeSet<String>,
 ) -> io::Result<Option<&'static str>> {
     if config.builders.iter().any(|builder| !builder.is_root) {
-        let plan = &Preflight::prepare(preflight, workspace, config, state)?.plan;
+        let plan = &Preflight::prepare(preflight, workspace, config, state, api_cutoff)?.plan;
         for spec in &plan.specs {
             if spec.instance.is_root {
                 continue;

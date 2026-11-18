@@ -107,7 +107,12 @@ class LauncherOptions {
 
       // Launcher controls are separate from builder settings.
       const rustFlagOptions = {'--background'};
-      const rustValueOptions = {'--jobs', '--interval-ms', '--worker'};
+      const rustValueOptions = {
+        '--jobs',
+        '--interval-ms',
+        '--worker',
+        '--api-cutoff',
+      };
       if (rustFlagOptions.contains(argument)) {
         rustArguments.add(argument);
       } else if (rustValueOptions.contains(argument)) {
@@ -120,7 +125,8 @@ class LauncherOptions {
         rustArguments.addAll([argument, value]);
       } else if (argument.startsWith('--jobs=') ||
           argument.startsWith('--interval-ms=') ||
-          argument.startsWith('--worker=')) {
+          argument.startsWith('--worker=') ||
+          argument.startsWith('--api-cutoff=')) {
         final separator = argument.indexOf('=');
         final option = argument.substring(0, separator);
         final value = argument.substring(separator + 1);

@@ -706,6 +706,43 @@ void main() {
       );
     });
 
+    test('decodes api_cutoff, defaulting to false when absent', () {
+      Map<String, dynamic> requestJson({bool? apiCutoff}) => <String, dynamic>{
+        'id': 1,
+        'builder': 'app:copy',
+        'input': 'app|lib/input.dart',
+        'kind': 'normal',
+        'allowed_outputs': <String>['app|lib/output.dart'],
+        'options': <String, dynamic>{},
+        'phase': 0,
+        'instance_key': 'app:default',
+        'is_root': true,
+        'triggers': <dynamic>[],
+        if (apiCutoff != null) 'api_cutoff': apiCutoff,
+      };
+      expect(
+        WorkerBuildRequest.fromJson(
+          requestJson(),
+          blockedAssets: const <String>[],
+        ).apiCutoff,
+        isFalse,
+      );
+      expect(
+        WorkerBuildRequest.fromJson(
+          requestJson(apiCutoff: true),
+          blockedAssets: const <String>[],
+        ).apiCutoff,
+        isTrue,
+      );
+      expect(
+        () => WorkerBuildRequest.fromJson(
+          requestJson()..['api_cutoff'] = 'true',
+          blockedAssets: const <String>[],
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
     test('requires blocked_assets for direct build messages', () {
       expect(
         () => WorkerMessage.decode(<String, dynamic>{

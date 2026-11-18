@@ -125,6 +125,7 @@ pub(super) fn run(
             config_digest,
             phase_count,
             optional_builder_capability_required,
+            &options.api_cutoff,
         )?;
 
         drop(prepare);
@@ -196,6 +197,7 @@ pub(super) fn run(
                                     config_digest,
                                     phase_count,
                                     optional_builder_capability_required,
+                                    &options.api_cutoff,
                                 )?;
                                 initialized_package = configured_builder.package.clone();
                                 transaction.resolver.clear();
@@ -305,6 +307,7 @@ pub(super) fn run(
                         phase: spec.instance.phase,
                         instance_key: spec.instance.instance_key.clone(),
                         is_root: configured_builder.is_root,
+                        api_cutoff: spec.instance.api_cutoff,
                         post_process: builder.kind == BuilderKind::PostProcess,
                         triggers: spec.instance.builder.triggers.clone(),
                     })
@@ -322,6 +325,7 @@ pub(super) fn run(
                         config_digest,
                         phase_count,
                         optional_builder_capability_required,
+                        &options.api_cutoff,
                     )?;
                     initialized_package = configured_builder.package.clone();
                     resolver_needs_reset = false;

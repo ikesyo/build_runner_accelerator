@@ -48,6 +48,12 @@ pub(crate) fn prepare_native_frontend(
 
     let manifest = prepare_manifest(options, workspace)?;
     let config = validate_native_manifest(options, workspace, manifest, retained_output_state)?;
+    // Validate cutoff keys up front: watch prepares its worker pool
+    // before the first planning pass, so a bad key must fail here
+    // rather than being masked by a recoverable worker startup error.
+    let api_cutoff =
+        crate::plan::resolve_api_cutoff_keys(&options.api_cutoff, &workspace.root_package);
+    crate::plan::validate_api_cutoff(&config, &api_cutoff)?;
     let preflight =
         preflight_native_state(options, workspace, &config, state, retained_output_state)?;
     Ok(NativeFrontend { config, preflight })
@@ -263,9 +269,16 @@ fn preflight_native_state(
             demand_policy,
             state,
             &mut preflight,
+            &options.api_cutoff,
         )?
     } else if matches!(options.command.as_str(), "build" | "watch") {
-        crate::build::dependency_output_conflict_reason(workspace, config, state, &mut preflight)?
+        crate::build::dependency_output_conflict_reason(
+            workspace,
+            config,
+            state,
+            &mut preflight,
+            &options.api_cutoff,
+        )?
     } else {
         None
     };

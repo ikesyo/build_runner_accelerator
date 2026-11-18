@@ -304,6 +304,7 @@ fn run_watch_build_inner(
             false,
             &loaded_graph.state,
             &mut frontend.preflight,
+            &options.api_cutoff,
         )?
     } else {
         build::dependency_output_conflict_reason(
@@ -311,6 +312,7 @@ fn run_watch_build_inner(
             build_config,
             &loaded_graph.state,
             &mut frontend.preflight,
+            &options.api_cutoff,
         )?
     };
     if let Some(reason) = transition_reason {

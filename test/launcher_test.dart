@@ -138,6 +138,23 @@ void main() {
     );
   });
 
+  test('api-cutoff forwards to the frontend as a value option', () {
+    expect(
+      LauncherOptions.parse([
+        'build',
+        '--api-cutoff',
+        'app:factory',
+        '--api-cutoff=app:other',
+      ]).rustArguments,
+      containsAllInOrder([
+        '--api-cutoff',
+        'app:factory',
+        '--api-cutoff',
+        'app:other',
+      ]),
+    );
+  });
+
   test('explicit --dart skips lookup', () async {
     final pathDirectory = await Directory.systemTemp.createTemp(
       'build-runner-accelerator-path-lookup-',

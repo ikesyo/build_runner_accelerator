@@ -18,6 +18,9 @@ pub struct BuildRequest {
     pub phase: u32,
     pub instance_key: String,
     pub is_root: bool,
+    /// Whether the builder opted into API-signature early cutoff
+    /// (ADR 0056); carried to the worker with the request.
+    pub api_cutoff: bool,
     pub post_process: bool,
     pub triggers: Vec<crate::builder::BuilderTrigger>,
 }
