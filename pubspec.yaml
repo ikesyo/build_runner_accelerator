@@ -18,7 +18,7 @@ environment:
 
 dependencies:
   # Keep the worker on the tested build_runner/analyzer compatibility window.
-  archive: ^4.0.7
+  archive: ">=3.6.1 <5.0.0"
   analyzer: ">=13.3.0 <15.0.0"
   build: ">=4.0.9 <5.1.0"
   build_config: ">=1.3.2 <1.5.0"

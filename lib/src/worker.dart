@@ -310,6 +310,11 @@ class _WorkerRuntime {
   /// clear.
   final Map<String, Set<String>> _committedDartDirectives =
       <String, Set<String>>{};
+  // Workspace leases can replay the same overlay after reinitializing for a
+  // different package. Only the extraction is reusable across those contexts.
+  Map<AssetId, ResetDirectiveContent> _previousOverlayExtractions = const {};
+  static const _maxOverlayExtractions = 4096;
+  static const _maxOverlayCodeUnits = 16 * 1024 * 1024;
   final _resetDirectiveContents = <String>{};
   final Map<String, Builder> builders = <String, Builder>{};
   final Map<String, PostProcessBuilder> postProcessBuilders =
@@ -361,6 +366,7 @@ class _WorkerRuntime {
     await resourceManager.disposeAll();
     _replaceResolver();
     _buildStarted = false;
+    _previousOverlayExtractions = const {};
     _clearPerBuildState();
     await _startBuild();
   }
@@ -424,9 +430,12 @@ class _WorkerRuntime {
       _replaceResolver();
       _buildStarted = false;
       await _startBuild(clearReadCaches: false, clearBuilders: false);
+      _previousOverlayExtractions = const {};
       return;
     }
     mark('overlay_read');
+    final overlayExtractions = <AssetId, ResetDirectiveContent>{};
+    var overlayCodeUnits = 0;
     final directiveTimer = _metricsEnabled ? resetTimer : null;
     final directiveStats = <String, int>{};
     int tick() => directiveTimer?.elapsedMicroseconds ?? 0;
@@ -500,6 +509,7 @@ class _WorkerRuntime {
       _replaceResolver();
       _buildStarted = false;
       await _startBuild(clearReadCaches: false, clearBuilders: false);
+      _previousOverlayExtractions = const {};
       return;
     }
     // A committed Dart asset whose directive set changed can change the
@@ -515,7 +525,20 @@ class _WorkerRuntime {
         continue;
       }
       final key = '${id.package}|${id.path}';
-      final current = extract(producedOutputs[id]!, 'updated');
+      final current = extract(
+        producedOutputs[id]!,
+        'updated',
+        equivalent: transported == null
+            ? null
+            : _previousOverlayExtractions[id],
+      );
+      final codeUnits = current.content.length;
+      if (transported != null &&
+          overlayExtractions.length < _maxOverlayExtractions &&
+          codeUnits <= _maxOverlayCodeUnits - overlayCodeUnits) {
+        overlayExtractions[id] = current;
+        overlayCodeUnits += codeUnits;
+      }
       final directives = current.directives;
       final oldCacheStart = tick();
       final cached = _committedDartDirectives[key];
@@ -567,6 +590,7 @@ class _WorkerRuntime {
       clearReadCaches: false,
       clearBuilders: false,
     );
+    _previousOverlayExtractions = overlayExtractions;
     mark('analyzer_start');
     if (resetTimer != null) {
       stderr.writeln(

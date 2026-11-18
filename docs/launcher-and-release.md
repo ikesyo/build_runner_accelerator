@@ -69,6 +69,9 @@ window is:
 | build_runner | >=2.15.3 <2.18.0 |
 | package_config | >=2.2.0 <4.0.0 |
 
+The launcher uses `archive >=3.6.1 <5.0.0` to unpack native releases. This
+allows the accelerator to resolve alongside packages that require archive 3.x.
+
 The runner upper bound protects private worker interfaces. Runners 2.15.3, 2.16.0 and 2.16.1
 allow Analyzer 13.3; the accelerator backports #5197 in an isolated compilation
 resolution so those runners also work with Analyzer 14.5 and newer. Runner

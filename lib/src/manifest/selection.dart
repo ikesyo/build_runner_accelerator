@@ -103,15 +103,9 @@ Map<String, SelectedBuilder> selectApplications({
     );
 
     for (final applied in definition.appliesBuilders) {
-      if (definitions.containsKey(applied)) {
-        select(
-          applied,
-          target: target,
-          generateFor: generateFor,
-          options: const {},
-          explicit: false,
-        );
-      }
+      // Applying a builder selects it on this target. Its input filter comes
+      // from its own target configuration or definition defaults.
+      select(applied, target: target, explicit: false);
     }
   }
 
