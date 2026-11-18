@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'frontend_binary_resolver.dart' show buildRunnerAcceleratorVersion;
@@ -557,33 +556,31 @@ List<WorkerBuildTrigger> _triggerList(Object? value, String label) {
 class FrameReader {
   FrameReader(Stream<List<int>> input) : _iterator = StreamIterator(input);
 
-  static final _emptyBuffer = Uint8List(0);
-  static const _headerLength = 4;
   final StreamIterator<List<int>> _iterator;
-  Uint8List _buffer = _emptyBuffer;
+  final List<int> _buffer = <int>[];
   int _start = 0;
-  int _end = 0;
 
-  int get _available => _end - _start;
+  int get _available => _buffer.length - _start;
 
   Future<JsonMap?> next() async {
-    if (_available < _headerLength) await _fill(_headerLength);
+    await _fill(4);
     if (_available == 0) return null;
 
-    final length = ByteData.sublistView(_buffer).getUint32(_start, Endian.big);
+    final length = ByteData.sublistView(
+      Uint8List.fromList(_buffer.sublist(_start, _start + 4)),
+    ).getUint32(0, Endian.big);
     if (length > _maxFrameLength) {
       throw const FormatException('IPC frame exceeds the 256 MiB safety limit');
     }
-    final frameLength = _headerLength + length;
-    if (_available < frameLength) await _fill(frameLength);
-    final payload = _buffer.sublist(
-      _start + _headerLength,
-      _start + frameLength,
-    );
-    _start += frameLength;
-    if (_start == _end) {
-      _buffer = _emptyBuffer;
-      _start = _end = 0;
+    await _fill(4 + length);
+    final end = _start + 4 + length;
+    final payload = Uint8List.fromList(_buffer.sublist(_start + 4, end));
+    _start = end;
+    // Compact when the consumed prefix is at least as long as the unread
+    // suffix. Each shift moves at most as many bytes as we've consumed.
+    if (_start >= _available) {
+      _buffer.removeRange(0, _start);
+      _start = 0;
     }
     if (_hasBinaryAssetResponseMagic(payload)) {
       return _decodeBinaryAssetResponse(payload);
@@ -619,7 +616,7 @@ class FrameReader {
     }
 
     final decoded = jsonDecode(
-      utf8.decoder.convert(payload, envelopeHeaderLength, bytesStart),
+      utf8.decode(payload.sublist(envelopeHeaderLength, bytesStart)),
     );
     if (decoded is! Map) {
       throw const FormatException('Binary IPC metadata must be a JSON object');
@@ -640,33 +637,13 @@ class FrameReader {
   }
 
   Future<void> _fill(int length) async {
-    while (_available < length) {
+    final end = _start + length;
+    while (_buffer.length < end) {
       if (!await _iterator.moveNext()) {
         if (_available == 0) return;
         throw const FormatException('Unexpected EOF in IPC frame');
       }
-      final chunk = _iterator.current;
-      final chunkLength = chunk.length;
-      if (_end + chunkLength > _buffer.length) {
-        final available = _available;
-        final required = available + chunkLength;
-        // Grow only for bytes that arrived. Compact only when a read needs
-        // more input and the free space at the end cannot fit the new chunk.
-        final buffer = required <= _buffer.length
-            ? _buffer
-            : Uint8List(
-                max(
-                  required,
-                  min(_buffer.length * 2, _maxFrameLength + _headerLength),
-                ),
-              );
-        buffer.setRange(0, available, _buffer, _start);
-        _buffer = buffer;
-        _start = 0;
-        _end = available;
-      }
-      _buffer.setRange(_end, _end + chunkLength, chunk);
-      _end += chunkLength;
+      _buffer.addAll(_iterator.current);
     }
   }
 }
