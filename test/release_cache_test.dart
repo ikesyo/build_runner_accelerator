@@ -227,7 +227,9 @@ void main() {
       ..addFile(
         ArchiveFile('linux-x64/build_runner_accelerator', bytes.length, bytes),
       );
-    final archiveBytes = ZipEncoder().encode(archive);
+    final archiveBytes = ArgumentError.checkNotNull(
+      ZipEncoder().encode(archive),
+    );
 
     expect(
       ReleaseArtifactCache.extractBinary(
@@ -239,11 +241,30 @@ void main() {
     );
   });
 
+  test('extracts the uniquely matching binary from a tar.gz archive', () {
+    final bytes = utf8.encode('frontend');
+    final archive = Archive()
+      ..addFile(
+        ArchiveFile('linux-x64/build_runner_accelerator', bytes.length, bytes),
+      );
+
+    expect(
+      ReleaseArtifactCache.extractBinary(
+        gzip.encode(TarEncoder().encode(archive)),
+        archiveFilename: 'build_runner_accelerator-linux-x64.tar.gz',
+        binaryName: 'build_runner_accelerator',
+      ),
+      bytes,
+    );
+  });
+
   test('rejects an archive without exactly one matching binary', () {
     final archive = Archive()
       ..addFile(ArchiveFile('README', 1, [1]))
       ..addFile(ArchiveFile('other', 1, [2]));
-    final archiveBytes = ZipEncoder().encode(archive);
+    final archiveBytes = ArgumentError.checkNotNull(
+      ZipEncoder().encode(archive),
+    );
 
     expect(
       () => ReleaseArtifactCache.extractBinary(

@@ -62,7 +62,7 @@ void main() {
         );
       }
 
-      await send({
+      final initialize = <String, dynamic>{
         'type': 'initialize',
         'input_restrictions': <String, List<String>>{},
         'package': package,
@@ -70,7 +70,8 @@ void main() {
         'root': Directory.current.absolute.path,
         'resolver_mode': 'dart_local',
         'accelerator_version': buildRunnerAcceleratorVersion,
-      });
+      };
+      await send(initialize);
       Future<Map<String, dynamic>> reset({
         String? content,
         bool deleted = false,
@@ -113,11 +114,19 @@ void main() {
         cache: true,
       );
       expect(same['graph_cleared'], false);
-      expect(same['directive_stats']['updated_extracts'], 1);
+      expect(same['directive_stats']['updated_extracts'] ?? 0, 0);
+      expect(same['directive_stats']['updated_same_content_reuses'], 1);
       expect(same['directive_stats']['old_cache_hits'], 1);
       expect(same['directive_stats']['old_reads'], isNull);
+      await send({...initialize, 'package': 'build_runner'});
+      final replay = await reset(content: "import 'a.dart';\nclass First {}");
+      expect(replay['graph_cleared'], false);
+      expect(replay['directive_stats']['updated_same_content_reuses'], 1);
+      expect(replay['directive_stats']['old_reads'], 1);
+      expect(replay['directive_stats']['old_cache_hits'], isNull);
       final body = await reset(content: "import 'a.dart';\nclass Body {}");
       expect(body['graph_cleared'], false);
+      expect(body['directive_stats']['updated_extracts'], 1);
       final changed = await reset(content: "import 'b.dart';\nclass Body {}");
       expect(changed['graph_cleared'], true);
       expect((await reset(deleted: true))['graph_cleared'], false);
@@ -129,6 +138,7 @@ void main() {
       await send({'type': 'reset'});
       final next = await reset(content: "import 'b.dart';\nclass Body {}");
       expect(next['graph_cleared'], true);
+      expect(next['directive_stats']['updated_extracts'], 1);
       expect(next['directive_stats']['old_same_content_reuses'] ?? 0, 0);
       expect(next['directive_stats']['old_reads'], 1);
       // A first generated asset has no old file/graph entry; nonempty directives

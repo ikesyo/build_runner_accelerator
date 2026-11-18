@@ -32,5 +32,9 @@ targets:
         - lib/**
     builders:
       applies_builder_app:producer:
+        # This filter must leave the applied consumer's input scope intact.
         generate_for:
-          - lib/**/*.txt
+          include:
+            - lib/**/*.txt
+          exclude:
+            - lib/**/*.produced.txt
