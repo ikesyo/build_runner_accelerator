@@ -430,6 +430,7 @@ class _WorkerRuntime {
       _replaceResolver();
       _buildStarted = false;
       await _startBuild(clearReadCaches: false, clearBuilders: false);
+      _previousOverlayExtractions = const {};
       return;
     }
     mark('overlay_read');
@@ -508,6 +509,7 @@ class _WorkerRuntime {
       _replaceResolver();
       _buildStarted = false;
       await _startBuild(clearReadCaches: false, clearBuilders: false);
+      _previousOverlayExtractions = const {};
       return;
     }
     // A committed Dart asset whose directive set changed can change the

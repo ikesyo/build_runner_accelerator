@@ -124,6 +124,27 @@ void main() {
       expect(replay['directive_stats']['updated_same_content_reuses'], 1);
       expect(replay['directive_stats']['old_reads'], 1);
       expect(replay['directive_stats']['old_cache_hits'], isNull);
+      for (final incremental in [false, true]) {
+        // Request a clean restart, then an incremental reset that must
+        // restart because the worker has no bytes for one of its updates.
+        await send({
+          'type': 'reset_resolver',
+          'incremental': incremental,
+          'updated_sources': incremental ? ['$id.missing'] : [],
+          'updated_cache': [],
+          'deleted_sources': [],
+          'deleted_cache': [],
+          'overlay_blob': null,
+        });
+        final afterRestart = await reset(
+          content: "import 'a.dart';\nclass First {}",
+        );
+        expect(
+          afterRestart['directive_stats']['updated_extracts'],
+          1,
+          reason: incremental ? 'missing-output fallback' : 'clean restart',
+        );
+      }
       final body = await reset(content: "import 'a.dart';\nclass Body {}");
       expect(body['graph_cleared'], false);
       expect(body['directive_stats']['updated_extracts'], 1);
