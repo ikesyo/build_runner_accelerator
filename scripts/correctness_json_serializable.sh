@@ -211,8 +211,9 @@ setup_case() {
   assert_same_file \
     "$stock_dir/lib/model.g.dart" \
     "$rust_dir/lib/model.g.dart"
+  # The clean plan counts the producer, combining builder, and part cleanup.
   assert_contains "$results_dir/$name.rust.initial.log" \
-    'Rust frontend: 2 build action(s)'
+    'Rust frontend: 3 build action(s)'
   cp "$rust_dir/.dart_tool/build_runner_accelerator/graph-v3.bin" \
     "$results_dir/$name.graph.before.bin"
   cp "$rust_dir/lib/model.g.dart" "$results_dir/$name.model.before.g.dart"
@@ -227,7 +228,7 @@ run_case_generated_output_delete() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_same_file "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart"
   assert_contains "$results_dir/$name.rust.change.log" \
-    'Rust frontend: 2 build action(s)'
+    'Rust frontend: 3 build action(s)'
   printf 'correctness: generated-output-delete: pass\n'
 }
 
@@ -265,7 +266,7 @@ run_case_rename() {
   assert_no_file "$stock_dir/lib/model.g.dart"
   assert_no_file "$rust_dir/lib/model.g.dart"
   assert_contains "$results_dir/$name.rust.change.log" \
-    'Rust frontend: 2 build action(s)'
+    'Rust frontend: 3 build action(s)'
   printf 'correctness: rename: pass\n'
 }
 
@@ -321,7 +322,7 @@ run_case_affected_actions() {
   assert_same_file "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart"
   assert_same_file "$stock_dir/lib/other.g.dart" "$rust_dir/lib/other.g.dart"
   assert_contains "$results_dir/$name.rust.initial-2.log" \
-    'Rust frontend: 2 build action(s)'
+    'Rust frontend: 3 build action(s)'
 
   sed -i 's/displayName/displayNameChanged/g' "$stock_dir/lib/model.dart"
   sed -i 's/displayName/displayNameChanged/g' "$rust_dir/lib/model.dart"
@@ -333,7 +334,7 @@ run_case_affected_actions() {
   assert_same_file "$stock_dir/lib/other.g.dart" "$rust_dir/lib/other.g.dart"
   assert_same_file "$results_dir/$name.other.before.g.dart" "$rust_dir/lib/other.g.dart"
   assert_contains "$results_dir/$name.rust.change.log" \
-    'Rust frontend: 2 build action(s)'
+    'Rust frontend: 3 build action(s)'
   printf 'correctness: affected-action-set: pass\n'
 }
 
@@ -358,7 +359,7 @@ run_case_generate_for() {
   assert_no_file "$stock_dir/lib/other.g.dart"
   assert_no_file "$rust_dir/lib/other.g.dart"
   assert_contains "$results_dir/$name.rust.change.log" \
-    'Rust frontend: 2 build action(s)'
+    'Rust frontend: 4 build action(s)'
   printf 'correctness: generate-for: pass\n'
 }
 
@@ -383,7 +384,7 @@ run_case_builder_options() {
   assert_contains "$stock_dir/lib/model.g.dart" "'display_name':"
   assert_contains "$rust_dir/lib/model.g.dart" "'display_name':"
   assert_contains "$results_dir/$name.rust.change.log" \
-    'Rust frontend: 2 build action(s)'
+    'Rust frontend: 3 build action(s)'
   printf 'correctness: builder-options: pass\n'
 }
 
@@ -403,7 +404,7 @@ run_case_glob_membership() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_same_file "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart"
   assert_contains "$results_dir/$name.rust.change.log" \
-    'Rust frontend: 2 build action(s)'
+    'Rust frontend: 4 build action(s)'
   printf 'correctness: glob-membership: pass\n'
 }
 
@@ -436,7 +437,7 @@ setup_conditional_dependency_case() {
     "$stock_dir/lib/model.g.dart" \
     "$rust_dir/lib/model.g.dart"
   assert_contains "$results_dir/$name.rust.initial.log" \
-    'Rust frontend: 2 build action(s)'
+    'Rust frontend: 5 build action(s)'
 }
 
 run_case_conditional_dependency() {
@@ -451,7 +452,7 @@ run_case_conditional_dependency() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_same_file "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart"
   assert_contains "$results_dir/$name.rust.change.log" \
-    'Rust frontend: 2 build action(s)'
+    'Rust frontend: 4 build action(s)'
   printf 'correctness: conditional-dependency: pass\n'
 }
 
@@ -465,7 +466,7 @@ run_case_empty_options() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_same_file "$stock_dir/lib/model.g.dart" "$rust_dir/lib/model.g.dart"
   assert_contains "$results_dir/$name.rust.change.log" \
-    'Rust frontend: 2 build action(s)'
+    'Rust frontend: 3 build action(s)'
   printf 'correctness: empty-options-native-path: pass\n'
 }
 

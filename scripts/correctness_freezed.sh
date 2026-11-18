@@ -212,7 +212,8 @@ prepare_baseline() {
   run_rust "$rust_dir" "$results_dir/baseline.rust.initial.log"
   assert_source_outputs "$stock_dir" "$rust_dir"
   assert_combining_part "$stock_dir" "$rust_dir"
-  assert_rust_actions "$results_dir/baseline.rust.initial.log" 4
+  # The clean plan includes combining and part cleanup under their own filters.
+  assert_rust_actions "$results_dir/baseline.rust.initial.log" 8
 
   cp -Rp "$stock_dir" "$stock_baseline_dir"
   cp -Rp "$rust_dir" "$rust_baseline_dir"
@@ -243,7 +244,7 @@ run_case_generated_output_delete() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_source_outputs "$stock_dir" "$rust_dir"
   assert_combining_part "$stock_dir" "$rust_dir"
-  assert_rust_actions "$results_dir/$name.rust.change.log" 4
+  assert_rust_actions "$results_dir/$name.rust.change.log" 7
   printf 'freezed-correctness: generated-output-delete: pass\n'
 }
 
@@ -291,7 +292,7 @@ run_case_rename() {
     "$rust_dir/lib/renamed.freezed.dart"
   assert_no_file "$stock_dir/lib/model.freezed.dart"
   assert_no_file "$rust_dir/lib/model.freezed.dart"
-  assert_rust_actions "$results_dir/$name.rust.change.log" 1
+  assert_rust_actions "$results_dir/$name.rust.change.log" 3
   printf 'freezed-correctness: rename: pass\n'
 }
 
@@ -351,7 +352,7 @@ run_case_affected_actions() {
   assert_combining_part "$stock_dir" "$rust_dir"
   assert_same_file "$results_dir/$name.other.before.freezed.dart" \
     "$rust_dir/lib/other.freezed.dart"
-  assert_rust_actions "$results_dir/$name.rust.change.log" 1
+  assert_rust_actions "$results_dir/$name.rust.change.log" 3
   printf 'freezed-correctness: affected-action-set: pass\n'
 }
 
@@ -380,7 +381,7 @@ run_case_dependency() {
   assert_combining_part "$stock_dir" "$rust_dir"
   # The changed dependency is itself a matching Freezed input and therefore
   # contributes a successful no-output action in addition to the model.
-  assert_rust_actions "$results_dir/$name.rust.change.log" 2
+  assert_rust_actions "$results_dir/$name.rust.change.log" 5
   printf 'freezed-correctness: resolver-dependency: pass\n'
 }
 
@@ -398,7 +399,7 @@ run_case_annotation_removal() {
   for output in serializable.freezed.dart serializable.g.dart; do
     assert_same_file "$stock_dir/lib/$output" "$rust_dir/lib/$output"
   done
-  assert_rust_actions "$results_dir/$name.rust.change.log" 1
+  assert_rust_actions "$results_dir/$name.rust.change.log" 3
   printf 'freezed-correctness: optional-output-removal: pass\n'
 }
 
@@ -437,7 +438,7 @@ run_case_combined_output_removal() {
   assert_same_file "$stock_dir/lib/serializable.g.dart" \
     "$rust_dir/lib/serializable.g.dart"
   assert_combining_part "$stock_dir" "$rust_dir"
-  assert_rust_actions "$results_dir/$name.rust.change.log" 3
+  assert_rust_actions "$results_dir/$name.rust.change.log" 5
   printf 'freezed-correctness: combined-output-removal: pass\n'
 }
 
@@ -452,7 +453,7 @@ run_case_builder_options() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_source_outputs "$stock_dir" "$rust_dir"
   assert_combining_part "$stock_dir" "$rust_dir"
-  assert_rust_actions "$results_dir/$name.rust.change.log" 4
+  assert_rust_actions "$results_dir/$name.rust.change.log" 8
   printf 'freezed-correctness: builder-options: pass\n'
 }
 
@@ -465,7 +466,7 @@ run_case_glob_membership() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_same_file "$stock_dir/lib/other.freezed.dart" \
     "$rust_dir/lib/other.freezed.dart"
-  assert_rust_actions "$results_dir/$name.rust.change.log" 1
+  assert_rust_actions "$results_dir/$name.rust.change.log" 3
   printf 'freezed-correctness: glob-membership: pass\n'
 }
 
@@ -480,7 +481,7 @@ run_case_empty_options() {
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_source_outputs "$stock_dir" "$rust_dir"
   assert_combining_part "$stock_dir" "$rust_dir"
-  assert_rust_actions "$results_dir/$name.rust.change.log" 4
+  assert_rust_actions "$results_dir/$name.rust.change.log" 8
   printf 'freezed-correctness: empty-options-native-path: pass\n'
 }
 

@@ -151,11 +151,9 @@ setup_case() {
   cp "$results_dir/baseline.rust.initial.log" \
     "$results_dir/$name.rust.initial.log"
   assert_outputs "$stock_dir" "$rust_dir"
-  # Follow build_runner's findBuilderOrder: applies_builders selects a
-  # consumer but does not add a synthetic phase edge. Generated-input
-  # dependencies still drive the phase-aware actions, which total nine for
-  # this fixture.
-  assert_actions "$results_dir/$name.rust.initial.log" 9
+  # The combining and cleanup builders use their own input filters. The
+  # clean plan counts their candidates alongside the generator actions.
+  assert_actions "$results_dir/$name.rust.initial.log" 12
   cp "$rust_dir/.dart_tool/build_runner_accelerator/graph-v3.bin" \
     "$results_dir/$name.graph.before.bin"
   cp "$rust_dir/lib/model.g.dart" "$results_dir/$name.model.before.g.dart"
@@ -177,9 +175,8 @@ run_case_source_edit() {
   run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_outputs "$stock_dir" "$rust_dir"
-  # The same generic phase ordering reduces the dirty generated-input batch
-  # to five native actions while preserving the stock output inventory.
-  assert_actions "$results_dir/$name.rust.change.log" 5
+  # The single edit dirties a subset of the clean plan.
+  assert_actions "$results_dir/$name.rust.change.log" 7
   cmp -s "$results_dir/$name.model.before.g.dart" "$rust_dir/lib/model.g.dart" && \
     fail 'source edit did not change Riverpod output'
   printf 'riverpod-correctness: source-edit-and-invalidation: pass\n'
@@ -200,12 +197,12 @@ run_case_generated_output_delete() {
   run_stock "$stock_dir" "$results_dir/$name.stock.change.log"
   run_rust "$rust_dir" "$results_dir/$name.rust.change.log"
   assert_outputs "$stock_dir" "$rust_dir"
-  # Cache-output invalidation also dirties the cache consumers, so this path
-  # now executes seven actions while preserving the stock output inventory.
+  # Cache-output invalidation also dirties the combining and cleanup actions
+  # that consume the missing parts.
   # The part-directive pre-filter records a minimal result for secondary.dart's
   # freezed action (no `part 'secondary.freezed.dart'` directive), so it stays
   # clean here where stock would re-run it as another no-op.
-  assert_actions "$results_dir/$name.rust.change.log" 7
+  assert_actions "$results_dir/$name.rust.change.log" 10
   printf 'riverpod-correctness: generated-output-delete: pass\n'
 }
 

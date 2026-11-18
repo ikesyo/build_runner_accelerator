@@ -34,7 +34,9 @@ void main() {
           binaryBytes,
         ),
       );
-    final archiveBytes = ZipEncoder().encode(archive);
+    final archiveBytes = ArgumentError.checkNotNull(
+      ZipEncoder().encode(archive),
+    );
     final linuxArchive = Archive()
       ..addFile(
         ArchiveFile(
@@ -43,9 +45,7 @@ void main() {
           binaryBytes,
         ),
       );
-    final linuxArchiveBytes = GZipEncoder().encode(
-      TarEncoder().encode(linuxArchive),
-    );
+    final linuxArchiveBytes = gzip.encode(TarEncoder().encode(linuxArchive));
     final manifest = jsonEncode({
       'schema_version': releaseManifestSchemaVersion,
       'package_version': _testVersion,
