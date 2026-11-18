@@ -7,7 +7,7 @@ use crate::metrics::{
 };
 use crate::plan::{
     BuildSpec, build_specs_for_kind_with_primary_inputs, build_specs_for_phase_with_primary_inputs,
-    validate_api_cutoff, validate_unique_outputs,
+    resolve_api_cutoff_keys, validate_api_cutoff, validate_unique_outputs,
 };
 use crate::visibility::AssetVisibility;
 use crate::workspace::Workspace;
@@ -40,6 +40,7 @@ pub(super) fn create(
     api_cutoff: &BTreeSet<String>,
 ) -> io::Result<PlannedActions> {
     let _planning = crate::wall::Span::new("planning");
+    let api_cutoff = &resolve_api_cutoff_keys(api_cutoff, &workspace.root_package);
     validate_api_cutoff(build_config, api_cutoff)?;
     // Post-process outputs are hidden from all normal Builder phases. Keep
     // them in the persisted snapshot for their own action bookkeeping, but

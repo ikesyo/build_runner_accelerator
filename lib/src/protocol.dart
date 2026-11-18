@@ -343,7 +343,9 @@ class WorkerBuildRequest {
       partPhaseIndex: partPhaseIndex as int?,
       instanceKey: instanceKey,
       isRoot: _requiredBool(message, 'is_root', 'build'),
-      apiCutoff: message['api_cutoff'] == true,
+      apiCutoff: message.containsKey('api_cutoff')
+          ? _requiredBool(message, 'api_cutoff', 'build')
+          : false,
       blockedAssets: blockedAssets,
       triggers: _triggerList(message['triggers'], 'build triggers'),
       otelReportId:

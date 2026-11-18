@@ -1413,6 +1413,12 @@ fn planning_marks_api_cutoff_instances_and_rejects_unknown_builders() -> io::Res
         "only the opted-in builder is marked"
     );
 
+    // Root-relative keys resolve against the root package, as with
+    // `--define` spellings.
+    let relative: BTreeSet<String> = [":factory".to_owned()].into_iter().collect();
+    let plan = planning::create(&workspace, &state, &config, &snapshot, &relative)?;
+    assert!(plan.specs.iter().any(|spec| spec.instance.api_cutoff));
+
     let unknown: BTreeSet<String> = ["app:missing".to_owned()].into_iter().collect();
     let error = match planning::create(&workspace, &state, &config, &snapshot, &unknown) {
         Ok(_) => panic!("unknown builder must be rejected"),
@@ -1424,6 +1430,8 @@ fn planning_marks_api_cutoff_instances_and_rejects_unknown_builders() -> io::Res
             .contains("Unknown --api-cutoff builder: app:missing"),
         "{error}"
     );
+    // Terminal for watch: the command-line key set cannot heal.
+    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
     Ok(())
 }
 

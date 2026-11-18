@@ -734,6 +734,13 @@ void main() {
         ).apiCutoff,
         isTrue,
       );
+      expect(
+        () => WorkerBuildRequest.fromJson(
+          requestJson()..['api_cutoff'] = 'true',
+          blockedAssets: const <String>[],
+        ),
+        throwsA(isA<FormatException>()),
+      );
     });
 
     test('requires blocked_assets for direct build messages', () {

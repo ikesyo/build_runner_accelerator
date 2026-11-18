@@ -231,9 +231,26 @@ fn build_specs(
     Ok(specs)
 }
 
+/// Resolves root-relative `--api-cutoff` keys (`:name`, a spelling
+/// `--define` also accepts) against the workspace root package.
+pub(crate) fn resolve_api_cutoff_keys(
+    api_cutoff: &BTreeSet<String>,
+    root_package: &str,
+) -> BTreeSet<String> {
+    api_cutoff
+        .iter()
+        .map(|key| match key.strip_prefix(':') {
+            Some(name) => format!("{root_package}:{name}"),
+            None => key.clone(),
+        })
+        .collect()
+}
+
 /// Resolves `--api-cutoff` keys against the configured builders. A key
 /// naming no configured builder could never apply, so it is an error
 /// rather than a silent no-op that leaves the builder content-keyed.
+/// The error is `Unsupported` so watch treats it as terminal: the key
+/// set is fixed by the command line and cannot heal on a file change.
 pub(crate) fn validate_api_cutoff(
     config: &RustBuildConfig,
     api_cutoff: &BTreeSet<String>,
@@ -254,10 +271,10 @@ pub(crate) fn validate_api_cutoff(
     if unknown.is_empty() {
         return Ok(());
     }
-    Err(io::Error::other(format!(
-        "Unknown --api-cutoff builder: {}",
-        unknown.join(", ")
-    )))
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!("Unknown --api-cutoff builder: {}", unknown.join(", ")),
+    ))
 }
 
 pub(crate) fn validate_unique_outputs(specs: &[BuildSpec]) -> io::Result<()> {

@@ -127,6 +127,11 @@ impl Options {
                 format!("--background is only supported with prewarm: {command}"),
             ));
         }
+        if !api_cutoff.is_empty() && !matches!(command.as_str(), "build" | "watch") {
+            return Err(io::Error::other(
+                "--api-cutoff is only supported with build and watch",
+            ));
+        }
         if show_help && !matches!(command.as_str(), "build" | "watch" | "prewarm") {
             return Err(io::Error::other(format!("Unsupported command: {command}")));
         }
@@ -692,6 +697,15 @@ mod tests {
         // The flag is consumed by the frontend, never forwarded as a
         // build argument.
         assert!(options.build_arguments.is_empty());
+        // Prewarm never plans, so it must not silently accept the flag.
+        assert!(
+            super::Options::parse(
+                ["prewarm", "--api-cutoff=app:factory"]
+                    .into_iter()
+                    .map(str::to_owned)
+            )
+            .is_err()
+        );
         let plain = super::Options::parse(["build"].into_iter().map(str::to_owned)).unwrap();
         assert!(plain.api_cutoff.is_empty());
         assert!(
