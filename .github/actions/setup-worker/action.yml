@@ -157,7 +157,7 @@ runs:
         restore-keys: |
           rust-target-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.rust }}-${{ inputs.frontend-profile }}-${{ inputs.rust-target || 'host' }}-
 
-    - uses: dart-lang/setup-dart@v1.8.1
+    - uses: dart-lang/setup-dart@v1.8.2
       with:
         sdk: ${{ steps.versions.outputs.dart }}
         # The matcher file is relative to setup-dart's own action directory;
