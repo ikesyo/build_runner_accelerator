@@ -138,7 +138,13 @@ learns only while executing an action whose request carries
 `api_cutoff`; a build that never opts in records no fingerprints,
 and the first opted-in build behaves like a cold start for the
 affected builders. Within an opted-in action's walk, repeat visits
-to unchanged content are memoized as before. Nested producer
+to unchanged content are memoized as before. The learning lookup
+is keyed by the frontend-supplied snapshot digest
+(`asset-digests-v1`) when the walk has one: the persistent cache
+answers by digest alone, so the first visit of a build no longer
+rehashes the full content of every unit in the closure. Units
+without a frontend digest (anything produced or committed during
+the build) fall back to hashing the content they were read as. Nested producer
 actions restore the caller's setting. Learning happens only in
 an opted-in action's own dep walk: a unit an opted-out action
 loaded, and a later opted-in action reuses from the cached dep

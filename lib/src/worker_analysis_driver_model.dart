@@ -316,9 +316,10 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   /// per walk visit.
   void _learnApiFingerprint(
     AssetId id,
-    String content, [
+    String content, {
     ParseStringResult? parsed,
-  ]) {
+    String? frontendDigest,
+  }) {
     if (!fingerprintLearningEnabled) return;
     final cache = _fingerprintCache;
     if (cache == null) return;
@@ -335,6 +336,26 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
     if (identical(_learnedContents[key], content) &&
         learnedApiFingerprints.containsKey(key)) {
       return;
+    }
+    // With a frontend-supplied digest (`asset-digests-v1`, ADR 0054)
+    // the persistent cache answers by digest alone: the digest is
+    // the BLAKE3 of the snapshot bytes the walk just read, so a hit
+    // needs neither the content hash nor a parse. The memos are
+    // cleared at each build boundary, so without this path the first
+    // visit of every build rehashes the full content of every unit
+    // in the closure. A miss falls through to learning from content;
+    // the entry it stores is keyed by that same digest.
+    if (frontendDigest != null) {
+      if (_learnedDigests[key] == frontendDigest &&
+          learnedApiFingerprints.containsKey(key)) {
+        return;
+      }
+      if (cache.contains(frontendDigest)) {
+        _learnedContents[key] = content;
+        _learnedDigests[key] = frontendDigest;
+        learnedApiFingerprints[key] = cache.lookup(frontendDigest);
+        return;
+      }
     }
     final digest = blake3Hex(utf8.encode(content));
     _learnedContents[key] = content;
@@ -405,7 +426,11 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
       // fed to the Analyzer, and a source asset's deps never change
       // during a build, so the value is fixed. Prefetching the revealed
       // deps mirrors the slow path below.
-      _learnApiFingerprint(id, content.values.last.value);
+      _learnApiFingerprint(
+        id,
+        content.values.last.value,
+        frontendDigest: frontendDigest,
+      );
       if (filesystem is RemoteBuilderFilesystem) {
         await filesystem.prefetchDepReads(digestHit.deps);
       }
@@ -415,7 +440,16 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
       for (final expiring in content.values) {
         b.values.add(
           ExpiringValue<AssetDeps>(
-            _depsFor(id, expiring.value),
+            // An incomplete read carries expiring placeholder values
+            // (an empty string for an asset unreadable in that phase),
+            // which are not the snapshot bytes the frontend digest
+            // describes; only a complete read may use it, mirroring
+            // the digest fast path above.
+            _depsFor(
+              id,
+              expiring.value,
+              frontendDigest: content.isComplete ? frontendDigest : null,
+            ),
             expiresAfter: expiring.expiresAfter,
           ),
         );
@@ -442,18 +476,23 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
     return result;
   }
 
-  AssetDeps _depsFor(AssetId id, String content) {
+  AssetDeps _depsFor(AssetId id, String content, {String? frontendDigest}) {
     if (content.isEmpty) {
       // A unit that became empty still has a current fingerprint (or
       // an unavailable marker); learning it replaces the fingerprint
       // of its previous, nonempty content.
-      _learnApiFingerprint(id, content);
+      _learnApiFingerprint(id, content, frontendDigest: frontendDigest);
       return AssetDeps.empty;
     }
     final cache = _cache;
     if (cache == null) {
       final (deps, parsed) = _parseWithResult(id, content);
-      _learnApiFingerprint(id, content, parsed);
+      _learnApiFingerprint(
+        id,
+        content,
+        parsed: parsed,
+        frontendDigest: frontendDigest,
+      );
       return deps;
     }
     final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
@@ -471,7 +510,7 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
       if (timer != null) {
         resolverActionMetrics.depParseCacheUs += timer.elapsedMicroseconds;
       }
-      _learnApiFingerprint(id, content);
+      _learnApiFingerprint(id, content, frontendDigest: frontendDigest);
       return hit;
     }
     resolverActionMetrics.depParseCacheMisses++;
@@ -483,7 +522,12 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
       resolverActionMetrics.depParseUs += parseTimer.elapsedMicroseconds;
     }
     cache.store(key, deps);
-    _learnApiFingerprint(id, content, parsed);
+    _learnApiFingerprint(
+      id,
+      content,
+      parsed: parsed,
+      frontendDigest: frontendDigest,
+    );
     if (timer != null) {
       resolverActionMetrics.depParseCacheUs += timer.elapsedMicroseconds;
     }
