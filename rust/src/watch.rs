@@ -45,12 +45,21 @@ impl WatchEvents {
             let _ = sender.send(result);
         })
         .map_err(io::Error::other)?;
+        let pub_tool_dir = workspace.pub_resolution_root().join(".dart_tool");
+        let mut watches_pub_tool = false;
         for package_root in workspace.package_roots() {
             if package_root != workspace.root && package_root.starts_with(&workspace.root) {
                 continue;
             }
             watcher
                 .watch(&package_root, RecursiveMode::Recursive)
+                .map_err(io::Error::other)?;
+            watches_pub_tool |= pub_tool_dir.starts_with(normalized_watch_path(&package_root));
+        }
+        if !watches_pub_tool {
+            // Watch the directory so atomic replacements by Pub are visible.
+            watcher
+                .watch(&pub_tool_dir, RecursiveMode::NonRecursive)
                 .map_err(io::Error::other)?;
         }
         self.watcher = Some(watcher);
@@ -505,9 +514,20 @@ fn configuration_package_root(workspace: &Workspace, path: &Path) -> Option<Path
         .max_by_key(|root| root.components().count())
 }
 
+fn is_pub_configuration_path(workspace: &Workspace, path: &Path) -> bool {
+    path.strip_prefix(workspace.pub_resolution_root())
+        .is_ok_and(|relative| {
+            relative == Path::new(".dart_tool/package_config.json")
+                || relative == Path::new(".dart_tool/package_graph.json")
+        })
+}
+
 fn is_configuration_event(workspace: &Workspace, event: &Event, selected: Option<&str>) -> bool {
     event.paths.iter().any(|path| {
         let path = normalized_watch_path(path);
+        if is_pub_configuration_path(workspace, &path) {
+            return true;
+        }
         let root = configuration_package_root(workspace, &path);
         let Some(root) = root else { return false };
         let Ok(relative) = path.strip_prefix(&root) else {
@@ -517,7 +537,6 @@ fn is_configuration_event(workspace: &Workspace, event: &Event, selected: Option
         relative == "build.yaml"
             || relative == "pubspec.yaml"
             || relative.ends_with(".build.yaml")
-            || (root == workspace.root && relative == ".dart_tool/package_graph.json")
             || (root == workspace.root && selected == Some(relative.as_str()))
     })
 }
@@ -643,6 +662,9 @@ fn is_relevant_event(
         if path.is_dir() {
             return false;
         }
+        if is_pub_configuration_path(workspace, &path) {
+            return true;
+        }
         let package = workspace
             .packages()
             .map(|(package, root)| (package, normalized_watch_path(root)))
@@ -671,8 +693,7 @@ fn is_relevant_event(
             .first()
             .is_some_and(|component| component.as_os_str().to_str() == Some(".dart_tool"))
         {
-            return is_root_package
-                && (name == "package_config.json" || relative == ".dart_tool/package_graph.json");
+            return false;
         }
         if matches!(relative.as_str(), "build.yaml" | "pubspec.yaml")
             || relative.ends_with(".build.yaml")

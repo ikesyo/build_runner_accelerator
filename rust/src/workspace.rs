@@ -193,6 +193,10 @@ impl Workspace {
         })
     }
 
+    pub(crate) fn pub_resolution_root(&self) -> &Path {
+        &self.pub_root
+    }
+
     /// Reuse this read for graph identity while rejecting a stale resolution.
     /// Keep the original text, not another digest or parsed copy, for comparison.
     pub(crate) fn read_package_config(&self) -> io::Result<Vec<u8>> {
