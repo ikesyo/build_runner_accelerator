@@ -4,7 +4,9 @@ use self::graph::ResidentGraph;
 use crate::build;
 use crate::builder::{ConfiguredBuilder, RustBuildConfig};
 use crate::cli::Options;
-use crate::frontend::{NativeFrontend, prepare_native_frontend, unsupported, worker_executable};
+use crate::frontend::{
+    NativeFrontend, contextual_error, prepare_native_frontend, unsupported, worker_executable,
+};
 use crate::graph::GraphState;
 use crate::pattern::match_capture_pattern;
 use crate::worker::WorkerPool;
@@ -51,7 +53,8 @@ impl WatchEvents {
         }
         // Activate the new subscriptions before dropping the old ones.
         // Both use the same queue, including events received during builds.
-        self._watcher = Self::subscribe(workspace, self.sender.clone())?;
+        self._watcher = Self::subscribe(workspace, self.sender.clone())
+            .map_err(|error| contextual_error("cannot refresh watch subscriptions", error))?;
         let mut paths = WatchPaths::new(workspace);
         paths.sources = self.paths.sources.clone();
         self.paths = paths;
@@ -134,6 +137,7 @@ impl WatchPaths {
 #[derive(Default)]
 struct WatchState {
     cached_configuration: Option<RustBuildConfig>,
+    configuration_stale: bool,
     events: Option<WatchEvents>,
     graph: ResidentGraph,
 }
@@ -338,14 +342,15 @@ fn run_watch_build_inner(
     let workspace = Workspace::load(options.root.clone())?;
     // Subscribe to new dependency paths before reading their build configuration.
     // Edits during preparation then remain queued for the next watch cycle.
-    let mut reuse_configuration = reuse_configuration;
     if let Some(events) = &mut watch_state.events
         && events.refresh_paths(&workspace)?
     {
-        reuse_configuration = false;
+        // Keep the previous plan for topology checks until its replacement is ready.
+        watch_state.configuration_stale = true;
         // Byte-identical package configs can resolve relative URIs differently.
         pool.take();
     }
+    let reuse_configuration = reuse_configuration && !watch_state.configuration_stale;
     let loaded_graph = watch_state.graph.take_for_build(&workspace)?;
     let session_start = watch_state.cached_configuration.is_none();
     let filtered = !options.settings.build_filters.is_empty();
@@ -427,6 +432,7 @@ fn run_watch_build_inner(
     }
     *pool_shape = Some(shape);
     watch_state.cached_configuration = Some(build_config.clone());
+    watch_state.configuration_stale = false;
     if *pool_signature != build_config.manifest_signature {
         pool.take();
         *pool_signature = build_config.manifest_signature.clone();
