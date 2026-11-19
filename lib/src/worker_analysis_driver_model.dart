@@ -85,9 +85,9 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
   PhasedAssetDeps phasedAssetDeps() => _workerGraphLoader.phasedAssetDeps();
 
   /// Unit fingerprints the dep walk has learned in this process
-  /// (ADR 0056), keyed by asset id string; a null value marks a unit
-  /// whose fingerprint is unavailable.
-  Map<String, String?> learnedApiFingerprints() =>
+  /// (ADR 0056), keyed by asset id string; a null fingerprint marks
+  /// a unit whose fingerprint is unavailable.
+  Map<String, LearnedApiFingerprint> learnedApiFingerprints() =>
       _CachingAssetDepsLoader.learnedApiFingerprints;
 
   /// Clears the learned fingerprints and the learning memos at a
@@ -149,6 +149,25 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
     } finally {
       _CachingAssetDepsLoader.fingerprintLearningEnabled = wasEnabled;
     }
+  }
+
+  /// Computes the direct resolver deps of [id] from explicit [content]
+  /// for an ADR 0056 preflight query. The caller read the content
+  /// itself, so no build filesystem state is consulted for the unit;
+  /// the loader records the unit's API fingerprint as a side effect,
+  /// exactly as a dep-walk load would.
+  List<AssetId> preflightUnitDeps(
+    AssetId id,
+    String content, {
+    required BuilderFilesystem builderFilesystem,
+    required int phase,
+  }) {
+    final loader = _CachingAssetDepsLoader(
+      builderFilesystem,
+      phase,
+      filesystem,
+    );
+    return loader.depsForContent(id, content);
   }
 
   @override
@@ -254,8 +273,8 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   /// fingerprint is unavailable. Reported to the frontend with the
   /// build results, delta-encoded against what it already has, like
   /// the dep graph.
-  static final Map<String, String?> learnedApiFingerprints =
-      <String, String?>{};
+  static final Map<String, LearnedApiFingerprint> learnedApiFingerprints =
+      <String, LearnedApiFingerprint>{};
 
   /// The exact content instance each asset's learned fingerprint was
   /// computed from, and the content digest recorded alongside it.
@@ -330,7 +349,14 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
     // the gate closed: report the unavailable marker so the
     // frontend drops the fingerprint it recorded earlier.
     if (!cache.modelSupported) {
-      learnedApiFingerprints[key] = null;
+      if (identical(_learnedContents[key], content) &&
+          learnedApiFingerprints[key]?.fingerprint == null) {
+        return;
+      }
+      final digest = blake3Hex(utf8.encode(content));
+      _learnedContents[key] = content;
+      _learnedDigests[key] = digest;
+      learnedApiFingerprints[key] = (digest: digest, fingerprint: null);
       return;
     }
     if (identical(_learnedContents[key], content) &&
@@ -346,15 +372,34 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
     // in the closure. A miss falls through to learning from content;
     // the entry it stores is keyed by that same digest.
     if (frontendDigest != null) {
+      // The digest memo may only answer for the very bytes it was
+      // learned from: when preflight initialized this worker, an
+      // edit landing before the action's walk can hand the walk
+      // newer content under the same snapshot digest, and accepting
+      // the memo would report the earlier fingerprint as evidence
+      // about bytes it was never computed from.
       if (_learnedDigests[key] == frontendDigest &&
-          learnedApiFingerprints.containsKey(key)) {
+          learnedApiFingerprints.containsKey(key) &&
+          _learnedContents[key] == content) {
         return;
       }
-      if (cache.contains(frontendDigest)) {
-        _learnedContents[key] = content;
-        _learnedDigests[key] = frontendDigest;
-        learnedApiFingerprints[key] = cache.lookup(frontendDigest);
-        return;
+      if (cache.contains(frontendDigest, package: id.package)) {
+        // Bind the cached fingerprint only to bytes that hash to the
+        // frontend digest: a phased read can serve content newer than
+        // the snapshot the digest describes (a mid-build edit), and
+        // reporting the digest for those bytes would let a later
+        // preflight treat the fingerprint as evidence about content
+        // it was never computed from. The verification hash runs once
+        // per asset per build; the memo above covers later visits.
+        if (blake3Hex(utf8.encode(content)) == frontendDigest) {
+          _learnedContents[key] = content;
+          _learnedDigests[key] = frontendDigest;
+          learnedApiFingerprints[key] = (
+            digest: frontendDigest,
+            fingerprint: cache.lookup(frontendDigest, package: id.package),
+          );
+          return;
+        }
       }
     }
     final digest = blake3Hex(utf8.encode(content));
@@ -364,9 +409,12 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
       return;
     }
     _learnedDigests[key] = digest;
-    learnedApiFingerprints[key] = parsed != null
-        ? cache.fingerprintForParse(digest, parsed)
-        : cache.fingerprintFor(digest, content);
+    learnedApiFingerprints[key] = (
+      digest: digest,
+      fingerprint: parsed != null
+          ? cache.fingerprintForParse(digest, parsed, package: id.package)
+          : cache.fingerprintFor(digest, content, package: id.package),
+    );
   }
 
   @override
@@ -476,6 +524,12 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
     return result;
   }
 
+  /// Runs the content-keyed deps computation for explicit [content]
+  /// (ADR 0056 preflight); see
+  /// [WorkerAnalysisDriverModel.preflightUnitDeps].
+  List<AssetId> depsForContent(AssetId id, String content) =>
+      _depsFor(id, content).deps.toList();
+
   AssetDeps _depsFor(AssetId id, String content, {String? frontendDigest}) {
     if (content.isEmpty) {
       // A unit that became empty still has a current fingerprint (or
@@ -536,10 +590,19 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
 
   // Same directive scan as `AssetDepsLoader._parse`. The parse result
   // rides along so the API fingerprint (ADR 0056) reuses this parse
-  // instead of parsing the unit a second time.
+  // instead of parsing the unit a second time. The parse uses the
+  // package's language version feature set when it is recorded, so
+  // the fingerprint is computed from the grammar the resolver itself
+  // parses with; without a recorded version the parse falls back to
+  // the latest grammar for the directive scan and no fingerprint is
+  // learned from it.
   (AssetDeps, ParseStringResult) _parseWithResult(AssetId id, String content) {
     final depsNodeBuilder = AssetDepsBuilder();
-    final result = parseString(content: content, throwIfDiagnostics: false);
+    final result = parseString(
+      content: content,
+      featureSet: apiFingerprintFeatureSet(id.package),
+      throwIfDiagnostics: false,
+    );
     final parsed = result.unit;
     for (final directive in parsed.directives) {
       if (directive is! UriBasedDirective) continue;

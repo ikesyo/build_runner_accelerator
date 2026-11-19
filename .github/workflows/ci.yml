@@ -523,6 +523,8 @@ jobs:
               CASE_FILTER=shared-baseline bash scripts/correctness_json_serializable.sh
               bash scripts/correctness_capture_builder.sh
               bash scripts/correctness_early_catalog.sh
+              bash scripts/correctness_api_cutoff.sh
+              bash scripts/correctness_api_cutoff_watch.sh
             env:
               PUB_GET_OFFLINE: '1'
           - name: Freezed watch and generic mappings

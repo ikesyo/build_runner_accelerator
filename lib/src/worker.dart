@@ -12,6 +12,7 @@ import 'package:build_runner/src/build/library_cycle_graph/phased_asset_deps.dar
 import 'package:build_runner/src/build/input_tracker.dart' show InputTracker;
 import 'package:build_runner/src/build/builder_filesystem.dart'
     show BuilderFilesystem;
+import 'api_fingerprint.dart' show LearnedApiFingerprint;
 import 'worker_resolvers.dart' show WorkerResolversImpl;
 import 'package:build_runner/src/build_plan/build_packages.dart'
     show BuildPackages;
@@ -26,6 +27,7 @@ import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
 import 'package:build_runner/src/build_plan/build_inputs.dart' show BuildInputs;
 
 import 'asset_read_cache.dart';
+import 'blake3.dart';
 import 'compiler_package_config.dart';
 import 'frontend_binary_resolver.dart' show buildRunnerAcceleratorVersion;
 import 'overlay_blob.dart';
@@ -203,6 +205,53 @@ Future<void> runWorker({
               'type': 'reset_resolver',
               'id': resetResolver.id,
             });
+          case WorkerApiFingerprintQueryMessage query:
+            // The query reads assets through the same RPC channel as a
+            // build action, so it runs inside an IO action scope; with
+            // no build started there is nothing to read through and
+            // every entry is simply unavailable.
+            if (!runtime._buildStarted) {
+              await writer.send(<String, dynamic>{
+                'v': 1,
+                'type': 'api_fingerprints',
+                'id': query.id,
+                'results': await runtime.apiFingerprintQuery(query.entries),
+              });
+              break;
+            }
+            final queryRpc = RpcSession(
+              reader,
+              writer,
+              buildId: query.id as int,
+              phase: runtime._phaseCount,
+              postProcess: false,
+              onControlMessage: (nested) => _handleNestedBuild(
+                nested,
+                reader,
+                writer,
+                runtime,
+                catalog,
+                postProcessCatalog,
+              ),
+            );
+            runtime.io.beginAction(
+              rpc: queryRpc,
+              package: query.entries.isEmpty
+                  ? ''
+                  : AssetId.parse(query.entries.first.asset).package,
+              primaryInput: null,
+              blockedAssets: const <AssetId>{},
+            );
+            try {
+              await writer.send(<String, dynamic>{
+                'v': 1,
+                'type': 'api_fingerprints',
+                'id': query.id,
+                'results': await runtime.apiFingerprintQuery(query.entries),
+              });
+            } finally {
+              runtime.io.endAction();
+            }
           case WorkerBuildMessage build:
             await _handleBuild(
               build.request,
@@ -294,9 +343,9 @@ class _WorkerRuntime {
   final Map<AssetId, Object> sentDepGraphValues = <AssetId, Object>{};
 
   /// API fingerprints already transmitted to Rust, keyed by asset id
-  /// string (ADR 0056). A null value is a transmitted unavailable
-  /// marker, distinct from never having sent the asset.
-  final Map<String, String?> sentApiFingerprints = <String, String?>{};
+  /// string (ADR 0056).
+  final Map<String, LearnedApiFingerprint> sentApiFingerprints =
+      <String, LearnedApiFingerprint>{};
 
   /// Resolver entrypoints recorded by every `_runBuild` of the current
   /// batch, including nested builds whose results do not join `results`.
@@ -356,6 +405,102 @@ class _WorkerRuntime {
     _phaseCount = phaseCount < 1 ? 1 : phaseCount;
     _clearPerBuildState();
     await _startBuild();
+  }
+
+  /// Answers an ADR 0056 preflight query: for each unit, reads the
+  /// current content through the asset RPC (bypassing per-build
+  /// content state, so watch residents answer for the bytes on disk
+  /// now), verifies it against the frontend's snapshot digest, and
+  /// computes the unit's API fingerprint and direct resolver deps from
+  /// that content. Any failure leaves the entry's values null, which
+  /// the frontend treats as no evidence.
+  Future<Map<String, Object?>> apiFingerprintQuery(
+    List<ApiFingerprintQueryEntry> entries,
+  ) async {
+    // The query's reads (and the dep loads its parses trigger) go
+    // through the shared read caches, and this worker goes on to
+    // execute the build. Content read here can be newer than the
+    // frontend's snapshot: a file edited after the snapshot and
+    // restored before the action runs would otherwise leave the
+    // temporary bytes cached, and execution would consume content
+    // the snapshot never contained while the committed snapshot
+    // still matches disk. Restore both caches afterwards so the
+    // query leaves no content behind.
+    final savedReadCache = Map<AssetId, List<int>>.of(readCache);
+    final savedReadableCache = Set<AssetId>.of(readableCache);
+    // The query is itself the API-cutoff operation: the frontend sends
+    // it only for opted-in builds, and the dep walks it triggers must
+    // learn the fingerprints it answers with. Learning is otherwise
+    // gated to opted-in build actions (ADR 0056), which have not run
+    // yet when a preflight query arrives, so enable it for the query
+    // and restore the caller's setting afterwards.
+    final previousLearning = resolver.fingerprintLearningEnabled;
+    resolver.setFingerprintLearningEnabled(true);
+    try {
+      return await _apiFingerprintQuery(entries);
+    } finally {
+      resolver.setFingerprintLearningEnabled(previousLearning);
+      readCache.removeWhere((id, _) => !savedReadCache.containsKey(id));
+      savedReadCache.forEach((id, bytes) {
+        if (!identical(readCache[id], bytes)) {
+          readCache[id] = bytes;
+        }
+      });
+      readableCache
+        ..removeWhere((id) => !savedReadableCache.contains(id))
+        ..addAll(savedReadableCache);
+    }
+  }
+
+  Future<Map<String, Object?>> _apiFingerprintQuery(
+    List<ApiFingerprintQueryEntry> entries,
+  ) async {
+    final results = <String, Object?>{};
+    for (final entry in entries) {
+      String? fingerprint;
+      List<String>? deps;
+      if (_buildStarted) {
+        try {
+          final id = AssetId.parse(entry.asset);
+          final bytes = await buildFilesystem.readerWriter.readAsBytes(id);
+          final content = utf8.decode(bytes);
+          // Snapshot digests are algorithm-tagged (`b3-<hex>`); the
+          // fingerprint cache keys on the bare hex.
+          final expectedDigest = entry.digest.startsWith('b3-')
+              ? entry.digest.substring(3)
+              : entry.digest;
+          if (blake3Hex(bytes) == expectedDigest) {
+            deps = resolver
+                .preflightUnitDeps(
+                  id,
+                  content,
+                  builderFilesystem: buildFilesystem,
+                  phase: _phaseCount,
+                )
+                .map((dep) => dep.toString())
+                .toList();
+            // The learned record is usable only when it was learned
+            // from exactly these bytes: a file whose decoded content
+            // hashes differently than its raw bytes (a leading BOM,
+            // which utf8.decode drops) learns a record bound to the
+            // re-encoded digest, and returning its fingerprint here
+            // would bind it to the snapshot digest it does not
+            // describe. Such units stay content-keyed (ADR 0056).
+            final learned = resolver.learnedApiFingerprints()[entry.asset];
+            if (learned != null && learned.digest == expectedDigest) {
+              fingerprint = learned.fingerprint;
+            }
+          }
+        } catch (_) {
+          // Unreadable or undecodable content is simply unavailable.
+        }
+      }
+      results[entry.asset] = <String, Object?>{
+        'fingerprint': fingerprint,
+        'deps': deps,
+      };
+    }
+    return results;
   }
 
   /// Ends the previous build and starts the next one with a fresh build
@@ -1092,6 +1237,7 @@ Future<JsonMap> _runBuildAction(
         ? _activityDurations()
         : const <String, int>{};
     var drainReads = const <AssetId>{};
+    var drainResolverReads = const <AssetId>{};
     if (request.phase > runtime._lastDepDrainPhase) {
       runtime._lastDepDrainPhase = request.phase;
       // Expired dep entries are re-loaded eagerly by the next library load
@@ -1100,11 +1246,17 @@ Future<JsonMap> _runBuildAction(
       // excluded from this action's recorded reads; the completed deps still
       // reach the exported dep graph.
       final readsBeforeDrain = Set<AssetId>.of(runtime.io.observedReads);
+      final resolverReadsBeforeDrain = Set<AssetId>.of(
+        runtime.io.resolverObservedReads,
+      );
       await runtime.resolver.drainPendingDepLoads(
         builderFilesystem: runtime.buildFilesystem,
         phase: request.phase,
       );
       drainReads = runtime.io.observedReads.difference(readsBeforeDrain);
+      drainResolverReads = runtime.io.resolverObservedReads.difference(
+        resolverReadsBeforeDrain,
+      );
     }
     final deleted = <AssetId>{};
     BuildStepImpl? step;
@@ -1258,7 +1410,7 @@ Future<JsonMap> _runBuildAction(
         runtime.io,
         runtime.packageConfig,
         runtime.resolverDependencyCache,
-        excludeReads: drainReads,
+        excludeReads: {...drainReads, ...drainResolverReads},
         // The staged map holds no declared outputs and this build's own
         // produced outputs are excluded here, so a digest only ever names
         // snapshot content (ADR 0054, Snapshot semantics).
@@ -1291,18 +1443,36 @@ Future<JsonMap> _runBuildAction(
     final observedReads = drainReads.isEmpty
         ? runtime.io.observedReads
         : runtime.io.observedReads.difference(drainReads);
-    final reads = <String>{
+    final resolverObservedReads = drainResolverReads.isEmpty
+        ? runtime.io.resolverObservedReads
+        : runtime.io.resolverObservedReads.difference(drainResolverReads);
+    // The step's InputTracker also records the resolver's internal
+    // readability probes: libraryFor preloads its target through the
+    // step, which tracks it as an input even though the builder
+    // never read it. Assets the IO attributed to the resolver
+    // channel alone (and did not also surface as direct reads or
+    // glob results) are resolver observations, so they come out of
+    // the direct set again; an asset read both ways stays direct.
+    final resolverOnlyReads = resolverObservedReads
+        .difference(observedReads)
+        .difference(runtime.io.observedGlobResults);
+    final readsSet = <String>{
       input.toString(),
       if (triggerInputTracker != null)
         ...triggerInputTracker.inputs.map((id) => id.toString()),
       if (step != null) ...step.inputTracker.inputs.map((id) => id.toString()),
       ...observedReads.map((id) => id.toString()),
       ...runtime.io.observedGlobResults.map((id) => id.toString()),
-    }.toList()..sort();
+    }..removeAll(resolverOnlyReads.map((id) => id.toString()));
+    final reads = readsSet.toList()..sort();
     final resolverReads = <String>{
       if (triggered && step != null)
         ...step.inputTracker.resolverEntrypoints.map((id) => id.toString()),
+      // Resolver invalidation keeps the full union: direct reads,
+      // plus the loads recorded separately as resolver machinery
+      // reads (ADR 0056). Only `reads` above is direct-only.
       if (triggered) ...observedReads.map((id) => id.toString()),
+      if (triggered) ...resolverObservedReads.map((id) => id.toString()),
     }.toList()..sort();
     final resolverEntrypoints = <AssetId>{
       if (triggered && step != null) ...step.inputTracker.resolverEntrypoints,
@@ -1444,20 +1614,27 @@ Map<String, List<String>> _resolverDepGraphJson(
 
 /// API fingerprints the dep walk learned that Rust has not been sent
 /// yet (ADR 0056): the delta of [learned] against [sent], which is
-/// updated in place. Units whose fingerprint is unavailable are sent
-/// as null so the frontend drops any fingerprint it recorded for an
-/// earlier content of the same asset.
-Map<String, String?> _apiFingerprintsJson(
-  Map<String, String?> learned,
-  Map<String, String?> sent,
+/// updated in place. Each value binds the fingerprint to the digest
+/// of the content that produced it; units whose fingerprint is
+/// unavailable are sent as null so the frontend drops any fingerprint
+/// it recorded for an earlier content of the same asset.
+Map<String, Object?> _apiFingerprintsJson(
+  Map<String, LearnedApiFingerprint> learned,
+  Map<String, LearnedApiFingerprint> sent,
 ) {
-  final result = <String, String?>{};
+  final result = <String, Object?>{};
   for (final entry in learned.entries) {
     if (sent.containsKey(entry.key) && sent[entry.key] == entry.value) {
       continue;
     }
     sent[entry.key] = entry.value;
-    result[entry.key] = entry.value;
+    final fingerprint = entry.value.fingerprint;
+    result[entry.key] = fingerprint == null
+        ? null
+        : <String, String>{
+            'digest': entry.value.digest,
+            'fingerprint': fingerprint,
+          };
   }
   return result;
 }

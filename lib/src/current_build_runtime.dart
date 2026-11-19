@@ -230,6 +230,12 @@ class RemoteBuilderFilesystem implements BuilderFilesystem {
     }
     late List<int> bytes;
     try {
+      // Builder steps read through here (BuildStepImpl calls
+      // contentOf for readAsBytes/readAsString/digest/canRead), so
+      // this read is a direct read and stays unscoped. The resolver
+      // machinery's own loads use the dep loader's entry points
+      // (_contentOfForDeps and the readPhased probe), which are the
+      // ones scoped as resolver reads (ADR 0056).
       bytes = await _remoteReaderWriter.readAsBytes(id);
     } on AssetNotFoundException {
       await ChildProcess.exitDueToAssetDeleted(id);
@@ -259,9 +265,12 @@ class RemoteBuilderFilesystem implements BuilderFilesystem {
     late AssetContent content;
     try {
       // Read the action-visible snapshot first. Never use an AssetId-only
-      // content cache: blocked/primary-input checks and observedReads must run
-      // before using even an already-cached byte snapshot.
-      final snapshot = await _remoteReaderWriter.readContent(id);
+      // content cache: blocked/primary-input checks and read recording must
+      // run before using even an already-cached byte snapshot. Dep loads
+      // are resolver loads, not direct reads (ADR 0056).
+      final snapshot = await _remoteReaderWriter.readAsResolver(
+        () => _remoteReaderWriter.readContent(id),
+      );
       if (resolverActionMetrics.enabled) {
         resolverActionMetrics.depContentSnapshotBytes += snapshot.bytes.length;
       }
@@ -334,7 +343,14 @@ class RemoteBuilderFilesystem implements BuilderFilesystem {
     final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
     final known = _remoteState.isSource(id);
     if (!known) _remoteState.addMissingSource(id);
-    final readable = known && await _remoteReaderWriter.canRead(id);
+    // The dep walk's readability probe is a resolver load too
+    // (ADR 0056); only the content read in `_contentOfForDeps`
+    // was scoped before.
+    final readable =
+        known &&
+        await _remoteReaderWriter.readAsResolver(
+          () => _remoteReaderWriter.canRead(id),
+        );
     if (timer != null) {
       resolverActionMetrics.depVisibilityUs += timer.elapsedMicroseconds;
     }

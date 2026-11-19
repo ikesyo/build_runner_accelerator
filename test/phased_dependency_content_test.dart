@@ -161,10 +161,11 @@ void main() {
       final first = await fs.readPhased(3, id);
       action(blocked: {id});
       expect((await fs.readPhased(1, id)).expiresAfter, 1);
-      expect(io.observedReads, {id});
+      expect(io.resolverObservedReads, {id});
+      expect(io.observedReads, isEmpty);
       io.endAction();
       expect((await fs.readPhased(3, id)).lastValue, first.lastValue);
-      expect(io.observedReads, {id});
+      expect(io.resolverObservedReads, {id});
       io.endAction();
     },
   );
@@ -193,7 +194,7 @@ void main() {
       expect(next.lastValue, first.lastValue);
       expect(firstVisible, next.lastValue);
       expect(analyzer.get('/app/lib/input.dart').content, next.lastValue);
-      expect(io.observedReads, {id});
+      expect(io.resolverObservedReads, {id});
       io.endAction();
     },
   );
@@ -231,7 +232,7 @@ void main() {
         final hidden = await fs.readPhased(1, id);
         expect(hidden.values.last.value, '');
         expect(hidden.expiresAfter, 1);
-        expect(io.observedReads, {id});
+        expect(io.resolverObservedReads, {id});
         io.endAction();
       }
     },
@@ -250,7 +251,7 @@ void main() {
       final missing = await fs.readPhased(1, id);
       expect(missing.values.last.value, '');
       expect(missing.expiresAfter, 1);
-      expect(io.observedReads, {id});
+      expect(io.resolverObservedReads, {id});
       io.endAction();
       cache[id] = utf8.encode("export 'other.dart'; class Generated {}");
       action();

@@ -39,6 +39,51 @@ pub(super) fn is_worker_script(worker_executable: &str) -> bool {
 
 /// Owns one child process and its framed stdin/stdout streams. The protocol
 /// reserves stdout for IPC; worker diagnostics are inherited from stderr.
+/// One unit's answer to an ADR 0056 preflight query. Either field is
+/// `None` when the worker could not produce it for the unit's current
+/// content; the frontend treats missing evidence as content-keyed.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ApiUnitEvidence {
+    pub fingerprint: Option<String>,
+    pub deps: Option<Vec<String>>,
+}
+
+/// Decodes one unit's preflight answer. The wire shape is `null`
+/// (unavailable) or an object whose `fingerprint` is a string or
+/// null and whose `deps` is an array of strings or null. Anything
+/// else is malformed, and malformed evidence is discarded whole:
+/// a silently truncated dependency list could otherwise pass as an
+/// unchanged one and waive an action on fabricated evidence.
+fn decode_api_unit_evidence(value: &Value) -> ApiUnitEvidence {
+    let malformed = ApiUnitEvidence::default();
+    if value.is_null() {
+        return malformed;
+    }
+    let Some(object) = value.as_object() else {
+        return malformed;
+    };
+    let fingerprint = match object.get("fingerprint") {
+        Some(Value::Null) | None => None,
+        Some(Value::String(fingerprint)) => Some(fingerprint.clone()),
+        Some(_) => return malformed,
+    };
+    let deps = match object.get("deps") {
+        Some(Value::Null) | None => None,
+        Some(Value::Array(items)) => {
+            let mut deps = Vec::with_capacity(items.len());
+            for item in items {
+                let Some(dep) = item.as_str() else {
+                    return malformed;
+                };
+                deps.push(dep.to_owned());
+            }
+            Some(deps)
+        }
+        Some(_) => return malformed,
+    };
+    ApiUnitEvidence { fingerprint, deps }
+}
+
 pub struct WorkerClient {
     pub(super) shared_parts_capable: bool,
     pub(super) batch_shared_fields_capable: bool,
@@ -71,7 +116,7 @@ pub struct WorkerClient {
     /// Unit API fingerprints reported with this client's results
     /// (ADR 0056); a `None` value marks a unit whose fingerprint is
     /// unavailable.
-    pub(super) api_fingerprints: BTreeMap<String, Option<String>>,
+    pub(super) api_fingerprints: BTreeMap<String, Option<crate::protocol::ApiFingerprintRecord>>,
 }
 
 /// Transport state belongs to one worker connection. Resets and single builds
@@ -937,6 +982,101 @@ impl WorkerClient {
         Ok(())
     }
 
+    /// ADR 0056 preflight: asks the worker for the current API
+    /// fingerprint and direct resolver deps of changed units, keyed by
+    /// the content digests the frontend's snapshot recorded. A unit
+    /// the worker cannot answer for comes back with empty evidence.
+    /// The worker reads the units through the asset RPC, so this
+    /// services nested asset requests exactly like a build does, with
+    /// an empty overlay and a synthetic request context at the last
+    /// phase, where every committed source is visible.
+    pub fn api_fingerprint_query(
+        &mut self,
+        workspace: &Workspace,
+        entries: &[(String, String)],
+        phase_count: u32,
+        visibility: &AssetVisibility,
+    ) -> io::Result<BTreeMap<String, ApiUnitEvidence>> {
+        let _wall = self.wall_span("worker_api_fingerprint_query", None);
+        let id = self.next_id();
+        self.send(&json!({
+            "v": 1,
+            "type": "api_fingerprint_query",
+            "id": id,
+            "entries": entries
+                .iter()
+                .map(|(asset, digest)| json!({"asset": asset, "digest": digest}))
+                .collect::<Vec<_>>(),
+        }))?;
+        let active_request = BuildRequest {
+            part_phase_index: None,
+            builder: String::new(),
+            input: entries
+                .first()
+                .map(|(asset, _)| asset.clone())
+                .unwrap_or_default(),
+            outputs: Vec::new(),
+            options: serde_json::Map::new(),
+            phase: phase_count,
+            instance_key: String::new(),
+            is_root: false,
+            api_cutoff: false,
+            post_process: false,
+            triggers: Vec::new(),
+        };
+        let empty_overlay = BTreeMap::new();
+        let empty_deleted = BTreeSet::new();
+        loop {
+            match self.receive()? {
+                IncomingFrame::Json(response) => {
+                    match response.get("type").and_then(Value::as_str) {
+                        Some("asset_request") => {
+                            self.handle_asset_request(
+                                workspace,
+                                &response,
+                                &empty_overlay,
+                                &empty_deleted,
+                                visibility,
+                                &active_request,
+                                id,
+                                None,
+                            )?;
+                        }
+                        Some("api_fingerprints") => {
+                            if response.get("id").and_then(Value::as_u64) != Some(id) {
+                                return Err(protocol_error(
+                                    "worker API fingerprint query failed",
+                                    &response,
+                                ));
+                            }
+                            let mut results = BTreeMap::new();
+                            if let Some(reported) =
+                                response.get("results").and_then(Value::as_object)
+                            {
+                                for (asset, value) in reported {
+                                    results.insert(asset.clone(), decode_api_unit_evidence(value));
+                                }
+                            }
+                            return Ok(results);
+                        }
+                        Some("error") => {
+                            return Err(protocol_error("worker error", &response));
+                        }
+                        _ => {
+                            return Err(protocol_error("unexpected worker message", &response));
+                        }
+                    }
+                }
+                IncomingFrame::Binary(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "unexpected binary IPC frame during API fingerprint query",
+                    ));
+                }
+            }
+        }
+    }
+
     /// Sends one phase/kind batch and serves its nested asset RPCs until a
     /// validated binary result arrives. The blocked-asset hint is computed from
     /// Rust visibility plus pending deletions; JSON result fallback, wrong IDs,
@@ -1016,7 +1156,10 @@ impl WorkerClient {
                         continue;
                     };
                     self.dep_graph.extend(decoded.dep_graph);
-                    self.api_fingerprints.extend(decoded.api_fingerprints);
+                    crate::protocol::merge_fingerprint_reports(
+                        &mut self.api_fingerprints,
+                        decoded.api_fingerprints,
+                    );
                     let results = decoded.results;
                     self.metrics.build_us += started.elapsed().as_micros() as u64;
                     self.trace_metrics(&_wall, metrics_before);
@@ -1421,6 +1564,39 @@ fn validate_initialized(response: &Value, id: u64) -> io::Result<()> {
 #[cfg(test)]
 mod version_tests {
     use super::*;
+    #[test]
+    fn api_unit_evidence_discards_malformed_replies() {
+        assert_eq!(
+            decode_api_unit_evidence(&json!({"fingerprint": "fp", "deps": ["a", "b"]})),
+            ApiUnitEvidence {
+                fingerprint: Some("fp".into()),
+                deps: Some(vec!["a".into(), "b".into()]),
+            }
+        );
+        assert_eq!(
+            decode_api_unit_evidence(&json!({"fingerprint": null, "deps": null})),
+            ApiUnitEvidence::default()
+        );
+        assert_eq!(
+            decode_api_unit_evidence(&json!(null)),
+            ApiUnitEvidence::default()
+        );
+        // A non-string dep must not be dropped silently: the whole
+        // answer is discarded, so it cannot pass as complete.
+        assert_eq!(
+            decode_api_unit_evidence(&json!({"fingerprint": "fp", "deps": ["a", 1]})),
+            ApiUnitEvidence::default()
+        );
+        assert_eq!(
+            decode_api_unit_evidence(&json!({"fingerprint": 1, "deps": []})),
+            ApiUnitEvidence::default()
+        );
+        assert_eq!(
+            decode_api_unit_evidence(&json!({"fingerprint": "fp", "deps": "a"})),
+            ApiUnitEvidence::default()
+        );
+    }
+
     #[test]
     fn initialization_requires_matching_version_and_id() {
         let valid = json!({"id": 1, "accelerator_version": env!("CARGO_PKG_VERSION")});

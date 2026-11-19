@@ -253,6 +253,27 @@ void main() {
       },
     );
 
+    test('astNodeFor records a part file under an asset URI', () async {
+      // Units outside lib/ (a primary input under test/, say) carry
+      // asset: URIs; their parts must record just like package: ones,
+      // or the AST-access downgrade misses them.
+      final testPrimary = AssetId('app', 'test/main.dart');
+      final part = AssetId('app', 'test/model_part.dart');
+      final local = WorkerStepResolver(
+        recordingDelegate,
+        timingEnabled: false,
+        primaryInput: testPrimary,
+      );
+      final fragment = _RecordingFragment(
+        _RecordingElement(_RecordingLibrary(testPrimary)),
+        libraryFragment: _RecordingLibraryFragment(
+          _RecordingSource(Uri.parse('asset:app/test/model_part.dart')),
+        ),
+      );
+      await local.astNodeFor(fragment);
+      expect(local.contentReads, <AssetId>{part});
+    });
+
     test(
       'astNodeFor falls back to the library for a non-package unit',
       () async {

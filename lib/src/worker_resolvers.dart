@@ -43,6 +43,7 @@ import 'package:build_runner/src/build/library_cycle_graph/phased_asset_deps.dar
 import 'package:build_runner/src/build/resolver/analysis_driver.dart';
 // ignore: implementation_imports
 import 'package:build_runner/src/build/resolver/analysis_driver_filesystem.dart';
+import 'current_build_runtime.dart' show RemoteBuilderFilesystem;
 import 'resolver_host.dart' show ResolverInitializationProfile;
 import 'resolver_metrics.dart';
 import 'sdk_summary_lock.dart';
@@ -116,7 +117,12 @@ class WorkerResolversImpl implements Resolvers {
     ResolverInitializationProfile? profile,
   }) : _packageConfig = packageConfig,
        _analysisDriverModel = analysisDriverModel,
-       _profile = profile;
+       _profile = profile {
+    // The preflight query path never triggers the lazy resolver
+    // initialization in get(), so record the fingerprint context
+    // eagerly when the configuration is already in hand.
+    if (packageConfig != null) _recordFingerprintContext(packageConfig);
+  }
 
   @override
   Future<ReleasableResolver> get(BuildStep buildStep) async {
@@ -126,10 +132,7 @@ class WorkerResolversImpl implements Resolvers {
       final loadedConfig = _packageConfig ??= await loadPackageConfigUri(
         Uri.parse(buildProcessState.packageConfigUri),
       );
-      // The fingerprint store is namespaced by the resolved analyzer,
-      // identified the same way as for the analysis byte store below.
-      ApiFingerprintCache.sharedAnalyzerRoot = loadedConfig['analyzer']?.root
-          .toString();
+      _recordFingerprintContext(loadedConfig);
       // Concurrent worker processes take the same `.sdk-summary.lock` the
       // prewarm shards hold, so a cold workspace builds `sdk.sum` once
       // instead of once per worker.
@@ -184,11 +187,17 @@ class WorkerResolversImpl implements Resolvers {
     // The wrapper is unconditional: besides the startup gate and
     // timing, it records the step's resolver content reads (ADR 0056),
     // which must not depend on whether profiling happens to be on.
+    // The reader/writer lets it attribute the delegate's internal
+    // readability probes to the resolver channel.
+    final stepFilesystem = buildStep.buildFilesystem;
     final wrapper = WorkerStepResolver(
       stepResolver,
       startupGate: _startupGate,
       timingEnabled: _profile?.enabled == true,
       primaryInput: buildStep.inputId,
+      readerWriter: stepFilesystem is RemoteBuilderFilesystem
+          ? stepFilesystem.readerWriter
+          : null,
     );
     _stepResolvers[buildStep] = wrapper;
     return wrapper;
@@ -201,9 +210,9 @@ class WorkerResolversImpl implements Resolvers {
       _stepResolvers.remove(buildStep)?.contentReads ?? const <AssetId>{};
 
   /// Unit fingerprints the dep walk has learned in this process
-  /// (ADR 0056), keyed by asset id string; a null value marks a unit
-  /// whose fingerprint is unavailable.
-  Map<String, String?> learnedApiFingerprints() =>
+  /// (ADR 0056), keyed by asset id string; a null fingerprint marks
+  /// a unit whose fingerprint is unavailable.
+  Map<String, LearnedApiFingerprint> learnedApiFingerprints() =>
       _analysisDriverModel.learnedApiFingerprints();
 
   /// Clears the learned fingerprints and their memos at a build
@@ -227,6 +236,21 @@ class WorkerResolversImpl implements Resolvers {
   /// [WorkerAnalysisDriverModel.invalidatePendingFingerprints]).
   void invalidatePendingFingerprints(Iterable<AssetId> ids) =>
       _analysisDriverModel.invalidatePendingFingerprints(ids);
+
+  /// Direct resolver deps of [id] computed from explicit [content]
+  /// (ADR 0056 preflight); see
+  /// [WorkerAnalysisDriverModel.preflightUnitDeps].
+  List<AssetId> preflightUnitDeps(
+    AssetId id,
+    String content, {
+    required BuilderFilesystem builderFilesystem,
+    required int phase,
+  }) => _analysisDriverModel.preflightUnitDeps(
+    id,
+    content,
+    builderFilesystem: builderFilesystem,
+    phase: phase,
+  );
 
   /// Starts a build.
   ///
@@ -299,6 +323,25 @@ AnalysisDriverForPackageBuild _analysisDriver(
     uriResolvers: [analysisDriverModel.filesystem],
     byteStore: byteStore,
   );
+}
+
+/// Records the process-wide fingerprint context (ADR 0056) from
+/// [packageConfig]: the resolved analyzer's root, which namespaces
+/// the fingerprint store the same way as the analysis byte store,
+/// and each package's language version, under which that package's
+/// fingerprints are computed (mirroring [_buildAnalyzerPackages]:
+/// packages without a configured version get the SDK language
+/// version).
+void _recordFingerprintContext(PackageConfig packageConfig) {
+  ApiFingerprintCache.sharedAnalyzerRoot = packageConfig['analyzer']?.root
+      .toString();
+  ApiFingerprintCache.packageLanguageVersions = {
+    for (final package in packageConfig.packages)
+      package.name: package.languageVersion == null
+          ? '${sdkLanguageVersion.major}.${sdkLanguageVersion.minor}'
+          : '${package.languageVersion!.major}'
+                '.${package.languageVersion!.minor}',
+  };
 }
 
 /// Mirrors build_runner's private `_buildAnalyzerPackages`; see

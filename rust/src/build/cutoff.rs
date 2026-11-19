@@ -1,0 +1,898 @@
+//! ADR 0056 stage 4: preflight assessment and effective-signature
+//! comparison for API-signature early cutoff.
+//!
+//! When source files changed, [`assess`] finds the opted-in actions
+//! whose recorded resolver observations reach the changes. Only those
+//! actions can be waived, and only when a worker preflight supplies
+//! the changed units' current fingerprints and directive edges:
+//! [`evaluate`] then folds effective signatures over the resolver dep
+//! graph (SCC-collapsed, seeded with the build's config digest) for
+//! the recorded graph and for the refreshed graph, and an action is
+//! clean exactly when every root fold matches and none of its
+//! resolver content reads changed. Any missing evidence (no recorded
+//! fingerprint, a recorded fingerprint not bound to the previous
+//! snapshot's bytes, an unavailable unit, a deleted, newly appeared
+//! or generated asset in the closure) leaves the action content-keyed.
+
+use crate::graph::{DirtyContext, GraphState};
+use crate::plan::BuildSpec;
+use crate::protocol::ApiFingerprintRecord;
+use crate::snapshot::Snapshot;
+use crate::worker::ApiUnitEvidence;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+/// The outcome of a stage 4 preflight: the actions whose resolver
+/// observations are proven unchanged, plus the fingerprints the
+/// preflight learned, to merge into the graph with the build's save.
+pub(super) struct CutoffEvidence {
+    pub(super) clean_actions: BTreeSet<String>,
+    pub(super) learned: BTreeMap<String, Option<ApiFingerprintRecord>>,
+}
+
+/// The bare BLAKE3 hex of a snapshot digest, which carries a `b3-`
+/// prefix unlike the digests workers report.
+fn bare_digest(digest: &str) -> &str {
+    digest.strip_prefix("b3-").unwrap_or(digest)
+}
+
+/// A preflight plan: the units to ask a worker about, and the
+/// candidate actions to evaluate with the answers.
+pub(super) struct Assessment {
+    /// (asset, current content digest) pairs for the fingerprint query.
+    pub(super) query: Vec<(String, String)>,
+    /// Package of the first candidate spec, for pool initialization.
+    pub(super) first_package: String,
+    candidates: Vec<Candidate>,
+    /// Changed assets that no longer exist as sources.
+    deleted: BTreeSet<String>,
+    /// Changed assets that did not exist in the previous snapshot.
+    /// A restored or newly appeared unit is existence-changed, not
+    /// API-changed: the recorded output may have been produced while
+    /// it was missing, which fingerprint evidence cannot rule out.
+    appeared: BTreeSet<String>,
+}
+
+struct Candidate {
+    key: String,
+    /// Resolver observation roots: entrypoints plus direct resolver
+    /// reads. The action's effective signature is the fold of these.
+    roots: Vec<String>,
+}
+
+/// Finds the opted-in actions a preflight could waive. Returns `None`
+/// when no changed source reaches any opted-in action's recorded
+/// resolver observations, in which case planning proceeds exactly as
+/// without cutoff and no worker is started for classification.
+pub(super) fn assess(
+    state: &GraphState,
+    specs: &[BuildSpec],
+    context: &DirtyContext<'_>,
+    current_snapshot: &Snapshot,
+    generated: &BTreeSet<String>,
+) -> Option<Assessment> {
+    let changed = context.changed();
+    if changed.is_empty() || state.actions.is_empty() {
+        return None;
+    }
+    let tainted = context.tainted();
+    let changed_set: BTreeSet<String> = changed.iter().map(|asset| (*asset).to_owned()).collect();
+    let recorded = GraphView {
+        base: &state.resolver_dep_graph,
+        overrides: None,
+    };
+    let mut candidates = Vec::new();
+    let mut query: BTreeMap<String, String> = BTreeMap::new();
+    let mut first_package = None;
+    for spec in specs {
+        if !spec.instance.api_cutoff {
+            continue;
+        }
+        let key = spec.action_key();
+        let Some(action) = state.actions.get(&key) else {
+            continue;
+        };
+        // Recorded AST access to a non-primary library breaks the
+        // observation contract for the whole action (ADR 0056): the
+        // safety net downgrades the action's recorded reads to
+        // content-keyed, not just the accessed asset's, so such
+        // actions are never candidates.
+        if !action.resolver_content_reads.is_empty() {
+            continue;
+        }
+        // An action whose primary input or direct reads changed is
+        // dirty on its direct terms no matter what the signatures
+        // say, so preflight evidence could never waive it; do not
+        // spend a query on it. (Reads recorded before the read split
+        // hold the union and exclude more, which is the safe side.)
+        if changed.contains(action.input.as_str())
+            || action
+                .reads
+                .iter()
+                .any(|asset| changed.contains(asset.as_str()))
+        {
+            continue;
+        }
+        if action.resolver_entrypoints.is_empty() && action.resolver_reads.is_empty() {
+            continue;
+        }
+        let reaches = action
+            .resolver_reads
+            .iter()
+            .any(|asset| changed.contains(asset.as_str()))
+            || action
+                .resolver_entrypoints
+                .iter()
+                .any(|entrypoint| tainted.contains(entrypoint.as_str()));
+        if !reaches {
+            continue;
+        }
+        // Signature roots are the action's resolver observations:
+        // its entrypoints plus the recorded resolver reads that are
+        // not also direct reads. The recorded resolver_reads keep
+        // the legacy union (direct reads included) for the dirty
+        // predicate, but a direct-only read must not become a fold
+        // root: a non-Dart config file has no fingerprint, so folding
+        // it in would block every waiver for the action. Direct
+        // reads stay content-keyed through the direct channel (and
+        // changed ones already excluded the action above).
+        let direct: BTreeSet<&str> = action.reads.iter().map(String::as_str).collect();
+        let roots: Vec<String> = action
+            .resolver_entrypoints
+            .iter()
+            .cloned()
+            .chain(
+                action
+                    .resolver_reads
+                    .iter()
+                    .filter(|asset| !direct.contains(asset.as_str()))
+                    .cloned(),
+            )
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if roots.is_empty() {
+            continue;
+        }
+        if first_package.is_none() {
+            first_package = Some(spec.instance.package.clone());
+        }
+        candidates.push(Candidate { key, roots });
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    // Every changed unit in the candidates' recorded closures needs
+    // a current fingerprint and refreshed edges for the comparison.
+    // The closures share the dependency tree, so walk their union
+    // once instead of once per candidate.
+    let all_roots: Vec<String> = candidates
+        .iter()
+        .flat_map(|candidate| candidate.roots.iter().cloned())
+        .collect();
+    let closure = forward_closure(&recorded, &all_roots);
+    for asset in closure.intersection(&changed_set) {
+        if generated.contains(asset) {
+            continue;
+        }
+        let Some(current) = current_snapshot.get(asset) else {
+            continue;
+        };
+        if current.exists {
+            query.insert(asset.clone(), current.digest.clone());
+        }
+    }
+    if query.is_empty() {
+        return None;
+    }
+    let deleted = changed
+        .iter()
+        .filter(|asset| {
+            current_snapshot
+                .get(**asset)
+                .is_none_or(|current| !current.exists)
+        })
+        .map(|asset| (*asset).to_owned())
+        .collect();
+    let appeared = changed
+        .iter()
+        .filter(|asset| {
+            current_snapshot
+                .get(**asset)
+                .is_some_and(|current| current.exists)
+                && state
+                    .assets
+                    .get(**asset)
+                    .is_none_or(|previous| !previous.exists)
+        })
+        .map(|asset| (*asset).to_owned())
+        .collect();
+    Some(Assessment {
+        query: query.into_iter().collect(),
+        first_package: first_package.expect("a candidate supplied a package"),
+        candidates,
+        deleted,
+        appeared,
+    })
+}
+
+/// Compares effective signatures for every assessed candidate using
+/// the preflight answers in `results`. Units the worker did not
+/// answer for, answered without a fingerprint or deps, deleted units,
+/// and generated assets in a closure all leave the action
+/// content-keyed.
+pub(super) fn evaluate(
+    state: &GraphState,
+    assessment: &Assessment,
+    results: &BTreeMap<String, ApiUnitEvidence>,
+    generated: &BTreeSet<String>,
+    seed: &str,
+) -> CutoffEvidence {
+    let mut learned: BTreeMap<String, Option<ApiFingerprintRecord>> = BTreeMap::new();
+    for (asset, digest) in &assessment.query {
+        if let Some(evidence) = results.get(asset) {
+            // The worker verified the content it fingerprinted
+            // against this snapshot digest, so the answer binds to it.
+            learned.insert(
+                asset.clone(),
+                evidence
+                    .fingerprint
+                    .clone()
+                    .map(|fingerprint| ApiFingerprintRecord {
+                        digest: bare_digest(digest).to_owned(),
+                        fingerprint,
+                    }),
+            );
+        }
+    }
+    let old_graph = GraphView {
+        base: &state.resolver_dep_graph,
+        overrides: None,
+    };
+    let mut edge_overrides: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut fingerprint_overrides: BTreeMap<String, String> = BTreeMap::new();
+    // Only queried units may contribute evidence: the worker was
+    // given a snapshot digest to verify for those, and an
+    // unsolicited entry binds to nothing, so it could otherwise
+    // override a unit whose recorded evidence should stand.
+    let queried: BTreeSet<&str> = assessment
+        .query
+        .iter()
+        .map(|(asset, _)| asset.as_str())
+        .collect();
+    for (asset, evidence) in results {
+        if !queried.contains(asset.as_str()) {
+            continue;
+        }
+        if let Some(deps) = &evidence.deps {
+            edge_overrides.insert(asset.clone(), deps.clone());
+        }
+        if let Some(fingerprint) = &evidence.fingerprint {
+            fingerprint_overrides.insert(asset.clone(), fingerprint.clone());
+        }
+    }
+    let new_graph = GraphView {
+        base: &state.resolver_dep_graph,
+        overrides: Some(&edge_overrides),
+    };
+    // A recorded fingerprint is baseline evidence only when it is
+    // bound to the previous snapshot's bytes for that unit. A worker
+    // can learn a fingerprint from content newer than the snapshot a
+    // watch build commits (an edit that arrives mid-build), and such
+    // a record must never stand in for the earlier content.
+    let bound_fingerprints: BTreeMap<String, String> = state
+        .asset_fingerprints
+        .iter()
+        .filter(|(asset, record)| {
+            state.assets.get(*asset).is_some_and(|previous| {
+                previous.exists && bare_digest(&previous.digest) == record.digest
+            })
+        })
+        .map(|(asset, record)| (asset.clone(), record.fingerprint.clone()))
+        .collect();
+    let old_fingerprints = FingerprintView {
+        base: &bound_fingerprints,
+        overrides: None,
+    };
+    let new_fingerprints = FingerprintView {
+        base: &bound_fingerprints,
+        overrides: Some(&fingerprint_overrides),
+    };
+    // Folds are per-unit values: compute them once per view over the
+    // union of all candidates' roots instead of re-walking the
+    // shared dependency tree (and re-hashing it) for every action.
+    let queried: BTreeSet<&str> = assessment
+        .query
+        .iter()
+        .map(|(asset, _)| asset.as_str())
+        .collect();
+    let all_roots: Vec<String> = assessment
+        .candidates
+        .iter()
+        .flat_map(|candidate| candidate.roots.iter().cloned())
+        .collect();
+    let old_folds = fold_map(&all_roots, &old_graph, &old_fingerprints, seed);
+    let new_folds = fold_map(&all_roots, &new_graph, &new_fingerprints, seed);
+    // The remaining checks ask whether a candidate's closure reaches
+    // a disqualifying asset: a generated, deleted or restored unit
+    // (blocked), or a queried unit the worker could not answer with
+    // both a fingerprint and refreshed edges (unanswered; the new
+    // fold would silently reuse stale evidence). Compute the roots
+    // each set taints once per view by walking the reverse graph,
+    // instead of walking every candidate's closure.
+    let blocked_targets: BTreeSet<&str> = generated
+        .iter()
+        .map(String::as_str)
+        .chain(assessment.deleted.iter().map(String::as_str))
+        .chain(assessment.appeared.iter().map(String::as_str))
+        .collect();
+    let unanswered_targets: BTreeSet<&str> = queried
+        .iter()
+        .copied()
+        .filter(|asset| {
+            results
+                .get(*asset)
+                .is_none_or(|evidence| evidence.fingerprint.is_none() || evidence.deps.is_none())
+        })
+        .collect();
+    let blocked_old = reverse_reachable(&old_graph, &all_roots, &blocked_targets);
+    let blocked_new = reverse_reachable(&new_graph, &all_roots, &blocked_targets);
+    let unanswered_old = reverse_reachable(&old_graph, &all_roots, &unanswered_targets);
+    let unanswered_new = reverse_reachable(&new_graph, &all_roots, &unanswered_targets);
+    let mut clean_actions = BTreeSet::new();
+    for candidate in &assessment.candidates {
+        let disqualified = candidate.roots.iter().any(|root| {
+            blocked_old.contains(root.as_str())
+                || blocked_new.contains(root.as_str())
+                || unanswered_old.contains(root.as_str())
+                || unanswered_new.contains(root.as_str())
+        });
+        if disqualified {
+            continue;
+        }
+        // A root absent from a fold map has no determined fold in
+        // that view (missing fingerprint evidence at or below it),
+        // which leaves the action content-keyed exactly as a failed
+        // fold did; a present root fold also implies the root's
+        // whole closure is folded in that view.
+        if candidate.roots.iter().all(|root| {
+            old_folds
+                .get(root)
+                .is_some_and(|fold| new_folds.get(root) == Some(fold))
+        }) {
+            clean_actions.insert(candidate.key.clone());
+        }
+    }
+    CutoffEvidence {
+        clean_actions,
+        learned,
+    }
+}
+
+/// The subset of `roots` that can reach any of `targets` over the
+/// dep graph, computed by walking the reverse graph from the
+/// targets within the region reachable from `roots`.
+fn reverse_reachable(
+    graph: &GraphView<'_>,
+    roots: &[String],
+    targets: &BTreeSet<&str>,
+) -> BTreeSet<String> {
+    let reachable = forward_closure(graph, roots);
+    let mut reverse: HashMap<&str, Vec<&str>> = HashMap::new();
+    for asset in &reachable {
+        for dep in graph.deps(asset) {
+            if reachable.contains(dep.as_str()) {
+                reverse
+                    .entry(dep.as_str())
+                    .or_default()
+                    .push(asset.as_str());
+            }
+        }
+    }
+    let root_set: BTreeSet<&str> = roots.iter().map(String::as_str).collect();
+    let mut reached_roots = BTreeSet::new();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut stack: Vec<&str> = targets
+        .iter()
+        .copied()
+        .filter(|target| reachable.contains(*target))
+        .collect();
+    for target in &stack {
+        seen.insert(target);
+    }
+    while let Some(asset) = stack.pop() {
+        if root_set.contains(asset) {
+            reached_roots.insert(asset.to_owned());
+        }
+        if let Some(dependents) = reverse.get(asset) {
+            for dependent in dependents {
+                if seen.insert(dependent) {
+                    stack.push(dependent);
+                }
+            }
+        }
+    }
+    reached_roots
+}
+
+/// The forward closure of `roots` over the dep graph, roots included.
+fn forward_closure(graph: &GraphView<'_>, roots: &[String]) -> BTreeSet<String> {
+    let mut seen: BTreeSet<String> = roots.iter().cloned().collect();
+    let mut stack: Vec<String> = roots.to_vec();
+    while let Some(asset) = stack.pop() {
+        for dep in graph.deps(&asset) {
+            if seen.insert(dep.clone()) {
+                stack.push(dep.clone());
+            }
+        }
+    }
+    seen
+}
+
+/// A dep graph view: recorded edges with per-asset overrides applied.
+struct GraphView<'a> {
+    base: &'a BTreeMap<String, Vec<String>>,
+    overrides: Option<&'a BTreeMap<String, Vec<String>>>,
+}
+
+impl GraphView<'_> {
+    fn deps(&self, asset: &str) -> &[String] {
+        self.overrides
+            .and_then(|overrides| overrides.get(asset))
+            .or_else(|| self.base.get(asset))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+}
+
+/// A fingerprint view: recorded fingerprints with overrides applied.
+struct FingerprintView<'a> {
+    base: &'a BTreeMap<String, String>,
+    overrides: Option<&'a BTreeMap<String, String>>,
+}
+
+impl FingerprintView<'_> {
+    fn get(&self, asset: &str) -> Option<&str> {
+        self.overrides
+            .and_then(|overrides| overrides.get(asset))
+            .or_else(|| self.base.get(asset))
+            .map(String::as_str)
+    }
+}
+
+/// Folds effective signatures for `roots`: for each root, the hash of
+/// its SCC's member fingerprints and the folds of the SCCs it depends
+/// on, seeded with `seed`. Returns `None` when any unit in the
+/// reachable subgraph has no fingerprint.
+#[cfg(test)]
+fn fold_all(
+    roots: &[String],
+    graph: &GraphView<'_>,
+    fingerprints: &FingerprintView<'_>,
+    seed: &str,
+) -> Option<BTreeMap<String, String>> {
+    let folds = fold_map(roots, graph, fingerprints, seed);
+    let mut result = BTreeMap::new();
+    for root in roots {
+        result.insert(root.clone(), folds.get(root.as_str())?.clone());
+    }
+    Some(result)
+}
+
+/// Computes the effective-signature fold of every unit reachable
+/// from `roots` whose fold is determined. A unit's fold needs its
+/// own fingerprint and the folds of all its dependencies, so a unit
+/// with no fingerprint, and everything depending on it, is absent
+/// from the result. Folds are per-unit values, so one computation
+/// serves every candidate that shares the dependency tree.
+fn fold_map(
+    roots: &[String],
+    graph: &GraphView<'_>,
+    fingerprints: &FingerprintView<'_>,
+    seed: &str,
+) -> BTreeMap<String, String> {
+    let reachable = {
+        let mut seen: BTreeSet<String> = roots.iter().cloned().collect();
+        let mut stack: Vec<String> = roots.to_vec();
+        while let Some(asset) = stack.pop() {
+            for dep in graph.deps(&asset) {
+                if seen.insert(dep.clone()) {
+                    stack.push(dep.clone());
+                }
+            }
+        }
+        seen
+    };
+    // Iterative Tarjan: SCCs are emitted in reverse topological order
+    // (dependencies first), which is the order folds are computed in.
+    let mut index_of: HashMap<&str, usize> = HashMap::new();
+    let mut lowlink: HashMap<&str, usize> = HashMap::new();
+    let mut on_stack: BTreeSet<&str> = BTreeSet::new();
+    let mut tarjan_stack: Vec<&str> = Vec::new();
+    let mut next_index = 0usize;
+    let mut sccs: Vec<Vec<&str>> = Vec::new();
+    for root in &reachable {
+        if index_of.contains_key(root.as_str()) {
+            continue;
+        }
+        // Each frame: (node, next dep position to visit).
+        let mut frames: Vec<(&str, usize)> = vec![(root.as_str(), 0)];
+        index_of.insert(root.as_str(), next_index);
+        lowlink.insert(root.as_str(), next_index);
+        next_index += 1;
+        tarjan_stack.push(root.as_str());
+        on_stack.insert(root.as_str());
+        while let Some(&(node, child)) = frames.last() {
+            let deps = graph.deps(node);
+            if child < deps.len() {
+                frames.last_mut().expect("frame exists").1 += 1;
+                let dep = deps[child].as_str();
+                if !reachable.contains(dep) {
+                    continue;
+                }
+                if !index_of.contains_key(dep) {
+                    index_of.insert(dep, next_index);
+                    lowlink.insert(dep, next_index);
+                    next_index += 1;
+                    tarjan_stack.push(dep);
+                    on_stack.insert(dep);
+                    frames.push((dep, 0));
+                } else if on_stack.contains(dep) {
+                    let dep_index = index_of[dep];
+                    let low = lowlink.get_mut(node).expect("node indexed");
+                    *low = (*low).min(dep_index);
+                }
+            } else {
+                frames.pop();
+                if let Some(&(parent, _)) = frames.last() {
+                    let node_low = lowlink[node];
+                    let parent_low = lowlink.get_mut(parent).expect("parent indexed");
+                    *parent_low = (*parent_low).min(node_low);
+                }
+                if lowlink[node] == index_of[node] {
+                    let mut scc = Vec::new();
+                    loop {
+                        let member = tarjan_stack.pop().expect("SCC member on stack");
+                        on_stack.remove(member);
+                        scc.push(member);
+                        if member == node {
+                            break;
+                        }
+                    }
+                    sccs.push(scc);
+                }
+            }
+        }
+    }
+    let mut scc_fold: HashMap<&str, String> = HashMap::new();
+    for scc in &sccs {
+        let mut members: Vec<&str> = scc.clone();
+        members.sort_unstable();
+        let mut external: BTreeMap<&str, &str> = BTreeMap::new();
+        let mut computable = true;
+        for member in &members {
+            for dep in graph.deps(member) {
+                let dep = dep.as_str();
+                // `members` is sorted above; a linear scan per edge
+                // would make folding a large import cycle quadratic.
+                if members.binary_search(&dep).is_err() {
+                    match scc_fold.get(dep) {
+                        Some(fold) => {
+                            external.insert(dep, fold);
+                        }
+                        None => computable = false,
+                    }
+                }
+            }
+        }
+        if !computable
+            || members
+                .iter()
+                .any(|member| fingerprints.get(member).is_none())
+        {
+            continue;
+        }
+        let mut hasher = blake3::Hasher::new();
+        hash_field(&mut hasher, seed);
+        for member in &members {
+            hash_field(&mut hasher, member);
+            hash_field(
+                &mut hasher,
+                fingerprints.get(member).expect("checked computable"),
+            );
+        }
+        for (dep, fold) in &external {
+            hash_field(&mut hasher, dep);
+            hash_field(&mut hasher, fold);
+        }
+        let fold = hasher.finalize().to_hex().to_string();
+        for member in &members {
+            scc_fold.insert(member, fold.clone());
+        }
+    }
+    scc_fold
+        .into_iter()
+        .map(|(asset, fold)| (asset.to_owned(), fold))
+        .collect()
+}
+
+fn hash_field(hasher: &mut blake3::Hasher, value: &str) {
+    hasher.update(&(value.len() as u32).to_be_bytes());
+    hasher.update(value.as_bytes());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::ActionState;
+
+    fn graph(edges: &[(&str, &[&str])]) -> BTreeMap<String, Vec<String>> {
+        edges
+            .iter()
+            .map(|(asset, deps)| {
+                (
+                    asset.to_string(),
+                    deps.iter().map(|dep| dep.to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    fn view<'a>(
+        graph: &'a BTreeMap<String, Vec<String>>,
+        fingerprints: &'a BTreeMap<String, String>,
+    ) -> (GraphView<'a>, FingerprintView<'a>) {
+        (
+            GraphView {
+                base: graph,
+                overrides: None,
+            },
+            FingerprintView {
+                base: fingerprints,
+                overrides: None,
+            },
+        )
+    }
+
+    fn fingerprints(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(asset, fp)| (asset.to_string(), fp.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn fold_propagates_leaf_changes_and_ignores_unrelated() {
+        let edges = graph(&[("a", &["b"]), ("b", &["c"]), ("c", &[])]);
+        let fps = fingerprints(&[("a", "fa"), ("b", "fb"), ("c", "fc")]);
+        let (g, f) = view(&edges, &fps);
+        let before = fold_all(&["a".into()], &g, &f, "seed").expect("folds");
+        let changed = fingerprints(&[("a", "fa"), ("b", "fb"), ("c", "fc2")]);
+        let (g2, f2) = view(&edges, &changed);
+        let after = fold_all(&["a".into()], &g2, &f2, "seed").expect("folds");
+        assert_ne!(before, after, "a leaf API change must reach the root");
+        let unrelated = fingerprints(&[("a", "fa"), ("b", "fb"), ("c", "fc"), ("z", "fz")]);
+        let (g3, f3) = view(&edges, &unrelated);
+        assert_eq!(
+            before,
+            fold_all(&["a".into()], &g3, &f3, "seed").expect("folds")
+        );
+        let (g4, f4) = view(&edges, &fps);
+        assert_ne!(
+            before,
+            fold_all(&["a".into()], &g4, &f4, "other-seed").expect("folds"),
+            "the seed binds the fold to the resolution environment"
+        );
+    }
+
+    #[test]
+    fn fold_collapses_cycles() {
+        let edges = graph(&[("a", &["b"]), ("b", &["a", "c"]), ("c", &[])]);
+        let fps = fingerprints(&[("a", "fa"), ("b", "fb"), ("c", "fc")]);
+        let (g, f) = view(&edges, &fps);
+        let folds = fold_all(&["a".into(), "b".into()], &g, &f, "seed").expect("folds");
+        assert_eq!(folds["a"], folds["b"], "cycle members share one fold");
+        let changed = fingerprints(&[("a", "fa"), ("b", "fb"), ("c", "fc2")]);
+        let (g2, f2) = view(&edges, &changed);
+        let after = fold_all(&["a".into(), "b".into()], &g2, &f2, "seed").expect("folds");
+        assert_ne!(folds, after);
+    }
+
+    #[test]
+    fn fold_requires_every_fingerprint() {
+        let edges = graph(&[("a", &["b"]), ("b", &[])]);
+        let fps = fingerprints(&[("a", "fa")]);
+        let (g, f) = view(&edges, &fps);
+        assert_eq!(fold_all(&["a".into()], &g, &f, "seed"), None);
+    }
+
+    fn state_with(
+        edges: &[(&str, &[&str])],
+        fps: &[(&str, &str)],
+        action: ActionState,
+    ) -> GraphState {
+        // Recorded fingerprints are bound to snapshot entries whose
+        // digests carry the `b3-` prefix the records omit.
+        let asset_fingerprints = fps
+            .iter()
+            .map(|(asset, fp)| {
+                (
+                    asset.to_string(),
+                    ApiFingerprintRecord {
+                        digest: format!("digest-of-{asset}"),
+                        fingerprint: fp.to_string(),
+                    },
+                )
+            })
+            .collect();
+        let assets = fps
+            .iter()
+            .map(|(asset, _)| {
+                (
+                    asset.to_string(),
+                    crate::snapshot::AssetSnapshot {
+                        exists: true,
+                        digest: format!("b3-digest-of-{asset}"),
+                        size: 0,
+                    },
+                )
+            })
+            .collect();
+        GraphState {
+            resolver_dep_graph: graph(edges),
+            asset_fingerprints,
+            assets,
+            actions: BTreeMap::from([("app|target:app:consumer".to_string(), action)]),
+            ..GraphState::default()
+        }
+    }
+
+    #[test]
+    fn evaluate_marks_only_proven_clean_actions() {
+        let action = ActionState {
+            builder: "app:consumer".into(),
+            input: "app|lib/main.dart".into(),
+            resolver_entrypoints: vec!["app|lib/main.dart".into()],
+            ..ActionState::default()
+        };
+        let state = state_with(
+            &[("app|lib/main.dart", &["app|lib/dep.dart"])],
+            &[
+                ("app|lib/main.dart", "f-main"),
+                ("app|lib/dep.dart", "f-dep"),
+            ],
+            action,
+        );
+        let assessment = Assessment {
+            query: vec![("app|lib/dep.dart".into(), "d2".into())],
+            first_package: "app".into(),
+            candidates: vec![Candidate {
+                key: "app|target:app:consumer".into(),
+                roots: vec!["app|lib/main.dart".into()],
+            }],
+            deleted: BTreeSet::new(),
+            appeared: BTreeSet::new(),
+        };
+        let unchanged = BTreeMap::from([(
+            "app|lib/dep.dart".to_string(),
+            ApiUnitEvidence {
+                fingerprint: Some("f-dep".into()),
+                deps: Some(vec![]),
+            },
+        )]);
+        let evidence = evaluate(&state, &assessment, &unchanged, &BTreeSet::new(), "seed");
+        assert!(evidence.clean_actions.contains("app|target:app:consumer"));
+        assert_eq!(
+            evidence.learned.get("app|lib/dep.dart"),
+            Some(&Some(ApiFingerprintRecord {
+                digest: "d2".to_string(),
+                fingerprint: "f-dep".to_string(),
+            }))
+        );
+        let changed = BTreeMap::from([(
+            "app|lib/dep.dart".to_string(),
+            ApiUnitEvidence {
+                fingerprint: Some("f-dep-2".into()),
+                deps: Some(vec![]),
+            },
+        )]);
+        let evidence = evaluate(&state, &assessment, &changed, &BTreeSet::new(), "seed");
+        assert!(evidence.clean_actions.is_empty());
+        // An unanswered unit is no evidence at all.
+        let evidence = evaluate(
+            &state,
+            &assessment,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            "seed",
+        );
+        assert!(evidence.clean_actions.is_empty());
+        // A unit that appeared since the previous snapshot is an
+        // existence change: matching fingerprints cannot prove the
+        // recorded output was not produced while it was missing.
+        let appeared_assessment = Assessment {
+            query: assessment.query.clone(),
+            first_package: assessment.first_package.clone(),
+            candidates: vec![Candidate {
+                key: "app|target:app:consumer".into(),
+                roots: vec!["app|lib/main.dart".into()],
+            }],
+            deleted: BTreeSet::new(),
+            appeared: BTreeSet::from(["app|lib/dep.dart".to_string()]),
+        };
+        let evidence = evaluate(
+            &state,
+            &appeared_assessment,
+            &unchanged,
+            &BTreeSet::new(),
+            "seed",
+        );
+        assert!(evidence.clean_actions.is_empty());
+        // Evidence for a unit that was never queried binds to no
+        // snapshot digest and is ignored outright: the same reply
+        // plus a volunteered entry for the importing unit (claiming
+        // a different fingerprint and no deps) changes nothing.
+        let mut with_volunteered = unchanged.clone();
+        with_volunteered.insert(
+            "app|lib/main.dart".to_string(),
+            ApiUnitEvidence {
+                fingerprint: Some("f-main-other".into()),
+                deps: Some(vec![]),
+            },
+        );
+        let evidence = evaluate(
+            &state,
+            &assessment,
+            &with_volunteered,
+            &BTreeSet::new(),
+            "seed",
+        );
+        assert!(evidence.clean_actions.contains("app|target:app:consumer"));
+    }
+
+    #[test]
+    fn evaluate_rejects_fingerprints_not_bound_to_the_snapshot() {
+        let action = ActionState {
+            builder: "app:consumer".into(),
+            input: "app|lib/main.dart".into(),
+            resolver_entrypoints: vec!["app|lib/main.dart".into()],
+            ..ActionState::default()
+        };
+        let mut state = state_with(
+            &[("app|lib/main.dart", &["app|lib/dep.dart"])],
+            &[
+                ("app|lib/main.dart", "f-main"),
+                ("app|lib/dep.dart", "f-dep"),
+            ],
+            action,
+        );
+        // The recorded fingerprint for the changed unit describes
+        // other bytes than the previous snapshot's (a worker learned
+        // it from a mid-build edit the commit did not record). Even
+        // though the preflight answer matches it, it is not evidence
+        // about the snapshot's content and must not waive the action.
+        state
+            .asset_fingerprints
+            .get_mut("app|lib/dep.dart")
+            .expect("recorded fingerprint")
+            .digest = "digest-of-newer-content".into();
+        let assessment = Assessment {
+            query: vec![("app|lib/dep.dart".into(), "d2".into())],
+            first_package: "app".into(),
+            candidates: vec![Candidate {
+                key: "app|target:app:consumer".into(),
+                roots: vec!["app|lib/main.dart".into()],
+            }],
+            deleted: BTreeSet::new(),
+            appeared: BTreeSet::new(),
+        };
+        let answers = BTreeMap::from([(
+            "app|lib/dep.dart".to_string(),
+            ApiUnitEvidence {
+                fingerprint: Some("f-dep".into()),
+                deps: Some(vec![]),
+            },
+        )]);
+        let evidence = evaluate(&state, &assessment, &answers, &BTreeSet::new(), "seed");
+        assert!(evidence.clean_actions.is_empty());
+    }
+}

@@ -38,7 +38,7 @@ class Counter {
 ''';
 
 String fingerprintOf(String source) {
-  final fingerprint = apiFingerprintForContent(source);
+  final fingerprint = apiFingerprintForContent(source, package: 'app');
   if (fingerprint == null) {
     throw StateError('expected a fingerprint for: $source');
   }
@@ -46,6 +46,10 @@ String fingerprintOf(String source) {
 }
 
 void main() {
+  // Fingerprints are computed under the package's language version;
+  // 'app' tracks the current SDK, 'old' is pinned to Dart 2.19.
+  ApiFingerprintCache.packageLanguageVersions = {'app': '3.13', 'old': '2.19'};
+
   group('computeApiFingerprint', () {
     final baseFingerprint = fingerprintOf(base);
 
@@ -64,6 +68,76 @@ void main() {
         reason: 'fingerprint must change',
       );
     }
+
+    test('syntax newer than the package version is unavailable', () {
+      // A record literal inside an explicitly typed function body:
+      // invisible to the fingerprint at Dart 3, but a Dart 2.19
+      // package does not parse it at all, so no fingerprint may be
+      // computed for that package (the real build would fail).
+      const source = '''
+int typed() {
+  final point = (1, 2);
+  return point.\$1;
+}
+''';
+      expect(apiFingerprintForContent(source, package: 'old'), isNull);
+      expect(apiFingerprintForContent(source, package: 'app'), isNotNull);
+      // The same content under two package versions fingerprints
+      // differently: the effective version is a component.
+      expect(
+        apiFingerprintForContent(base, package: 'old'),
+        isNot(apiFingerprintForContent(base, package: 'app')),
+      );
+    });
+
+    test('const primary constructor field values are visible', () {
+      // The analyzer signature misses these initializers: it only
+      // hashes field initializers when it finds a traditional const
+      // constructor. The values are observable through constant
+      // evaluation, so the fingerprint must cover them itself.
+      expect(
+        fingerprintOf('class const A() { final int x = 1; }'),
+        isNot(fingerprintOf('class const A() { final int x = 2; }')),
+      );
+      // A non-const primary constructor exposes no constant value,
+      // so its initializers stay invisible, like the signature's.
+      expect(
+        fingerprintOf('class A() { final int x = 1; }'),
+        fingerprintOf('class A() { final int x = 2; }'),
+      );
+      // Type parameter bounds sit between the class name and the
+      // parameter list; the detection must skip them.
+      expect(
+        fingerprintOf('class const A<T extends Object>() { final int x = 1; }'),
+        isNot(
+          fingerprintOf(
+            'class const A<T extends Object>() { final int x = 2; }',
+          ),
+        ),
+      );
+    });
+
+    test('language version override is visible', () {
+      expect(
+        fingerprintOf('// @dart = 3.0\n$base'),
+        isNot(fingerprintOf('// @dart = 3.1\n$base')),
+        reason: 'fingerprint must change with the override',
+      );
+      expect(
+        fingerprintOf('// @dart = 3.1\n$base'),
+        isNot(baseFingerprint),
+        reason: 'an override must differ from no override',
+      );
+      // The package 'app' is pinned to 3.13, so this override names
+      // the version already in effect; its presence alone is
+      // observable through the element model and must still change
+      // the fingerprint.
+      expect(
+        fingerprintOf('// @dart = 3.13\n$base'),
+        isNot(baseFingerprint),
+        reason: 'an override matching the package version must differ',
+      );
+    });
 
     test('body-only edit to a method is invisible', () {
       expectSame(
@@ -252,7 +326,10 @@ void main() {
 
     test('augmentation declaration is unavailable', () {
       expect(
-        apiFingerprintForContent('augment class A { augment void m() {} }'),
+        apiFingerprintForContent(
+          'augment class A { augment void m() {} }',
+          package: 'app',
+        ),
         isNull,
       );
     });
@@ -261,6 +338,7 @@ void main() {
       expect(
         apiFingerprintForContent(
           "import augment 'aug.dart';\nclass A { void m() {} }",
+          package: 'app',
         ),
         isNull,
       );
@@ -268,13 +346,16 @@ void main() {
 
     test('augmentation library directive is unavailable', () {
       expect(
-        apiFingerprintForContent("library augment 'main.dart';\nint f() => 1;"),
+        apiFingerprintForContent(
+          "library augment 'main.dart';\nint f() => 1;",
+          package: 'app',
+        ),
         isNull,
       );
     });
 
     test('syntax error is unavailable', () {
-      expect(apiFingerprintForContent('class {'), isNull);
+      expect(apiFingerprintForContent('class {', package: 'app'), isNull);
     });
   });
 
@@ -292,63 +373,85 @@ void main() {
 
     test('computes, stores and reuses by content digest', () {
       final digest = blake3Hex(base.codeUnits);
-      expect(cache.contains(digest), isFalse);
-      final fingerprint = cache.fingerprintFor(digest, base);
+      expect(cache.contains(digest, package: 'app'), isFalse);
+      final fingerprint = cache.fingerprintFor(digest, base, package: 'app');
       expect(fingerprint, fingerprintOf(base));
-      expect(cache.contains(digest), isTrue);
-      expect(cache.lookup(digest), fingerprint);
+      expect(cache.contains(digest, package: 'app'), isTrue);
+      expect(cache.lookup(digest, package: 'app'), fingerprint);
       // A second call with different content under the same digest
       // returns the stored value: the digest is the key.
-      expect(cache.fingerprintFor(digest, 'class Other {}'), fingerprint);
+      expect(
+        cache.fingerprintFor(digest, 'class Other {}', package: 'app'),
+        fingerprint,
+      );
+    });
+
+    test('entries are keyed by package language version', () {
+      final digest = blake3Hex(base.codeUnits);
+      final current = cache.fingerprintFor(digest, base, package: 'app');
+      final old = cache.fingerprintFor(digest, base, package: 'old');
+      expect(old, isNot(current));
+      expect(cache.lookup(digest, package: 'app'), current);
+      expect(cache.lookup(digest, package: 'old'), old);
+      // A package whose version was never recorded gets nothing.
+      expect(cache.fingerprintFor(digest, base, package: 'unknown'), isNull);
+      expect(cache.contains(digest, package: 'unknown'), isFalse);
     });
 
     test('unavailable fingerprints are cached as markers', () {
       const broken = 'class {';
       final digest = blake3Hex(broken.codeUnits);
-      expect(cache.fingerprintFor(digest, broken), isNull);
-      expect(cache.contains(digest), isTrue);
-      expect(cache.lookup(digest), isNull);
+      expect(cache.fingerprintFor(digest, broken, package: 'app'), isNull);
+      expect(cache.contains(digest, package: 'app'), isTrue);
+      expect(cache.lookup(digest, package: 'app'), isNull);
     });
 
     test('entries and markers survive reopening the store', () {
       final digest = blake3Hex(base.codeUnits);
-      final fingerprint = cache.fingerprintFor(digest, base);
+      final fingerprint = cache.fingerprintFor(digest, base, package: 'app');
       const broken = 'class {';
       final brokenDigest = blake3Hex(broken.codeUnits);
-      cache.fingerprintFor(brokenDigest, broken);
+      cache.fingerprintFor(brokenDigest, broken, package: 'app');
 
       final reopened = ApiFingerprintCache(
         store: IndexedBlobStore('${dir.path}/store.bin'),
       );
-      expect(reopened.lookup(digest), fingerprint);
-      expect(reopened.contains(brokenDigest), isTrue);
-      expect(reopened.lookup(brokenDigest), isNull);
+      expect(reopened.lookup(digest, package: 'app'), fingerprint);
+      expect(reopened.contains(brokenDigest, package: 'app'), isTrue);
+      expect(reopened.lookup(brokenDigest, package: 'app'), isNull);
     });
 
     test('fingerprintForParse reuses the caller parse and stores', () {
       final digest = blake3Hex(base.codeUnits);
-      final parsed = parseString(content: base);
-      final fingerprint = cache.fingerprintForParse(digest, parsed);
+      final parsed = parseString(
+        content: base,
+        featureSet: apiFingerprintFeatureSet('app'),
+      );
+      final fingerprint = cache.fingerprintForParse(
+        digest,
+        parsed,
+        package: 'app',
+      );
       expect(fingerprint, fingerprintOf(base));
-      expect(cache.lookup(digest), fingerprint);
+      expect(cache.lookup(digest, package: 'app'), fingerprint);
     });
 
     test('fingerprintForParse stores unavailable markers', () {
       const source = 'augment class A { augment void m() {} }';
       final digest = blake3Hex(source.codeUnits);
       final parsed = parseString(content: source, throwIfDiagnostics: false);
-      expect(cache.fingerprintForParse(digest, parsed), isNull);
-      expect(cache.contains(digest), isTrue);
-      expect(cache.lookup(digest), isNull);
+      expect(cache.fingerprintForParse(digest, parsed, package: 'app'), isNull);
+      expect(cache.contains(digest, package: 'app'), isTrue);
+      expect(cache.lookup(digest, package: 'app'), isNull);
     });
 
     test('a disabled AST model bypasses stored fingerprints', () {
       final digest = blake3Hex(base.codeUnits);
-      expect(cache.fingerprintFor(digest, base), isNotNull);
+      expect(cache.fingerprintFor(digest, base, package: 'app'), isNotNull);
 
       debugSetAstModelSupported(false);
       addTearDown(() => debugSetAstModelSupported(null));
-      expect(cache.fingerprintFor(digest, base), isNull);
+      expect(cache.fingerprintFor(digest, base, package: 'app'), isNull);
     });
 
     test('environment-caused nulls are not cached as markers', () {
@@ -356,8 +459,8 @@ void main() {
       addTearDown(() => debugSetAstModelSupported(null));
       const source = 'int f() => 1;';
       final digest = blake3Hex(source.codeUnits);
-      expect(cache.fingerprintFor(digest, source), isNull);
-      expect(cache.contains(digest), isFalse);
+      expect(cache.fingerprintFor(digest, source, package: 'app'), isNull);
+      expect(cache.contains(digest, package: 'app'), isFalse);
     });
   });
 
@@ -367,7 +470,7 @@ void main() {
     test('is SDK-only until the analyzer root is known', () {
       ApiFingerprintCache.sharedAnalyzerRoot = null;
       final sdk = Platform.version.split(' ').first;
-      expect(debugApiFingerprintStoreNamespace(), 'v1-$sdk');
+      expect(debugApiFingerprintStoreNamespace(), 'v5-$sdk');
     });
 
     test('carries the analyzer package directory once known', () {
@@ -376,7 +479,7 @@ void main() {
       final sdk = Platform.version.split(' ').first;
       expect(
         debugApiFingerprintStoreNamespace(),
-        startsWith('v1-$sdk-analyzer-14.6.0-'),
+        startsWith('v5-$sdk-analyzer-14.6.0-'),
       );
     });
 
@@ -386,8 +489,8 @@ void main() {
       final a = debugApiFingerprintStoreNamespace();
       ApiFingerprintCache.sharedAnalyzerRoot = 'file:///checkout-b/analyzer/';
       final b = debugApiFingerprintStoreNamespace();
-      expect(a, startsWith('v1-$sdk-analyzer-'));
-      expect(b, startsWith('v1-$sdk-analyzer-'));
+      expect(a, startsWith('v5-$sdk-analyzer-'));
+      expect(b, startsWith('v5-$sdk-analyzer-'));
       expect(a, isNot(b));
     });
   });

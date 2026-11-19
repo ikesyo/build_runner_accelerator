@@ -119,14 +119,27 @@ pub(super) fn run(
             .first()
             .map(|spec| spec.instance.package.clone())
             .expect("dirty actions have a package");
-        active_pool.initialize(
+        // A preflight that already initialized the pool with this
+        // exact signature (ADR 0056 stage 4) leaves the workers in
+        // the just-initialized state execution needs; initializing
+        // again would only reset them a second time.
+        if !active_pool.take_preflight_initialization(
             workspace,
             &first_package,
             config_digest,
             phase_count,
             optional_builder_capability_required,
             &options.api_cutoff,
-        )?;
+        ) {
+            active_pool.initialize(
+                workspace,
+                &first_package,
+                config_digest,
+                phase_count,
+                optional_builder_capability_required,
+                &options.api_cutoff,
+            )?;
+        }
 
         drop(prepare);
 

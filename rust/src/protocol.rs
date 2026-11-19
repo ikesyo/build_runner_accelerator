@@ -28,6 +28,45 @@ pub struct GlobRead {
     pub pattern: String,
 }
 
+/// A unit API fingerprint bound to the content digest of the unit
+/// that produced it (ADR 0056). Workers report the digest of the
+/// exact content they fingerprinted, so the frontend can reject
+/// baseline evidence whose bytes are not the committed snapshot's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiFingerprintRecord {
+    /// Bare BLAKE3 hex of the fingerprinted content (no `b3-` prefix,
+    /// unlike snapshot digests).
+    pub digest: String,
+    pub fingerprint: String,
+}
+
+/// Merges fingerprint reports into `target`, degrading a disagreement
+/// to `None` (evidence dropped) instead of letting the later report
+/// win. Two reports for the same asset disagree only when they were
+/// learned from different bytes, which a mid-build edit can cause
+/// when several workers (or successive results) observe the asset at
+/// different times; outputs may have been generated against either
+/// observation, so neither report can be trusted as their basis.
+/// Once degraded, an entry stays `None` for the rest of the merge
+/// scope: a further report cannot resurrect it.
+pub fn merge_fingerprint_reports(
+    target: &mut BTreeMap<String, Option<ApiFingerprintRecord>>,
+    incoming: BTreeMap<String, Option<ApiFingerprintRecord>>,
+) {
+    for (asset, record) in incoming {
+        match target.entry(asset) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(record);
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                if *entry.get() != record {
+                    entry.insert(None);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -393,7 +432,7 @@ struct BinaryBuildBatchResultMetadata {
     /// a unit whose fingerprint is unavailable. Batch-level like the
     /// dep graph: the walk evidence is shared by every action.
     #[serde(default)]
-    api_fingerprints: std::collections::BTreeMap<String, Option<String>>,
+    api_fingerprints: std::collections::BTreeMap<String, Option<ApiFingerprintRecord>>,
 }
 
 pub struct DecodedBuildBatchResult {
@@ -401,7 +440,7 @@ pub struct DecodedBuildBatchResult {
     pub more: bool,
     pub results: Vec<BuildResult>,
     pub dep_graph: std::collections::BTreeMap<String, Vec<String>>,
-    pub api_fingerprints: std::collections::BTreeMap<String, Option<String>>,
+    pub api_fingerprints: std::collections::BTreeMap<String, Option<ApiFingerprintRecord>>,
 }
 
 pub fn decode_build_batch_result_frame(frame: BinaryFrame) -> io::Result<DecodedBuildBatchResult> {
@@ -538,12 +577,49 @@ impl BuildBatchResultCollector {
 #[cfg(test)]
 mod tests {
     use super::{
-        BINARY_ASSET_RESPONSE_MAGIC, BINARY_BUILD_RESULT_MAGIC, IncomingFrame, MAX_FRAME_LENGTH,
-        decode_build_batch_result_frame, decode_build_result_frame, read_message_with_size,
+        ApiFingerprintRecord, BINARY_ASSET_RESPONSE_MAGIC, BINARY_BUILD_RESULT_MAGIC,
+        IncomingFrame, MAX_FRAME_LENGTH, decode_build_batch_result_frame,
+        decode_build_result_frame, merge_fingerprint_reports, read_message_with_size,
         write_binary_frame, write_binary_frame_with_magic, write_frame,
     };
     use serde_json::{Value, json};
+    use std::collections::BTreeMap;
     use std::io::Cursor;
+
+    #[test]
+    fn merge_fingerprint_reports_degrades_disagreements() {
+        fn record(digest: &str, fingerprint: &str) -> ApiFingerprintRecord {
+            ApiFingerprintRecord {
+                digest: digest.to_owned(),
+                fingerprint: fingerprint.to_owned(),
+            }
+        }
+        let mut target = BTreeMap::new();
+        merge_fingerprint_reports(
+            &mut target,
+            BTreeMap::from([("app|lib/a.dart".to_owned(), Some(record("d-1", "f-1")))]),
+        );
+        // An agreeing report keeps the record.
+        merge_fingerprint_reports(
+            &mut target,
+            BTreeMap::from([("app|lib/a.dart".to_owned(), Some(record("d-1", "f-1")))]),
+        );
+        assert_eq!(
+            target.get("app|lib/a.dart"),
+            Some(&Some(record("d-1", "f-1")))
+        );
+        // A disagreeing report drops the evidence, and no later
+        // report in the same merge scope resurrects it.
+        merge_fingerprint_reports(
+            &mut target,
+            BTreeMap::from([("app|lib/a.dart".to_owned(), Some(record("d-2", "f-2")))]),
+        );
+        merge_fingerprint_reports(
+            &mut target,
+            BTreeMap::from([("app|lib/a.dart".to_owned(), Some(record("d-1", "f-1")))]),
+        );
+        assert_eq!(target.get("app|lib/a.dart"), Some(&None));
+    }
 
     #[test]
     fn frame_round_trip_uses_length_prefix() {
@@ -867,12 +943,21 @@ mod tests {
             &[0],
             false,
             json!({}),
-            json!({"app|lib/a.dart": "fp-a", "app|lib/b.dart": null}),
+            json!({
+                "app|lib/a.dart": {"digest": "d-a", "fingerprint": "fp-a"},
+                "app|lib/b.dart": null,
+            }),
         );
         assert_eq!(
             decoded.api_fingerprints,
             std::collections::BTreeMap::from([
-                ("app|lib/a.dart".to_owned(), Some("fp-a".to_owned())),
+                (
+                    "app|lib/a.dart".to_owned(),
+                    Some(super::ApiFingerprintRecord {
+                        digest: "d-a".to_owned(),
+                        fingerprint: "fp-a".to_owned(),
+                    }),
+                ),
                 ("app|lib/b.dart".to_owned(), None),
             ])
         );
@@ -892,7 +977,7 @@ mod tests {
                     &[0],
                     true,
                     json!({}),
-                    json!({"app|lib/a.dart": "fp-a"}),
+                    json!({"app|lib/a.dart": {"digest": "d-a", "fingerprint": "fp-a"}}),
                 ))
                 .unwrap()
                 .is_none()
@@ -917,7 +1002,7 @@ mod tests {
                     &[0],
                     true,
                     json!({}),
-                    json!({"app|lib/a.dart": "fp-a"}),
+                    json!({"app|lib/a.dart": {"digest": "d-a", "fingerprint": "fp-a"}}),
                 ))
                 .unwrap()
                 .is_none()

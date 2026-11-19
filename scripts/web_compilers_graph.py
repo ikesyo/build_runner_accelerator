@@ -35,7 +35,7 @@ class Reader:
 
 def native_graph(root):
     r = Reader(root / '.dart_tool/build_runner_accelerator/graph-v3.bin')
-    assert r.u32() == 9, 'update the pinned native graph reader'
+    assert r.u32() == 10, 'update the pinned native graph reader'
     r.string()
     r.take(1)
     for _ in range(r.u32()):
@@ -59,7 +59,8 @@ def native_graph(root):
                             content_reads=content_reads, entrypoints=entrypoints,
                             globs=globs, outputs=outputs, status=status)
     r.mapping(r.strings)
-    r.mapping(r.string)
+    # API fingerprint records carry a digest and a fingerprint.
+    r.mapping(lambda: (r.string(), r.string()))
     r.mapping(lambda: r.take(1))
     inputs = r.mapping(r.strings)
     globs = r.mapping(lambda: r.mapping(r.strings))

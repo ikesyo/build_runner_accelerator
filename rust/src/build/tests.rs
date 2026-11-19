@@ -303,6 +303,7 @@ fn generated_glob_candidates_invalidate_consumers_with_phase_visibility() {
             &specs,
             &state,
             &[(asset.into(), phase, kind)],
+            None,
         );
         assert_eq!(
             dirty.len(),
@@ -926,6 +927,8 @@ fn removing_target_with_shared_builder_invalidates_glob_consumer() -> io::Result
             plan,
             &BTreeSet::new(),
             &mut FilesystemMetrics::default(),
+            None,
+            &state.dirty_context(snapshot),
         )
     };
     assert!(
@@ -1222,6 +1225,8 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
             &plan,
             &BTreeSet::new(),
             &mut FilesystemMetrics::default(),
+            None,
+            &state.dirty_context(&snapshot),
         )
     };
     let result = check()?;
@@ -1280,6 +1285,8 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
             &retained_plan,
             &retained,
             &mut FilesystemMetrics::default(),
+            None,
+            &retained_state.dirty_context(&snapshot),
         )
     };
     assert!(retained_check()?.dirty.is_empty());
@@ -1305,15 +1312,18 @@ fn dirty_analysis_preserves_logical_id_replay_and_recorded_outputs() -> io::Resu
         result.lazy_force_keys,
         BTreeSet::from([optional_spec.action_key()])
     );
+    let empty_state = GraphState::default();
     let fresh = analyze(
         &workspace,
-        &GraphState::default(),
+        &empty_state,
         &config,
         "config",
         &snapshot,
         &plan,
         &BTreeSet::new(),
         &mut FilesystemMetrics::default(),
+        None,
+        &empty_state.dirty_context(&snapshot),
     )?;
     assert_eq!(
         fresh
@@ -1436,6 +1446,256 @@ fn planning_marks_api_cutoff_instances_and_rejects_unknown_builders() -> io::Res
 }
 
 #[test]
+fn api_cutoff_evidence_waives_resolver_only_dirtiness() -> io::Result<()> {
+    use super::cutoff::CutoffEvidence;
+    use super::{dirty, planning};
+    use crate::metrics::FilesystemMetrics;
+    use crate::snapshot::AssetSnapshot;
+    let (temporary, workspace, config, base_snapshot) = planning_fixture(1)?;
+    let entry = "app|lib/entry.dart";
+    let dep = "app|lib/dep.dart";
+    let mut old_snapshot = base_snapshot.clone();
+    for asset in [entry, dep] {
+        old_snapshot.insert(
+            asset.into(),
+            AssetSnapshot {
+                exists: true,
+                digest: "v1".into(),
+                size: 2,
+            },
+        );
+    }
+    let mut state = GraphState {
+        schema_version: crate::graph::GRAPH_SCHEMA_VERSION,
+        config_digest: "config".into(),
+        assets: old_snapshot.clone(),
+        ..GraphState::default()
+    };
+    state
+        .resolver_dep_graph
+        .insert(entry.into(), vec![dep.into()]);
+    let cutoff_set: BTreeSet<String> = ["app:factory".to_owned()].into_iter().collect();
+    let plan = planning::create(&workspace, &state, &config, &old_snapshot, &cutoff_set)?;
+    let spec = plan
+        .specs
+        .iter()
+        .find(|spec| spec.instance.api_cutoff)
+        .expect("the factory spec opted in")
+        .clone();
+    let key = spec.action_key();
+    // Output digests are collected from disk during analysis, so the
+    // recorded outputs must exist as files with matching digests.
+    let output_digest = crate::digest::digest_bytes(b"out");
+    for output in &spec.outputs {
+        let path = output.split('|').nth(1).expect("asset path");
+        let file = temporary.0.join(path);
+        std::fs::create_dir_all(file.parent().expect("output parent"))?;
+        std::fs::write(&file, b"out")?;
+        old_snapshot.insert(
+            output.clone(),
+            AssetSnapshot {
+                exists: true,
+                digest: output_digest.clone(),
+                size: 3,
+            },
+        );
+    }
+    state.assets.clone_from(&old_snapshot);
+    state.actions.insert(
+        key.clone(),
+        ActionState {
+            builder: spec.instance.builder.id.clone(),
+            input: spec.input.clone(),
+            outputs: spec.outputs.clone(),
+            output_digests: spec
+                .outputs
+                .iter()
+                .map(|output| (output.clone(), output_digest.clone()))
+                .collect(),
+            resolver_entrypoints: vec![entry.into()],
+            status: "success".into(),
+            ..ActionState::default()
+        },
+    );
+    let mut current_snapshot = old_snapshot.clone();
+    current_snapshot.get_mut(dep).expect("dep recorded").digest = "v2".into();
+    let analyze = |plan: &planning::PlannedActions, cutoff: Option<&CutoffEvidence>| {
+        dirty::analyze(
+            &workspace,
+            &state,
+            &config,
+            "config",
+            &current_snapshot,
+            plan,
+            &BTreeSet::new(),
+            &mut FilesystemMetrics::default(),
+            cutoff,
+            &state.dirty_context(&current_snapshot),
+        )
+    };
+    // Without evidence the tainted entrypoint dirties the action.
+    let without = analyze(&plan, None)?;
+    assert!(
+        without.dirty.iter().any(|dirty| dirty.action_key() == key),
+        "resolver taint must dirty the action without evidence"
+    );
+    // With a clean verdict the same change leaves the action clean.
+    let evidence = CutoffEvidence {
+        clean_actions: BTreeSet::from([key.clone()]),
+        learned: BTreeMap::new(),
+    };
+    let with = analyze(&plan, Some(&evidence))?;
+    assert!(
+        with.dirty.iter().all(|dirty| dirty.action_key() != key),
+        "signature evidence must waive the resolver-only dirtiness"
+    );
+    // A plan that did not opt the builder in ignores the evidence.
+    let plain_plan =
+        planning::create(&workspace, &state, &config, &old_snapshot, &BTreeSet::new())?;
+    let plain = analyze(&plain_plan, Some(&evidence))?;
+    assert!(
+        plain.dirty.iter().any(|dirty| dirty.action_key() == key),
+        "evidence must not waive actions that did not opt in"
+    );
+    Ok(())
+}
+
+#[test]
+fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<()> {
+    use super::{cutoff, planning};
+    use crate::snapshot::AssetSnapshot;
+    let (_temporary, workspace, config, base_snapshot) = planning_fixture(1)?;
+    let entry = "app|lib/entry.dart";
+    let dep = "app|lib/dep.dart";
+    let mut old_snapshot = base_snapshot.clone();
+    for asset in [entry, dep] {
+        old_snapshot.insert(
+            asset.into(),
+            AssetSnapshot {
+                exists: true,
+                digest: "v1".into(),
+                size: 2,
+            },
+        );
+    }
+    let mut state = GraphState {
+        schema_version: crate::graph::GRAPH_SCHEMA_VERSION,
+        config_digest: "config".into(),
+        assets: old_snapshot.clone(),
+        ..GraphState::default()
+    };
+    state
+        .resolver_dep_graph
+        .insert(entry.into(), vec![dep.into()]);
+    let cutoff_set: BTreeSet<String> = ["app:factory".to_owned()].into_iter().collect();
+    let plan = planning::create(&workspace, &state, &config, &old_snapshot, &cutoff_set)?;
+    let spec = plan
+        .specs
+        .iter()
+        .find(|spec| spec.instance.api_cutoff)
+        .expect("the factory spec opted in")
+        .clone();
+    let key = spec.action_key();
+    state.actions.insert(
+        key.clone(),
+        ActionState {
+            builder: spec.instance.builder.id.clone(),
+            input: spec.input.clone(),
+            outputs: spec.outputs.clone(),
+            resolver_entrypoints: vec![entry.into()],
+            status: "success".into(),
+            ..ActionState::default()
+        },
+    );
+    let mut current_snapshot = old_snapshot.clone();
+    current_snapshot.get_mut(dep).expect("dep recorded").digest = "v2".into();
+    let generated = BTreeSet::new();
+    // Control: the same change reaches the opted-in action and makes
+    // it a preflight candidate.
+    {
+        let context = state.dirty_context(&current_snapshot);
+        let assessment =
+            cutoff::assess(&state, &plan.specs, &context, &current_snapshot, &generated);
+        assert!(assessment.is_some(), "control action must be a candidate");
+    }
+    // A direct read of a non-Dart file rides along in the recorded
+    // resolver_reads union, but it is not a signature root: it has
+    // no fingerprint, so folding it in would block every waiver.
+    // With matching fingerprints the action still proves clean.
+    {
+        let action = state.actions.get_mut(&key).expect("action recorded");
+        action.reads = vec!["app|lib/config.yaml".into()];
+        action.resolver_reads = vec!["app|lib/config.yaml".into()];
+    }
+    state.asset_fingerprints.insert(
+        entry.into(),
+        crate::protocol::ApiFingerprintRecord {
+            digest: "v1".into(),
+            fingerprint: "fp-entry".into(),
+        },
+    );
+    state.asset_fingerprints.insert(
+        dep.into(),
+        crate::protocol::ApiFingerprintRecord {
+            digest: "v1".into(),
+            fingerprint: "fp-dep".into(),
+        },
+    );
+    {
+        let context = state.dirty_context(&current_snapshot);
+        let assessment =
+            cutoff::assess(&state, &plan.specs, &context, &current_snapshot, &generated)
+                .expect("a direct non-Dart read must not block candidacy");
+        let results = BTreeMap::from([(
+            dep.to_string(),
+            crate::worker::ApiUnitEvidence {
+                fingerprint: Some("fp-dep".into()),
+                deps: Some(Vec::new()),
+            },
+        )]);
+        let evidence = cutoff::evaluate(&state, &assessment, &results, &generated, "config");
+        assert!(
+            evidence.clean_actions.contains(&key),
+            "matching fingerprints must waive the action despite the direct config read"
+        );
+    }
+    {
+        let action = state.actions.get_mut(&key).expect("action recorded");
+        action.reads = Vec::new();
+        action.resolver_reads = Vec::new();
+    }
+    state.asset_fingerprints.clear();
+    // A changed direct read makes the action dirty on its direct
+    // terms, so it is not a candidate either: preflight evidence
+    // could never waive it.
+    state.actions.get_mut(&key).expect("action recorded").reads = vec![dep.into()];
+    {
+        let context = state.dirty_context(&current_snapshot);
+        let assessment =
+            cutoff::assess(&state, &plan.specs, &context, &current_snapshot, &generated);
+        assert!(
+            assessment.is_none(),
+            "an action with a changed direct read must not be a candidate"
+        );
+    }
+    state.actions.get_mut(&key).expect("action recorded").reads = Vec::new();
+    // Recorded AST access (a resolver content read) downgrades the
+    // whole action: it is no longer a candidate at all (ADR 0056).
+    state
+        .actions
+        .get_mut(&key)
+        .expect("action recorded")
+        .resolver_content_reads = vec![dep.into()];
+    let context = state.dirty_context(&current_snapshot);
+    let assessment = cutoff::assess(&state, &plan.specs, &context, &current_snapshot, &generated);
+    assert!(
+        assessment.is_none(),
+        "an action with recorded AST access must not be a candidate"
+    );
+    Ok(())
+}
+
+#[test]
 fn undemanded_optional_stays_demandable_without_changing_successful_empty_reuse() -> io::Result<()>
 {
     use super::{dirty, planning};
@@ -1472,6 +1732,8 @@ fn undemanded_optional_stays_demandable_without_changing_successful_empty_reuse(
             &plan,
             &BTreeSet::new(),
             &mut FilesystemMetrics::default(),
+            None,
+            &state.dirty_context(&snapshot),
         )
     };
     let dirty = analyze(&state)?;
@@ -1575,6 +1837,8 @@ fn planned_actions_share_only_their_configured_instance_and_release_with_the_bui
         &plan,
         &BTreeSet::new(),
         &mut FilesystemMetrics::default(),
+        None,
+        &state.dirty_context(&snapshot),
     )?;
     assert_eq!(dirty.dirty.len(), 6);
     assert_eq!(dirty.lazy_force_keys.len(), 2);
@@ -1626,6 +1890,8 @@ fn planning_retention_benchmark() -> io::Result<()> {
         &plan,
         &BTreeSet::new(),
         &mut FilesystemMetrics::default(),
+        None,
+        &state.dirty_context(&snapshot),
     )?;
     let index = execution::optional_specs_by_output(&plan.specs);
     let retained_us = started.elapsed().as_micros();
