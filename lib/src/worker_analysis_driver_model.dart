@@ -90,6 +90,10 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
   Map<String, String?> learnedApiFingerprints() =>
       _CachingAssetDepsLoader.learnedApiFingerprints;
 
+  /// Clears the learned fingerprints and the learning memos at a
+  /// build boundary (see [_CachingAssetDepsLoader.clearLearned]).
+  void clearLearnedApiFingerprints() => _CachingAssetDepsLoader.clearLearned();
+
   /// Completes dep loads queued for [phase] or earlier.
   ///
   /// An expired `PhasedValue.unavailable` entry is queued in the loader's
@@ -227,10 +231,36 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   static final Map<String, String?> learnedApiFingerprints =
       <String, String?>{};
 
+  /// The exact content instance each asset's learned fingerprint was
+  /// computed from, and the content digest recorded alongside it.
+  /// Dep walks revisit the same units for every action whose
+  /// resolver closure contains them, so relearning on every visit
+  /// (a full-content hash plus a store lookup) multiplied the walk's
+  /// cost by the action count; these memos reduce repeat visits of
+  /// unchanged content to a map probe. Both are cleared with the
+  /// learned map at each build boundary (see [clearLearned]), so a
+  /// resident worker does not retain the sources of deleted or
+  /// renamed files for its whole lifetime.
+  static final Map<String, String> _learnedContents = <String, String>{};
+  static final Map<String, String> _learnedDigests = <String, String>{};
+
+  /// Clears [learnedApiFingerprints] and the learning memos. Called
+  /// at each build start: only the new build's own observations may
+  /// be reported, and the memos must not outlive that boundary.
+  static void clearLearned() {
+    learnedApiFingerprints.clear();
+    _learnedContents.clear();
+    _learnedDigests.clear();
+  }
+
   /// Records the API fingerprint of the unit [id] with source
   /// [content] as learned. [parsed] reuses the dep walk's own parse
   /// when it has one; without it the fingerprint cache answers, and
-  /// parses on a miss.
+  /// parses on a miss. A unit whose learned fingerprint is still in
+  /// [learnedApiFingerprints] for the same content is not relearned:
+  /// the worker clears that map at each build start, so a cleared
+  /// entry is relearned (and re-reported) once per build, never once
+  /// per walk visit.
   static void _learnApiFingerprint(
     AssetId id,
     String content, [
@@ -238,8 +268,28 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   ]) {
     final cache = _fingerprintCache;
     if (cache == null) return;
+    final key = id.toString();
+    // The AST-model gate can close mid-process (a misbehaving walk
+    // latches it shut), after which every fingerprint is
+    // unavailable. A memo hit must not serve a value learned before
+    // the gate closed: report the unavailable marker so the
+    // frontend drops the fingerprint it recorded earlier.
+    if (!cache.modelSupported) {
+      learnedApiFingerprints[key] = null;
+      return;
+    }
+    if (identical(_learnedContents[key], content) &&
+        learnedApiFingerprints.containsKey(key)) {
+      return;
+    }
     final digest = blake3Hex(utf8.encode(content));
-    learnedApiFingerprints[id.toString()] = parsed != null
+    _learnedContents[key] = content;
+    if (_learnedDigests[key] == digest &&
+        learnedApiFingerprints.containsKey(key)) {
+      return;
+    }
+    _learnedDigests[key] = digest;
+    learnedApiFingerprints[key] = parsed != null
         ? cache.fingerprintForParse(digest, parsed)
         : cache.fingerprintFor(digest, content);
   }

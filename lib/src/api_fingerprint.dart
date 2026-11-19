@@ -352,6 +352,14 @@ String _hex(Uint8List bytes) {
 /// Disable with `BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0`, like the other
 /// dep-parse caches.
 final class ApiFingerprintCache {
+  /// Whether the AST-model gate currently trusts fingerprinting in
+  /// this process. The gate can close mid-process: fingerprinting a
+  /// unit whose walk misbehaves latches it shut (see
+  /// [computeApiFingerprint]), after which every fingerprint is
+  /// unavailable. Callers that memoize fingerprints must consult
+  /// this instead of serving a value learned before the gate closed.
+  bool get modelSupported => _astModelSupported;
+
   ApiFingerprintCache({IndexedBlobStore? store})
     : _store = store ?? _sharedStore();
 
