@@ -411,6 +411,14 @@ class _WorkerRuntime {
       readCache.remove(id);
       readableCache.remove(id);
     }
+    resolver.invalidatePendingFingerprints(changedAssets);
+    // The frontend drops the recorded fingerprints for these
+    // assets; if a later action relearns one and lands on the same
+    // fingerprint (a body-only change), the sent delta must not
+    // suppress the re-report.
+    for (final id in changedAssets) {
+      sentApiFingerprints.remove(id.toString());
+    }
     for (final id in deletedSources.followedBy(deletedCache)) {
       producedOutputs.remove(id);
     }
@@ -987,6 +995,37 @@ Future<void> _handleBuildBatch(
 }
 
 Future<JsonMap> _runBuild(
+  WorkerBuildRequest request,
+  FrameReader reader,
+  FrameWriter writer,
+  _WorkerRuntime runtime,
+  Map<String, BuilderFactory> builderCatalog,
+  Map<String, PostProcessBuilderFactory> postProcessCatalog, {
+  Set<AssetId>? inheritedBlockedAssets,
+}) async {
+  // API fingerprint learning follows this action's opt-in (ADR 0056):
+  // dep walks during the action record fingerprints only for
+  // builders the build opted in to the API cutoff. A lazy asset read
+  // can suspend this action and run a producer action on the same
+  // worker, so the caller's setting is restored afterwards.
+  final previousLearning = runtime.resolver.fingerprintLearningEnabled;
+  runtime.resolver.setFingerprintLearningEnabled(request.apiCutoff);
+  try {
+    return await _runBuildAction(
+      request,
+      reader,
+      writer,
+      runtime,
+      builderCatalog,
+      postProcessCatalog,
+      inheritedBlockedAssets: inheritedBlockedAssets,
+    );
+  } finally {
+    runtime.resolver.setFingerprintLearningEnabled(previousLearning);
+  }
+}
+
+Future<JsonMap> _runBuildAction(
   WorkerBuildRequest request,
   FrameReader reader,
   FrameWriter writer,

@@ -211,6 +211,23 @@ class WorkerResolversImpl implements Resolvers {
   void clearLearnedApiFingerprints() =>
       _analysisDriverModel.clearLearnedApiFingerprints();
 
+  /// Enables or disables API fingerprint learning for subsequent
+  /// dep walks in this process (see
+  /// [WorkerAnalysisDriverModel.setFingerprintLearningEnabled]).
+  void setFingerprintLearningEnabled(bool enabled) =>
+      _analysisDriverModel.setFingerprintLearningEnabled(enabled);
+
+  /// Whether API fingerprint learning is currently enabled in this
+  /// process (see [setFingerprintLearningEnabled]).
+  bool get fingerprintLearningEnabled =>
+      _analysisDriverModel.fingerprintLearningEnabled;
+
+  /// Invalidates all fingerprint state for [ids], whose bytes a
+  /// resolver reset updated or deleted (see
+  /// [WorkerAnalysisDriverModel.invalidatePendingFingerprints]).
+  void invalidatePendingFingerprints(Iterable<AssetId> ids) =>
+      _analysisDriverModel.invalidatePendingFingerprints(ids);
+
   /// Starts a build.
   ///
   /// If another build has the lock, waits for it to finish.

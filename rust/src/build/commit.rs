@@ -133,6 +133,26 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         transaction,
     } = inputs;
 
+    // Assets whose bytes this transaction writes, deletes, or
+    // source-edits. A fingerprint learned during the build describes
+    // the bytes the walk read, which a later change may postdate;
+    // the graph update below drops those assets' reported
+    // fingerprints with this set.
+    let mut transaction_changed: BTreeSet<String> =
+        transaction.pending_outputs.keys().cloned().collect();
+    for (_, asset) in &transaction.pending_deletions {
+        transaction_changed.insert(asset.clone());
+    }
+    for (_, asset) in &transaction.pending_location_deletions {
+        transaction_changed.insert(asset.clone());
+    }
+    for (_, action) in &transaction.deleted_actions {
+        transaction_changed.extend(action.outputs.iter().cloned());
+    }
+    for asset in transaction.source_edits.keys() {
+        transaction_changed.insert(asset.clone());
+    }
+
     let undo = crate::wall::Span::new("commit_undo_prepare");
     let mut changes = BTreeMap::new();
     if transaction.clean_artifact_tree {
@@ -385,6 +405,7 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         }
     }
     drop(scan);
+    state.supersede_api_fingerprint_reports(&transaction_changed);
     let update = crate::wall::Span::new("graph_update_assets");
     state.update_assets(post_snapshot);
     drop(update);

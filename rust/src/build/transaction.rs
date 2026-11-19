@@ -24,6 +24,17 @@ impl ResolverChanges {
             || !self.resolver_cache_deleted.is_empty()
     }
 
+    /// Every asset whose bytes this reset changes or deletes.
+    pub(super) fn changed_assets(&self) -> BTreeSet<String> {
+        self.resolver_updated
+            .iter()
+            .chain(&self.resolver_deleted)
+            .chain(&self.resolver_cache_updated)
+            .chain(&self.resolver_cache_deleted)
+            .cloned()
+            .collect()
+    }
+
     /// Clears deltas after a resolver reset or worker reinitialization consumes
     /// their baseline.
     pub(super) fn clear(&mut self) {

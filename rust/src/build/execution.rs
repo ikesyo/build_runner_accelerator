@@ -203,6 +203,7 @@ pub(super) fn run(
                                 transaction.resolver.clear();
                                 resolver_needs_reset = false;
                             } else if resolver_needs_reset || transaction.resolver.has_changes() {
+                                let reset_changed = transaction.resolver.changed_assets();
                                 active_pool.reset_resolver(
                                     &workspace.root,
                                     &transaction.overlay,
@@ -216,6 +217,7 @@ pub(super) fn run(
                                     ),
                                     true,
                                 )?;
+                                state.drop_api_fingerprints(&reset_changed);
                                 resolver_needs_reset = false;
                             }
                             active_pool.materialize_optional_primary(
@@ -331,6 +333,7 @@ pub(super) fn run(
                     resolver_needs_reset = false;
                     transaction.resolver.clear();
                 } else if resolver_needs_reset {
+                    let reset_changed = transaction.resolver.changed_assets();
                     active_pool.reset_resolver(
                         &workspace.root,
                         &transaction.overlay,
@@ -340,6 +343,7 @@ pub(super) fn run(
                         std::mem::take(&mut transaction.resolver.resolver_cache_deleted),
                         true,
                     )?;
+                    state.drop_api_fingerprints(&reset_changed);
                     resolver_needs_reset = false;
                 }
                 drop(reset);
