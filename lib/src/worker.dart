@@ -627,7 +627,7 @@ class _WorkerRuntime {
     // observation from an earlier build could overwrite a fresher one
     // another worker reported in the meantime. Only this build's own
     // observations may be reported.
-    resolver.learnedApiFingerprints().clear();
+    resolver.clearLearnedApiFingerprints();
     batchResolverEntrypoints.clear();
     builders.clear();
     postProcessBuilders.clear();

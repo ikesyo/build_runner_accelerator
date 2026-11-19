@@ -206,6 +206,11 @@ class WorkerResolversImpl implements Resolvers {
   Map<String, String?> learnedApiFingerprints() =>
       _analysisDriverModel.learnedApiFingerprints();
 
+  /// Clears the learned fingerprints and their memos at a build
+  /// boundary (see [WorkerAnalysisDriverModel.clearLearnedApiFingerprints]).
+  void clearLearnedApiFingerprints() =>
+      _analysisDriverModel.clearLearnedApiFingerprints();
+
   /// Starts a build.
   ///
   /// If another build has the lock, waits for it to finish.
