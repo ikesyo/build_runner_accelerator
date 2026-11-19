@@ -239,4 +239,24 @@ if VERIFY_COMMAND_LOG="$temporary/previous-workspace.log" VERIFY_WORKSPACE="$pre
 fi
 cmp "$temporary/previous.graph" "$previous/.dart_tool/build_runner_accelerator/graph-v3.bin" || fail 'scope rejection changed individual graph'
 [[ ! -e "$previous/.dart_tool/build_runner_accelerator/workspace-mode" ]] || fail 'scope rejection created workspace marker'
-printf 'workspace: PASS stock/native=yes aot=yes jobs=2 noop=yes edit=yes delete=yes rename=yes failure-recovery=yes state-transition=yes topology-rejection=yes\n'
+
+member_stock="$workspace/fixtures/member-stock"
+member_native="$workspace/fixtures/member-native"
+for fixture in "$member_stock" "$member_native"; do
+  cp -R "$repo_root/fixtures/workspace_option_app" "$fixture"
+  rm -rf "$fixture/.dart_tool" "$fixture/a/.dart_tool" "$fixture/b/.dart_tool" "$fixture/gen/.dart_tool"
+  worker_pub_get "$fixture" "${pub_get_args[@]}"
+  [[ ! -e "$fixture/a/.dart_tool/package_config.json" ]] || fail 'Pub created a member-local package config'
+done
+verification_run_stock_build "$member_stock/a" "workspace/stock/member-only" "$temporary/stock-member-only.log" "$dart_bin" "$pub_cache" build --force-jit
+verification_run_command_in_dir "$member_native/a" "workspace/launcher/member-only" "$temporary/native-member-only.log" 300 \
+  env PUB_CACHE="$pub_cache" BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
+  BUILD_RUNNER_ACCELERATOR_WORKER_AOT=0 "$dart_bin" --suppress-analytics \
+  run build_runner_accelerator build --dart "$dart_bin" --force-jit --jobs 1
+[[ -f "$member_stock/a/lib/input.gen" ]] || fail 'stock member build did not generate output'
+diff -r "$member_stock/a/lib" "$member_native/a/lib" || fail 'individual member output differs'
+diff -r "$repo_root/fixtures/workspace_option_app/b/lib" "$member_native/b/lib" || fail 'individual build changed sibling output'
+[[ ! -e "$member_native/a/.dart_tool/package_config.json" ]] || fail 'individual build wrote a member-local package config'
+[[ -f "$member_native/a/.dart_tool/build_runner_accelerator/graph-v3.bin" ]] || fail 'individual build did not write its member graph'
+[[ ! -e "$member_native/.dart_tool/build_runner_accelerator/graph-v3.bin" ]] || fail 'individual build wrote a workspace graph'
+printf 'workspace: PASS stock/native=yes member-only=yes aot=yes jobs=2 noop=yes edit=yes delete=yes rename=yes failure-recovery=yes state-transition=yes topology-rejection=yes\n'

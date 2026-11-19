@@ -83,6 +83,7 @@ type FindAssetsCache = BTreeMap<(String, String), Vec<String>>;
 pub struct Workspace {
     pub root: PathBuf,
     pub root_package: String,
+    pub_root: PathBuf,
     packages: BTreeMap<String, PathBuf>,
     compiler_packages: BTreeMap<String, PathBuf>,
     sources: Arc<OnceLock<Arc<AssetSources>>>,
@@ -153,7 +154,7 @@ impl Workspace {
 
         // A compile-only backport must not change builder-visible dependency
         // bytes, source enumeration, or package paths.
-        let original_path = root.join(".dart_tool/package_config.json");
+        let original_path = prepared.pub_root.join(".dart_tool/package_config.json");
         let mut packages = BTreeMap::new();
         for entry in &prepared.original.packages {
             packages.insert(
@@ -176,6 +177,7 @@ impl Workspace {
         Ok(Self {
             root,
             root_package,
+            pub_root: prepared.pub_root,
             packages,
             compiler_packages,
             sources: Arc::new(OnceLock::new()),
@@ -194,7 +196,7 @@ impl Workspace {
     /// Reuse this read for graph identity while rejecting a stale resolution.
     /// Keep the original text, not another digest or parsed copy, for comparison.
     pub(crate) fn read_package_config(&self) -> io::Result<Vec<u8>> {
-        let bytes = fs::read(self.root.join(".dart_tool/package_config.json"))?;
+        let bytes = fs::read(self.pub_root.join(".dart_tool/package_config.json"))?;
         if bytes != self.package_config_contents.as_bytes() {
             return Err(io::Error::other(
                 "package_config.json changed after workspace preparation; rerun after dependency resolution finishes",
@@ -216,7 +218,7 @@ impl Workspace {
         let mut bytes = b"build-runner-accelerator-manifest-v4\0".to_vec();
         bytes.extend_from_slice(self.package_config_identity.as_bytes());
         bytes.push(0);
-        match fs::read(self.root.join("pubspec.lock")) {
+        match fs::read(self.pub_root.join("pubspec.lock")) {
             Ok(contents) => {
                 bytes.extend_from_slice(&normalize_text_bytes(&contents));
                 bytes.push(0xfe);
@@ -227,7 +229,7 @@ impl Workspace {
         // Pub's roots and direct dependency graph can change while the
         // package configuration and lockfile remain byte-identical. Those
         // roots determine the workspace output packages and builder scope.
-        match fs::read(self.root.join(".dart_tool/package_graph.json")) {
+        match fs::read(self.pub_root.join(".dart_tool/package_graph.json")) {
             Ok(contents) => {
                 bytes.push(1);
                 bytes.extend_from_slice(&normalize_text_bytes(&contents));

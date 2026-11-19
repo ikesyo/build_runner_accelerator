@@ -1156,18 +1156,6 @@ String _factoryProbeSource(Iterable<FactoryProbeRequest> requests) {
 }
 
 String? _findPackageConfigPath(String root) {
-  var packageConfigRoot = p.canonicalize(root);
-  while (true) {
-    final candidate = p.join(
-      packageConfigRoot,
-      '.dart_tool',
-      'package_config.json',
-    );
-    if (File(candidate).existsSync()) {
-      return compilerPackageConfigPath(packageConfigRoot);
-    }
-    final parent = p.dirname(packageConfigRoot);
-    if (parent == packageConfigRoot) return null;
-    packageConfigRoot = parent;
-  }
+  final candidate = compilerPackageConfigPath(p.canonicalize(root));
+  return File(candidate).existsSync() ? candidate : null;
 }

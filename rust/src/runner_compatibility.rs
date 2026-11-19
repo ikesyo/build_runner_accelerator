@@ -2,6 +2,7 @@
 //! Never edits Pub's package cache or the application's package configuration.
 use crate::digest::digest_bytes;
 use crate::workspace::{PackageConfigFile, canonicalize, resolve_uri};
+use crate::workspace_discovery::pub_resolution_root;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
@@ -17,23 +18,23 @@ const BEFORE: &str = "AnalysisOptionsImpl()\n          // ignore: deprecated_mem
 #[cfg(test)]
 const AFTER: &str = "workerAnalysisOptions(_featureSet(\n            enableExperiments: enabledExperiments,\n          )),";
 
-pub(crate) fn package_config(root: &Path) -> PathBuf {
+pub(crate) fn package_config(root: &Path) -> io::Result<PathBuf> {
     let isolated = root.join(crate::compile_isolation::CONFIG);
     if crate::compile_isolation::enabled() && isolated.is_file() {
-        return isolated;
+        return Ok(isolated);
     }
     let compatible = root.join(CONFIG);
     if compatible.is_file() {
-        compatible
+        Ok(compatible)
     } else {
-        root.join(".dart_tool/package_config.json")
+        Ok(pub_resolution_root(root)?.join(".dart_tool/package_config.json"))
     }
 }
 
 /// Resolve the old output default without changing user arguments or compiler
 /// settings. Workspace preparation still validates/backports the runner itself.
 pub(crate) fn legacy_output_defaults(root: &Path) -> io::Result<bool> {
-    let path = root.join(".dart_tool/package_config.json");
+    let path = pub_resolution_root(root)?.join(".dart_tool/package_config.json");
     let config: Value = serde_json::from_slice(&fs::read(&path)?)?;
     let runner = config["packages"].as_array().and_then(|packages| {
         packages
@@ -55,6 +56,7 @@ thread_local! {
 
 /// Parsed original and effective compiler views from one preparation.
 pub(crate) struct PreparedConfig {
+    pub(crate) pub_root: PathBuf,
     pub(crate) path: PathBuf,
     pub(crate) original: PackageConfigFile,
     /// Exact original bytes; consumers revalidate at build/cache boundaries.
@@ -68,7 +70,8 @@ pub(crate) struct PreparedConfig {
 pub(crate) fn prepare(root: &Path) -> io::Result<PreparedConfig> {
     #[cfg(test)]
     PREPARE_CALLS.with(|calls| calls.set(calls.get() + 1));
-    let original_path = root.join(".dart_tool/package_config.json");
+    let pub_root = pub_resolution_root(root)?;
+    let original_path = pub_root.join(".dart_tool/package_config.json");
     let contents = fs::read_to_string(&original_path)?;
     let original: PackageConfigFile = serde_json::from_str(&contents)?;
     let path = prepare_compiler(root, &original_path, &original, &contents)?;
@@ -80,6 +83,7 @@ pub(crate) fn prepare(root: &Path) -> io::Result<PreparedConfig> {
         Some((serde_json::from_str(&contents)?, contents))
     };
     Ok(PreparedConfig {
+        pub_root,
         path,
         original,
         compiler,
@@ -367,7 +371,7 @@ mod tests {
         let original = fs::read(root.join(".dart_tool/package_config.json")).unwrap();
         let resolver = fs::read(root.join("upstream runner").join(RESOLVER)).unwrap();
         let path = prepare(root).unwrap();
-        assert_eq!(path, package_config(root));
+        assert_eq!(path, package_config(root).unwrap());
         let config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         let clone = resolve_uri(
             path.parent().unwrap(),
@@ -512,7 +516,7 @@ mod tests {
             refreshed.resolve_logical_dependency(&dependency).unwrap(),
             original_copy
         );
-        let config = package_config(&first.0);
+        let config = package_config(&first.0).unwrap();
         let parsed: Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
         let copy = resolve_uri(
             config.parent().unwrap(),
@@ -560,7 +564,7 @@ mod tests {
                 })
                 .collect();
             for handle in handles {
-                assert_eq!(handle.join().unwrap(), package_config(&fixture.0));
+                assert_eq!(handle.join().unwrap(), package_config(&fixture.0).unwrap());
             }
         });
         prepare(&fixture.0).unwrap();

@@ -31,7 +31,7 @@ pub(crate) fn prepare(root: &Path, mut config: Value) -> io::Result<PathBuf> {
     let packages = config["packages"]
         .as_array_mut()
         .ok_or_else(|| error("missing packages"))?;
-    let config_dir = root.join(".dart_tool");
+    let config_dir = crate::workspace_discovery::pub_resolution_root(root)?.join(".dart_tool");
     let mut roots = BTreeMap::new();
     for package in packages.iter() {
         let name = package["name"]
@@ -592,7 +592,7 @@ mod tests {
         if let Some(root) = std::env::var_os(CHILD) {
             let root = PathBuf::from(root);
             let on = Workspace::load(root.clone()).unwrap();
-            let selected = crate::runner_compatibility::package_config(&root);
+            let selected = crate::runner_compatibility::package_config(&root).unwrap();
             let config: Value = serde_json::from_slice(&fs::read(&selected).unwrap()).unwrap();
             let copy = copied_root(&config, "analyzer").join("lib/dart/analysis/utilities.dart");
             let key = on.logical_dependency_key(&copy).unwrap();
@@ -623,7 +623,7 @@ mod tests {
                 off.builder_manifest_fingerprint().unwrap()
             );
             assert_eq!(
-                crate::runner_compatibility::package_config(&root),
+                crate::runner_compatibility::package_config(&root).unwrap(),
                 root.join(".dart_tool/package_config.json")
             );
             return;

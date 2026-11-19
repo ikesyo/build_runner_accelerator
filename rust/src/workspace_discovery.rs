@@ -25,21 +25,7 @@ pub(crate) fn discover(current: &Path) -> io::Result<WorkspaceDiscovery> {
     let current = canonicalize(current)?;
     let current_pubspec = current.join("pubspec.yaml");
     let current_package = package_name(&current_pubspec)?;
-    // BuildPaths.load: the workspace root applies only when the reference
-    // file exists and the current pubspec opts into the workspace (a member
-    // via `resolution: workspace`, the root via a `workspace:` section). A
-    // stale reference falls back to a single-package build at the current
-    // package, keeping the same graph/configuration identity as stock.
-    let mut workspace_root = None;
-    let reference = current.join(".dart_tool/pub/workspace_ref.json");
-    if reference.is_file() && pubspec_opts_into_workspace(&current_pubspec)? {
-        let value: serde_json::Value = serde_json::from_slice(&fs::read(&reference)?)?;
-        let relative = value
-            .get("workspaceRoot")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| io::Error::other("workspace_ref.json has no workspaceRoot"))?;
-        workspace_root = Some(canonicalize(reference.parent().unwrap().join(relative))?);
-    }
+    let workspace_root = pub_workspace_root(&current)?;
     let build_workspace = workspace_root.is_some();
     let root = workspace_root.unwrap_or_else(|| current.clone());
     let root_package = package_name(&root.join("pubspec.yaml"))?;
@@ -113,6 +99,30 @@ pub(crate) fn discover(current: &Path) -> io::Result<WorkspaceDiscovery> {
         },
         &current,
     )
+}
+
+/// Resolve Pub metadata independently of which package will produce outputs.
+pub(crate) fn pub_resolution_root(current: &Path) -> io::Result<PathBuf> {
+    Ok(pub_workspace_root(current)?.unwrap_or_else(|| current.to_path_buf()))
+}
+
+fn pub_workspace_root(current: &Path) -> io::Result<Option<PathBuf>> {
+    // BuildPaths.load: the workspace root applies only when the reference
+    // file exists and the current pubspec opts into the workspace (a member
+    // via `resolution: workspace`, the root via a `workspace:` section). A
+    // stale reference falls back to a single-package build at the current
+    // package, keeping the same graph/configuration identity as stock.
+    let pubspec = current.join("pubspec.yaml");
+    let reference = current.join(".dart_tool/pub/workspace_ref.json");
+    if reference.is_file() && pubspec_opts_into_workspace(&pubspec)? {
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(&reference)?)?;
+        let relative = value
+            .get("workspaceRoot")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| io::Error::other("workspace_ref.json has no workspaceRoot"))?;
+        return canonicalize(reference.parent().unwrap().join(relative)).map(Some);
+    }
+    Ok(None)
 }
 
 /// Whether a pubspec opts into its workspace, as the YAML-level check in

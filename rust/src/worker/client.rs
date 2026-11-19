@@ -710,7 +710,7 @@ impl WorkerClient {
             WorkerArtifact::Aot(executable) => Command::new(executable),
             WorkerArtifact::Kernel(kernel) => {
                 let mut command = Command::new(dart_binary);
-                let package_config = crate::runner_compatibility::package_config(root);
+                let package_config = crate::runner_compatibility::package_config(root)?;
                 command
                     .arg(format!("--packages={}", package_config.display()))
                     .arg(kernel);
@@ -722,7 +722,7 @@ impl WorkerClient {
                     command
                         .arg(format!(
                             "--packages={}",
-                            crate::runner_compatibility::package_config(root).display()
+                            crate::runner_compatibility::package_config(root)?.display()
                         ))
                         .arg(worker_executable);
                 } else {

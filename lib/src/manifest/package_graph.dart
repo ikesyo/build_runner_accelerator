@@ -7,6 +7,7 @@ import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
+import '../compiler_package_config.dart';
 import 'model.dart';
 import 'settings.dart';
 
@@ -66,21 +67,7 @@ Future<PackageGraph> loadPackageGraph(
     throw StateError('The current package has no name in pubspec.yaml.');
   }
 
-  var packageConfigRoot = root;
-  PackageConfig? packageConfig;
-  while (true) {
-    packageConfig = await findPackageConfig(
-      Directory(packageConfigRoot),
-      recurse: false,
-    );
-    if (packageConfig != null) break;
-    final parent = p.dirname(packageConfigRoot);
-    if (parent == packageConfigRoot) break;
-    packageConfigRoot = parent;
-  }
-  if (packageConfig == null) {
-    throw StateError('Unable to find package_config.json for $root.');
-  }
+  final packageConfig = await loadPackageConfig(pubPackageConfigFile(root));
 
   // Pub's package graph provides the flattened list of workspace roots,
   // including nested members. Reject missing roots and unknown packages.
