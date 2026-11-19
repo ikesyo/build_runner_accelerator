@@ -22,6 +22,18 @@ pub(crate) struct PackageSources {
 
 pub(crate) type AssetSources = BTreeMap<String, PackageSources>;
 
+pub(crate) fn matches_asset_sources(
+    sources: Option<&AssetSources>,
+    package: &str,
+    path: &str,
+) -> bool {
+    sources.is_none_or(|sources| {
+        sources
+            .get(package)
+            .is_some_and(|sources| sources.matches(path))
+    })
+}
+
 impl PackageSources {
     fn may_include_under(&self, prefix: &str) -> bool {
         let may_match = |pattern: &String| {
@@ -351,6 +363,10 @@ impl Workspace {
         }
     }
 
+    pub(crate) fn asset_sources(&self) -> Option<&Arc<AssetSources>> {
+        self.sources.get()
+    }
+
     pub(crate) fn includes_build_implementation_sources(&self) -> bool {
         self.sources
             .get()
@@ -405,11 +421,7 @@ impl Workspace {
     }
 
     pub(crate) fn is_source_path(&self, package: &str, path: &str) -> bool {
-        self.sources.get().is_none_or(|sources| {
-            sources
-                .get(package)
-                .is_some_and(|sources| sources.matches(path))
-        })
+        matches_asset_sources(self.sources.get().map(Arc::as_ref), package, path)
     }
 
     pub fn read_asset(&self, asset: &str) -> io::Result<Vec<u8>> {

@@ -123,7 +123,7 @@ impl std::error::Error for FrontendError {
         Some(&self.source)
     }
 }
-fn contextual_error(context: &'static str, source: io::Error) -> io::Error {
+pub(crate) fn contextual_error(context: &'static str, source: io::Error) -> io::Error {
     io::Error::new(source.kind(), FrontendError { context, source })
 }
 

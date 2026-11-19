@@ -4,11 +4,13 @@ use self::graph::ResidentGraph;
 use crate::build;
 use crate::builder::{ConfiguredBuilder, RustBuildConfig};
 use crate::cli::Options;
-use crate::frontend::{NativeFrontend, prepare_native_frontend, unsupported, worker_executable};
+use crate::frontend::{
+    NativeFrontend, contextual_error, prepare_native_frontend, unsupported, worker_executable,
+};
 use crate::graph::GraphState;
 use crate::pattern::match_capture_pattern;
 use crate::worker::WorkerPool;
-use crate::workspace::Workspace;
+use crate::workspace::{AssetSources, Workspace, matches_asset_sources};
 use notify::{
     Event, EventKind, RecursiveMode, Watcher,
     event::{ModifyKind, RenameMode},
@@ -17,7 +19,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
@@ -26,21 +29,42 @@ pub(crate) struct WatchChanges {
     pub(crate) added_paths: BTreeSet<PathBuf>,
 }
 
-#[derive(Default)]
 struct WatchEvents {
-    watcher: Option<notify::RecommendedWatcher>,
-    receiver: Option<Receiver<notify::Result<Event>>>,
+    _watcher: notify::RecommendedWatcher,
+    sender: Sender<notify::Result<Event>>,
+    receiver: Receiver<notify::Result<Event>>,
+    paths: WatchPaths,
 }
 
 impl WatchEvents {
-    // Subscribe once after native-plan validation. The channel is left unread
-    // until the initial build completes so in-build edits queue for the loop.
-    fn start(&mut self, workspace: &Workspace) -> io::Result<()> {
-        if self.watcher.is_some() {
-            return Ok(());
-        }
-
+    fn new(workspace: &Workspace) -> io::Result<Self> {
         let (sender, receiver) = mpsc::channel();
+        Ok(Self {
+            _watcher: Self::subscribe(workspace, sender.clone())?,
+            sender,
+            receiver,
+            paths: WatchPaths::new(workspace),
+        })
+    }
+
+    fn refresh_paths(&mut self, workspace: &Workspace) -> io::Result<bool> {
+        if self.paths.matches_resolution(workspace) {
+            return Ok(false);
+        }
+        // Activate the new subscriptions before dropping the old ones.
+        // Both use the same queue, including events received during builds.
+        self._watcher = Self::subscribe(workspace, self.sender.clone())
+            .map_err(|error| contextual_error("cannot refresh watch subscriptions", error))?;
+        let mut paths = WatchPaths::new(workspace);
+        paths.sources = self.paths.sources.clone();
+        self.paths = paths;
+        Ok(true)
+    }
+
+    fn subscribe(
+        workspace: &Workspace,
+        sender: Sender<notify::Result<Event>>,
+    ) -> io::Result<notify::RecommendedWatcher> {
         let mut watcher = notify::recommended_watcher(move |result| {
             let _ = sender.send(result);
         })
@@ -62,16 +86,59 @@ impl WatchEvents {
                 .watch(&pub_tool_dir, RecursiveMode::NonRecursive)
                 .map_err(io::Error::other)?;
         }
-        self.watcher = Some(watcher);
-        self.receiver = Some(receiver);
-        Ok(())
+        Ok(watcher)
+    }
+}
+
+// Keep only event classification data between builds, without the build caches.
+struct WatchPaths {
+    root: PathBuf,
+    root_package: String,
+    pub_root: PathBuf,
+    graph_path: PathBuf,
+    packages: Vec<(String, PathBuf)>,
+    sources: Option<Arc<AssetSources>>,
+}
+
+impl WatchPaths {
+    fn new(workspace: &Workspace) -> Self {
+        Self {
+            root: workspace.root.clone(),
+            root_package: workspace.root_package.clone(),
+            pub_root: workspace.pub_resolution_root().to_path_buf(),
+            graph_path: build::graph_path(workspace),
+            packages: workspace
+                .packages()
+                .map(|(name, path)| (name.to_owned(), path.to_path_buf()))
+                .collect(),
+            sources: workspace.asset_sources().cloned(),
+        }
+    }
+
+    fn matches_resolution(&self, workspace: &Workspace) -> bool {
+        self.root == workspace.root
+            && self.root_package == workspace.root_package
+            && self.pub_root == workspace.pub_resolution_root()
+            && workspace.packages().eq(self
+                .packages
+                .iter()
+                .map(|(name, path)| (name.as_str(), path.as_path())))
+    }
+
+    fn package_for_path(&self, path: &Path) -> Option<(&str, PathBuf)> {
+        self.packages
+            .iter()
+            .map(|(package, root)| (package.as_str(), normalized_watch_path(root)))
+            .filter(|(_, root)| path.starts_with(root))
+            .max_by_key(|(_, root)| root.components().count())
     }
 }
 
 #[derive(Default)]
 struct WatchState {
     cached_configuration: Option<RustBuildConfig>,
-    events: WatchEvents,
+    configuration_stale: bool,
+    events: Option<WatchEvents>,
     graph: ResidentGraph,
 }
 
@@ -111,7 +178,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
     // the unnormalized spelling. Such a file edit is an ordinary source event;
     // keep the resolved plan until a recognized configuration change occurs.
     let normalized_config_path = settings.config_path()?;
-    let mut retain_configuration = stock_config_path
+    let aliased_config = stock_config_path
         .as_ref()
         .is_some_and(|raw| normalized_config_path.as_ref() != Some(raw));
     let mut source_post_process_outputs = BTreeSet::new();
@@ -133,51 +200,42 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         }
     };
 
-    let workspace = Workspace::load(options.root.clone())?;
     // Preserve watch recovery when the first native attempt fails before plan
     // selection reaches the early subscription point.
-    watch_state.events.start(&workspace)?;
-    if let Some(path) = &normalized_config_path {
-        let file = workspace.root.join(path);
-        // Stock attributes an event to the deepest package. A selected root
-        // AssetId physically inside a dependency is not a root config event.
-        retain_configuration |= configuration_package_root(&workspace, &file)
-            .is_some_and(|root| root != workspace.root);
+    if watch_state.events.is_none() {
+        let workspace = Workspace::load(options.root.clone())?;
+        watch_state.events = Some(WatchEvents::new(&workspace)?);
     }
+    let root = watch_state.events.as_ref().unwrap().paths.root.clone();
     if native_build_succeeded {
         source_post_process_outputs =
-            load_source_post_process_outputs(&workspace.root, watch_state.graph.committed());
+            load_source_post_process_outputs(&root, watch_state.graph.committed());
     }
-    println!(
-        "Watching {} (native filesystem events)",
-        workspace.root.display()
-    );
+    println!("Watching {} (native filesystem events)", root.display());
 
     loop {
-        if let Some(config) = &watch_state.cached_configuration {
-            workspace.configure_sources(config.asset_sources.as_ref());
-        }
+        let events = watch_state.events.as_ref().unwrap();
+        let paths = &events.paths;
+        // Stock attributes an event to the deepest package. A selected root
+        // AssetId physically inside a dependency is not a root config event.
+        let retain_configuration = aliased_config
+            || normalized_config_path.as_ref().is_some_and(|path| {
+                configuration_package_root(paths, &root.join(path))
+                    .is_some_and(|config_root| config_root != root)
+            });
         // This flag records whether any build has succeeded. Later builder
         // failures retain event classification from the committed disk graph.
         let previous_state = if native_build_succeeded {
-            Some(
-                watch_state
-                    .graph
-                    .for_events(&build::graph_path(&workspace))?,
-            )
+            Some(watch_state.graph.for_events(&paths.graph_path)?)
         } else {
             // Even an initial publication failure must roll back before waiting
             // or classifying events against a partially changed output tree.
-            crate::build::recovery::recover(&build::graph_path(&workspace))?;
+            crate::build::recovery::recover(&paths.graph_path)?;
             None
         };
         let (configuration_changed, changed_paths) = wait_for_relevant_event(
-            watch_state
-                .events
-                .receiver
-                .as_ref()
-                .ok_or_else(|| io::Error::other("native watch was not initialized"))?,
-            &workspace,
+            &events.receiver,
+            paths,
             &source_post_process_outputs,
             options.interval_ms,
             stock_config_path.as_deref(),
@@ -197,10 +255,8 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
         ) {
             Ok(()) => {
                 native_build_succeeded = true;
-                source_post_process_outputs = load_source_post_process_outputs(
-                    &workspace.root,
-                    watch_state.graph.committed(),
-                );
+                source_post_process_outputs =
+                    load_source_post_process_outputs(&root, watch_state.graph.committed());
             }
             Err(error) if crate::frontend::is_terminal_frontend_error(&error) => return Err(error),
             Err(error) => {
@@ -284,6 +340,17 @@ fn run_watch_build_inner(
         success: false,
     };
     let workspace = Workspace::load(options.root.clone())?;
+    // Subscribe to new dependency paths before reading their build configuration.
+    // Edits during preparation then remain queued for the next watch cycle.
+    if let Some(events) = &mut watch_state.events
+        && events.refresh_paths(&workspace)?
+    {
+        // Keep the previous plan for topology checks until its replacement is ready.
+        watch_state.configuration_stale = true;
+        // Byte-identical package configs can resolve relative URIs differently.
+        pool.take();
+    }
+    let reuse_configuration = reuse_configuration && !watch_state.configuration_stale;
     let loaded_graph = watch_state.graph.take_for_build(&workspace)?;
     let session_start = watch_state.cached_configuration.is_none();
     let filtered = !options.settings.build_filters.is_empty();
@@ -357,17 +424,19 @@ fn run_watch_build_inner(
         let reason = "watch configuration changed builder applications or output topology";
         return unsupported(reason);
     }
+    // Start the first subscription only after native-plan validation and
+    // before any worker or build can observe source files.
+    match &mut watch_state.events {
+        Some(events) => events.paths.sources = workspace.asset_sources().cloned(),
+        None => watch_state.events = Some(WatchEvents::new(&workspace)?),
+    }
     *pool_shape = Some(shape);
     watch_state.cached_configuration = Some(build_config.clone());
+    watch_state.configuration_stale = false;
     if *pool_signature != build_config.manifest_signature {
         pool.take();
         *pool_signature = build_config.manifest_signature.clone();
     }
-    // Subscribe only after the native plan is known to be supported, and before
-    // worker startup or the initial build can observe source files. Events are
-    // consumed by run() after the initial build so edits made during it remain
-    // queued for the next watch cycle.
-    watch_state.events.start(&workspace)?;
     if pool.is_none() {
         let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
         let worker_command = worker_executable(options, build_config)?;
@@ -411,7 +480,7 @@ fn run_watch_build_inner(
 
 fn wait_for_relevant_event(
     receiver: &Receiver<notify::Result<Event>>,
-    workspace: &Workspace,
+    workspace: &WatchPaths,
     source_post_process_outputs: &BTreeSet<String>,
     debounce_ms: u64,
     stock_config_path: Option<&str>,
@@ -504,32 +573,29 @@ pub(crate) fn normalized_watch_path(path: &Path) -> PathBuf {
     normalized
 }
 
-fn configuration_package_root(workspace: &Workspace, path: &Path) -> Option<PathBuf> {
-    let path = normalized_watch_path(path);
+fn configuration_package_root(workspace: &WatchPaths, path: &Path) -> Option<PathBuf> {
     workspace
-        .package_roots()
-        .into_iter()
-        .map(|root| normalized_watch_path(&root))
-        .filter(|root| path.starts_with(root))
-        .max_by_key(|root| root.components().count())
+        .package_for_path(&normalized_watch_path(path))
+        .map(|(_, root)| root)
 }
 
-fn is_pub_configuration_path(workspace: &Workspace, path: &Path) -> bool {
-    path.strip_prefix(workspace.pub_resolution_root())
+fn is_pub_configuration_path(workspace: &WatchPaths, path: &Path) -> bool {
+    path.strip_prefix(&workspace.pub_root)
         .is_ok_and(|relative| {
             relative == Path::new(".dart_tool/package_config.json")
                 || relative == Path::new(".dart_tool/package_graph.json")
         })
 }
 
-fn is_configuration_event(workspace: &Workspace, event: &Event, selected: Option<&str>) -> bool {
+fn is_configuration_event(workspace: &WatchPaths, event: &Event, selected: Option<&str>) -> bool {
     event.paths.iter().any(|path| {
         let path = normalized_watch_path(path);
         if is_pub_configuration_path(workspace, &path) {
             return true;
         }
-        let root = configuration_package_root(workspace, &path);
-        let Some(root) = root else { return false };
+        let Some((_, root)) = workspace.package_for_path(&path) else {
+            return false;
+        };
         let Ok(relative) = path.strip_prefix(&root) else {
             return false;
         };
@@ -644,7 +710,7 @@ fn output_pattern_matches(relative: &str, name: &str, pattern: &str) -> bool {
 }
 
 fn is_relevant_event(
-    workspace: &Workspace,
+    workspace: &WatchPaths,
     event: &Event,
     source_post_process_outputs: &BTreeSet<String>,
     selected: Option<&str>,
@@ -665,12 +731,7 @@ fn is_relevant_event(
         if is_pub_configuration_path(workspace, &path) {
             return true;
         }
-        let package = workspace
-            .packages()
-            .map(|(package, root)| (package, normalized_watch_path(root)))
-            .filter(|(_, root)| path.starts_with(root))
-            .max_by_key(|(_, root)| root.components().count());
-        let Some((package, package_root)) = package else {
+        let Some((package, package_root)) = workspace.package_for_path(&path) else {
             return false;
         };
         let is_root_package = package == workspace.root_package;
@@ -701,7 +762,7 @@ fn is_relevant_event(
             return true;
         }
         let asset = format!("{package}|{relative}");
-        if !workspace.is_source_path(package, &relative)
+        if !matches_asset_sources(workspace.sources.as_deref(), package, &relative)
             && !previous_state.is_some_and(|state| {
                 state.assets.contains_key(&asset) || state.output_locations.contains_key(&asset)
             })
@@ -823,6 +884,7 @@ mod manifest_tests {
             "dep": {"targets": [{"include": ["lib/**"], "exclude": []}], "public_assets": ["lib/**"]},
         })).unwrap());
         workspace.configure_sources(Some(&sources));
+        let workspace = WatchPaths::new(&workspace);
         let mut state = GraphState::default();
         state.assets.insert(
             "app|generated/out.final".into(),
@@ -905,6 +967,7 @@ mod manifest_tests {
         let output = root.join("lib/a.final");
         fs::write(&output, "generated").unwrap();
         let workspace = Workspace::load(root.clone()).unwrap();
+        let workspace = WatchPaths::new(&workspace);
         let event = Event::new(EventKind::Modify(ModifyKind::Any)).add_path(output.clone());
         let mut state = GraphState::default();
         state
@@ -976,6 +1039,7 @@ mod manifest_tests {
         )
         .unwrap();
         let workspace = Workspace::load(root).unwrap();
+        let workspace = WatchPaths::new(&workspace);
         let root_config = workspace.root.join("build.named.yaml");
         assert_eq!(
             configuration_package_root(&workspace, &root_config),
