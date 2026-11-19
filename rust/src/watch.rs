@@ -343,6 +343,8 @@ fn run_watch_build_inner(
         && events.refresh_paths(&workspace)?
     {
         reuse_configuration = false;
+        // Byte-identical package configs can resolve relative URIs differently.
+        pool.take();
     }
     let loaded_graph = watch_state.graph.take_for_build(&workspace)?;
     let session_start = watch_state.cached_configuration.is_none();

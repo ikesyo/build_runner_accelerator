@@ -1398,7 +1398,7 @@ fn prepare_worker_kernel(
     let temp_kernel = temporary_sibling(&kernel_path, process_id, "dill");
     let temp_depfile = temporary_sibling(&depfile_path, process_id, "d");
     let package_config = crate::runner_compatibility::package_config(root)?;
-    let config_key = digest_file(&package_config)?;
+    let config_key = kernel_package_config_key(&package_config)?;
     let output = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "kernel"])
         .arg("--no-embed-sources")
@@ -1416,7 +1416,9 @@ fn prepare_worker_kernel(
         remove_if_present(&temp_depfile);
         return Err(kernel_compile_status_error(&worker_path, output.status));
     }
-    if digest_file(&package_config)? != config_key {
+    let current_config_key = crate::runner_compatibility::package_config(root)
+        .and_then(|path| kernel_package_config_key(&path));
+    if !current_config_key.is_ok_and(|key| key == config_key) {
         remove_if_present(&temp_kernel);
         remove_if_present(&temp_depfile);
         return Err(io::Error::other(
@@ -1442,11 +1444,19 @@ fn prepare_worker_kernel(
     canonicalize(kernel_path)
 }
 
+fn kernel_package_config_key(path: &Path) -> io::Result<String> {
+    // Relative package URIs are resolved against the path passed to Dart.
+    let mut inputs = fs::read(path)?;
+    inputs.push(0);
+    inputs.extend_from_slice(path.as_os_str().as_encoded_bytes());
+    Ok(digest_bytes(&inputs))
+}
+
 fn kernel_config_is_current(root: &Path, kernel: &Path) -> bool {
     // Missing evidence invalidates this disposable cache in either mode.
     fs::read_to_string(kernel.with_extension("dill.config")).is_ok_and(|expected| {
         crate::runner_compatibility::package_config(root)
-            .and_then(|path| digest_file(&path))
+            .and_then(|path| kernel_package_config_key(&path))
             .is_ok_and(|actual| actual == expected)
     })
 }
@@ -2263,10 +2273,11 @@ mod tests {
         let config = root.join(".dart_tool/package_config.json");
         let kernel = root.join("worker.dill");
         assert!(!super::kernel_config_is_current(&root, &kernel));
-        fs::write(&config, "original configuration").unwrap();
+        let contents = r#"{"configVersion":2,"packages":[{"name":"dep","rootUri":"../dep/"}]}"#;
+        fs::write(&config, contents).unwrap();
         fs::write(
             kernel.with_extension("dill.config"),
-            super::digest_file(&config).unwrap(),
+            super::kernel_package_config_key(&config).unwrap(),
         )
         .unwrap();
         assert!(super::kernel_config_is_current(&root, &kernel));
@@ -2274,10 +2285,27 @@ mod tests {
         assert!(!super::kernel_config_is_current(&root, &kernel));
         fs::write(
             kernel.with_extension("dill.config"),
-            super::digest_file(&config).unwrap(),
+            super::kernel_package_config_key(&config).unwrap(),
         )
         .unwrap();
         fs::write(&config, "experimental configuration").unwrap();
+        assert!(!super::kernel_config_is_current(&root, &kernel));
+        fs::write(&config, contents).unwrap();
+        assert!(super::kernel_config_is_current(&root, &kernel));
+        let alternate = root.join("alternate/.dart_tool");
+        fs::create_dir_all(&alternate).unwrap();
+        fs::copy(&config, alternate.join("package_config.json")).unwrap();
+        fs::write(
+            root.join("pubspec.yaml"),
+            "name: app\nresolution: workspace\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join(".dart_tool/pub")).unwrap();
+        fs::write(
+            root.join(".dart_tool/pub/workspace_ref.json"),
+            r#"{"workspaceRoot":"../../alternate"}"#,
+        )
+        .unwrap();
         assert!(!super::kernel_config_is_current(&root, &kernel));
         fs::remove_dir_all(root).unwrap();
     }
@@ -2302,9 +2330,9 @@ mod tests {
         fs::write(&original, "original").unwrap();
         fs::write(&isolated, "isolated").unwrap();
         let stamp = kernel.with_extension("dill.config");
-        fs::write(&stamp, super::digest_file(&original).unwrap()).unwrap();
+        fs::write(&stamp, super::kernel_package_config_key(&original).unwrap()).unwrap();
         assert!(!super::kernel_config_is_current(&root, &kernel));
-        fs::write(&stamp, super::digest_file(&isolated).unwrap()).unwrap();
+        fs::write(&stamp, super::kernel_package_config_key(&isolated).unwrap()).unwrap();
         assert!(super::kernel_config_is_current(&root, &kernel));
         fs::write(original, "changed original").unwrap();
         assert!(super::kernel_config_is_current(&root, &kernel));
