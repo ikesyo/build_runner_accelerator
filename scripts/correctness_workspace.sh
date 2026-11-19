@@ -272,11 +272,22 @@ pubspec = root / 'pubspec.yaml'
 pubspec.write_text(pubspec.read_text().replace('workspace: [a, b, gen]', 'workspace: [a, b]'))
 generator = root / 'gen' / 'pubspec.yaml'
 generator.write_text(generator.read_text().replace('resolution: workspace\n', ''))
+config = root / 'gen' / 'build.yaml'
+config.write_text(config.read_text() + '    defaults:\n      options:\n        prefix: copied\n')
+builder = root / 'gen' / 'lib' / 'builder.dart'
+builder.write_text(builder.read_text().replace(
+    '=> CopyBuilder();', "=> CopyBuilder(options.config['prefix'] as String);"
+).replace(
+    'class CopyBuilder implements Builder {',
+    'class CopyBuilder implements Builder {\n  CopyBuilder(this.prefix);\n  final String prefix;',
+).replace('copied: $value', '$prefix: $value'))
 PY
-replacement="$member_native/replacement"
+# Keep the new dependency outside every directory watched at startup.
+replacement="$temporary/replacement"
 mkdir -p "$replacement/lib"
-cp "$member_native/gen/pubspec.yaml" "$member_native/gen/build.yaml" "$replacement/"
-sed 's/copied: /replacement: /' "$member_native/gen/lib/builder.dart" >"$replacement/lib/builder.dart"
+cp "$member_native/gen/pubspec.yaml" "$replacement/"
+cp "$member_native/gen/lib/builder.dart" "$replacement/lib/"
+sed 's/prefix: copied/prefix: replacement/' "$member_native/gen/build.yaml" >"$replacement/build.yaml"
 worker_pub_get "$member_native" "${pub_get_args[@]}"
 shared_config="$member_native/.dart_tool/package_config.json"
 cp "$shared_config" "$temporary/before-watch-config.json"
@@ -303,12 +314,16 @@ grep -Fq 'copied: ' "$member_native/a/lib/input.gen" || fail 'initial watch used
 cat >"$member_native/pubspec_overrides.yaml" <<'YAML'
 dependency_overrides:
   ws_gen:
-    path: replacement
+    path: ../../../replacement
 YAML
 worker_pub_get "$member_native" "${pub_get_args[@]}"
 if cmp -s "$temporary/before-watch-config.json" "$shared_config"; then
   fail 'Pub did not update the shared package config'
 fi
 wait_for_watch_text "$member_native/a/lib/input.gen" 'replacement: '
+sed 's/prefix: replacement/prefix: updated/' "$replacement/build.yaml" >"$temporary/updated-build.yaml"
+mv "$temporary/updated-build.yaml" "$replacement/build.yaml"
+wait_for_watch_text "$member_native/a/lib/input.gen" 'updated: '
+wait_for_watch_text "$member_native/a/lib/second.gen" 'updated: '
 diff -r "$repo_root/fixtures/workspace_option_app/b/lib" "$member_native/b/lib" || fail 'member watch changed sibling output'
 printf 'workspace: PASS stock/native=yes member-only=yes member-watch=yes aot=yes jobs=2 noop=yes edit=yes delete=yes rename=yes failure-recovery=yes state-transition=yes topology-rejection=yes\n'
