@@ -12,10 +12,12 @@ workspace="$temporary/workspace"
 stock="$workspace/fixtures/stock"
 native="$workspace/fixtures/native"
 holder_pid=
+watch_pid=
 pub_get_args=()
 if [[ "${PUB_GET_OFFLINE:-0}" == 1 ]]; then pub_get_args+=(--offline); fi
 cleanup() {
   local status=$?
+  worker_stop_process_group "$watch_pid"
   if [[ -n "$holder_pid" ]]; then
     kill "$holder_pid" 2>/dev/null || true
     wait "$holder_pid" 2>/dev/null || true
@@ -239,4 +241,74 @@ if VERIFY_COMMAND_LOG="$temporary/previous-workspace.log" VERIFY_WORKSPACE="$pre
 fi
 cmp "$temporary/previous.graph" "$previous/.dart_tool/build_runner_accelerator/graph-v3.bin" || fail 'scope rejection changed individual graph'
 [[ ! -e "$previous/.dart_tool/build_runner_accelerator/workspace-mode" ]] || fail 'scope rejection created workspace marker'
-printf 'workspace: PASS stock/native=yes aot=yes jobs=2 noop=yes edit=yes delete=yes rename=yes failure-recovery=yes state-transition=yes topology-rejection=yes\n'
+
+member_stock="$workspace/fixtures/member-stock"
+member_native="$workspace/fixtures/member-native"
+for fixture in "$member_stock" "$member_native"; do
+  cp -R "$repo_root/fixtures/workspace_option_app" "$fixture"
+  rm -rf "$fixture/.dart_tool" "$fixture/a/.dart_tool" "$fixture/b/.dart_tool" "$fixture/gen/.dart_tool"
+  worker_pub_get "$fixture" "${pub_get_args[@]}"
+  [[ ! -e "$fixture/a/.dart_tool/package_config.json" ]] || fail 'Pub created a member-local package config'
+done
+verification_run_stock_build "$member_stock/a" "workspace/stock/member-only" "$temporary/stock-member-only.log" "$dart_bin" "$pub_cache" build --force-jit
+verification_run_command_in_dir "$member_native/a" "workspace/launcher/member-only" "$temporary/native-member-only.log" 300 \
+  env PUB_CACHE="$pub_cache" BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" \
+  BUILD_RUNNER_ACCELERATOR_WORKER_AOT=0 "$dart_bin" --suppress-analytics \
+  run build_runner_accelerator build --dart "$dart_bin" --force-jit --jobs 1
+[[ -f "$member_stock/a/lib/input.gen" ]] || fail 'stock member build did not generate output'
+diff -r "$member_stock/a/lib" "$member_native/a/lib" || fail 'individual member output differs'
+diff -r "$repo_root/fixtures/workspace_option_app/b/lib" "$member_native/b/lib" || fail 'individual build changed sibling output'
+[[ ! -e "$member_native/a/.dart_tool/package_config.json" ]] || fail 'individual build wrote a member-local package config'
+[[ -f "$member_native/a/.dart_tool/build_runner_accelerator/graph-v3.bin" ]] || fail 'individual build did not write its member graph'
+[[ ! -e "$member_native/.dart_tool/build_runner_accelerator/graph-v3.bin" ]] || fail 'individual build wrote a workspace graph'
+
+# Make the builder an ordinary path dependency so Pub can redirect it.
+python3 - "$member_native" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+pubspec = root / 'pubspec.yaml'
+pubspec.write_text(pubspec.read_text().replace('workspace: [a, b, gen]', 'workspace: [a, b]'))
+generator = root / 'gen' / 'pubspec.yaml'
+generator.write_text(generator.read_text().replace('resolution: workspace\n', ''))
+PY
+replacement="$member_native/replacement"
+mkdir -p "$replacement/lib"
+cp "$member_native/gen/pubspec.yaml" "$member_native/gen/build.yaml" "$replacement/"
+sed 's/copied: /replacement: /' "$member_native/gen/lib/builder.dart" >"$replacement/lib/builder.dart"
+worker_pub_get "$member_native" "${pub_get_args[@]}"
+shared_config="$member_native/.dart_tool/package_config.json"
+cp "$shared_config" "$temporary/before-watch-config.json"
+
+watch_log="$temporary/member-watch.log"
+VERIFY_WORKSPACE="$member_native/a" worker_start_frontend_process_group "$watch_log" \
+  BUILD_RUNNER_ACCELERATOR_WORKER_AOT=0 -- \
+  watch --root "$member_native/a" --dart "$dart_bin" --force-jit --jobs 1
+watch_pid=$worker_last_pid
+
+wait_for_watch_text() {
+  local file=$1 expected=$2
+  for _ in $(seq 1 "$(verification_watch_poll_iterations 250)"); do
+    [[ -f "$file" ]] && grep -Fq -- "$expected" "$file" && return 0
+    kill -0 "$watch_pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  tail -n 80 "$watch_log" >&2
+  fail "member watch did not write '$expected' to $file"
+}
+
+wait_for_watch_text "$watch_log" '(native filesystem events)'
+grep -Fq 'copied: ' "$member_native/a/lib/input.gen" || fail 'initial watch used the wrong builder'
+cat >"$member_native/pubspec_overrides.yaml" <<'YAML'
+dependency_overrides:
+  ws_gen:
+    path: replacement
+YAML
+worker_pub_get "$member_native" "${pub_get_args[@]}"
+if cmp -s "$temporary/before-watch-config.json" "$shared_config"; then
+  fail 'Pub did not update the shared package config'
+fi
+wait_for_watch_text "$member_native/a/lib/input.gen" 'replacement: '
+diff -r "$repo_root/fixtures/workspace_option_app/b/lib" "$member_native/b/lib" || fail 'member watch changed sibling output'
+printf 'workspace: PASS stock/native=yes member-only=yes member-watch=yes aot=yes jobs=2 noop=yes edit=yes delete=yes rename=yes failure-recovery=yes state-transition=yes topology-rejection=yes\n'

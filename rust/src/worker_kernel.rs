@@ -1397,7 +1397,7 @@ fn prepare_worker_kernel(
     let process_id = std::process::id();
     let temp_kernel = temporary_sibling(&kernel_path, process_id, "dill");
     let temp_depfile = temporary_sibling(&depfile_path, process_id, "d");
-    let package_config = crate::runner_compatibility::package_config(root);
+    let package_config = crate::runner_compatibility::package_config(root)?;
     let config_key = digest_file(&package_config)?;
     let output = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "kernel"])
@@ -1445,7 +1445,8 @@ fn prepare_worker_kernel(
 fn kernel_config_is_current(root: &Path, kernel: &Path) -> bool {
     // Missing evidence invalidates this disposable cache in either mode.
     fs::read_to_string(kernel.with_extension("dill.config")).is_ok_and(|expected| {
-        digest_file(&crate::runner_compatibility::package_config(root))
+        crate::runner_compatibility::package_config(root)
+            .and_then(|path| digest_file(&path))
             .is_ok_and(|actual| actual == expected)
     })
 }
@@ -1726,7 +1727,9 @@ fn prewarm_jobs() -> usize {
 fn prewarm_script_path(root: &Path) -> Option<PathBuf> {
     // The compiler view may copy only lib/. Locate the orchestration helper
     // in the original package, then compile it with the effective config.
-    let config_path = root.join(".dart_tool/package_config.json");
+    let config_path = crate::workspace_discovery::pub_resolution_root(root)
+        .ok()?
+        .join(".dart_tool/package_config.json");
     let text = fs::read_to_string(&config_path).ok()?;
     let config: serde_json::Value = serde_json::from_str(&text).ok()?;
     let package = config.get("packages")?.as_array()?.iter().find(|package| {
@@ -1826,7 +1829,10 @@ fn spawn_analysis_prewarm_options(
         ANALYSIS_PREWARM_ACTIVE.store(false, Ordering::Release);
         return None;
     }
-    let package_config = crate::runner_compatibility::package_config(root);
+    let Ok(package_config) = crate::runner_compatibility::package_config(root) else {
+        ANALYSIS_PREWARM_ACTIVE.store(false, Ordering::Release);
+        return None;
+    };
     let dirs = dirs.map(str::to_owned).or_else(|| {
         env::var("BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM_DIRS")
             .ok()
@@ -1951,7 +1957,7 @@ mod tests {
         )
         .unwrap();
         assert_ne!(
-            crate::runner_compatibility::package_config(&root),
+            crate::runner_compatibility::package_config(&root).unwrap(),
             original_path
         );
         let snapshot = super::CompilerConfigSnapshot::create(&workspace).unwrap();

@@ -835,12 +835,12 @@ Future<PackageConfig> _loadPackageConfig() async {
   // against the initialize request before any build action is accepted.
   final hasCompatibilityConfig = hasCompilerPackageConfig('.');
   var packageConfigUri = hasCompatibilityConfig
-      ? File('.dart_tool/package_config.json').absolute.uri
+      ? pubPackageConfigFile('.').uri
       : await Isolate.packageConfig;
   if (packageConfigUri == null || hasCompatibilityConfig) {
     // Compile with the backport, but keep original package roots for builder
     // reads, resolver assets, and SDK summary identity.
-    packageConfigUri ??= File('.dart_tool/package_config.json').absolute.uri;
+    packageConfigUri ??= pubPackageConfigFile('.').uri;
     // build_runner's SDK summary generator uses its process state rather than
     // the PackageConfig passed to our resolver. Seed it through the same API
     // that build_runner uses when starting an AOT build isolate.

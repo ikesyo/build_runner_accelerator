@@ -116,9 +116,7 @@ Future<void> main(List<String> args) async {
   if (hasCompilerPackageConfig('.')) {
     buildProcessState.deserializeAndSet(
       jsonEncode({
-        'packageConfigUri': File(
-          '.dart_tool/package_config.json',
-        ).absolute.uri.toString(),
+        'packageConfigUri': pubPackageConfigFile('.').uri.toString(),
       }),
     );
   }
