@@ -94,6 +94,23 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
   /// build boundary (see [_CachingAssetDepsLoader.clearLearned]).
   void clearLearnedApiFingerprints() => _CachingAssetDepsLoader.clearLearned();
 
+  /// Enables or disables API fingerprint learning for subsequent
+  /// dep walks in this process (see
+  /// [_CachingAssetDepsLoader.fingerprintLearningEnabled]).
+  void setFingerprintLearningEnabled(bool enabled) =>
+      _CachingAssetDepsLoader.fingerprintLearningEnabled = enabled;
+
+  /// Whether API fingerprint learning is currently enabled in this
+  /// process (see [setFingerprintLearningEnabled]).
+  bool get fingerprintLearningEnabled =>
+      _CachingAssetDepsLoader.fingerprintLearningEnabled;
+
+  /// Invalidates all fingerprint state for [ids], whose bytes a
+  /// resolver reset updated or deleted (see
+  /// [_CachingAssetDepsLoader.invalidateFingerprints]).
+  void invalidatePendingFingerprints(Iterable<AssetId> ids) =>
+      _CachingAssetDepsLoader.invalidateFingerprints(ids);
+
   /// Completes dep loads queued for [phase] or earlier.
   ///
   /// An expired `PhasedValue.unavailable` entry is queued in the loader's
@@ -102,6 +119,9 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
   /// queue while no action owns the reader keeps those bookkeeping reload
   /// reads out of any action's observed reads; the completed deps still
   /// reach the dep graph exported for dependency-based invalidation.
+  /// Fingerprint learning is suspended for the drain: these are
+  /// bookkeeping loads owned by no action, so they must not learn
+  /// under whatever action's opt-in happens to be active.
   Future<void> drainPendingDepLoads({
     required BuilderFilesystem builderFilesystem,
     required int phase,
@@ -122,7 +142,13 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
       phase,
       filesystem,
     );
-    await _workerGraphLoader.libraryCycleGraphOf(loader, id);
+    final wasEnabled = _CachingAssetDepsLoader.fingerprintLearningEnabled;
+    _CachingAssetDepsLoader.fingerprintLearningEnabled = false;
+    try {
+      await _workerGraphLoader.libraryCycleGraphOf(loader, id);
+    } finally {
+      _CachingAssetDepsLoader.fingerprintLearningEnabled = wasEnabled;
+    }
   }
 
   @override
@@ -244,6 +270,33 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   static final Map<String, String> _learnedContents = <String, String>{};
   static final Map<String, String> _learnedDigests = <String, String>{};
 
+  /// Forgets what this process learned about [ids], whose bytes a
+  /// resolver reset updated or deleted: the learning memos and the
+  /// learned value itself are cleared, so the stale fingerprint is
+  /// neither served from the memo nor re-reported with the next
+  /// result. A later walk that loads the unit relearns its
+  /// fingerprint from the new bytes. The frontend drops the
+  /// recorded fingerprints for the same assets before dispatching
+  /// post-reset actions.
+  static void invalidateFingerprints(Iterable<AssetId> ids) {
+    for (final id in ids) {
+      final key = id.toString();
+      _learnedContents.remove(key);
+      _learnedDigests.remove(key);
+      learnedApiFingerprints.remove(key);
+    }
+  }
+
+  /// Whether dep walks in this process record API fingerprints.
+  /// Learning is off unless the action being executed opted in to
+  /// the API cutoff (ADR 0056): the per-unit hash and store lookup
+  /// otherwise tax every build for an opt-in feature, and on large
+  /// closures that cost is the walk's dominant term. Set from the
+  /// build request at each action's start; actions on one worker
+  /// run sequentially, so the flag always matches the action whose
+  /// walk is running.
+  static bool fingerprintLearningEnabled = false;
+
   /// Clears [learnedApiFingerprints] and the learning memos. Called
   /// at each build start: only the new build's own observations may
   /// be reported, and the memos must not outlive that boundary.
@@ -261,11 +314,12 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   /// the worker clears that map at each build start, so a cleared
   /// entry is relearned (and re-reported) once per build, never once
   /// per walk visit.
-  static void _learnApiFingerprint(
+  void _learnApiFingerprint(
     AssetId id,
     String content, [
     ParseStringResult? parsed,
   ]) {
+    if (!fingerprintLearningEnabled) return;
     final cache = _fingerprintCache;
     if (cache == null) return;
     final key = id.toString();

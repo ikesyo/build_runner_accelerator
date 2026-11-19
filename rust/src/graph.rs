@@ -62,6 +62,10 @@ pub struct GraphState {
     /// walks (ADR 0056). Absence means no evidence: later stages treat
     /// such units as content-keyed.
     pub asset_fingerprints: BTreeMap<String, String>,
+    /// Assets whose fingerprint the current build reported, used by
+    /// [`GraphState::update_assets`] to tell fresh evidence apart from
+    /// records the previous build left. Runtime-only: never saved.
+    pub api_fingerprint_reports: BTreeSet<String>,
     /// Actual output location at the successful commit (true means cache).
     pub output_locations: BTreeMap<String, bool>,
     /// Stock InputTracker input order, distinct from broader observed reads.
@@ -224,10 +228,21 @@ impl GraphState {
     /// reported fingerprint replaces the recorded one; a reported
     /// unavailable marker removes the entry, so evidence recorded for
     /// an earlier content of the asset is never kept.
+    /// Drops the recorded fingerprints of [assets], whose bytes a
+    /// resolver reset is changing. Called by the frontend before
+    /// post-reset actions dispatch, so a removal can never merge
+    /// after a fingerprint relearned from the new bytes.
+    pub fn drop_api_fingerprints(&mut self, assets: &BTreeSet<String>) {
+        for asset in assets {
+            self.asset_fingerprints.remove(asset);
+        }
+    }
+
     pub fn merge_api_fingerprints(&mut self, reported: BTreeMap<String, Option<String>>) {
         for (asset, fingerprint) in reported {
             match fingerprint {
                 Some(fingerprint) => {
+                    self.api_fingerprint_reports.insert(asset.clone());
                     self.asset_fingerprints.insert(asset, fingerprint);
                 }
                 None => {
@@ -365,7 +380,45 @@ impl GraphState {
     }
 
     pub fn update_assets(&mut self, snapshot: Snapshot) {
+        // A recorded fingerprint describes the bytes it was learned
+        // from. An asset whose snapshot entry changed or vanished
+        // since the previous build drops its fingerprint here, at
+        // the build boundary, so a build that never relearns it (for
+        // example because only opted-out actions resolved it) cannot
+        // leave evidence for superseded bytes behind. Fingerprints
+        // reported during this build are fresh evidence and survive
+        // even when their asset changed.
+        if !self.asset_fingerprints.is_empty() {
+            let reported = &self.api_fingerprint_reports;
+            self.asset_fingerprints.retain(|asset, _| {
+                (reported.contains(asset) && snapshot.get(asset).is_some_and(|entry| entry.exists))
+                    || match (self.assets.get(asset), snapshot.get(asset)) {
+                        (Some(old), Some(new)) => {
+                            old.exists == new.exists && old.digest == new.digest
+                        }
+                        _ => false,
+                    }
+            });
+        }
+        self.api_fingerprint_reports.clear();
         self.assets = snapshot;
+    }
+
+    /// Drops the fingerprints reported this build for assets whose
+    /// bytes the build's transaction changed after a walk could have
+    /// fingerprinted them (an output written or deleted later in the
+    /// build, a source edit published at commit). A report cannot say
+    /// which in-build version of the bytes it describes, and the
+    /// previous-vs-final comparison in [`GraphState::update_assets`]
+    /// cannot detect every stale value (a transaction that restores
+    /// the previous bytes leaves the two snapshots equal), so the
+    /// values are removed outright rather than only losing their
+    /// fresh-evidence exemption.
+    pub fn supersede_api_fingerprint_reports(&mut self, assets: &BTreeSet<String>) {
+        for asset in assets {
+            self.api_fingerprint_reports.remove(asset);
+            self.asset_fingerprints.remove(asset);
+        }
     }
 
     /// Whether this graph's schema and builder configuration match the plan.
@@ -768,6 +821,7 @@ impl<'a> Decoder<'a> {
             stock_input_order,
             stock_glob_members,
             watch_generated_sources,
+            api_fingerprint_reports: BTreeSet::new(),
         })
     }
 
@@ -952,6 +1006,7 @@ mod tests {
             schema_version: super::GRAPH_SCHEMA_VERSION,
             config_digest: String::new(),
             was_filtered: false,
+            api_fingerprint_reports: BTreeSet::new(),
             assets,
             actions: BTreeMap::new(),
             resolver_dep_graph: BTreeMap::new(),
@@ -1088,6 +1143,7 @@ mod tests {
             schema_version: super::GRAPH_SCHEMA_VERSION,
             config_digest: "config".to_owned(),
             was_filtered: true,
+            api_fingerprint_reports: BTreeSet::new(),
             retained_output_state: true,
             watch_generated_sources: BTreeSet::from(["app|lib/omitted.mid".to_owned()]),
             stock_glob_members: BTreeMap::from([(
@@ -1189,6 +1245,106 @@ mod tests {
             BTreeMap::from([
                 ("app|lib/a.dart".to_owned(), "new".to_owned()),
                 ("app|lib/c.dart".to_owned(), "added".to_owned()),
+            ])
+        );
+    }
+
+    #[test]
+    fn update_assets_drops_fingerprints_of_changed_and_removed_assets() {
+        let entry = |digest: &str| crate::snapshot::AssetSnapshot {
+            exists: true,
+            digest: digest.to_owned(),
+            size: 1,
+        };
+        let mut state = GraphState {
+            assets: BTreeMap::from([
+                ("app|lib/a.dart".to_owned(), entry("aaa")),
+                ("app|lib/b.dart".to_owned(), entry("bbb")),
+                ("app|lib/c.dart".to_owned(), entry("ccc")),
+            ]),
+            asset_fingerprints: BTreeMap::from([
+                ("app|lib/a.dart".to_owned(), "fa".to_owned()),
+                ("app|lib/b.dart".to_owned(), "fb".to_owned()),
+                ("app|lib/c.dart".to_owned(), "fc".to_owned()),
+            ]),
+            ..GraphState::default()
+        };
+        state.update_assets(BTreeMap::from([
+            ("app|lib/a.dart".to_owned(), entry("aaa")),
+            ("app|lib/b.dart".to_owned(), entry("changed")),
+        ]));
+        assert_eq!(
+            state.asset_fingerprints,
+            BTreeMap::from([("app|lib/a.dart".to_owned(), "fa".to_owned())])
+        );
+    }
+
+    #[test]
+    fn superseded_or_deleted_reports_are_dropped() {
+        let entry = |digest: &str| crate::snapshot::AssetSnapshot {
+            exists: true,
+            digest: digest.to_owned(),
+            size: 1,
+        };
+        let mut state = GraphState {
+            assets: BTreeMap::from([
+                ("app|lib/a.dart".to_owned(), entry("aaa")),
+                ("app|lib/gone.dart".to_owned(), entry("ggg")),
+                ("app|lib/restored.dart".to_owned(), entry("rrr")),
+            ]),
+            ..GraphState::default()
+        };
+        state.merge_api_fingerprints(BTreeMap::from([
+            ("app|lib/a.dart".to_owned(), Some("fresh-a".to_owned())),
+            ("app|lib/gone.dart".to_owned(), Some("fresh-g".to_owned())),
+            (
+                "app|lib/restored.dart".to_owned(),
+                Some("intermediate".to_owned()),
+            ),
+        ]));
+        // The transaction rewrote a.dart after the walk fingerprinted
+        // it and restored restored.dart to its previous bytes: neither
+        // report is evidence for the committed bytes, and the
+        // previous-vs-final comparison cannot tell for restored.dart.
+        // gone.dart is absent from the final snapshot.
+        state.supersede_api_fingerprint_reports(&BTreeSet::from([
+            "app|lib/a.dart".to_owned(),
+            "app|lib/restored.dart".to_owned(),
+        ]));
+        state.update_assets(BTreeMap::from([
+            ("app|lib/a.dart".to_owned(), entry("changed")),
+            ("app|lib/restored.dart".to_owned(), entry("rrr")),
+        ]));
+        assert!(state.asset_fingerprints.is_empty());
+    }
+
+    #[test]
+    fn update_assets_keeps_fingerprints_reported_by_the_current_build() {
+        let entry = |digest: &str| crate::snapshot::AssetSnapshot {
+            exists: true,
+            digest: digest.to_owned(),
+            size: 1,
+        };
+        let mut state = GraphState {
+            assets: BTreeMap::from([("app|lib/a.dart".to_owned(), entry("aaa"))]),
+            asset_fingerprints: BTreeMap::from([("app|lib/a.dart".to_owned(), "stale".to_owned())]),
+            ..GraphState::default()
+        };
+        // The build relearns the edited asset and a brand-new one;
+        // both reports are fresh evidence for the new snapshot.
+        state.merge_api_fingerprints(BTreeMap::from([
+            ("app|lib/a.dart".to_owned(), Some("fresh".to_owned())),
+            ("app|lib/new.dart".to_owned(), Some("new".to_owned())),
+        ]));
+        state.update_assets(BTreeMap::from([
+            ("app|lib/a.dart".to_owned(), entry("changed")),
+            ("app|lib/new.dart".to_owned(), entry("nnn")),
+        ]));
+        assert_eq!(
+            state.asset_fingerprints,
+            BTreeMap::from([
+                ("app|lib/a.dart".to_owned(), "fresh".to_owned()),
+                ("app|lib/new.dart".to_owned(), "new".to_owned()),
             ])
         );
     }
