@@ -276,6 +276,92 @@ void main() {
     });
   }
 
+  test(
+    'runAsResolver attributes reads across awaits to the resolver set',
+    () async {
+      final id = AssetId('app', 'lib/api.dart');
+      final io = RemoteAssetReaderWriter(
+        readCache: AssetReadCache({id: utf8.encode('x')}),
+        readableCache: {},
+      );
+      await io.runAsResolver(() async {
+        // The resolver's readability probe records its content preload
+        // only after an await; the scope must span the whole call.
+        await Future<void>.delayed(Duration.zero);
+        await io.readAsBytes(id);
+        await io.canRead(id);
+      });
+      expect(io.observedReads, isEmpty);
+      expect(io.resolverObservedReads, {id});
+      // A later direct read of the same asset lands in both sets, so
+      // result assembly keeps it a direct read.
+      await io.readAsBytes(id);
+      expect(io.observedReads, {id});
+      expect(io.resolverObservedReads, {id});
+    },
+  );
+
+  test('a direct read concurrent with a resolver call stays direct', () async {
+    final resolverId = AssetId('app', 'lib/resolved.dart');
+    final directId = AssetId('app', 'lib/direct.dart');
+    final io = RemoteAssetReaderWriter(
+      readCache: AssetReadCache({
+        resolverId: utf8.encode('r'),
+        directId: utf8.encode('d'),
+      }),
+      readableCache: {},
+    );
+    final gate = Completer<void>();
+    final resolverRead = io.runAsResolver(() async {
+      await gate.future;
+      await io.readAsBytes(resolverId);
+    });
+    // While the resolver call is still in flight, a direct read of
+    // another asset must keep its own attribution.
+    await io.readAsBytes(directId);
+    gate.complete();
+    await resolverRead;
+    expect(io.observedReads, {directId});
+    expect(io.resolverObservedReads, {resolverId});
+  });
+
+  test('a nested action inside a resolver scope starts unattributed', () async {
+    final outerId = AssetId('app', 'lib/outer.dart');
+    final nestedId = AssetId('app', 'lib/nested.dart');
+    final io = RemoteAssetReaderWriter(
+      readCache: AssetReadCache({
+        outerId: utf8.encode('o'),
+        nestedId: utf8.encode('n'),
+      }),
+      readableCache: {},
+    );
+    io.beginAction(
+      rpc: _rpc(),
+      package: 'app',
+      primaryInput: outerId,
+      blockedAssets: {},
+    );
+    await io.runAsResolver(() async {
+      // A build triggered from inside the resolver call (an
+      // optional builder, say) runs in this call chain, but its own
+      // reads belong to the nested action, not to the resolver.
+      io.beginAction(
+        rpc: _rpc(),
+        package: 'app',
+        primaryInput: nestedId,
+        blockedAssets: {},
+      );
+      await io.readAsBytes(nestedId);
+      expect(io.observedReads, {nestedId});
+      expect(io.resolverObservedReads, isEmpty);
+      io.endAction();
+      await io.readAsBytes(outerId);
+    });
+    expect(io.observedReads, isEmpty);
+    expect(io.resolverObservedReads, {outerId});
+    io.endAction();
+  });
+
   test('nested actions restore the outer asset IO context', () async {
     final outerInput = AssetId('app', 'lib/outer.dart');
     final outerOutput = AssetId('app', 'lib/outer.txt');

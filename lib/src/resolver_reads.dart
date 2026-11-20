@@ -190,8 +190,17 @@ Future<void> collectResolverReads(
   cache._bindPackageConfig(packageConfig);
   final metrics = resolverActionMetrics;
   final pending = Queue<AssetId>();
+  // Seed from both read sets: after the ADR 0056 read split, a
+  // library loaded only by the resolver machinery is in
+  // `resolverObservedReads`, and its conditional directives still
+  // have to be scanned or their targets are never recorded.
   pending.addAll(
     io.observedReads.where(
+      (asset) => asset.extension == '.dart' && !excludeReads.contains(asset),
+    ),
+  );
+  pending.addAll(
+    io.resolverObservedReads.where(
       (asset) => asset.extension == '.dart' && !excludeReads.contains(asset),
     ),
   );
@@ -254,9 +263,10 @@ Future<void> collectResolverReads(
     final readTimer = metrics.enabled ? (Stopwatch()..start()) : null;
     try {
       // Validate the asset under this action's visibility before consulting
-      // cached parse results. The reader also records this action's observed
-      // read, and its shared byte cache avoids another RPC when available.
-      content = await io.readContent(asset);
+      // cached parse results. This collector is resolver machinery, so the
+      // validation read is recorded as a resolver read (ADR 0056); the
+      // shared byte cache avoids another RPC when available.
+      content = await io.readAsResolver(() => io.readContent(asset));
     } on AssetNotFoundException {
       // A demanded optional output can appear later in this phase. Do not
       // memoize a missing asset across actions.

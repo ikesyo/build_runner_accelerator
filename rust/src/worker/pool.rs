@@ -1,4 +1,4 @@
-use super::client::{WorkerClient, WorkerClientMetrics};
+use super::client::{ApiUnitEvidence, WorkerClient, WorkerClientMetrics};
 use super::lazy::{FilteredDemandCoordinator, LazyBuildState};
 use super::request::BuildRequest;
 use crate::plan::BuildSpec;
@@ -45,6 +45,11 @@ pub struct WorkerPool {
     allow_worker_artifact_upgrade: bool,
     max_jobs: usize,
     initialized: Option<PoolSignature>,
+    /// The signature a read-only preflight initialized the pool with
+    /// (ADR 0056 stage 4). Execution may reuse that initialization
+    /// when its own signature matches instead of resetting every
+    /// worker a second time; any real initialize clears the mark.
+    preflight_initialization: Option<PoolSignature>,
     retained_output_guard: bool,
     native_overlay: bool,
     initialized_workers: usize,
@@ -177,6 +182,7 @@ impl WorkerPool {
             allow_worker_artifact_upgrade: true,
             max_jobs,
             initialized: None,
+            preflight_initialization: None,
             retained_output_guard: false,
             native_overlay: false,
             initialized_workers: 0,
@@ -192,6 +198,62 @@ impl WorkerPool {
     }
 
     /// Resolver dependency edges reported by every worker in the pool.
+    /// ADR 0056 preflight query, answered by the first initialized
+    /// worker. A pool without an initialized, capable worker answers
+    /// with no evidence, which the caller treats as content-keyed.
+    pub fn api_fingerprint_query(
+        &mut self,
+        workspace: &Workspace,
+        entries: &[(String, String)],
+        visibility: &AssetVisibility,
+    ) -> io::Result<BTreeMap<String, ApiUnitEvidence>> {
+        if self.initialized_workers == 0 || !self.workers[0].api_fingerprints_capable {
+            return Ok(BTreeMap::new());
+        }
+        let phase_count = self
+            .initialized
+            .as_ref()
+            .map(|signature| signature.phase_count as u32)
+            .unwrap_or(0);
+        self.workers[0].api_fingerprint_query(workspace, entries, phase_count, visibility)
+    }
+
+    /// Records that the pool's current initialization was performed
+    /// for a read-only preflight (ADR 0056 stage 4), so execution can
+    /// reuse it when its signature matches.
+    pub fn mark_preflight_initialization(&mut self) {
+        self.preflight_initialization = self.initialized.clone();
+    }
+
+    /// Consumes the preflight mark, returning true exactly when the
+    /// pool is still initialized with the signature execution is
+    /// about to request and only read-only queries ran since that
+    /// initialization, so execution may skip its own initialize (and
+    /// the worker resets it performs).
+    pub fn take_preflight_initialization(
+        &mut self,
+        workspace: &Workspace,
+        package: &str,
+        config_digest: &str,
+        phase_count: usize,
+        requires_optional_builder: bool,
+        api_cutoff: &BTreeSet<String>,
+    ) -> bool {
+        let Some(marked) = self.preflight_initialization.take() else {
+            return false;
+        };
+        let signature = PoolSignature {
+            root: workspace.root.clone(),
+            package: package.to_owned(),
+            config_digest: config_digest.to_owned(),
+            phase_count,
+            requires_optional_builder,
+            api_cutoff: api_cutoff.to_owned(),
+            retained_output_guard: self.retained_output_guard,
+        };
+        marked == signature && self.initialized.as_ref() == Some(&signature)
+    }
+
     pub fn take_dep_graph(&mut self) -> BTreeMap<String, Vec<String>> {
         let mut dep_graph = BTreeMap::new();
         for worker in &mut self.workers {
@@ -202,10 +264,15 @@ impl WorkerPool {
 
     /// Unit API fingerprints reported by every worker in the pool
     /// (ADR 0056); a `None` value marks an unavailable fingerprint.
-    pub fn take_api_fingerprints(&mut self) -> BTreeMap<String, Option<String>> {
+    pub fn take_api_fingerprints(
+        &mut self,
+    ) -> BTreeMap<String, Option<crate::protocol::ApiFingerprintRecord>> {
         let mut api_fingerprints = BTreeMap::new();
         for worker in &mut self.workers {
-            api_fingerprints.append(&mut worker.api_fingerprints);
+            crate::protocol::merge_fingerprint_reports(
+                &mut api_fingerprints,
+                std::mem::take(&mut worker.api_fingerprints),
+            );
         }
         api_fingerprints
     }
@@ -249,6 +316,7 @@ impl WorkerPool {
         requires_optional_builder: bool,
         api_cutoff: &BTreeSet<String>,
     ) -> io::Result<()> {
+        self.preflight_initialization = None;
         let root = &workspace.root;
         // Deferred filtered-watch pools materialize only when a build actually
         // reaches worker initialization. Ordinary callers retain eager start.

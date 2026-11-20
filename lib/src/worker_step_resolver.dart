@@ -5,6 +5,7 @@ import 'package:analyzer/dart/element/element.dart';
 import 'package:build/build.dart';
 
 import 'analysis_startup_gate.dart';
+import 'remote_build_step.dart';
 import 'resolver_metrics.dart';
 
 /// Gates linking calls and optionally times resolver entry points.
@@ -19,11 +20,30 @@ class WorkerStepResolver implements ReleasableResolver {
     this.startupGate,
     required this.timingEnabled,
     required this.primaryInput,
+    this.readerWriter,
   });
 
   final ReleasableResolver _delegate;
   final AnalysisStartupGate? startupGate;
   final bool timingEnabled;
+
+  /// The action's reader/writer, used to attribute the delegate's
+  /// internal readability probes to the resolver channel (ADR 0056):
+  /// `libraryFor`, `isLibrary` and `compilationUnitFor` first call
+  /// `canRead` on the build step, which preloads the target through
+  /// the shared content path, and without scoping that preload lands
+  /// in the action's direct reads even though the builder never read
+  /// the source. Null when the step's filesystem is not the remote
+  /// one (probes then stay direct, the safe side).
+  final RemoteAssetReaderWriter? readerWriter;
+
+  /// Runs a delegate resolver call with its reads attributed to the
+  /// resolver channel; see [readerWriter].
+  Future<T> _scoped<T>(Future<T> Function() call) {
+    final scope = readerWriter;
+    if (scope == null) return call();
+    return scope.runAsResolver(call);
+  }
 
   /// The action's primary input asset.
   final AssetId primaryInput;
@@ -134,7 +154,7 @@ class WorkerStepResolver implements ReleasableResolver {
 
   @override
   Future<bool> isLibrary(AssetId assetId) =>
-      _time('isLibrary', () => _delegate.isLibrary(assetId));
+      _time('isLibrary', () => _scoped(() => _delegate.isLibrary(assetId)));
 
   @override
   Future<AstNode?> astNodeFor(Fragment fragment, {bool resolve = false}) async {
@@ -171,15 +191,19 @@ class WorkerStepResolver implements ReleasableResolver {
   }
 
   /// The asset of the compilation unit holding [fragment], when that
-  /// unit's source is a package URI; otherwise null. A declaration in
-  /// a part file lives in its own unit, and the library fallback in
-  /// [_recordFragmentLibrary] names the defining unit instead, which
-  /// would miss the part file entirely (or record nothing at all when
-  /// the defining unit is the primary input).
+  /// unit's source is a package or asset URI; otherwise null. A
+  /// declaration in a part file lives in its own unit, and the
+  /// library fallback in [_recordFragmentLibrary] names the defining
+  /// unit instead, which would miss the part file entirely (or
+  /// record nothing at all when the defining unit is the primary
+  /// input). Units outside a package's `lib/` (a primary input
+  /// under `test/`, say) carry `asset:` URIs rather than `package:`
+  /// ones, and their parts must resolve just the same.
   AssetId? _unitAsset(Fragment fragment) {
     try {
       final uri = fragment.libraryFragment?.source.uri;
-      if (uri == null || uri.scheme != 'package') return null;
+      if (uri == null) return null;
+      if (uri.scheme != 'package' && uri.scheme != 'asset') return null;
       return AssetId.resolve(uri);
     } on Object {
       return null;
@@ -194,9 +218,11 @@ class WorkerStepResolver implements ReleasableResolver {
     if (assetId != primaryInput) contentReads.add(assetId);
     return _time(
       'compilationUnitFor',
-      () => _delegate.compilationUnitFor(
-        assetId,
-        allowSyntaxErrors: allowSyntaxErrors,
+      () => _scoped(
+        () => _delegate.compilationUnitFor(
+          assetId,
+          allowSyntaxErrors: allowSyntaxErrors,
+        ),
       ),
     );
   }
@@ -207,7 +233,9 @@ class WorkerStepResolver implements ReleasableResolver {
     bool allowSyntaxErrors = false,
   }) => _time(
     'libraryFor',
-    () => _delegate.libraryFor(assetId, allowSyntaxErrors: allowSyntaxErrors),
+    () => _scoped(
+      () => _delegate.libraryFor(assetId, allowSyntaxErrors: allowSyntaxErrors),
+    ),
     links: true,
   );
 

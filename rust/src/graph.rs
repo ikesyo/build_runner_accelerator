@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-pub const GRAPH_SCHEMA_VERSION: u32 = 9;
+pub const GRAPH_SCHEMA_VERSION: u32 = 10;
 
 /// Schema 9 added per-action resolver content reads and per-asset API
 /// fingerprints to the graph body. Schema 8 bodies lack both fields,
@@ -13,6 +13,11 @@ pub const GRAPH_SCHEMA_VERSION: u32 = 9;
 /// Publication recovery validates pre-upgrade journals without the
 /// schema gate and relies on this dispatch.
 const GRAPH_SCHEMA_API_FINGERPRINTS: u32 = 9;
+/// Schema 10 stores each fingerprint as a digest-bound record;
+/// schema 9 stored the bare fingerprint string, so the two layouts
+/// need distinct version gates for recovery to decode a schema 9
+/// journal with its own layout.
+const GRAPH_SCHEMA_API_FINGERPRINT_RECORDS: u32 = 10;
 const GRAPH_MAGIC: &[u8; 4] = b"BRAG";
 const GRAPH_FORMAT_VERSION: u8 = 3;
 const GRAPH_HEADER_LENGTH: usize = GRAPH_MAGIC.len() + 1 + 4;
@@ -59,13 +64,21 @@ pub struct GraphState {
     /// IO, so their dependency edges cannot be recovered from reads alone.
     pub resolver_dep_graph: BTreeMap<String, Vec<String>>,
     /// API fingerprints of source units, learned by the workers' dep
-    /// walks (ADR 0056). Absence means no evidence: later stages treat
+    /// walks (ADR 0056), each bound to the content digest that
+    /// produced it. Absence means no evidence: later stages treat
     /// such units as content-keyed.
-    pub asset_fingerprints: BTreeMap<String, String>,
+    pub asset_fingerprints: BTreeMap<String, crate::protocol::ApiFingerprintRecord>,
     /// Assets whose fingerprint the current build reported, used by
     /// [`GraphState::update_assets`] to tell fresh evidence apart from
     /// records the previous build left. Runtime-only: never saved.
     pub api_fingerprint_reports: BTreeSet<String>,
+    /// Assets whose fingerprint reports conflicted within the current
+    /// build (learned from different bytes after a mid-build edit).
+    /// Their evidence stays dropped until the next build boundary:
+    /// no later report in the same build can resurrect it, because
+    /// outputs may have been generated against either observation.
+    /// Runtime-only: never saved.
+    pub api_fingerprint_conflicts: BTreeSet<String>,
     /// Actual output location at the successful commit (true means cache).
     pub output_locations: BTreeMap<String, bool>,
     /// Stock InputTracker input order, distinct from broader observed reads.
@@ -225,7 +238,7 @@ impl GraphState {
     }
 
     /// Merges API fingerprints reported by the workers (ADR 0056). A
-    /// reported fingerprint replaces the recorded one; a reported
+    /// reported record replaces the recorded one; a reported
     /// unavailable marker removes the entry, so evidence recorded for
     /// an earlier content of the asset is never kept.
     /// Drops the recorded fingerprints of [assets], whose bytes a
@@ -238,15 +251,46 @@ impl GraphState {
         }
     }
 
-    pub fn merge_api_fingerprints(&mut self, reported: BTreeMap<String, Option<String>>) {
-        for (asset, fingerprint) in reported {
-            match fingerprint {
-                Some(fingerprint) => {
+    pub fn merge_api_fingerprints(
+        &mut self,
+        reported: BTreeMap<String, Option<crate::protocol::ApiFingerprintRecord>>,
+    ) {
+        for (asset, record) in reported {
+            if self.api_fingerprint_conflicts.contains(&asset) {
+                self.asset_fingerprints.remove(&asset);
+                continue;
+            }
+            match record {
+                Some(record) => {
+                    // A second, different report for the same asset in
+                    // one build means the build observed two versions
+                    // of its bytes (a mid-build edit): outputs may
+                    // have been generated against either fingerprint,
+                    // so the evidence is dropped for the rest of the
+                    // build rather than letting the later report win.
+                    if self.api_fingerprint_reports.contains(&asset)
+                        && self.asset_fingerprints.get(&asset) != Some(&record)
+                    {
+                        self.asset_fingerprints.remove(&asset);
+                        self.api_fingerprint_conflicts.insert(asset);
+                        continue;
+                    }
                     self.api_fingerprint_reports.insert(asset.clone());
-                    self.asset_fingerprints.insert(asset, fingerprint);
+                    self.asset_fingerprints.insert(asset, record);
                 }
                 None => {
+                    // An unavailable report after a recorded one in
+                    // the same build is a disagreement too: the two
+                    // observations cannot both describe the bytes the
+                    // build's outputs were generated against, so the
+                    // evidence stays dropped for the rest of the
+                    // build instead of being resurrected by a later
+                    // agreeing report.
+                    if self.api_fingerprint_reports.contains(&asset) {
+                        self.api_fingerprint_conflicts.insert(asset.clone());
+                    }
                     self.asset_fingerprints.remove(&asset);
+                    self.api_fingerprint_reports.insert(asset);
                 }
             }
         }
@@ -337,7 +381,13 @@ impl GraphState {
         current_output_digests: &BTreeMap<String, String>,
     ) -> bool {
         let context = self.dirty_context(current_assets);
-        self.changed_since_previous_with(action, &context, current_assets, current_output_digests)
+        self.changed_since_previous_with(
+            action,
+            &context,
+            current_assets,
+            current_output_digests,
+            false,
+        )
     }
 
     /// Compares a recorded action with the old/current snapshots and the
@@ -350,19 +400,26 @@ impl GraphState {
         context: &DirtyContext<'_>,
         current_assets: &Snapshot,
         current_output_digests: &BTreeMap<String, String>,
+        resolver_explained: bool,
     ) -> bool {
-        let mut dependencies =
-            Vec::with_capacity(1 + action.reads.len() + action.resolver_reads.len());
-        dependencies.push(action.input.as_str());
-        dependencies.extend(action.reads.iter().map(String::as_str));
-        dependencies.extend(action.resolver_reads.iter().map(String::as_str));
-        dependencies
-            .into_iter()
-            .any(|asset| context.changed.contains(asset))
+        // The primary input and direct reads are content observations:
+        // they always key the action. Resolver observations are keyed
+        // by content too, unless `resolver_explained` reports that the
+        // action's effective API signature is unchanged (ADR 0056), in
+        // which case they cannot have observed anything new.
+        let direct_changed = std::iter::once(action.input.as_str())
+            .chain(action.reads.iter().map(String::as_str))
+            .any(|asset| context.changed.contains(asset));
+        let resolver_changed = action
+            .resolver_reads
+            .iter()
+            .any(|asset| context.changed.contains(asset.as_str()))
             || action
                 .resolver_entrypoints
                 .iter()
-                .any(|entrypoint| context.tainted.contains(entrypoint.as_str()))
+                .any(|entrypoint| context.tainted.contains(entrypoint.as_str()));
+        direct_changed
+            || (resolver_changed && !resolver_explained)
             || action.glob_reads.iter().any(|glob| {
                 let key = glob_asset_key(glob);
                 let previous = self
@@ -401,6 +458,7 @@ impl GraphState {
             });
         }
         self.api_fingerprint_reports.clear();
+        self.api_fingerprint_conflicts.clear();
         self.assets = snapshot;
     }
 
@@ -417,6 +475,7 @@ impl GraphState {
     pub fn supersede_api_fingerprint_reports(&mut self, assets: &BTreeSet<String>) {
         for asset in assets {
             self.api_fingerprint_reports.remove(asset);
+            self.api_fingerprint_conflicts.remove(asset);
             self.asset_fingerprints.remove(asset);
         }
     }
@@ -439,6 +498,18 @@ fn invalid_graph(message: impl Into<String>) -> io::Error {
 pub struct DirtyContext<'a> {
     changed: std::collections::HashSet<&'a str>,
     tainted: std::collections::HashSet<&'a str>,
+}
+
+impl DirtyContext<'_> {
+    /// Assets whose snapshot entry differs (see [`GraphState::dirty_context`]).
+    pub fn changed(&self) -> &std::collections::HashSet<&str> {
+        &self.changed
+    }
+
+    /// Assets whose resolver dependency closure contains a changed asset.
+    pub fn tainted(&self) -> &std::collections::HashSet<&str> {
+        &self.tainted
+    }
 }
 
 struct Encoder {
@@ -516,6 +587,33 @@ impl Encoder {
         Ok(())
     }
 
+    fn write_api_fingerprints(
+        &mut self,
+        values: &BTreeMap<String, crate::protocol::ApiFingerprintRecord>,
+    ) -> io::Result<()> {
+        self.write_count(values.len(), "api fingerprints")?;
+        for (asset, record) in values {
+            self.write_string(asset)?;
+            self.write_string(&record.digest)?;
+            self.write_string(&record.fingerprint)?;
+        }
+        Ok(())
+    }
+
+    /// The schema 9 layout: the bare fingerprint string per asset,
+    /// with no content digest binding.
+    fn write_api_fingerprint_strings(
+        &mut self,
+        values: &BTreeMap<String, crate::protocol::ApiFingerprintRecord>,
+    ) -> io::Result<()> {
+        self.write_count(values.len(), "api fingerprints")?;
+        for (asset, record) in values {
+            self.write_string(asset)?;
+            self.write_string(&record.fingerprint)?;
+        }
+        Ok(())
+    }
+
     fn write_snapshot(&mut self, snapshot: &Snapshot) -> io::Result<()> {
         self.write_count(snapshot.len(), "asset snapshot")?;
         for (asset, entry) in snapshot {
@@ -565,8 +663,10 @@ impl Encoder {
             self.write_action(action, state.schema_version)?;
         }
         self.write_string_list_map(&state.resolver_dep_graph)?;
-        if state.schema_version >= GRAPH_SCHEMA_API_FINGERPRINTS {
-            self.write_string_map(&state.asset_fingerprints)?;
+        if state.schema_version >= GRAPH_SCHEMA_API_FINGERPRINT_RECORDS {
+            self.write_api_fingerprints(&state.asset_fingerprints)?;
+        } else if state.schema_version >= GRAPH_SCHEMA_API_FINGERPRINTS {
+            self.write_api_fingerprint_strings(&state.asset_fingerprints)?;
         }
         self.write_count(state.output_locations.len(), "output locations")?;
         for (asset, cache) in &state.output_locations {
@@ -685,6 +785,53 @@ impl<'a> Decoder<'a> {
         Ok(values)
     }
 
+    fn read_api_fingerprints(
+        &mut self,
+    ) -> io::Result<BTreeMap<String, crate::protocol::ApiFingerprintRecord>> {
+        let count = self.read_count("api fingerprints")?;
+        let mut values = BTreeMap::new();
+        for _ in 0..count {
+            let asset = self.read_string()?;
+            let digest = self.read_string()?;
+            let fingerprint = self.read_string()?;
+            let record = crate::protocol::ApiFingerprintRecord {
+                digest,
+                fingerprint,
+            };
+            if values.insert(asset, record).is_some() {
+                return Err(invalid_graph(
+                    "graph contains a duplicate api fingerprint asset",
+                ));
+            }
+        }
+        Ok(values)
+    }
+
+    /// The schema 9 layout: the bare fingerprint string per asset.
+    /// Decoded records carry an empty digest, which never matches a
+    /// snapshot digest, so schema 9 evidence stays inert; ordinary
+    /// loading invalidates the obsolete schema before use anyway.
+    fn read_api_fingerprint_strings(
+        &mut self,
+    ) -> io::Result<BTreeMap<String, crate::protocol::ApiFingerprintRecord>> {
+        let count = self.read_count("api fingerprints")?;
+        let mut values = BTreeMap::new();
+        for _ in 0..count {
+            let asset = self.read_string()?;
+            let fingerprint = self.read_string()?;
+            let record = crate::protocol::ApiFingerprintRecord {
+                digest: String::new(),
+                fingerprint,
+            };
+            if values.insert(asset, record).is_some() {
+                return Err(invalid_graph(
+                    "graph contains a duplicate api fingerprint asset",
+                ));
+            }
+        }
+        Ok(values)
+    }
+
     fn read_snapshot(&mut self) -> io::Result<Snapshot> {
         let count = self.read_count("asset snapshot")?;
         let mut snapshot = BTreeMap::new();
@@ -778,8 +925,10 @@ impl<'a> Decoder<'a> {
             }
         }
         let resolver_dep_graph = self.read_string_list_map()?;
-        let asset_fingerprints = if schema_version >= GRAPH_SCHEMA_API_FINGERPRINTS {
-            self.read_string_map()?
+        let asset_fingerprints = if schema_version >= GRAPH_SCHEMA_API_FINGERPRINT_RECORDS {
+            self.read_api_fingerprints()?
+        } else if schema_version >= GRAPH_SCHEMA_API_FINGERPRINTS {
+            self.read_api_fingerprint_strings()?
         } else {
             BTreeMap::new()
         };
@@ -822,6 +971,7 @@ impl<'a> Decoder<'a> {
             stock_glob_members,
             watch_generated_sources,
             api_fingerprint_reports: BTreeSet::new(),
+            api_fingerprint_conflicts: BTreeSet::new(),
         })
     }
 
@@ -1007,6 +1157,7 @@ mod tests {
             config_digest: String::new(),
             was_filtered: false,
             api_fingerprint_reports: BTreeSet::new(),
+            api_fingerprint_conflicts: BTreeSet::new(),
             assets,
             actions: BTreeMap::new(),
             resolver_dep_graph: BTreeMap::new(),
@@ -1103,7 +1254,10 @@ mod tests {
             config_digest: "previous configuration".to_owned(),
             asset_fingerprints: BTreeMap::from([(
                 "app|lib/model.dart".to_owned(),
-                "fingerprint".to_owned(),
+                crate::protocol::ApiFingerprintRecord {
+                    digest: "digest".to_owned(),
+                    fingerprint: "fingerprint".to_owned(),
+                },
             )]),
             actions: BTreeMap::from([(
                 "step".to_owned(),
@@ -1128,6 +1282,56 @@ mod tests {
     }
 
     #[test]
+    fn schema_9_graph_body_decodes_for_recovery_validation() {
+        // A journal written by the schema 9 binary stores bare
+        // fingerprint strings and already has resolver content
+        // reads. Publication recovery validates that body with
+        // decode_checked(.., false) before ordinary load
+        // invalidation can run, so it must decode with its own
+        // layout; the fingerprints come back with an empty digest,
+        // which no snapshot digest can match.
+        let previous = GraphState {
+            schema_version: 9,
+            config_digest: "previous configuration".to_owned(),
+            asset_fingerprints: BTreeMap::from([(
+                "app|lib/model.dart".to_owned(),
+                crate::protocol::ApiFingerprintRecord {
+                    digest: "digest".to_owned(),
+                    fingerprint: "fingerprint".to_owned(),
+                },
+            )]),
+            actions: BTreeMap::from([(
+                "step".to_owned(),
+                ActionState {
+                    resolver_content_reads: vec!["app|lib/dep.dart".to_owned()],
+                    ..ActionState::default()
+                },
+            )]),
+            ..GraphState::default()
+        };
+        let mut encoder = super::Encoder::new();
+        encoder.write_graph_state(&previous).unwrap();
+        let payload = encoder.finish();
+        let mut bytes = super::GRAPH_MAGIC.to_vec();
+        bytes.push(super::GRAPH_FORMAT_VERSION);
+        bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&payload);
+        let decoded = GraphState::decode_checked(&bytes, false).unwrap();
+        assert_eq!(decoded.config_digest, "previous configuration");
+        assert_eq!(
+            decoded.asset_fingerprints["app|lib/model.dart"],
+            crate::protocol::ApiFingerprintRecord {
+                digest: String::new(),
+                fingerprint: "fingerprint".to_owned(),
+            }
+        );
+        assert_eq!(
+            decoded.actions["step"].resolver_content_reads,
+            vec!["app|lib/dep.dart".to_owned()]
+        );
+    }
+
+    #[test]
     fn old_graph_schema_is_not_compatible() {
         let state = GraphState {
             schema_version: 1,
@@ -1144,6 +1348,7 @@ mod tests {
             config_digest: "config".to_owned(),
             was_filtered: true,
             api_fingerprint_reports: BTreeSet::new(),
+            api_fingerprint_conflicts: BTreeSet::new(),
             retained_output_state: true,
             watch_generated_sources: BTreeSet::from(["app|lib/omitted.mid".to_owned()]),
             stock_glob_members: BTreeMap::from([(
@@ -1175,7 +1380,10 @@ mod tests {
             )]),
             asset_fingerprints: BTreeMap::from([(
                 "app|lib/model.dart".to_owned(),
-                "fingerprint".to_owned(),
+                crate::protocol::ApiFingerprintRecord {
+                    digest: "digest".to_owned(),
+                    fingerprint: "fingerprint".to_owned(),
+                },
             )]),
             actions: BTreeMap::from([(
                 "example:builder|app|lib/model.dart".to_owned(),
@@ -1227,25 +1435,105 @@ mod tests {
 
     #[test]
     fn merge_api_fingerprints_replaces_and_removes() {
+        fn record(digest: &str, fingerprint: &str) -> crate::protocol::ApiFingerprintRecord {
+            crate::protocol::ApiFingerprintRecord {
+                digest: digest.to_owned(),
+                fingerprint: fingerprint.to_owned(),
+            }
+        }
         let mut state = GraphState {
             asset_fingerprints: BTreeMap::from([
-                ("app|lib/a.dart".to_owned(), "old".to_owned()),
-                ("app|lib/b.dart".to_owned(), "kept".to_owned()),
+                ("app|lib/a.dart".to_owned(), record("d-old", "old")),
+                ("app|lib/b.dart".to_owned(), record("d-b", "kept")),
             ]),
             ..GraphState::default()
         };
         state.merge_api_fingerprints(BTreeMap::from([
-            ("app|lib/a.dart".to_owned(), Some("new".to_owned())),
+            ("app|lib/a.dart".to_owned(), Some(record("d-new", "new"))),
             ("app|lib/b.dart".to_owned(), None),
-            ("app|lib/c.dart".to_owned(), Some("added".to_owned())),
+            ("app|lib/c.dart".to_owned(), Some(record("d-c", "added"))),
             ("app|lib/d.dart".to_owned(), None),
         ]));
         assert_eq!(
             state.asset_fingerprints,
             BTreeMap::from([
-                ("app|lib/a.dart".to_owned(), "new".to_owned()),
-                ("app|lib/c.dart".to_owned(), "added".to_owned()),
+                ("app|lib/a.dart".to_owned(), record("d-new", "new")),
+                ("app|lib/c.dart".to_owned(), record("d-c", "added")),
             ])
+        );
+    }
+
+    #[test]
+    fn merge_api_fingerprints_drops_conflicting_reports_for_the_build() {
+        fn record(digest: &str, fingerprint: &str) -> crate::protocol::ApiFingerprintRecord {
+            crate::protocol::ApiFingerprintRecord {
+                digest: digest.to_owned(),
+                fingerprint: fingerprint.to_owned(),
+            }
+        }
+        let mut state = GraphState::default();
+        // Two workers observe the same asset at different bytes after
+        // a mid-build edit: neither report can be trusted as the
+        // basis for the build's outputs, so the evidence is dropped.
+        state.merge_api_fingerprints(BTreeMap::from([(
+            "app|lib/a.dart".to_owned(),
+            Some(record("d-1", "f-1")),
+        )]));
+        state.merge_api_fingerprints(BTreeMap::from([(
+            "app|lib/a.dart".to_owned(),
+            Some(record("d-2", "f-2")),
+        )]));
+        assert!(!state.asset_fingerprints.contains_key("app|lib/a.dart"));
+        // A later report in the same build cannot resurrect it, even
+        // one that agrees with the first observation.
+        state.merge_api_fingerprints(BTreeMap::from([(
+            "app|lib/a.dart".to_owned(),
+            Some(record("d-1", "f-1")),
+        )]));
+        assert!(!state.asset_fingerprints.contains_key("app|lib/a.dart"));
+        // An unavailable report after a recorded one is a
+        // disagreement too, and a later agreeing report cannot
+        // resurrect the evidence within the build.
+        state.merge_api_fingerprints(BTreeMap::from([(
+            "app|lib/c.dart".to_owned(),
+            Some(record("d-c", "f-c")),
+        )]));
+        state.merge_api_fingerprints(BTreeMap::from([("app|lib/c.dart".to_owned(), None)]));
+        state.merge_api_fingerprints(BTreeMap::from([(
+            "app|lib/c.dart".to_owned(),
+            Some(record("d-c", "f-c")),
+        )]));
+        assert!(!state.asset_fingerprints.contains_key("app|lib/c.dart"));
+        // Agreeing reports are kept, and the next build boundary
+        // clears the conflict so fresh evidence counts again.
+        state.merge_api_fingerprints(BTreeMap::from([(
+            "app|lib/b.dart".to_owned(),
+            Some(record("d-b", "f-b")),
+        )]));
+        state.merge_api_fingerprints(BTreeMap::from([(
+            "app|lib/b.dart".to_owned(),
+            Some(record("d-b", "f-b")),
+        )]));
+        assert_eq!(
+            state.asset_fingerprints.get("app|lib/b.dart"),
+            Some(&record("d-b", "f-b"))
+        );
+        state.update_assets(BTreeMap::from([(
+            "app|lib/a.dart".to_owned(),
+            crate::snapshot::AssetSnapshot {
+                exists: true,
+                digest: "d-1".to_owned(),
+                size: 1,
+            },
+        )]));
+        assert!(state.api_fingerprint_conflicts.is_empty());
+        state.merge_api_fingerprints(BTreeMap::from([(
+            "app|lib/a.dart".to_owned(),
+            Some(record("d-1", "f-1")),
+        )]));
+        assert_eq!(
+            state.asset_fingerprints.get("app|lib/a.dart"),
+            Some(&record("d-1", "f-1"))
         );
     }
 
@@ -1256,6 +1544,10 @@ mod tests {
             digest: digest.to_owned(),
             size: 1,
         };
+        let record = |fingerprint: &str| crate::protocol::ApiFingerprintRecord {
+            digest: format!("d-{fingerprint}"),
+            fingerprint: fingerprint.to_owned(),
+        };
         let mut state = GraphState {
             assets: BTreeMap::from([
                 ("app|lib/a.dart".to_owned(), entry("aaa")),
@@ -1263,9 +1555,9 @@ mod tests {
                 ("app|lib/c.dart".to_owned(), entry("ccc")),
             ]),
             asset_fingerprints: BTreeMap::from([
-                ("app|lib/a.dart".to_owned(), "fa".to_owned()),
-                ("app|lib/b.dart".to_owned(), "fb".to_owned()),
-                ("app|lib/c.dart".to_owned(), "fc".to_owned()),
+                ("app|lib/a.dart".to_owned(), record("fa")),
+                ("app|lib/b.dart".to_owned(), record("fb")),
+                ("app|lib/c.dart".to_owned(), record("fc")),
             ]),
             ..GraphState::default()
         };
@@ -1275,7 +1567,7 @@ mod tests {
         ]));
         assert_eq!(
             state.asset_fingerprints,
-            BTreeMap::from([("app|lib/a.dart".to_owned(), "fa".to_owned())])
+            BTreeMap::from([("app|lib/a.dart".to_owned(), record("fa"))])
         );
     }
 
@@ -1286,6 +1578,10 @@ mod tests {
             digest: digest.to_owned(),
             size: 1,
         };
+        let record = |fingerprint: &str| crate::protocol::ApiFingerprintRecord {
+            digest: format!("d-{fingerprint}"),
+            fingerprint: fingerprint.to_owned(),
+        };
         let mut state = GraphState {
             assets: BTreeMap::from([
                 ("app|lib/a.dart".to_owned(), entry("aaa")),
@@ -1295,11 +1591,11 @@ mod tests {
             ..GraphState::default()
         };
         state.merge_api_fingerprints(BTreeMap::from([
-            ("app|lib/a.dart".to_owned(), Some("fresh-a".to_owned())),
-            ("app|lib/gone.dart".to_owned(), Some("fresh-g".to_owned())),
+            ("app|lib/a.dart".to_owned(), Some(record("fresh-a"))),
+            ("app|lib/gone.dart".to_owned(), Some(record("fresh-g"))),
             (
                 "app|lib/restored.dart".to_owned(),
-                Some("intermediate".to_owned()),
+                Some(record("intermediate")),
             ),
         ]));
         // The transaction rewrote a.dart after the walk fingerprinted
@@ -1325,16 +1621,20 @@ mod tests {
             digest: digest.to_owned(),
             size: 1,
         };
+        let record = |fingerprint: &str| crate::protocol::ApiFingerprintRecord {
+            digest: format!("d-{fingerprint}"),
+            fingerprint: fingerprint.to_owned(),
+        };
         let mut state = GraphState {
             assets: BTreeMap::from([("app|lib/a.dart".to_owned(), entry("aaa"))]),
-            asset_fingerprints: BTreeMap::from([("app|lib/a.dart".to_owned(), "stale".to_owned())]),
+            asset_fingerprints: BTreeMap::from([("app|lib/a.dart".to_owned(), record("stale"))]),
             ..GraphState::default()
         };
         // The build relearns the edited asset and a brand-new one;
         // both reports are fresh evidence for the new snapshot.
         state.merge_api_fingerprints(BTreeMap::from([
-            ("app|lib/a.dart".to_owned(), Some("fresh".to_owned())),
-            ("app|lib/new.dart".to_owned(), Some("new".to_owned())),
+            ("app|lib/a.dart".to_owned(), Some(record("fresh"))),
+            ("app|lib/new.dart".to_owned(), Some(record("new"))),
         ]));
         state.update_assets(BTreeMap::from([
             ("app|lib/a.dart".to_owned(), entry("changed")),
@@ -1343,8 +1643,8 @@ mod tests {
         assert_eq!(
             state.asset_fingerprints,
             BTreeMap::from([
-                ("app|lib/a.dart".to_owned(), "fresh".to_owned()),
-                ("app|lib/new.dart".to_owned(), "new".to_owned()),
+                ("app|lib/a.dart".to_owned(), record("fresh")),
+                ("app|lib/new.dart".to_owned(), record("new")),
             ])
         );
     }

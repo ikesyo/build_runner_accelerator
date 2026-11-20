@@ -2,11 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
+import 'package:pub_semver/pub_semver.dart';
 // ignore: implementation_imports
 import 'package:analyzer/src/dart/analysis/unlinked_api_signature.dart';
 // ignore: implementation_imports
@@ -40,6 +42,12 @@ import 'indexed_blob_store.dart';
 ///    library cycle re-links. All visibilities are included because
 ///    intra-library inference can chain a private helper's inferred
 ///    type into a public one.
+/// 4. A digest of the field initializers of classes with a const
+///    primary constructor. The analyzer signature hashes explicitly
+///    typed field initializers only when it finds a traditional
+///    const constructor, so a const primary constructor's fields
+///    escape it, even though their values are observable through
+///    constant evaluation of the constructor.
 ///
 /// Offsets and other informative data are excluded on purpose: the
 /// fingerprint backs an opt-in observation contract under which
@@ -53,11 +61,21 @@ import 'indexed_blob_store.dart';
 /// (ADR 0056), or the resolved analyzer's AST model does not behave
 /// the way the walk expects (see [_astModelSupported]). Callers must
 /// treat such units as content-keyed.
-String? computeApiFingerprint(ParseStringResult result) {
+///
+/// The parse must have been produced with the feature set of the
+/// unit's package language version (see [apiFingerprintFeatureSet]):
+/// the resolver parses units at that version and rejects what is
+/// invalid there, so a fingerprint computed from a newer grammar
+/// could bless an edit the real build would fail on.
+/// [packageLanguageVersion] is that version ('3.10', say).
+String? computeApiFingerprint(
+  ParseStringResult result, {
+  required String packageLanguageVersion,
+}) {
   if (result.errors.isNotEmpty) return null;
   if (!_astModelSupported) return null;
   try {
-    return _computeApiFingerprint(result);
+    return _computeApiFingerprint(result, packageLanguageVersion);
   } on Object {
     // The AST model drifted from the shape the self-test validated.
     // Stop trusting it rather than risk a wrong fingerprint.
@@ -66,18 +84,33 @@ String? computeApiFingerprint(ParseStringResult result) {
   }
 }
 
-String? _computeApiFingerprint(ParseStringResult result) {
+String? _computeApiFingerprint(
+  ParseStringResult result,
+  String packageLanguageVersion,
+) {
   final unit = result.unit;
   final walk = _walkUnit(unit);
   if (walk.usesAugmentation) return null;
   final apiSignature = computeUnlinkedApiSignature(
     unit as impl.CompilationUnitImpl,
   );
+  // The unit's language version is part of what the element model
+  // exposes (LibraryElement's languageVersion) and can change how
+  // the same declarations are interpreted, but it is not covered
+  // by the API signature, so it is fingerprinted explicitly. The
+  // package's configured version and the `// @dart = x.y` override
+  // are recorded separately: the override's presence is itself
+  // observable through the element model, even when it names the
+  // same version the package already uses.
+  final override = unit.languageVersionToken;
   final components = StringBuffer()
-    ..writeln('api-fingerprint-v1')
+    ..writeln('api-fingerprint-v5')
     ..writeln(_hex(apiSignature))
+    ..writeln(packageLanguageVersion)
+    ..writeln(override == null ? '' : '${override.major}.${override.minor}')
     ..writeln(blake3Hex(utf8.encode(_docCommentSlots(unit, walk))))
-    ..writeln(blake3Hex(utf8.encode(walk.omittedBodies.join('\n'))));
+    ..writeln(blake3Hex(utf8.encode(walk.omittedBodies.join('\n'))))
+    ..writeln(blake3Hex(utf8.encode(walk.constPrimaryInitializers.join('\n'))));
   return blake3Hex(utf8.encode(components.toString()));
 }
 
@@ -90,10 +123,47 @@ String debugApiFingerprintStoreNamespace() =>
 ///
 /// This is the on-demand path; callers that already parse the unit for
 /// the dependency walk should prefer [computeApiFingerprint] on the
-/// shared parse.
-String? apiFingerprintForContent(String content) {
+/// shared parse. Returns null when [package]'s language version was
+/// not recorded (see [ApiFingerprintCache.packageLanguageVersions]):
+/// without it the parse cannot be reproduced at the version the
+/// resolver would use, so no sound fingerprint exists.
+String? apiFingerprintForContent(String content, {required String package}) {
+  final featureSet = apiFingerprintFeatureSet(package);
+  final languageVersion = ApiFingerprintCache.packageLanguageVersions[package];
+  if (featureSet == null || languageVersion == null) return null;
   return computeApiFingerprint(
-    parseString(content: content, throwIfDiagnostics: false),
+    parseString(
+      content: content,
+      featureSet: featureSet,
+      throwIfDiagnostics: false,
+    ),
+    packageLanguageVersion: languageVersion,
+  );
+}
+
+final Map<String, FeatureSet> _featureSetByVersion = {};
+
+/// The feature set the resolver parses [package]'s units with: the
+/// features of its configured language version, which the parser
+/// then restricts further for a unit's `// @dart =` override, exactly
+/// as the analysis driver does. Null when the package's version was
+/// not recorded.
+FeatureSet? apiFingerprintFeatureSet(String package) {
+  final version = ApiFingerprintCache.packageLanguageVersions[package];
+  if (version == null) return null;
+  return _featureSetByVersion[version] ??= FeatureSet.fromEnableFlags2(
+    sdkLanguageVersion: _languageVersion(version),
+    flags: const [],
+  );
+}
+
+/// A recorded 'major.minor' language version as a [Version].
+Version _languageVersion(String version) {
+  final parts = version.split('.');
+  return Version(
+    int.parse(parts[0]),
+    parts.length > 1 ? int.parse(parts[1]) : 0,
+    0,
   );
 }
 
@@ -187,6 +257,7 @@ final class _UnitWalk {
   final List<String> docSlots = <String>[];
   final Set<Token> consumedDocTokens = Set<Token>.identity();
   final List<String> omittedBodies = <String>[];
+  final List<String> constPrimaryInitializers = <String>[];
   bool usesAugmentation = false;
 }
 
@@ -227,6 +298,33 @@ final class _FingerprintVisitor extends GeneralizingAstVisitor<void> {
   _FingerprintVisitor(this.walk);
 
   final _UnitWalk walk;
+
+  /// Whether the class whose body is currently being visited has a
+  /// const primary constructor (see [_hasConstPrimaryConstructor]).
+  bool _inConstPrimaryClass = false;
+
+  @override
+  void visitClassDeclaration(ClassDeclaration node) {
+    final outer = _inConstPrimaryClass;
+    if (_hasConstPrimaryConstructor(node)) _inConstPrimaryClass = true;
+    super.visitClassDeclaration(node);
+    _inConstPrimaryClass = outer;
+  }
+
+  @override
+  void visitFieldDeclaration(FieldDeclaration node) {
+    if (_inConstPrimaryClass && !node.isStatic) {
+      for (final variable in node.fields.variables) {
+        final initializer = variable.initializer;
+        if (initializer != null) {
+          walk.constPrimaryInitializers.add(
+            _tokenLexemes(initializer.beginToken, initializer.endToken),
+          );
+        }
+      }
+    }
+    super.visitFieldDeclaration(node);
+  }
 
   @override
   void visitNode(AstNode node) {
@@ -281,14 +379,53 @@ final class _FingerprintVisitor extends GeneralizingAstVisitor<void> {
 
 /// Token lexemes of [body], so comment edits and formatting inside it
 /// stay invisible, matching the rest of the fingerprint.
-String _bodyTokens(FunctionBody body) {
+String _bodyTokens(FunctionBody body) =>
+    _tokenLexemes(body.beginToken, body.endToken);
+
+/// Whether [node] declares a const primary constructor, detected
+/// from the header tokens so the check works on any analyzer in the
+/// supported window: a parameter list directly after the class name
+/// (possibly after type parameters) marks a primary constructor,
+/// and a `const` between the `class` keyword and that list makes
+/// it const. Older grammars reject the syntax before this matters.
+bool _hasConstPrimaryConstructor(ClassDeclaration node) {
+  var sawConst = false;
+  var angleDepth = 0;
+  Token? token = node.classKeyword.next;
+  while (token != null && token != node.endToken) {
+    final lexeme = token.lexeme;
+    // Type parameter lists (and function-typed bounds inside them)
+    // contain their own parentheses and keywords; only depth-zero
+    // tokens describe the constructor header itself.
+    if (lexeme == '<') angleDepth++;
+    if (lexeme == '>') angleDepth--;
+    if (lexeme == '>>') angleDepth -= 2;
+    if (lexeme == '>>>') angleDepth -= 3;
+    if (angleDepth == 0) {
+      if (lexeme == '(') return sawConst;
+      if (lexeme == '{' ||
+          lexeme == ';' ||
+          lexeme == 'extends' ||
+          lexeme == 'with' ||
+          lexeme == 'implements') {
+        return false;
+      }
+      if (lexeme == 'const') sawConst = true;
+    }
+    token = token.next;
+  }
+  return false;
+}
+
+/// Token lexemes between [begin] and [end] inclusive.
+String _tokenLexemes(Token begin, Token end) {
   final lexemes = StringBuffer();
-  Token? token = body.beginToken;
+  Token? token = begin;
   while (token != null) {
     lexemes
       ..write(token.lexeme)
       ..write(' ');
-    if (token == body.endToken) break;
+    if (token == end) break;
     final next = token.next;
     if (next == token) break;
     token = next;
@@ -340,8 +477,10 @@ String _hex(Uint8List bytes) {
 
 /// Content-keyed persistent cache of API fingerprints.
 ///
-/// Keyed by the content digest alone: unlike directive resolution, a
-/// fingerprint depends only on the unit's own content. The store is
+/// Keyed by the content digest and the unit's package language
+/// version: a fingerprint depends on the grammar the unit is parsed
+/// with, and the same content in a package configured for an older
+/// Dart can parse differently (or not at all). The store is
 /// namespaced by SDK version because parsing is grammar-dependent,
 /// and by the resolved analyzer (see [sharedAnalyzerRoot]) because
 /// the fingerprint is computed by that analyzer's AST model; it
@@ -351,6 +490,12 @@ String _hex(Uint8List bytes) {
 ///
 /// Disable with `BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0`, like the other
 /// dep-parse caches.
+/// A unit API fingerprint learned by the dep walk (ADR 0056), bound
+/// to the bare BLAKE3 hex digest of the exact content that produced
+/// it. A null [fingerprint] marks a unit whose fingerprint is
+/// unavailable for that content.
+typedef LearnedApiFingerprint = ({String digest, String? fingerprint});
+
 final class ApiFingerprintCache {
   /// Whether the AST-model gate currently trusts fingerprinting in
   /// this process. The gate can close mid-process: fingerprinting a
@@ -363,7 +508,15 @@ final class ApiFingerprintCache {
   ApiFingerprintCache({IndexedBlobStore? store})
     : _store = store ?? _sharedStore();
 
-  static const _packedVersion = 'v1';
+  /// Store format version, bumped whenever the fingerprint
+  /// algorithm changes (v2: the language version override joined
+  /// the fingerprint; v3: the effective language version is a
+  /// component and entries are keyed by package language version;
+  /// v4: const primary constructor field initializers joined the
+  /// fingerprint; v5: the language version override is recorded
+  /// separately from the package version), so entries computed by
+  /// an older algorithm are never served for content they predate.
+  static const _packedVersion = 'v5';
 
   /// Root URI of the resolved analyzer package, recorded from the
   /// project's package configuration by the worker's resolver setup,
@@ -372,6 +525,15 @@ final class ApiFingerprintCache {
   /// Set before the first shared cache is built. A worker process
   /// serves one project, so the value is stable for its lifetime.
   static String? sharedAnalyzerRoot;
+
+  /// Language versions ('3.10') by package name, recorded from the
+  /// project's package configuration by the worker's resolver setup,
+  /// with the SDK language version filled in for packages that do
+  /// not configure one, mirroring how the analysis packages are
+  /// built. A worker process serves one project, so the value is
+  /// stable for its lifetime. Units of packages missing here get
+  /// no fingerprint: their parse version cannot be reproduced.
+  static Map<String, String> packageLanguageVersions = const {};
 
   /// The shared process-wide cache, or `null` when disabled.
   static ApiFingerprintCache? shared() {
@@ -415,12 +577,24 @@ final class ApiFingerprintCache {
 
   final IndexedBlobStore? _store;
 
-  /// The cached fingerprint for [contentDigest].
+  /// The store key for a unit: its content digest qualified by its
+  /// package's language version. Null when the version was not
+  /// recorded, in which case nothing is served or stored.
+  String? _key(String contentDigest, String package) {
+    final version = packageLanguageVersions[package];
+    if (version == null) return null;
+    return '$contentDigest@$version';
+  }
+
+  /// The cached fingerprint for the unit of [package] with content
+  /// digest [contentDigest].
   ///
   /// Returns `null` both on a miss and for a stored unavailable marker
   /// (augmentations, parse errors); use [contains] to tell them apart.
-  String? lookup(String contentDigest) {
-    final bytes = _entry(contentDigest);
+  String? lookup(String contentDigest, {required String package}) {
+    final key = _key(contentDigest, package);
+    if (key == null) return null;
+    final bytes = _entry(key);
     if (bytes == null || bytes.isEmpty) return null;
     try {
       return utf8.decode(bytes);
@@ -430,49 +604,77 @@ final class ApiFingerprintCache {
   }
 
   /// Whether any entry (fingerprint or unavailable marker) is stored
-  /// for [contentDigest].
-  bool contains(String contentDigest) => _entry(contentDigest) != null;
-
-  /// Records [fingerprint] for [contentDigest]; `null` records the
-  /// unavailable marker.
-  void store(String contentDigest, String? fingerprint) {
-    _store?.put(contentDigest, utf8.encode(fingerprint ?? ''));
+  /// for the unit of [package] with content digest [contentDigest].
+  bool contains(String contentDigest, {required String package}) {
+    final key = _key(contentDigest, package);
+    return key != null && _entry(key) != null;
   }
 
-  /// The fingerprint for the unit with content digest [contentDigest]
-  /// and source [content], computing and caching it on a miss.
+  /// Records [fingerprint] for the unit of [package] with content
+  /// digest [contentDigest]; `null` records the unavailable marker.
+  void store(
+    String contentDigest,
+    String? fingerprint, {
+    required String package,
+  }) {
+    final key = _key(contentDigest, package);
+    if (key == null) return;
+    _store?.put(key, utf8.encode(fingerprint ?? ''));
+  }
+
+  /// The fingerprint for the unit of [package] with content digest
+  /// [contentDigest] and source [content], computing and caching it
+  /// on a miss.
   ///
   /// The AST-model gate applies to cache hits too: once the model is
   /// known not to behave, stored fingerprints are no longer trusted,
   /// because they were computed by the same walk.
-  String? fingerprintFor(String contentDigest, String content) {
+  String? fingerprintFor(
+    String contentDigest,
+    String content, {
+    required String package,
+  }) {
     if (!_astModelSupported) return null;
-    if (_entry(contentDigest) != null) return lookup(contentDigest);
-    final fingerprint = apiFingerprintForContent(content);
+    final key = _key(contentDigest, package);
+    if (key == null) return null;
+    if (_entry(key) != null) return lookup(contentDigest, package: package);
+    final fingerprint = apiFingerprintForContent(content, package: package);
     // A null fingerprint is only worth persisting when the content
     // caused it (parse errors, augmentations). A null caused by the
     // AST model being unavailable in this process is environmental:
     // persisting it would mark valid content as unavailable for
     // later builds whose model works.
     if (fingerprint != null || _astModelSupported) {
-      store(contentDigest, fingerprint);
+      store(contentDigest, fingerprint, package: package);
     }
     return fingerprint;
   }
 
-  /// The fingerprint for a unit the caller already parsed, recorded
-  /// under [contentDigest]. Follows the same rules as [fingerprintFor]:
-  /// the AST-model gate applies before a stored entry is served, and
-  /// an environment-caused null is not persisted as a marker.
-  String? fingerprintForParse(String contentDigest, ParseStringResult result) {
+  /// The fingerprint for a unit of [package] the caller already
+  /// parsed, recorded under [contentDigest]. The parse must have
+  /// been produced with the package's feature set (see
+  /// [apiFingerprintFeatureSet]). Follows the same rules as
+  /// [fingerprintFor]: the AST-model gate applies before a stored
+  /// entry is served, and an environment-caused null is not
+  /// persisted as a marker.
+  String? fingerprintForParse(
+    String contentDigest,
+    ParseStringResult result, {
+    required String package,
+  }) {
     if (!_astModelSupported) return null;
-    if (_entry(contentDigest) != null) return lookup(contentDigest);
-    final fingerprint = computeApiFingerprint(result);
+    final key = _key(contentDigest, package);
+    if (key == null) return null;
+    if (_entry(key) != null) return lookup(contentDigest, package: package);
+    final fingerprint = computeApiFingerprint(
+      result,
+      packageLanguageVersion: packageLanguageVersions[package]!,
+    );
     if (fingerprint != null || _astModelSupported) {
-      store(contentDigest, fingerprint);
+      store(contentDigest, fingerprint, package: package);
     }
     return fingerprint;
   }
 
-  Uint8List? _entry(String contentDigest) => _store?.get(contentDigest);
+  Uint8List? _entry(String key) => _store?.get(key);
 }

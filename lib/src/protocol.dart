@@ -33,6 +33,8 @@ sealed class WorkerMessage {
         return WorkerInitializeMessage.fromJson(message);
       case 'reset':
         return WorkerResetMessage.fromJson(message);
+      case 'api_fingerprint_query':
+        return WorkerApiFingerprintQueryMessage.fromJson(message);
       case 'reset_resolver':
         return WorkerResetResolverMessage.fromJson(
           message,
@@ -114,6 +116,52 @@ class WorkerResetMessage extends WorkerMessage {
 
   factory WorkerResetMessage.fromJson(JsonMap message) =>
       WorkerResetMessage(id: _requiredInt(message, 'id', 'reset'));
+}
+
+/// One unit of an ADR 0056 preflight query: the asset and the content
+/// digest the frontend's snapshot recorded for it. The worker answers
+/// with the unit's current API fingerprint and direct resolver deps,
+/// computed from content it reads itself and verified against this
+/// digest.
+typedef ApiFingerprintQueryEntry = ({String asset, String digest});
+
+class WorkerApiFingerprintQueryMessage extends WorkerMessage {
+  WorkerApiFingerprintQueryMessage({required int id, required this.entries})
+    : super(id: id);
+
+  final List<ApiFingerprintQueryEntry> entries;
+
+  factory WorkerApiFingerprintQueryMessage.fromJson(JsonMap message) {
+    final rawEntries = message['entries'];
+    if (rawEntries is! List) {
+      throw const FormatException(
+        'api_fingerprint_query entries must be a list',
+      );
+    }
+    return WorkerApiFingerprintQueryMessage(
+      id: _requiredInt(message, 'id', 'api_fingerprint_query'),
+      entries: <ApiFingerprintQueryEntry>[
+        for (final raw in rawEntries)
+          if (raw is Map<String, dynamic>)
+            (
+              asset: _requiredString(
+                raw,
+                'asset',
+                'api_fingerprint_query entry',
+              ),
+              digest: _requiredString(
+                raw,
+                'digest',
+                'api_fingerprint_query entry',
+              ),
+            )
+          else
+            throw const FormatException(
+              'api_fingerprint_query entry must be an object',
+            ),
+      ],
+    );
+  }
 }
 
 class WorkerResetResolverMessage extends WorkerMessage {

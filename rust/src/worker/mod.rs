@@ -10,7 +10,7 @@ mod workspace;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use client::WorkerClient;
+pub(crate) use client::{ApiUnitEvidence, WorkerClient};
 #[allow(unused_imports)] // Preserve the existing crate::worker::LazyBuildResult path.
 pub(crate) use lazy::LazyBuildResult;
 pub(crate) use lazy::LazyBuildState;

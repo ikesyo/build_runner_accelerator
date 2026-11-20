@@ -30,6 +30,49 @@ void main() {
       expect(reset.overlayBlob, isNull);
     });
 
+    test('decodes API fingerprint queries', () {
+      final message = WorkerMessage.decode(<String, dynamic>{
+        'v': 1,
+        'type': 'api_fingerprint_query',
+        'id': 7,
+        'entries': <dynamic>[
+          <String, dynamic>{'asset': 'app|lib/a.dart', 'digest': 'aaa'},
+          <String, dynamic>{'asset': 'app|lib/b.dart', 'digest': 'bbb'},
+        ],
+      });
+
+      expect(message, isA<WorkerApiFingerprintQueryMessage>());
+      final query = message as WorkerApiFingerprintQueryMessage;
+      expect(query.id, 7);
+      expect(query.entries, hasLength(2));
+      expect(query.entries.first.asset, 'app|lib/a.dart');
+      expect(query.entries.first.digest, 'aaa');
+      expect(query.entries.last.asset, 'app|lib/b.dart');
+    });
+
+    test('rejects API fingerprint queries with malformed entries', () {
+      expect(
+        () => WorkerMessage.decode(<String, dynamic>{
+          'v': 1,
+          'type': 'api_fingerprint_query',
+          'id': 8,
+          'entries': <dynamic>[
+            <String, dynamic>{'asset': 'app|lib/a.dart'},
+          ],
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => WorkerMessage.decode(<String, dynamic>{
+          'v': 1,
+          'type': 'api_fingerprint_query',
+          'id': 8,
+          'entries': 'app|lib/a.dart',
+        }),
+        throwsFormatException,
+      );
+    });
+
     test('rejects resolver resets with omitted deltas', () {
       expect(
         () => WorkerMessage.decode(<String, dynamic>{

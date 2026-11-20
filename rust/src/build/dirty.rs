@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::Instant;
 
+use super::cutoff::CutoffEvidence;
 use super::planning::PlannedActions;
 
 pub(super) struct DirtyPlan {
@@ -34,6 +35,8 @@ pub(super) fn analyze(
     plan: &PlannedActions,
     retained_outputs: &BTreeSet<String>,
     filesystem_metrics: &mut FilesystemMetrics,
+    cutoff: Option<&CutoffEvidence>,
+    dirty_context: &crate::graph::DirtyContext<'_>,
 ) -> io::Result<DirtyPlan> {
     let dirty_check_started = Instant::now();
     let specs = &plan.specs;
@@ -86,7 +89,6 @@ pub(super) fn analyze(
     apply_output_digests(&mut current_output_digests, recorded_output_digests);
     let mut dirty = Vec::new();
     let mut dirty_roots = Vec::new();
-    let dirty_context = state.dirty_context(current_snapshot);
     let compatible = state.is_compatible(config_digest);
     for (spec, digests) in specs.iter().zip(spec_output_digests) {
         let key = spec.action_key();
@@ -106,9 +108,12 @@ pub(super) fn analyze(
             }
             Some(action) if compatible => state.changed_since_previous_with(
                 action,
-                &dirty_context,
+                dirty_context,
                 current_snapshot,
                 &current_output_digests,
+                cutoff.is_some_and(|evidence| {
+                    spec.instance.api_cutoff && evidence.clean_actions.contains(&key)
+                }),
             ),
             _ => true,
         };
@@ -159,7 +164,7 @@ pub(super) fn analyze(
             removed_outputs.push((action.input.clone(), producer.phase, BuilderKind::Normal));
         }
     }
-    expand_dirty_dependents_with_removed(&mut dirty_roots, specs, state, &removed_outputs);
+    expand_dirty_dependents_with_removed(&mut dirty_roots, specs, state, &removed_outputs, cutoff);
     let mut dirty_keys = dirty
         .iter()
         .map(|spec| spec.action_key())
@@ -407,7 +412,7 @@ pub(super) fn expand_dirty_dependents(
     specs: &[crate::plan::BuildSpec],
     state: &GraphState,
 ) {
-    expand_dirty_dependents_with_removed(dirty, specs, state, &[]);
+    expand_dirty_dependents_with_removed(dirty, specs, state, &[], None);
 }
 
 pub(super) fn expand_dirty_dependents_with_removed(
@@ -415,8 +420,17 @@ pub(super) fn expand_dirty_dependents_with_removed(
     specs: &[crate::plan::BuildSpec],
     state: &GraphState,
     removed_outputs: &[(String, u32, BuilderKind)],
+    cutoff: Option<&CutoffEvidence>,
 ) {
-    expand_with_source_changes(dirty, specs, state, removed_outputs, &BTreeSet::new(), None);
+    expand_with_source_changes(
+        dirty,
+        specs,
+        state,
+        removed_outputs,
+        &BTreeSet::new(),
+        None,
+        cutoff,
+    );
 }
 
 /// A source directive edit is visible to every phase; current pass results
@@ -432,7 +446,18 @@ pub(super) fn replay_after_source_edits(
         .filter(|spec| changed.contains(&spec.input))
         .cloned()
         .collect();
-    expand_with_source_changes(&mut affected, specs, state, &[], changed, Some(staged));
+    // Mid-build directive replays stay content-keyed: the edited
+    // content arises during execution, so no preflight evidence can
+    // cover it (ADR 0056 stage 4 notes).
+    expand_with_source_changes(
+        &mut affected,
+        specs,
+        state,
+        &[],
+        changed,
+        Some(staged),
+        None,
+    );
     let lazy_force_keys = affected
         .iter()
         .filter(|spec| spec.instance.builder.is_optional)
@@ -485,6 +510,7 @@ fn expand_with_source_changes(
     removed_outputs: &[(String, u32, BuilderKind)],
     changed_sources: &BTreeSet<String>,
     staged: Option<&BTreeMap<String, ActionState>>,
+    cutoff: Option<&CutoffEvidence>,
 ) {
     let specs_by_key = specs
         .iter()
@@ -494,7 +520,11 @@ fn expand_with_source_changes(
         committed: &state.actions,
         staged,
     };
-    let mut dependents_by_asset = BTreeMap::<&str, Vec<&str>>::new();
+    // Content reads and resolver reads stay in separate maps: only the
+    // resolver channel can be waived by API-signature evidence
+    // (ADR 0056), and only for changed-source seeds.
+    let mut read_dependents = BTreeMap::<&str, Vec<&str>>::new();
+    let mut resolver_dependents = BTreeMap::<&str, Vec<&str>>::new();
     let mut actions_by_entrypoint = BTreeMap::<&str, Vec<&str>>::new();
     let mut glob_dependents = Vec::new();
     for (action_key, action) in actions.iter() {
@@ -503,8 +533,14 @@ fn expand_with_source_changes(
                 glob_dependents.push((action_key, spec.instance.phase, glob));
             }
         }
-        for dependency in action.reads.iter().chain(action.resolver_reads.iter()) {
-            dependents_by_asset
+        for dependency in &action.reads {
+            read_dependents
+                .entry(dependency.as_str())
+                .or_default()
+                .push(action_key);
+        }
+        for dependency in &action.resolver_reads {
+            resolver_dependents
                 .entry(dependency.as_str())
                 .or_default()
                 .push(action_key);
@@ -525,7 +561,7 @@ fn expand_with_source_changes(
         // broadening ordinary primary-input invalidation (which is already
         // handled by GraphState::changed_since_previous).
         if action.status == "skipped_missing_input" {
-            dependents_by_asset
+            read_dependents
                 .entry(action.input.as_str())
                 .or_default()
                 .push(action_key);
@@ -561,7 +597,10 @@ fn expand_with_source_changes(
         || removed_cursor < removed_outputs.len()
         || changed_sources.len() > 0
     {
-        let impacts = if cursor < dirty.len() {
+        // Only changed-source seeds are API-keyed: signature evidence
+        // speaks about source edits between snapshots, never about a
+        // dirty producer's outputs or a removed output.
+        let (impacts, api_keyed) = if cursor < dirty.len() {
             let source_key = dirty[cursor].action_key();
             let source_outputs = match actions.get(source_key.as_str()) {
                 Some(action)
@@ -640,18 +679,24 @@ fn expand_with_source_changes(
                 });
             }
             cursor += 1;
-            impacts
+            (impacts, false)
         } else if removed_cursor < removed_outputs.len() {
             let (asset, phase, kind) = &removed_outputs[removed_cursor];
             removed_cursor += 1;
-            vec![AssetImpact::output(asset.clone(), *phase, *kind, true)]
+            (
+                vec![AssetImpact::output(asset.clone(), *phase, *kind, true)],
+                false,
+            )
         } else {
-            vec![AssetImpact {
-                asset: changed_sources.next().expect("source remaining").clone(),
-                visibility: ChangeVisibility::All,
-                glob_phase: None,
-                resolver_only: false,
-            }]
+            (
+                vec![AssetImpact {
+                    asset: changed_sources.next().expect("source remaining").clone(),
+                    visibility: ChangeVisibility::All,
+                    glob_phase: None,
+                    resolver_only: false,
+                }],
+                true,
+            )
         };
         let mut ancestors_seen = BTreeSet::<&str>::new();
         for impact in &impacts {
@@ -659,7 +704,17 @@ fn expand_with_source_changes(
             let mut dependent_keys: Vec<&str> = if impact.resolver_only {
                 Vec::new()
             } else {
-                dependents_by_asset
+                read_dependents
+                    .get(output.as_str())
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .collect()
+            };
+            let mut resolver_keys: Vec<&str> = if impact.resolver_only {
+                Vec::new()
+            } else {
+                resolver_dependents
                     .get(output.as_str())
                     .into_iter()
                     .flatten()
@@ -690,7 +745,7 @@ fn expand_with_source_changes(
                 if !ancestors_seen.insert(asset) {
                     continue;
                 }
-                dependent_keys.extend(
+                resolver_keys.extend(
                     actions_by_entrypoint
                         .get(asset)
                         .into_iter()
@@ -701,6 +756,21 @@ fn expand_with_source_changes(
                     stack.extend(parents.iter().copied());
                 }
             }
+            // Resolver-channel dependents of a changed source are
+            // waived for opted-in actions whose effective signature
+            // the preflight proved unchanged (ADR 0056). Content
+            // reads above are never waived.
+            if api_keyed {
+                resolver_keys.retain(|key| {
+                    !cutoff.is_some_and(|evidence| {
+                        evidence.clean_actions.contains(*key)
+                            && specs_by_key
+                                .get(*key)
+                                .is_some_and(|spec| spec.instance.api_cutoff)
+                    })
+                });
+            }
+            dependent_keys.extend(resolver_keys);
             for dependent_key in dependent_keys {
                 let Some(spec) = specs_by_key.get(dependent_key) else {
                     continue;

@@ -1,0 +1,40 @@
+targets:
+  $default:
+    builders:
+      api_cutoff_app:summary:
+        generate_for:
+          - lib/consumer.dart
+      api_cutoff_app:echo:
+        generate_for:
+          - lib/consumer.dart
+      api_cutoff_app:probe:
+        generate_for:
+          - lib/consumer.dart
+builders:
+  summary:
+    import: "package:api_cutoff_app/builder.dart"
+    builder_factories:
+      - summaryBuilder
+    build_extensions:
+      ".dart":
+        - ".summary.txt"
+    auto_apply: none
+    build_to: source
+  echo:
+    import: "package:api_cutoff_app/builder.dart"
+    builder_factories:
+      - echoBuilder
+    build_extensions:
+      ".dart":
+        - ".echo.txt"
+    auto_apply: none
+    build_to: source
+  probe:
+    import: "package:api_cutoff_app/builder.dart"
+    builder_factories:
+      - probeBuilder
+    build_extensions:
+      ".dart":
+        - ".probe.txt"
+    auto_apply: none
+    build_to: source

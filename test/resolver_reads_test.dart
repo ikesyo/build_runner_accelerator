@@ -76,6 +76,37 @@ void main() {
     },
   );
 
+  test('conditional reads are collected for resolver-only loads', () async {
+    final main = AssetId('app', 'lib/main.dart');
+    final old = AssetId('app', 'lib/old.dart');
+    final reads = AssetReadCache({
+      main: utf8.encode("export 'old.dart' if (dart.library.io) 'dart:io';"),
+      old: [],
+    });
+    final cache = _newTestCache();
+    final config = PackageConfig([]);
+    final io = RemoteAssetReaderWriter(readCache: reads, readableCache: {});
+    io.beginAction(
+      rpc: _rpc(),
+      package: 'app',
+      primaryInput: null,
+      blockedAssets: {},
+    );
+    try {
+      // The library was loaded only by the resolver machinery, so
+      // it is not among the direct reads; its conditional targets
+      // must still be discovered and recorded as dependencies.
+      io.resolverObservedReads.add(main);
+      await collectResolverReads(io, config, cache);
+      expect(io.observedReads, contains(old));
+      // The collector's validation read must not promote the
+      // scanned library itself to a direct read.
+      expect(io.observedReads, isNot(contains(main)));
+    } finally {
+      io.endAction();
+    }
+  });
+
   test(
     'frontend digests serve cached conditional reads without reading',
     () async {

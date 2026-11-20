@@ -1,4 +1,5 @@
 mod commit;
+mod cutoff;
 mod dirty;
 mod execution;
 mod filtered;
@@ -154,7 +155,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
 )]
 pub(crate) fn run_with_config_session(
     options: &Options,
-    pool: Option<&mut WorkerPool>,
+    mut pool: Option<&mut WorkerPool>,
     workspace: Workspace,
     frontend: NativeFrontend,
     loaded_graph: LoadedGraph,
@@ -322,6 +323,29 @@ pub(crate) fn run_with_config_session(
         )?;
         return Ok((!settings.only_check).then_some(state));
     }
+    // The dirty context (snapshot comparison plus the reverse
+    // resolver graph walk) is computed once and shared between the
+    // cutoff preflight and dirty analysis.
+    let dirty_context = state.dirty_context(&current_snapshot);
+    // ADR 0056 stage 4: when changed sources reach opted-in actions'
+    // resolver observations, preflight their current fingerprints so
+    // dirty analysis can waive actions whose effective signature is
+    // unchanged. A pool started here is handed to execution below, so
+    // the preflight worker stays on as a build worker.
+    let (cutoff_evidence, cutoff_pool) = prepare_cutoff(
+        options,
+        &workspace,
+        &state,
+        &build_config,
+        &config_digest,
+        &plan,
+        &current_snapshot,
+        &dirty_context,
+        has_shared_parts,
+        retained_output_guard,
+        pool.as_deref_mut(),
+    )?;
+    let mut cutoff_pool = cutoff_pool;
     let dirty = crate::wall::Span::new("dirty_check");
     let dirty_plan = dirty::analyze(
         &workspace,
@@ -332,8 +356,16 @@ pub(crate) fn run_with_config_session(
         &plan,
         &retained_outputs,
         &mut filesystem_metrics,
+        cutoff_evidence.as_ref(),
+        &dirty_context,
     )?;
     drop(dirty);
+    // The learned fingerprints are merged only after analysis: the
+    // shared dirty context borrows the state, and the merge is a
+    // persistence concern (nothing in analysis reads fingerprints).
+    if let Some(evidence) = &cutoff_evidence {
+        state.merge_api_fingerprints(evidence.learned.clone());
+    }
     if settings.legacy_keep_modified_outputs && retained_output_guard {
         let dirty_keys: std::collections::BTreeSet<_> = dirty_plan
             .dirty
@@ -405,8 +437,13 @@ pub(crate) fn run_with_config_session(
         .iter()
         .flat_map(|spec| spec.outputs.iter().cloned())
         .collect();
+    let execution_pool: Option<&mut WorkerPool> = match (pool, cutoff_pool.as_mut()) {
+        (Some(existing), _) => Some(existing),
+        (None, Some(started)) => Some(started),
+        (None, None) => None,
+    };
     let execution = execution::run(
-        pool,
+        execution_pool,
         execution::ExecutionInputs {
             options,
             workspace: &workspace,
@@ -495,6 +532,106 @@ pub(crate) fn run_with_config_session(
     }
     print_result_line(no_work, graph_metrics.written_outputs, started);
     Ok(Some(state))
+}
+
+/// ADR 0056 stage 4 preflight. When the build opted into API cutoff
+/// and changed sources reach an opted-in action's resolver
+/// observations, ensures a worker pool exists (starting one if the
+/// caller did not supply a resident pool), asks it for the changed
+/// units' current fingerprints and directive edges, and evaluates
+/// which actions' effective signatures are unchanged. Returns the
+/// evidence and the pool started here, if any, for execution to
+/// reuse. Missing evidence simply leaves actions content-keyed;
+/// only transport failures propagate.
+#[allow(clippy::too_many_arguments)]
+fn prepare_cutoff(
+    options: &Options,
+    workspace: &Workspace,
+    state: &GraphState,
+    build_config: &crate::builder::RustBuildConfig,
+    config_digest: &str,
+    plan: &planning::PlannedActions,
+    current_snapshot: &crate::snapshot::Snapshot,
+    context: &crate::graph::DirtyContext<'_>,
+    has_shared_parts: bool,
+    retained_output_guard: bool,
+    pool: Option<&mut WorkerPool>,
+) -> io::Result<(Option<cutoff::CutoffEvidence>, Option<WorkerPool>)> {
+    if options.api_cutoff.is_empty()
+        || options.settings.only_check
+        || !options.workspace_output_packages.is_empty()
+        || !state.is_compatible(config_digest)
+        || context.changed().is_empty()
+    {
+        // Workspace builds stay content-keyed in this stage: their
+        // execution manages its own dispatch pool, so a preflight
+        // pool could not be reused and would only add workers.
+        return Ok((None, None));
+    }
+    let generated: std::collections::BTreeSet<String> = state
+        .output_locations
+        .keys()
+        .cloned()
+        .chain(
+            state
+                .actions
+                .values()
+                .flat_map(|action| action.outputs.iter().cloned()),
+        )
+        .collect();
+    let Some(assessment) =
+        cutoff::assess(state, &plan.specs, context, current_snapshot, &generated)
+    else {
+        return Ok((None, None));
+    };
+    let mut owned_pool: Option<WorkerPool> = None;
+    let active_pool = match pool {
+        Some(existing) => existing,
+        None => {
+            let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
+            let worker_command = crate::frontend::worker_executable(options, build_config)?;
+            let started = WorkerPool::start(
+                workspace,
+                dart_binary,
+                &worker_command,
+                options.jobs,
+                options.worker.is_none(),
+            )?;
+            owned_pool = Some(started);
+            owned_pool.as_mut().expect("pool was just started")
+        }
+    };
+    // Both pool paths get the per-build pool state execution would
+    // set before initializing: a resident pool that has not executed
+    // a build yet must not let the preflight initialization skip the
+    // shared-parts capability check or answer from stale digests,
+    // and execution may reuse this initialization as-is.
+    active_pool.set_retained_output_guard(retained_output_guard);
+    active_pool.set_native_overlay(has_shared_parts);
+    let declared_outputs: std::collections::BTreeSet<String> = plan
+        .specs
+        .iter()
+        .flat_map(|spec| spec.outputs.iter().cloned())
+        .collect();
+    active_pool.set_asset_digests(crate::snapshot::asset_digests(
+        current_snapshot,
+        &declared_outputs,
+    ));
+    active_pool.initialize(
+        workspace,
+        &assessment.first_package,
+        config_digest,
+        build_config.phase_count(),
+        !execution::optional_specs_by_output(&plan.specs).is_empty(),
+        &options.api_cutoff,
+    )?;
+    let results =
+        active_pool.api_fingerprint_query(workspace, &assessment.query, &plan.visibility)?;
+    // The query is read-only: let execution reuse this initialization
+    // when its signature matches instead of resetting the workers.
+    active_pool.mark_preflight_initialization();
+    let evidence = cutoff::evaluate(state, &assessment, &results, &generated, config_digest);
+    Ok((Some(evidence), owned_pool))
 }
 
 pub(crate) fn empty_filtered_result(spec: &crate::plan::BuildSpec) -> crate::protocol::BuildResult {

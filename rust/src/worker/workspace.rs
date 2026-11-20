@@ -109,7 +109,7 @@ pub(crate) struct WorkspaceCompletion {
     pub(crate) range: Range<usize>,
     pub(crate) results: io::Result<Vec<BuildResult>>,
     pub(crate) dep_graph: BTreeMap<String, Vec<String>>,
-    pub(crate) api_fingerprints: BTreeMap<String, Option<String>>,
+    pub(crate) api_fingerprints: BTreeMap<String, Option<crate::protocol::ApiFingerprintRecord>>,
     pub(crate) elapsed: Duration,
 }
 

@@ -16,6 +16,15 @@ import 'asset_read_cache.dart';
 import 'protocol.dart';
 import 'resolver_metrics.dart';
 
+/// Zone key carrying the token of the action that opened a
+/// resolver read scope, so recordings on that asynchronous call
+/// chain are attributed to the resolver channel (ADR 0056). A zone
+/// value follows one call chain only, which keeps concurrent
+/// builder reads unattributed, and the token stops matching as
+/// soon as a nested action becomes active, so a build triggered
+/// from inside a resolver call starts unattributed.
+final Object _resolverReadZoneKey = Object();
+
 /// Mutable per-action state behind the long-lived current build_runner
 /// [ReaderWriter]. The Rust side processes a worker's batch sequentially, so
 /// changing the action view between requests is safe and lets the same
@@ -34,6 +43,7 @@ class _RemoteActionState {
   final Set<AssetId> blockedAssets;
   final Map<AssetId, Uint8List> outputs = <AssetId, Uint8List>{};
   final Set<AssetId> observedReads = <AssetId>{};
+  final Set<AssetId> resolverObservedReads = <AssetId>{};
   final Set<AssetId> observedGlobResults = <AssetId>{};
   final Map<ObservedGlob, List<AssetId>> observedGlobMembers = {};
   final Set<ObservedGlob> observedGlobs = <ObservedGlob>{};
@@ -47,6 +57,8 @@ class _RemoteIoState {
   final List<_RemoteActionState> _actions = <_RemoteActionState>[];
   final Map<AssetId, Uint8List> _idleOutputs = <AssetId, Uint8List>{};
   final Set<AssetId> _idleObservedReads = <AssetId>{};
+  final Set<AssetId> _idleResolverObservedReads = <AssetId>{};
+  final Object _idleAttributionToken = Object();
   final Set<AssetId> _idleObservedGlobResults = <AssetId>{};
   final Map<ObservedGlob, List<AssetId>> _idleObservedGlobMembers = {};
   final Set<ObservedGlob> _idleObservedGlobs = <ObservedGlob>{};
@@ -89,6 +101,34 @@ class _RemoteIoState {
       _actions.isEmpty ? _idleOutputs : _active.outputs;
   Set<AssetId> get observedReads =>
       _actions.isEmpty ? _idleObservedReads : _active.observedReads;
+  Set<AssetId> get resolverObservedReads => _actions.isEmpty
+      ? _idleResolverObservedReads
+      : _active.resolverObservedReads;
+
+  /// Identifies the action a resolver read scope belongs to: the
+  /// active action state, or a dedicated token while idle.
+  Object get attributionToken =>
+      _actions.isEmpty ? _idleAttributionToken : _active;
+
+  /// Records a read of [id] with the current attribution: resolver
+  /// loads land in [resolverObservedReads], direct builder reads in
+  /// [observedReads]. An asset read both ways appears in both sets,
+  /// and result assembly keeps it a direct read. Attribution follows
+  /// the asynchronous call chain (a zone value carrying the scope
+  /// opener's [attributionToken]), not an action-wide flag: a
+  /// builder that runs a resolver call and a direct read
+  /// concurrently must not have the direct read attributed to the
+  /// resolver just because the resolver call is still in flight,
+  /// and a nested action triggered from inside a resolver call has
+  /// a different token, so its reads start unattributed.
+  void recordRead(AssetId id) {
+    if (Zone.current[_resolverReadZoneKey] == attributionToken) {
+      resolverObservedReads.add(id);
+    } else {
+      observedReads.add(id);
+    }
+  }
+
   Set<AssetId> get observedGlobResults =>
       _actions.isEmpty ? _idleObservedGlobResults : _active.observedGlobResults;
   Map<ObservedGlob, List<AssetId>> get observedGlobMembers =>
@@ -127,6 +167,36 @@ class RemoteAssetReaderWriter extends ReaderWriter {
 
   Map<AssetId, Uint8List> get outputs => _state.outputs;
   Set<AssetId> get observedReads => _state.observedReads;
+  Set<AssetId> get resolverObservedReads => _state.resolverObservedReads;
+
+  /// Enters [read] with resolver read attribution (ADR 0056) and
+  /// returns its result. The attribution is a zone value, so it
+  /// covers the read's whole asynchronous chain, however long it
+  /// runs, and only that chain: a direct read the builder runs
+  /// concurrently alongside keeps its own attribution. The build
+  /// filesystem wraps the reads it performs for the resolver
+  /// machinery in this.
+  T readAsResolver<T>(T Function() read) {
+    return runZoned(
+      read,
+      zoneValues: {_resolverReadZoneKey: _state.attributionToken},
+    );
+  }
+
+  /// Runs [body] with reads attributed to the resolver channel,
+  /// for call chains that record reads only after an await: the
+  /// resolver entry points probe the target's readability through
+  /// the build step before delegating, and that probe's content
+  /// preload records only after an await, so the scope has to span
+  /// the delegated call. Builder reads are unaffected: they enter
+  /// through the step outside resolver calls, in their own chain.
+  Future<T> runAsResolver<T>(Future<T> Function() body) {
+    return runZoned(
+      body,
+      zoneValues: {_resolverReadZoneKey: _state.attributionToken},
+    );
+  }
+
   Set<AssetId> get observedGlobResults => _state.observedGlobResults;
   Map<ObservedGlob, List<AssetId>> get observedGlobMembers =>
       _state.observedGlobMembers;
@@ -250,7 +320,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
     bool inArtifactTree = false,
     bool hidden = false,
   }) async {
-    _state.observedReads.add(id);
+    _state.recordRead(id);
     final primaryInput = _state.primaryInput;
     if (primaryInput != null && id != primaryInput) return false;
     if (_state.outputs.containsKey(id)) return true;
@@ -299,7 +369,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
   /// Internal immutable snapshot for collectors, decoding and hashing. Uses
   /// the same visibility and read tracking path as public builder reads.
   Future<AssetReadContent> readContent(AssetId id) async {
-    _state.observedReads.add(id);
+    _state.recordRead(id);
     final primaryInput = _state.primaryInput;
     if (primaryInput != null && id != primaryInput) {
       throw AssetNotFoundException(id);

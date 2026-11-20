@@ -93,7 +93,7 @@ mod batch_transport {
                             "glob_reads": [], "diagnostics": []
                         }],
                         "dep_graph": {format!("example|entry{id}.dart"): ["example|dep.dart"]},
-                        "api_fingerprints": {format!("example|entry{id}.dart"): if id == 0 { json!("fp0") } else { json!(null) }}
+                        "api_fingerprints": {format!("example|entry{id}.dart"): if id == 0 { json!({"digest": "d0", "fingerprint": "fp0"}) } else { json!(null) }}
                     }),
                     &[0, 255, id as u8],
                 )?;
@@ -155,7 +155,13 @@ mod batch_transport {
             assert_eq!(
                 worker.api_fingerprints,
                 BTreeMap::from([
-                    ("example|entry0.dart".to_owned(), Some("fp0".to_owned())),
+                    (
+                        "example|entry0.dart".to_owned(),
+                        Some(crate::protocol::ApiFingerprintRecord {
+                            digest: "d0".to_owned(),
+                            fingerprint: "fp0".to_owned(),
+                        }),
+                    ),
                     ("example|entry1.dart".to_owned(), None),
                 ])
             );
