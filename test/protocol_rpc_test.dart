@@ -7,6 +7,97 @@ import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('reads mixed frames at every split and one byte at a time', () async {
+    final bytes = [
+      ..._frame(utf8.encode('{"type":"first"}')),
+      ..._assetFrame([0, 255, 1]),
+      ..._frame(utf8.encode('{"type":"last"}')),
+    ];
+    final partitions = [
+      for (var split = 0; split <= bytes.length; split++)
+        [
+          Uint8List.fromList(bytes.sublist(0, split)),
+          <int>[],
+          bytes.sublist(split),
+        ],
+      [
+        for (final byte in bytes) [byte],
+      ],
+    ];
+    for (final chunks in partitions) {
+      final reader = FrameReader(Stream.fromIterable(chunks));
+      expect(await reader.next(), {'type': 'first'});
+      final binary = (await reader.next())!;
+      expect(await reader.next(), {'type': 'last'});
+      expect(binary['bytes'], [0, 255, 1]);
+      expect(await reader.next(), isNull);
+    }
+  });
+
+  test('retains unread bytes and returned assets across compaction', () async {
+    final asset = List.generate(128, (index) => index);
+    final nextFrame = _frame(utf8.encode('{"type":"next"}'));
+    final firstChunk = Uint8List.fromList([
+      ..._assetFrame(asset),
+      ...nextFrame.take(2),
+    ]);
+    final reader = FrameReader(
+      Stream.fromIterable([firstChunk, nextFrame.sublist(2)]),
+    );
+
+    final binary = (await reader.next())!;
+    firstChunk.fillRange(0, firstChunk.length, 0xff);
+    expect(await reader.next(), {'type': 'next'});
+    expect(binary['bytes'], asset);
+    expect(await reader.next(), isNull);
+  });
+
+  test('distinguishes a clean EOF from invalid frame boundaries', () async {
+    expect(await FrameReader(Stream.value(<int>[])).next(), isNull);
+    final frame = _frame(utf8.encode('{"type":"message"}'));
+    for (var end = 1; end < frame.length; end++) {
+      final reader = FrameReader(Stream.value(frame.sublist(0, end)));
+      await expectLater(reader.next(), throwsFormatException);
+    }
+    final truncated = FrameReader(Stream.value([0x10, 0, 0, 0, 0]));
+    await expectLater(
+      truncated.next(),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          'Unexpected EOF in IPC frame',
+        ),
+      ),
+    );
+    final oversized = FrameReader(Stream.value([0x10, 0, 0, 1, ...frame]));
+    // A framing error must not consume the header or the following bytes.
+    for (var attempt = 0; attempt < 2; attempt++) {
+      await expectLater(
+        oversized.next(),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            'IPC frame exceeds the 256 MiB safety limit',
+          ),
+        ),
+      );
+    }
+  });
+
+  test('a malformed payload consumes only its own frame', () async {
+    final reader = FrameReader(
+      Stream.value([
+        ..._frame([0xff]),
+        ..._frame(utf8.encode('{"type":"next"}')),
+      ]),
+    );
+    await expectLater(reader.next(), throwsFormatException);
+    expect(await reader.next(), {'type': 'next'});
+    expect(await reader.next(), isNull);
+  });
+
   test(
     'concurrent JSON and binary frames retain order and complete bytes',
     () async {
@@ -160,3 +251,22 @@ void main() {
     },
   );
 }
+
+List<int> _frame(List<int> payload) {
+  final length = ByteData(4)..setUint32(0, payload.length);
+  return [...length.buffer.asUint8List(), ...payload];
+}
+
+List<int> _assetFrame(List<int> bytes) => _frame([
+  ...ascii.encode('BRAB'),
+  ..._frame(
+    utf8.encode(
+      jsonEncode({
+        'type': 'asset_response',
+        'encoding': 'raw',
+        'length': bytes.length,
+      }),
+    ),
+  ),
+  ...bytes,
+]);

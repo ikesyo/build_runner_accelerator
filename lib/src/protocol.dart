@@ -606,20 +606,30 @@ class FrameReader {
 
   final StreamIterator<List<int>> _iterator;
   final List<int> _buffer = <int>[];
+  int _start = 0;
+
+  int get _available => _buffer.length - _start;
 
   Future<JsonMap?> next() async {
     await _fill(4);
-    if (_buffer.isEmpty) return null;
+    if (_available == 0) return null;
 
     final length = ByteData.sublistView(
-      Uint8List.fromList(_buffer.sublist(0, 4)),
+      Uint8List.fromList(_buffer.sublist(_start, _start + 4)),
     ).getUint32(0, Endian.big);
     if (length > _maxFrameLength) {
       throw const FormatException('IPC frame exceeds the 256 MiB safety limit');
     }
     await _fill(4 + length);
-    final payload = Uint8List.fromList(_buffer.sublist(4, 4 + length));
-    _buffer.removeRange(0, 4 + length);
+    final end = _start + 4 + length;
+    final payload = Uint8List.fromList(_buffer.sublist(_start + 4, end));
+    _start = end;
+    // Compact when the consumed prefix is at least as long as the unread
+    // suffix. Each shift moves at most as many bytes as we've consumed.
+    if (_start >= _available) {
+      _buffer.removeRange(0, _start);
+      _start = 0;
+    }
     if (_hasBinaryAssetResponseMagic(payload)) {
       return _decodeBinaryAssetResponse(payload);
     }
@@ -675,9 +685,10 @@ class FrameReader {
   }
 
   Future<void> _fill(int length) async {
-    while (_buffer.length < length) {
+    final end = _start + length;
+    while (_buffer.length < end) {
       if (!await _iterator.moveNext()) {
-        if (_buffer.isEmpty) return;
+        if (_available == 0) return;
         throw const FormatException('Unexpected EOF in IPC frame');
       }
       _buffer.addAll(_iterator.current);
