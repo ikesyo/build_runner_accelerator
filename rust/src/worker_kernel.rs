@@ -1756,9 +1756,6 @@ fn prepare_worker_kernel(
     let temp_depfile = temporary_sibling(&depfile_path, process_id, "d");
     let package_config = crate::runner_compatibility::package_config(root)?;
     let config_key = kernel_package_config_key(&package_config)?;
-    // The stamp needs the compiling SDK's identity; resolve it before
-    // compiling so an unlocatable SDK fails before the compile is spent.
-    let sdk_root = dart_sdk_root(dart_binary)?;
     let compile_started = std::time::SystemTime::now();
     let output = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "kernel"])
@@ -1788,15 +1785,18 @@ fn prepare_worker_kernel(
     }
     let config_stamp = kernel_path.with_extension("dill.config");
     let temp_config = temporary_sibling(&config_stamp, process_id, "config");
-    let stamp_json = match build_kernel_stamp(
-        root,
-        &sdk_root,
-        &temp_kernel,
-        &temp_depfile,
-        &config_key,
-        compile_started,
-    )
-    .and_then(|stamp| serde_json::to_string(&stamp).map_err(io::Error::other))
+    let stamp_json = match dart_sdk_root(dart_binary)
+        .and_then(|sdk_root| {
+            build_kernel_stamp(
+                root,
+                &sdk_root,
+                &temp_kernel,
+                &temp_depfile,
+                &config_key,
+                compile_started,
+            )
+        })
+        .and_then(|stamp| serde_json::to_string(&stamp).map_err(io::Error::other))
     {
         Ok(json) => json,
         Err(error) => {
