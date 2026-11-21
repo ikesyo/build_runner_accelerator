@@ -2885,8 +2885,14 @@ mod tests {
         assert!(!current("sdk_b"));
         // Let the digest evidence settle, then change a dependency's
         // contents while restoring its modification time: the mtime-only
-        // check this replaces would have reused the stale kernel.
-        thread::sleep(crate::file_stamp::STAMP_SETTLE + std::time::Duration::from_millis(100));
+        // check this replaces would have reused the stale kernel. The
+        // settle window is Unix-only; elsewhere digests are compared
+        // directly and a short delay is enough.
+        #[cfg(unix)]
+        let settle = crate::file_stamp::STAMP_SETTLE + std::time::Duration::from_millis(100);
+        #[cfg(not(unix))]
+        let settle = std::time::Duration::from_millis(100);
+        thread::sleep(settle);
         assert!(current("sdk_a"));
         assert!(current("sdk_a"));
         let mtime = fs::metadata(&dep).unwrap().modified().unwrap();
