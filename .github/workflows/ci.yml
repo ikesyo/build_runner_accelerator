@@ -525,6 +525,7 @@ jobs:
               bash scripts/correctness_early_catalog.sh
               bash scripts/correctness_api_cutoff.sh
               bash scripts/correctness_api_cutoff_watch.sh
+              bash scripts/correctness_api_cutoff_diff.sh
             env:
               PUB_GET_OFFLINE: '1'
           - name: Freezed watch and generic mappings

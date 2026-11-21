@@ -69,7 +69,7 @@ worker_start_frontend_process_group "$log_path" \
   BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" -- \
   watch --root "$watch_dir" --dart "$dart_bin" --interval-ms 200 \
   --api-cutoff 'api_cutoff_app:summary' --api-cutoff 'api_cutoff_app:echo' \
-  --api-cutoff 'api_cutoff_app:probe'
+  --api-cutoff 'api_cutoff_app:probe' --api-cutoff 'api_cutoff_app:ast'
 watch_pid=$worker_last_pid
 
 summary_runs() {
@@ -80,6 +80,12 @@ echo_runs() {
 }
 probe_runs() {
   grep -Fc 'Dart action metrics: {"builder":"api_cutoff_app:probe"' "$log_path" || true
+}
+ast_runs() {
+  grep -Fc 'Dart action metrics: {"builder":"api_cutoff_app:ast"' "$log_path" || true
+}
+combine_runs() {
+  grep -Fc 'Dart action metrics: {"builder":"api_cutoff_app:combine"' "$log_path" || true
 }
 
 wait_for_initial_build() {
@@ -135,10 +141,15 @@ wait_for_stable_watch_state 0 1
 summary_before=$(summary_runs)
 echo_before=$(echo_runs)
 probe_before=$(probe_runs)
+ast_before=$(ast_runs)
+combine_before=$(combine_runs)
 ((summary_before >= 1)) || fail 'summary action did not run in the initial watch build'
 ((echo_before >= 1)) || fail 'echo action did not run in the initial watch build'
 ((probe_before >= 1)) || fail 'probe action did not run in the initial watch build'
+((ast_before >= 1)) || fail 'ast action did not run in the initial watch build'
 cp "$watch_dir/lib/consumer.summary.txt" "$results_dir/summary.initial.txt"
+cp "$watch_dir/lib/consumer.probe.txt" "$results_dir/probe.initial.txt"
+cp "$watch_dir/lib/consumer.combined.txt" "$results_dir/combined.initial.txt"
 
 # Body-only edit: the resident worker must answer the preflight
 # with the unchanged fingerprint, so summary is skipped while the
@@ -151,8 +162,29 @@ wait_for_stable_watch_state 1 2
   fail 'probe action reran after a body-only edit in watch mode'
 (( $(echo_runs) > echo_before )) || \
   fail 'echo action did not rerun after a body-only edit in watch mode'
+# The ast action is opted in but observes the dependency through
+# its AST, so the safety net downgrades it: it must rerun on the
+# body-only edit, and its output embeds the body text, so the new
+# body must be visible immediately, not only after a later edit.
+(( $(ast_runs) > ast_before )) || \
+  fail 'ast action did not rerun after a body-only edit in watch mode'
+grep -Fq 'widget-v2' "$watch_dir/lib/consumer.ast.txt" || \
+  fail 'ast output did not pick up the body edit in watch mode'
 cmp "$results_dir/summary.initial.txt" "$watch_dir/lib/consumer.summary.txt" || \
   fail 'summary output changed after a body-only edit in watch mode'
+# The waived probe output and the held combine output must also
+# survive the rebuild untouched; the later API edit reruns both
+# builders and would repair a dropped or rewritten file before
+# the final stock comparison could notice.
+cmp "$results_dir/probe.initial.txt" "$watch_dir/lib/consumer.probe.txt" || \
+  fail 'probe output changed after a body-only edit in watch mode'
+cmp "$results_dir/combined.initial.txt" "$watch_dir/lib/consumer.combined.txt" || \
+  fail 'combined output changed after a body-only edit in watch mode'
+# The downstream combine action consumes the waived summary
+# output, so it must stay idle too; identical output bytes would
+# hide an unnecessary rerun from the final comparison.
+[[ "$(combine_runs)" == "$combine_before" ]] || \
+  fail 'combine action reran after a body-only edit in watch mode'
 grep -Fq 'widget-v2' "$watch_dir/lib/consumer.echo.txt" || \
   fail 'echo output did not pick up the body edit in watch mode'
 summary_before=$(summary_runs)
@@ -179,6 +211,9 @@ wait_for_stable_watch_state 2 3
   fail 'summary action did not rerun after an API edit in watch mode'
 grep -Fq 'ready' "$watch_dir/lib/consumer.summary.txt" || \
   fail 'summary output did not observe the API edit in watch mode'
+# The summary rerun dirties its consumer: combine must advance.
+(( $(combine_runs) > combine_before )) || \
+  fail 'combine action did not rerun after the API edit in watch mode'
 grep -Fq 'ready' "$watch_dir/lib/consumer.probe.txt" || \
   fail 'probe output did not observe the API edit in watch mode'
 
@@ -201,5 +236,9 @@ cmp "$stock_dir/lib/consumer.echo.txt" "$watch_dir/lib/consumer.echo.txt" || \
   fail 'watch echo output differs from stock'
 cmp "$stock_dir/lib/consumer.probe.txt" "$watch_dir/lib/consumer.probe.txt" || \
   fail 'watch probe output differs from stock'
+cmp "$stock_dir/lib/consumer.ast.txt" "$watch_dir/lib/consumer.ast.txt" || \
+  fail 'watch ast output differs from stock'
+cmp "$stock_dir/lib/consumer.combined.txt" "$watch_dir/lib/consumer.combined.txt" || \
+  fail 'watch combined output differs from stock'
 
 printf 'api-cutoff-watch: PASS body-only-skip=yes api-rerun=yes stock-identical=yes\n'

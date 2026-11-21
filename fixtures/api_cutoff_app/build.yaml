@@ -10,6 +10,12 @@ targets:
       api_cutoff_app:probe:
         generate_for:
           - lib/consumer.dart
+      api_cutoff_app:ast:
+        generate_for:
+          - lib/consumer.dart
+      api_cutoff_app:combine:
+        generate_for:
+          - lib/consumer.summary.txt
 builders:
   summary:
     import: "package:api_cutoff_app/builder.dart"
@@ -36,5 +42,25 @@ builders:
     build_extensions:
       ".dart":
         - ".probe.txt"
+    auto_apply: none
+    build_to: source
+  ast:
+    import: "package:api_cutoff_app/builder.dart"
+    builder_factories:
+      - astBuilder
+    build_extensions:
+      ".dart":
+        - ".ast.txt"
+    auto_apply: none
+    build_to: source
+  combine:
+    import: "package:api_cutoff_app/builder.dart"
+    builder_factories:
+      - combineBuilder
+    build_extensions:
+      ".summary.txt":
+        - ".combined.txt"
+    required_inputs:
+      - ".summary.txt"
     auto_apply: none
     build_to: source
