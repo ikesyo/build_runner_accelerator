@@ -34,7 +34,7 @@ jobs:
           key: tagpr-pub-${{ runner.os }}-${{ hashFiles('fixtures/**/pubspec.yaml') }}
           restore-keys: |
             tagpr-pub-${{ runner.os }}-
-      - uses: dart-lang/setup-dart@v1.8.1
+      - uses: dart-lang/setup-dart@v1.8.2
         with:
           sdk: '3.13.3'
       - name: Run tagpr

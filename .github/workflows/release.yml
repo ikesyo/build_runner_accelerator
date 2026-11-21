@@ -44,7 +44,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: dart-lang/setup-dart@v1.8.1
+      - uses: dart-lang/setup-dart@v1.8.2
         with:
           sdk: ${{ matrix.sdk }}
       - name: Dart package checks
@@ -201,7 +201,7 @@ jobs:
           if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
           "$binary" --version
           "$binary" --help
-      - uses: dart-lang/setup-dart@v1.8.1
+      - uses: dart-lang/setup-dart@v1.8.2
         with:
           sdk: '3.13.3'
       - name: Package archive and verify Dart-only consumer
@@ -311,7 +311,7 @@ jobs:
           openssl pkeyutl -sign -rawin -inkey signing-key.pem \
             -in dist/SHA256SUMS -out dist/SHA256SUMS.sig
           rm -f signing-key.pem
-      - uses: dart-lang/setup-dart@v1.8.1
+      - uses: dart-lang/setup-dart@v1.8.2
         with:
           sdk: '3.13.3'
       - name: Verify all final signed artifacts before publication
