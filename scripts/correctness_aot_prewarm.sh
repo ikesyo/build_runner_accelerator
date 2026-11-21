@@ -231,7 +231,7 @@ case "$(uname -s)" in
     deferred_state="$workspace_deferred/.dart_tool/build_runner_accelerator"
     rm -rf -- "$deferred_state/aot-sdk" "$deferred_state/graph-v3.bin"
     find "$workspace_deferred/lib" -name '*.g.dart' -delete
-    BUILD_RUNNER_ACCELERATOR_CACHE="$temporary_dir/deferred-cache-cold" \
+    AOT_POLICY=1 BUILD_RUNNER_ACCELERATOR_CACHE="$temporary_dir/deferred-cache-cold" \
       run_runner "$workspace_deferred" "$deferred_log" build || fail 'deferred cold build failed'
     [[ -f "$workspace_deferred/lib/model_01.g.dart" ]] || fail 'deferred cold build produced no output'
     grep -Fq 'using kernel while AOT compiles in background' "$deferred_log" || \
@@ -321,6 +321,7 @@ assert load(sys.argv[1], sys.argv[3]) == load(sys.argv[2], sys.argv[4]), \
     'manifests differ beyond the workspace root'
 PY
     worker_stop_process_group "$watchcfg_pid"
+    watchcfg_pid=
     watchcfg_mtime_before=$(aot_mtime_ns "$watchcfg_aot")
     # Validate the published artifact synchronously: a build under
     # this config has no actions (the builder is disabled), so it
