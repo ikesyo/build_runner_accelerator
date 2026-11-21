@@ -21,6 +21,14 @@ List<String> describeClass(ClassElement cls, String prefix) {
         .join(',');
     lines.add('$prefix${cls.name}.ctor [$params]');
   }
+  for (final field in cls.fields) {
+    final initializer = field.constantInitializer;
+    if (initializer != null) {
+      lines.add(
+        '$prefix${cls.name}.${field.name} init=${initializer.toSource()}',
+      );
+    }
+  }
   return lines;
 }
 

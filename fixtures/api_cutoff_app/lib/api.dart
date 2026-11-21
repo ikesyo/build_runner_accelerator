@@ -24,6 +24,9 @@ class Limits {
   /// The maximum number of items.
   final int maxItems;
 
+  /// The hard ceiling, set by a field initializer.
+  final int ceiling = 100;
+
   /// Creates limits with a const constructor.
   const Limits({this.maxItems = 10});
 }

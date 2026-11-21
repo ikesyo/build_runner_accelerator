@@ -157,15 +157,19 @@ assert_pattern() {
   done
 }
 
-# Control for the no-work steps: without the flag the same edit
-# must rerun the summary action, proving the cutoff build's silence
-# is a waiver and not a missed invalidation.
-assert_plain_summary_reruns() {
+# Control for the steps where the cutoff build skips the
+# resolver-only actions: without the flag the same edit must rerun
+# them, proving the cutoff build's skip is a waiver and not a
+# missed invalidation.
+assert_plain_resolver_reruns() {
   local step=$1
-  local actual
-  actual=$(builder_runs "$temporary_dir/$step.plain.log" summary)
-  [[ "$actual" == "1" ]] ||
-    fail "step $step: unflagged summary ran $actual time(s), expected 1 (control)"
+  local builder
+  for builder in summary probe; do
+    local actual
+    actual=$(builder_runs "$temporary_dir/$step.plain.log" "$builder")
+    [[ "$actual" == "1" ]] ||
+      fail "step $step: unflagged $builder ran $actual time(s), expected 1 (control)"
+  done
 }
 
 assert_no_work() {
@@ -220,6 +224,8 @@ elif mode == "comment":
          "// A plain comment: still not documentation, outside the API")
 elif mode == "const":
     edit("api.dart", "this.maxItems = 10", "this.maxItems = 20")
+elif mode == "const-init":
+    edit("api.dart", "ceiling = 100", "ceiling = 200")
 elif mode == "api":
     edit("api.dart",
          "  /// Extra rendering.\n  String extra() => 'extra';\n}",
@@ -280,6 +286,7 @@ edit_all body
 build_all body
 assert_pattern body 0 0 1 1 0
 assert_total body 2
+assert_plain_resolver_reruns body
 
 edit_all doc
 build_all doc
@@ -291,12 +298,19 @@ edit_all comment
 build_all comment
 assert_pattern comment 0 0 1 1 0
 assert_total comment 2
+assert_plain_resolver_reruns comment
 
 edit_all const
 build_all const
 assert_pattern const 1 1 1 1 1
 assert_total const 5
 assert_cutoff_output_contains const lib/consumer.summary.txt 'maxItems=20'
+
+edit_all const-init
+build_all const-init
+assert_pattern const-init 1 1 1 1 1
+assert_total const-init 5
+assert_cutoff_output_contains const-init lib/consumer.summary.txt 'init=200'
 
 edit_all api
 build_all api
@@ -307,6 +321,7 @@ assert_cutoff_output_contains api lib/consumer.summary.txt 'ready'
 edit_all part-body
 build_all part-body
 assert_no_work part-body
+assert_plain_resolver_reruns part-body
 
 edit_all part-api
 build_all part-api
@@ -317,10 +332,11 @@ assert_cutoff_output_contains part-api lib/consumer.summary.txt 'partReady'
 edit_all cycle-body
 build_all cycle-body
 assert_no_work cycle-body
+assert_plain_resolver_reruns cycle-body
 
 edit_all cycle-api
 build_all cycle-api
 assert_pattern cycle-api 1 - - 0 1
 assert_cutoff_output_contains cycle-api lib/consumer.summary.txt 'extraB'
 
-printf 'api-cutoff-diff: PASS steps=11 stock-identical=yes plain-identical=yes\n'
+printf 'api-cutoff-diff: PASS steps=12 stock-identical=yes plain-identical=yes\n'
