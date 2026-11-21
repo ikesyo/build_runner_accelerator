@@ -365,7 +365,12 @@ assert_cutoff_output_contains part-api lib/consumer.summary.txt 'partReady'
 
 edit_all cycle-body
 build_all cycle-body
-assert_no_work cycle-body
+# The resolver-only actions stay waived (the cycle fingerprint is
+# unchanged), but the downgraded ast action reruns: resolving
+# cycle_a loaded the whole cycle, so its content-keyed dependency
+# set covers cycle_b as well.
+assert_pattern cycle-body 0 0 0 1 0
+assert_total cycle-body 1
 assert_plain_resolver_reruns cycle-body
 
 edit_all ast-cycle-body
@@ -376,7 +381,7 @@ assert_plain_summary_reruns ast-cycle-body
 
 edit_all cycle-api
 build_all cycle-api
-assert_pattern cycle-api 1 - - 0 1
+assert_pattern cycle-api 1 - - 1 1
 assert_cutoff_output_contains cycle-api lib/consumer.summary.txt 'extraB'
 
 printf 'api-cutoff-diff: PASS steps=13 stock-identical=yes plain-identical=yes\n'
