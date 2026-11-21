@@ -35,7 +35,7 @@ Use the following policy:
   worker lifetime whose invalidation rules are explicit. Do not share cache
   state across incompatible SDK, package, or workspace identities.
 - Treat worker AOT/kernel caches as derived artifacts. The launcher default
-  depends on the command: `watch`/`serve` compile the workspace-local AOT
+  depends on the command: `watch` compiles the workspace-local AOT
   worker in the background so the session does not wait on the one-time
   compile. One-shot commands like `build` start on a cached AOT artifact
   when one exists; on a cold cache they start on a kernel worker and
@@ -56,7 +56,8 @@ Use the following policy:
   This is worker AOT, not AOT
   compilation of the project-facing launcher. A cache miss must preserve
   correctness and provide a usable kernel/script-worker path;
-  `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1` requests the synchronous policy,
+  `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1` requests the automatic policy
+  (the one-shot default described above),
   `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=force` keeps the strict synchronous
   AOT compile,
   `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background` requests the background

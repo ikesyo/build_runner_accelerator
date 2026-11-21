@@ -73,15 +73,17 @@ struct AotMetadata {
 
 /// Stamp published alongside a cached worker kernel. Reuse requires the
 /// same evidence the AOT metadata checks: the effective package
-/// configuration, the identity of the SDK that compiled the kernel, and
-/// the content digest of every depfile dependency outside the SDK and
-/// the package configuration itself (both covered by the first two).
+/// configuration, the identity of the SDK that compiled the kernel, a
+/// digest of the kernel bytes themselves, and the content digest of
+/// every depfile dependency outside the SDK and the package
+/// configuration itself (both covered by the first two).
 #[derive(Debug, Deserialize, Serialize)]
 struct KernelStamp {
     format: u32,
     config_key: String,
     sdk_version: String,
     allowed_experiments: String,
+    kernel_digest: String,
     dependencies: BTreeMap<String, String>,
 }
 
@@ -1754,6 +1756,9 @@ fn prepare_worker_kernel(
     let temp_depfile = temporary_sibling(&depfile_path, process_id, "d");
     let package_config = crate::runner_compatibility::package_config(root)?;
     let config_key = kernel_package_config_key(&package_config)?;
+    // The stamp needs the compiling SDK's identity; resolve it before
+    // compiling so an unlocatable SDK fails before the compile is spent.
+    let sdk_root = dart_sdk_root(dart_binary)?;
     let compile_started = std::time::SystemTime::now();
     let output = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "kernel"])
@@ -1783,11 +1788,15 @@ fn prepare_worker_kernel(
     }
     let config_stamp = kernel_path.with_extension("dill.config");
     let temp_config = temporary_sibling(&config_stamp, process_id, "config");
-    let stamp_json = match dart_sdk_root(dart_binary)
-        .and_then(|sdk_root| {
-            build_kernel_stamp(root, &sdk_root, &temp_depfile, &config_key, compile_started)
-        })
-        .and_then(|stamp| serde_json::to_string(&stamp).map_err(io::Error::other))
+    let stamp_json = match build_kernel_stamp(
+        root,
+        &sdk_root,
+        &temp_kernel,
+        &temp_depfile,
+        &config_key,
+        compile_started,
+    )
+    .and_then(|stamp| serde_json::to_string(&stamp).map_err(io::Error::other))
     {
         Ok(json) => json,
         Err(error) => {
@@ -1828,6 +1837,7 @@ fn kernel_package_config_key(path: &Path) -> io::Result<String> {
 fn build_kernel_stamp(
     root: &Path,
     sdk_root: &Path,
+    kernel: &Path,
     depfile: &Path,
     config_key: &str,
     compile_started: std::time::SystemTime,
@@ -1864,6 +1874,7 @@ fn build_kernel_stamp(
         config_key: config_key.to_owned(),
         sdk_version,
         allowed_experiments,
+        kernel_digest: digest_file(kernel)?,
         dependencies: digests,
     })
 }
@@ -1922,9 +1933,10 @@ fn kernel_stamp_is_current(
         return false;
     }
     let mut digests = crate::validated_digest::Cache::load(root);
-    let valid = stamp.dependencies.iter().all(|(key, expected)| {
-        current_keys.contains(key) && digests.matches(Path::new(key), expected)
-    });
+    let valid = digests.matches(kernel, &stamp.kernel_digest)
+        && stamp.dependencies.iter().all(|(key, expected)| {
+            current_keys.contains(key) && digests.matches(Path::new(key), expected)
+        });
     if valid {
         digests.save(root);
     }
@@ -2725,6 +2737,7 @@ mod tests {
             config_key,
             sdk_version: String::new(),
             allowed_experiments: String::new(),
+            kernel_digest: String::new(),
             dependencies: Default::default(),
         };
         fs::write(
@@ -2857,6 +2870,7 @@ mod tests {
             super::build_kernel_stamp(
                 &root,
                 &root.join("sdk_a"),
+                &kernel,
                 &depfile,
                 &key,
                 std::time::SystemTime::UNIX_EPOCH,
@@ -2866,6 +2880,7 @@ mod tests {
         let stamp = super::build_kernel_stamp(
             &root,
             &root.join("sdk_a"),
+            &kernel,
             &depfile,
             &key,
             std::time::SystemTime::now(),
@@ -2906,6 +2921,12 @@ mod tests {
             .unwrap();
         assert!(!current("sdk_a"));
         fs::write(&dep, "before").unwrap();
+        assert!(current("sdk_a"));
+        // The stamp also binds the kernel bytes themselves: a damaged or
+        // replaced .dill is not reused.
+        fs::write(&kernel, "tampered").unwrap();
+        assert!(!current("sdk_a"));
+        fs::write(&kernel, "kernel").unwrap();
         assert!(current("sdk_a"));
         // Stamps written before the format carried this evidence are
         // treated as stale, not parsed leniently.
