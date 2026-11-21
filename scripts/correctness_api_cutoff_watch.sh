@@ -172,6 +172,14 @@ grep -Fq 'widget-v2' "$watch_dir/lib/consumer.ast.txt" || \
   fail 'ast output did not pick up the body edit in watch mode'
 cmp "$results_dir/summary.initial.txt" "$watch_dir/lib/consumer.summary.txt" || \
   fail 'summary output changed after a body-only edit in watch mode'
+# The waived probe output and the held combine output must also
+# survive the rebuild untouched; the later API edit reruns both
+# builders and would repair a dropped or rewritten file before
+# the final stock comparison could notice.
+cmp "$results_dir/probe.initial.txt" "$watch_dir/lib/consumer.probe.txt" || \
+  fail 'probe output changed after a body-only edit in watch mode'
+cmp "$results_dir/combined.initial.txt" "$watch_dir/lib/consumer.combined.txt" || \
+  fail 'combined output changed after a body-only edit in watch mode'
 # The downstream combine action consumes the waived summary
 # output, so it must stay idle too; identical output bytes would
 # hide an unnecessary rerun from the final comparison.
