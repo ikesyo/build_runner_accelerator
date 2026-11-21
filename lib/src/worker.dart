@@ -68,6 +68,8 @@ Future<void> runWorker({
   SharedPartEncoder? sharedPartEncoder,
   SharedPartStepFactory? sharedPartStepFactory,
   List<String> arguments = const [],
+  FrameReader? frameReader,
+  FrameWriter? frameWriter,
   Map<String, PostProcessBuilderFactory> postProcessCatalog =
       const <String, PostProcessBuilderFactory>{},
 }) async {
@@ -121,8 +123,8 @@ Future<void> runWorker({
     enabled: _metricsEnabled,
   )..packageConfigLoadUs = packageConfigTimer?.elapsedMicroseconds ?? 0;
   final runtime = _WorkerRuntime(packageConfig, resolverProfile);
-  final reader = FrameReader(stdin);
-  final writer = FrameWriter(stdout);
+  final reader = frameReader ?? FrameReader(stdin);
+  final writer = frameWriter ?? FrameWriter(stdout);
   try {
     while (true) {
       final rawMessage = await reader.next();

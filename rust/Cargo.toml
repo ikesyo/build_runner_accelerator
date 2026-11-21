@@ -5,6 +5,9 @@ edition = "2024"
 license = "MIT"
 publish = false
 
+[features]
+ffi-spike = []
+
 [dependencies]
 memchr = "2.8"
 blake3 = "1.8"

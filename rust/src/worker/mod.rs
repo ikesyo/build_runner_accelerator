@@ -1,5 +1,7 @@
 mod asset_rpc;
 mod client;
+#[cfg(feature = "ffi-spike")]
+pub(crate) use client::WorkerConnection;
 mod lazy;
 mod overlay_blob;
 mod pool;

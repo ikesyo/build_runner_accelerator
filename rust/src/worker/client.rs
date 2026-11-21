@@ -14,9 +14,9 @@ use crate::workspace::Workspace;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
-use std::io::{self, BufReader, BufWriter};
+use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -105,9 +105,7 @@ pub struct WorkerClient {
     pub(super) blocked_assets_cache: BlockedAssetsCache,
     /// Reusable serialization buffer for typed build messages.
     pub(super) send_buffer: Vec<u8>,
-    child: Child,
-    input: BufWriter<ChildStdin>,
-    output: BufReader<ChildStdout>,
+    connection: WorkerConnection,
     pub(super) next_id: u64,
     pub(super) metrics: WorkerClientMetrics,
     /// Resolver dependency edges reported with this client's batch or single results.
@@ -751,53 +749,19 @@ impl WorkerClient {
     ) -> io::Result<Self> {
         let _wall = crate::wall::Span::new("worker_spawn");
         let started = Instant::now();
-        let mut command = match worker_artifact {
-            WorkerArtifact::Aot(executable) => Command::new(executable),
-            WorkerArtifact::Kernel(kernel) => {
-                let mut command = Command::new(dart_binary);
-                let package_config = crate::runner_compatibility::package_config(root)?;
-                command
-                    .arg(format!("--packages={}", package_config.display()))
-                    .arg(kernel);
-                command
-            }
-            WorkerArtifact::Script => {
-                let mut command = Command::new(dart_binary);
-                if is_worker_script(worker_executable) {
-                    command
-                        .arg(format!(
-                            "--packages={}",
-                            crate::runner_compatibility::package_config(root)?.display()
-                        ))
-                        .arg(worker_executable);
-                } else {
-                    command.args(["--suppress-analytics", "run", worker_executable]);
-                }
-                command
-            }
-        };
-        let mut child = command
-            .current_dir(root)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()?;
-        let input = BufWriter::new(
-            child
-                .stdin
-                .take()
-                .ok_or_else(|| io::Error::other("worker stdin unavailable"))?,
-        );
-        let output = BufReader::new(
-            child
-                .stdout
-                .take()
-                .ok_or_else(|| io::Error::other("worker stdout unavailable"))?,
-        );
-        Ok(Self {
-            child,
-            input,
-            output,
+        #[cfg(feature = "ffi-spike")]
+        if let Some(connection) = crate::ffi_spike::connect()? {
+            return Ok(Self::from_connection(connection, started));
+        }
+
+        let connection =
+            WorkerConnection::spawn(root, dart_binary, worker_executable, worker_artifact)?;
+        Ok(Self::from_connection(connection, started))
+    }
+
+    fn from_connection(connection: WorkerConnection, started: Instant) -> Self {
+        Self {
+            connection,
             next_id: 1,
             metrics: WorkerClientMetrics {
                 worker_start_us: started.elapsed().as_micros() as u64,
@@ -816,7 +780,7 @@ impl WorkerClient {
             staged_asset_digests: None,
             blocked_assets_cache: BlockedAssetsCache::default(),
             send_buffer: Vec::new(),
-        })
+        }
     }
 
     /// Performs the versioned handshake and enforces the capabilities required
@@ -1202,7 +1166,7 @@ impl WorkerClient {
     }
 
     pub(super) fn wall_span(&self, stage: &'static str, id: Option<u64>) -> crate::wall::Span {
-        crate::wall::Span::new(stage).worker(self.child.id(), id)
+        crate::wall::Span::new(stage).worker(self.connection.id(), id)
     }
 
     pub(super) fn next_id(&mut self) -> u64 {
@@ -1240,7 +1204,7 @@ impl WorkerClient {
         } else {
             message
         };
-        let frame_size = write_frame(&mut self.input, message)?;
+        let frame_size = write_frame(&mut self.connection.input, message)?;
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
         Ok(())
@@ -1251,7 +1215,8 @@ impl WorkerClient {
     /// context fields are populated by the wire constructors, so unlike
     /// [`Self::send`] this path never clones the message.
     pub(super) fn send_serialized<T: serde::Serialize>(&mut self, message: &T) -> io::Result<()> {
-        let frame_size = write_frame_buffered(&mut self.input, message, &mut self.send_buffer)?;
+        let frame_size =
+            write_frame_buffered(&mut self.connection.input, message, &mut self.send_buffer)?;
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
         Ok(())
@@ -1407,7 +1372,7 @@ impl WorkerClient {
     }
 
     pub(super) fn send_binary(&mut self, metadata: &Value, bytes: &[u8]) -> io::Result<()> {
-        let frame_size = write_binary_frame(&mut self.input, metadata, bytes)?;
+        let frame_size = write_binary_frame(&mut self.connection.input, metadata, bytes)?;
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
         Ok(())
@@ -1418,8 +1383,8 @@ impl WorkerClient {
     pub(super) fn receive(&mut self) -> io::Result<IncomingFrame> {
         let _receive = self.wall_span("receive_frame", None);
         loop {
-            let (message, frame_size) =
-                read_message_with_size(&mut self.output)?.ok_or_else(|| {
+            let (message, frame_size) = read_message_with_size(&mut self.connection.output)?
+                .ok_or_else(|| {
                     io::Error::new(io::ErrorKind::UnexpectedEof, "Dart worker exited")
                 })?;
             let metadata = match &message {
@@ -1487,12 +1452,92 @@ impl WorkerClient {
     }
 }
 
-impl Drop for WorkerClient {
-    /// Ensure the subprocess cannot outlive its owning pool, even after a
-    /// protocol or worker error. The exit status is intentionally best effort.
+pub(crate) struct WorkerConnection {
+    child: Option<Child>,
+    input: Box<dyn Write + Send>,
+    output: Box<dyn Read + Send>,
+}
+
+impl WorkerConnection {
+    fn spawn(
+        root: &Path,
+        dart_binary: &str,
+        worker_executable: &str,
+        worker_artifact: &WorkerArtifact,
+    ) -> io::Result<Self> {
+        let mut command = match worker_artifact {
+            WorkerArtifact::Aot(executable) => Command::new(executable),
+            WorkerArtifact::Kernel(kernel) => {
+                let mut command = Command::new(dart_binary);
+                let package_config = crate::runner_compatibility::package_config(root)?;
+                command
+                    .arg(format!("--packages={}", package_config.display()))
+                    .arg(kernel);
+                command
+            }
+            WorkerArtifact::Script => {
+                let mut command = Command::new(dart_binary);
+                if is_worker_script(worker_executable) {
+                    command
+                        .arg(format!(
+                            "--packages={}",
+                            crate::runner_compatibility::package_config(root)?.display()
+                        ))
+                        .arg(worker_executable);
+                } else {
+                    command.args(["--suppress-analytics", "run", worker_executable]);
+                }
+                command
+            }
+        };
+        let mut child = command
+            .current_dir(root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+        let input = BufWriter::new(
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| io::Error::other("worker stdin unavailable"))?,
+        );
+        let output = BufReader::new(
+            child
+                .stdout
+                .take()
+                .ok_or_else(|| io::Error::other("worker stdout unavailable"))?,
+        );
+        Ok(Self {
+            child: Some(child),
+            input: Box::new(input),
+            output: Box::new(output),
+        })
+    }
+
+    #[cfg(feature = "ffi-spike")]
+    pub(crate) fn in_process(
+        input: impl Write + Send + 'static,
+        output: impl Read + Send + 'static,
+    ) -> Self {
+        Self {
+            child: None,
+            input: Box::new(input),
+            output: Box::new(output),
+        }
+    }
+
+    fn id(&self) -> u32 {
+        self.child.as_ref().map_or_else(std::process::id, Child::id)
+    }
+}
+
+impl Drop for WorkerConnection {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Some(child) = &mut self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 

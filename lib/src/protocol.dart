@@ -696,8 +696,18 @@ WorkerBuildRequest _decodeBuildRequest(JsonMap message) {
 }
 
 class FrameWriter {
-  FrameWriter(this._output, {int maxBuildResultFrameLength = _maxFrameLength})
-    : _maxBuildResultFrameLength = maxBuildResultFrameLength {
+  FrameWriter(IOSink output, {int maxBuildResultFrameLength = _maxFrameLength})
+    : this.withFrameSink((chunks) async {
+        for (final chunk in chunks) {
+          output.add(chunk);
+        }
+        await output.flush();
+      }, maxBuildResultFrameLength: maxBuildResultFrameLength);
+
+  FrameWriter.withFrameSink(
+    this._writeFrame, {
+    int maxBuildResultFrameLength = _maxFrameLength,
+  }) : _maxBuildResultFrameLength = maxBuildResultFrameLength {
     // A lower limit makes boundary tests cheap; callers cannot raise the
     // protocol's production safety limit.
     if (maxBuildResultFrameLength < 8 ||
@@ -706,7 +716,7 @@ class FrameWriter {
     }
   }
 
-  final IOSink _output;
+  final Future<void> Function(List<List<int>>) _writeFrame;
   final int _maxBuildResultFrameLength;
   Future<void> _pending = Future<void>.value();
 
@@ -896,14 +906,9 @@ class FrameWriter {
     ]);
   }
 
-  /// Keeps a whole frame and its flush exclusive on the shared IOSink.
+  /// Keeps a whole frame and its flush exclusive on the transport.
   Future<void> _sendChunks(List<List<int>> chunks) {
-    final sent = _pending.then((_) async {
-      for (final chunk in chunks) {
-        _output.add(chunk);
-      }
-      await _output.flush();
-    });
+    final sent = _pending.then((_) => _writeFrame(chunks));
     // Each caller observes its own failure; the queue must not introduce an
     // unhandled second error or block later diagnostic/error frames.
     _pending = sent.then<void>((_) {}, onError: (Object _, StackTrace _) {});
