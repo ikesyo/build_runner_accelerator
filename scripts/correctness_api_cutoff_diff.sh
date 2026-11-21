@@ -120,6 +120,19 @@ outputs=(
 
 compare_outputs() {
   local step=$1
+  # The generated file sets must match too, not only the known
+  # outputs' bytes: an extra published file or a missing one is a
+  # parity failure even when the five known outputs agree. The
+  # source trees are identical across copies by construction, so
+  # comparing the whole lib/ listing isolates the generated set.
+  local stock_files cutoff_files plain_files
+  stock_files=$(cd "$stock_dir" && find lib -type f | sort)
+  cutoff_files=$(cd "$cutoff_dir" && find lib -type f | sort)
+  plain_files=$(cd "$plain_dir" && find lib -type f | sort)
+  [[ "$stock_files" == "$cutoff_files" ]] ||
+    fail "step $step: cutoff lib/ file set differs from stock"
+  [[ "$stock_files" == "$plain_files" ]] ||
+    fail "step $step: plain lib/ file set differs from stock"
   local output
   for output in "${outputs[@]}"; do
     [[ -f "$stock_dir/$output" ]] || fail "step $step: missing stock output: $output"

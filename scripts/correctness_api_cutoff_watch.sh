@@ -69,7 +69,7 @@ worker_start_frontend_process_group "$log_path" \
   BUILD_RUNNER_ACCELERATOR_BIN="$BUILD_RUNNER_ACCELERATOR_BIN" -- \
   watch --root "$watch_dir" --dart "$dart_bin" --interval-ms 200 \
   --api-cutoff 'api_cutoff_app:summary' --api-cutoff 'api_cutoff_app:echo' \
-  --api-cutoff 'api_cutoff_app:probe'
+  --api-cutoff 'api_cutoff_app:probe' --api-cutoff 'api_cutoff_app:ast'
 watch_pid=$worker_last_pid
 
 summary_runs() {
@@ -80,6 +80,9 @@ echo_runs() {
 }
 probe_runs() {
   grep -Fc 'Dart action metrics: {"builder":"api_cutoff_app:probe"' "$log_path" || true
+}
+ast_runs() {
+  grep -Fc 'Dart action metrics: {"builder":"api_cutoff_app:ast"' "$log_path" || true
 }
 
 wait_for_initial_build() {
