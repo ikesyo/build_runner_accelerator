@@ -84,6 +84,9 @@ probe_runs() {
 ast_runs() {
   grep -Fc 'Dart action metrics: {"builder":"api_cutoff_app:ast"' "$log_path" || true
 }
+combine_runs() {
+  grep -Fc 'Dart action metrics: {"builder":"api_cutoff_app:combine"' "$log_path" || true
+}
 
 wait_for_initial_build() {
   for _ in $(seq 1 "$(verification_watch_poll_iterations 250)"); do
@@ -139,6 +142,7 @@ summary_before=$(summary_runs)
 echo_before=$(echo_runs)
 probe_before=$(probe_runs)
 ast_before=$(ast_runs)
+combine_before=$(combine_runs)
 ((summary_before >= 1)) || fail 'summary action did not run in the initial watch build'
 ((echo_before >= 1)) || fail 'echo action did not run in the initial watch build'
 ((probe_before >= 1)) || fail 'probe action did not run in the initial watch build'
