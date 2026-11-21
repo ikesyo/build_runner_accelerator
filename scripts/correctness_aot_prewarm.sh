@@ -225,7 +225,7 @@ case "$(uname -s)" in
     workspace_deferred="$workspace_parent/deferred"
     deferred_log="$temporary_dir/deferred.log"
     setup_workspace "$workspace_deferred"
-    BUILD_RUNNER_ACCELERATOR_CACHE="$temporary_dir/deferred-cache" \
+    AOT_POLICY=force BUILD_RUNNER_ACCELERATOR_CACHE="$temporary_dir/deferred-cache" \
       run_runner "$workspace_deferred" "$temporary_dir/deferred-warm.log" build || \
       fail 'deferred warm-up build failed'
     deferred_state="$workspace_deferred/.dart_tool/build_runner_accelerator"
@@ -300,6 +300,7 @@ case "$(uname -s)" in
       sleep 2
     done
     [[ -x "$watchcfg_aot" ]] || fail 'watch background helper did not publish an executable'
+    kill -0 "$watchcfg_pid" 2>/dev/null || fail 'watch-config watch exited after publishing'
     cmp "$twin_worker" \
       "$workspace_watch/.dart_tool/build_runner_accelerator/dynamic_worker.dart" || \
       fail 'watch background helper rewrote the worker entrypoint'

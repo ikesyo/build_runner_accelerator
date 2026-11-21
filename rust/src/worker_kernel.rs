@@ -912,7 +912,7 @@ pub(crate) fn pinned_worker_artifact_is_current(
             let worker_path = absolute_worker_path(root, Path::new(worker_executable))?;
             let kernel_path = worker_path.with_extension("dill");
             let depfile_path = PathBuf::from(format!("{}.d", kernel_path.display()));
-            if !dart_sdk_root(dart_binary).is_ok_and(|sdk_root| {
+            if !dart_sdk_root_for_binary(dart_binary).is_ok_and(|sdk_root| {
                 kernel_stamp_is_current(root, &sdk_root, &kernel_path, &depfile_path, &worker_path)
             }) {
                 return Ok(false);
@@ -1745,7 +1745,9 @@ fn prepare_worker_kernel(
     let worker_path = absolute_worker_path(root, Path::new(worker_executable))?;
     let kernel_path = worker_path.with_extension("dill");
     let depfile_path = PathBuf::from(format!("{}.d", kernel_path.display()));
-    if dart_sdk_root(dart_binary).is_ok_and(|sdk_root| {
+    // The stamp binds the SDK of the binary that compiles and launches
+    // the kernel, not the DART_SDK override used for AOT preparation.
+    if dart_sdk_root_for_binary(dart_binary).is_ok_and(|sdk_root| {
         kernel_stamp_is_current(root, &sdk_root, &kernel_path, &depfile_path, &worker_path)
     }) {
         return canonicalize(kernel_path);
@@ -1785,7 +1787,7 @@ fn prepare_worker_kernel(
     }
     let config_stamp = kernel_path.with_extension("dill.config");
     let temp_config = temporary_sibling(&config_stamp, process_id, "config");
-    let stamp_json = match dart_sdk_root(dart_binary)
+    let stamp_json = match dart_sdk_root_for_binary(dart_binary)
         .and_then(|sdk_root| {
             build_kernel_stamp(
                 root,
