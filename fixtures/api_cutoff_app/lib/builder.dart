@@ -77,8 +77,8 @@ Builder astBuilder(BuilderOptions options) => _AstBuilder();
 /// not cover, so the cutoff's safety net must downgrade this
 /// builder: the dependency stays content-keyed and a body-only edit
 /// reruns the action even though the builder is opted in. The
-/// output embeds method body lengths, so a stale waiver would be
-/// visible as a mismatch against stock.
+/// output embeds the method bodies themselves, so a stale waiver
+/// would be visible as a mismatch against stock.
 class _AstBuilder implements Builder {
   @override
   Map<String, List<String>> get buildExtensions => const {
@@ -96,7 +96,7 @@ class _AstBuilder implements Builder {
       for (final member in declaration.body.members) {
         if (member is MethodDeclaration) {
           lines.add(
-            '$className.${member.name.lexeme}:${member.body.toSource().length}',
+            '$className.${member.name.lexeme}:${member.body.toSource()}',
           );
         } else if (member is ConstructorDeclaration) {
           lines.add('$className.ctor:${member.parameters.toSource()}');

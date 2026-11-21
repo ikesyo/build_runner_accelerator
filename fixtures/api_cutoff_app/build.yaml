@@ -60,5 +60,7 @@ builders:
     build_extensions:
       ".summary.txt":
         - ".combined.txt"
+    required_inputs:
+      - ".summary.txt"
     auto_apply: none
     build_to: source
