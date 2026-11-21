@@ -4,7 +4,7 @@ use crate::worker_kernel::{
     AOT_COMPILE_LOCK_NAME, BACKGROUND_AOT_LOCK_ENV, acquire_background_aot_lock,
     analysis_prewarm_enabled, early_worker_aot_compile, early_worker_aot_enabled,
     manifest_prewarm_enabled, prewarm_worker_aot, start_analysis_prewarm,
-    start_manifest_analysis_prewarm, take_background_aot_lock,
+    start_manifest_analysis_prewarm,
 };
 use crate::workspace::Workspace;
 use std::fs;
@@ -17,7 +17,8 @@ pub(crate) const STOCK_OUTPUT_POLICY_STATE: &str =
     ".dart_tool/build_runner_accelerator/stock-output-policy-state";
 
 const MANIFEST_PATH: &str = ".dart_tool/build_runner_accelerator/builder-manifest.json";
-const WORKER_ENTRYPOINT_PATH: &str = ".dart_tool/build_runner_accelerator/dynamic_worker.dart";
+pub(crate) const WORKER_ENTRYPOINT_PATH: &str =
+    ".dart_tool/build_runner_accelerator/dynamic_worker.dart";
 const EARLY_WORKER_MARKER_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 pub(crate) struct NativeFrontend {
@@ -678,12 +679,28 @@ pub(crate) fn run_aot_prewarm(options: &Options) -> io::Result<()> {
     if options.background {
         return run_prewarm_detached(options);
     }
-    let _background_lock = take_background_aot_lock();
+    // The background compile lock is owned by main (taken at process
+    // start, before any check that can exit early). For an after-exit
+    // helper, main has already waited for the spawning build to exit
+    // and acquired the lock before any coordination lock was taken;
+    // a contended deferred lock makes main exit before dispatch.
     let workspace = load_prewarm_workspace(options)?;
-    let build_config =
-        prepare_native_frontend(options, &workspace, &crate::graph::GraphState::default())?;
-    let build_config = build_config.config;
-    let worker = worker_executable(options, &build_config)?;
+    let worker = if std::env::var_os(crate::worker_kernel::BACKGROUND_AOT_HELPER_ENV).is_some() {
+        // A helper spawned by a build or watch run compiles the worker
+        // source its spawner selected, exactly as it lies on disk.
+        // Preparing a manifest here would use this process's own
+        // (default) options and could regenerate the entrypoint under
+        // a different configuration than the spawner's.
+        options
+            .worker
+            .clone()
+            .ok_or_else(|| io::Error::other("background AOT helper requires an explicit worker"))?
+    } else {
+        let build_config =
+            prepare_native_frontend(options, &workspace, &crate::graph::GraphState::default())?;
+        let build_config = build_config.config;
+        worker_executable(options, &build_config)?
+    };
     let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
     // Warm the shared analyzer byte store alongside the worker AOT compile:
     // the JIT prewarm overlaps the compile and continues to completion.

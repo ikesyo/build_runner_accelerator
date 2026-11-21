@@ -20,5 +20,5 @@ opentelemetry_sdk = { version = "0.33", default-features = false, features = ["t
 opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic-messages", "trace", "with-serde"] }
 yaml-rust2 = "0.13.0"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"

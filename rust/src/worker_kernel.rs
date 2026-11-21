@@ -17,6 +17,24 @@ const AOT_METADATA_VERSION: u32 = 3;
 const AOT_CACHE_KEY_VERSION: &str = "v2";
 pub(crate) const BACKGROUND_AOT_LOCK_ENV: &str =
     "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_BACKGROUND_LOCK";
+/// Marks a prewarm process spawned as a background AOT helper by a
+/// build or watch run, as opposed to a user-invoked `prewarm`: the
+/// helper compiles the worker source the spawner selected, exactly
+/// as it lies on disk, instead of preparing a manifest from its own
+/// (default) options, which could regenerate the worker entrypoint
+/// under a different configuration than the spawner's.
+pub(crate) const BACKGROUND_AOT_HELPER_ENV: &str =
+    "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_BACKGROUND_HELPER";
+/// Marks a background AOT helper spawned by a one-shot build: the helper
+/// waits for the spawning build process to exit before compiling, so the
+/// compile never competes with the build's own workers for CPU.
+pub(crate) const BACKGROUND_AOT_AFTER_EXIT_ENV: &str =
+    "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_BACKGROUND_AFTER_EXIT";
+/// The pid of the build process that spawned an after-exit helper,
+/// passed separately because the helper acquires the compile lock only
+/// after the wait, so no lock file exists to record the pid in.
+pub(crate) const BACKGROUND_AOT_SPAWNER_ENV: &str =
+    "BUILD_RUNNER_ACCELERATOR_WORKER_AOT_BACKGROUND_SPAWNER";
 const BACKGROUND_AOT_LOCK_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 pub(crate) const AOT_COMPILE_LOCK_NAME: &str = ".aot-background.lock";
 /// How long a compiler waits for another process's compile to publish before
@@ -53,14 +71,34 @@ struct AotMetadata {
     dependencies: BTreeMap<String, String>,
 }
 
+/// Stamp published alongside a cached worker kernel. Reuse requires the
+/// same evidence the AOT metadata checks: the effective package
+/// configuration, the identity of the SDK that compiled the kernel, a
+/// digest of the kernel bytes themselves, and the content digest of
+/// every depfile dependency outside the SDK and the package
+/// configuration itself (both covered by the first two).
+#[derive(Debug, Deserialize, Serialize)]
+struct KernelStamp {
+    format: u32,
+    config_key: String,
+    sdk_version: String,
+    allowed_experiments: String,
+    kernel_digest: String,
+    dependencies: BTreeMap<String, String>,
+}
+
+const KERNEL_STAMP_VERSION: u32 = 1;
+
 /// Select the worker launch artifact using this build's prepared resolution.
 /// Callers load a fresh Workspace at command/watch configuration boundaries;
 /// AOT helpers must not reload it within that preparation unit.
 ///
 /// The launcher requests a synchronous AOT worker for one-shot commands and
-/// a background compile for `watch` by default. The request can be disabled,
-/// made synchronous, or made strict through the environment. An explicit AOT
-/// path takes precedence over every other mode.
+/// a background compile for `watch` by default. A synchronous request starts
+/// on a cached AOT artifact when one exists; on a cold cache it starts on a
+/// kernel worker and compiles AOT in the background for the next build. The
+/// request can be disabled, made synchronous, or made strict through the
+/// environment. An explicit AOT path takes precedence over every other mode.
 ///
 pub(crate) fn resolve_worker_artifact(
     workspace: &Workspace,
@@ -84,12 +122,73 @@ pub(crate) fn resolve_worker_artifact(
                 if let Some(kernel) = configured_worker_kernel()? {
                     return Ok(WorkerArtifact::Kernel(kernel));
                 }
-                match prepare_worker_aot(workspace, dart_binary, worker_executable) {
-                    Ok(aot) => return Ok(WorkerArtifact::Aot(aot)),
+                match current_or_restored_aot(workspace, dart_binary, worker_executable) {
+                    Ok(Some(aot)) => return Ok(WorkerArtifact::Aot(aot)),
+                    Ok(None) => {
+                        // Cold cache: a synchronous AOT compile blocks the
+                        // first action for tens of seconds, while a kernel
+                        // compile is several times faster and its workers
+                        // start quickly. Start on the kernel and let the AOT
+                        // compile finish in the background; it publishes to
+                        // the shared cache so the next build starts on AOT.
+                        // The helper starts only once the kernel is ready:
+                        // if kernel preparation failed, the synchronous AOT
+                        // fallback below would wait on the compile lock the
+                        // helper holds while the helper waits for this
+                        // process to exit.
+                        // Under workspace-mode state the helper cannot run
+                        // (it is rejected as an individual invocation), so
+                        // those builds keep the synchronous compile below
+                        // until the helper has a workspace-aware path.
+                        // Platforms without a liveness probe spawn no
+                        // helper at all and also keep the synchronous
+                        // compile, so their AOT cache still gets populated.
+                        if cfg!(unix)
+                            && crate::workspace_mode::reject_individual_after_workspace(root)
+                                .is_ok()
+                            && !pub_workspace_participant(root)
+                        {
+                            match prepare_worker_kernel(root, dart_binary, worker_executable) {
+                                Ok(kernel) => {
+                                    start_background_aot_compile(
+                                        workspace,
+                                        dart_binary,
+                                        worker_executable,
+                                        "kernel",
+                                    );
+                                    return Ok(WorkerArtifact::Kernel(kernel));
+                                }
+                                Err(error) => {
+                                    eprintln!(
+                                        "Rust worker kernel cache unavailable; compiling AOT synchronously ({error})"
+                                    );
+                                }
+                            }
+                        }
+                        match prepare_worker_aot(workspace, dart_binary, worker_executable) {
+                            Ok(aot) => return Ok(WorkerArtifact::Aot(aot)),
+                            Err(error) => {
+                                eprintln!(
+                                    "Rust worker AOT cache unavailable; using Dart script ({error})"
+                                );
+                                return Ok(WorkerArtifact::Script);
+                            }
+                        }
+                    }
                     Err(error) => {
+                        // The probe itself failed (for example a broken SDK
+                        // layout); keep the previous blocking behavior.
                         eprintln!(
-                            "Rust worker AOT cache unavailable; using kernel/script ({error})"
+                            "Rust worker AOT cache check failed; compiling synchronously ({error})"
                         );
+                        match prepare_worker_aot(workspace, dart_binary, worker_executable) {
+                            Ok(aot) => return Ok(WorkerArtifact::Aot(aot)),
+                            Err(error) => {
+                                eprintln!(
+                                    "Rust worker AOT cache unavailable; using kernel/script ({error})"
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -109,6 +208,7 @@ pub(crate) fn resolve_worker_artifact(
                             dart_binary,
                             worker_executable,
                             &context,
+                            false,
                         )?;
                         if started {
                             eprintln!(
@@ -162,6 +262,27 @@ pub(crate) fn prewarm_worker_aot(
         ));
     }
     prepare_worker_aot(workspace, dart_binary, worker_executable)
+}
+
+/// Whether [root] takes part in a Pub workspace, as a member or as
+/// the workspace root. The after-exit helper holds the shared
+/// coordination lock at the workspace root for the length of its
+/// compile, and a workspace build takes that lock exclusively, so a
+/// leftover helper would make the next workspace build fail. A build
+/// in a workspace keeps the synchronous compile instead; the helper
+/// is reserved for standalone packages, where the shared lock
+/// conflicts only with an explicit prewarm.
+fn pub_workspace_participant(root: &Path) -> bool {
+    match crate::workspace_mode::coordination_root(root) {
+        Ok(coordination) => {
+            if coordination != root {
+                return true;
+            }
+        }
+        Err(_) => return true,
+    }
+    let pubspec = root.join("pubspec.yaml");
+    crate::workspace_discovery::pubspec_opts_into_workspace(&pubspec).unwrap_or(true)
 }
 
 /// Starts the synchronous worker AOT compile on a background thread while the
@@ -226,8 +347,15 @@ where
         .unwrap_or_else(|_| Err(io::Error::other("worker AOT compilation panicked")))
 }
 
+/// Whether the manifest-generation window starts the worker AOT compile
+/// early (see [`early_worker_aot_compile`]): the synchronous and force
+/// policies, unless an explicit AOT or kernel artifact is configured.
+/// The compile serves the manifest probe; when it produces an artifact,
+/// the build reuses it. When it does not (no manifest generation ran, or
+/// the compile was unavailable), `resolve_worker_artifact` starts the
+/// build on a kernel worker instead of compiling synchronously.
 pub(crate) fn early_worker_aot_enabled() -> bool {
-    matches!(aot_request(), AotRequest::Force | AotRequest::Synchronous)
+    matches!(aot_request(), AotRequest::Synchronous | AotRequest::Force)
         && configured_worker_aot().ok().flatten().is_none()
         && configured_worker_kernel().ok().flatten().is_none()
 }
@@ -297,8 +425,9 @@ fn configured_worker_aot() -> io::Result<Option<PathBuf>> {
 
 /// Command-dependent default worker AOT policy used when the environment
 /// does not override it: `watch` favors startup latency (background
-/// compile), while one-shot commands favor total wall-clock time
-/// (synchronous compile).
+/// compile), while one-shot commands use the synchronous policy, which
+/// starts on a cached AOT artifact or, on a cold cache, on a kernel worker
+/// while the AOT compile proceeds in the background.
 static DEFAULT_WORKER_AOT_POLICY: OnceLock<AotRequest> = OnceLock::new();
 
 pub(crate) fn apply_default_worker_aot_policy(command: &str) {
@@ -336,6 +465,64 @@ pub(crate) fn take_background_aot_lock() -> Option<BackgroundAotLock> {
     env::var_os(BACKGROUND_AOT_LOCK_ENV).map(|path| BackgroundAotLock {
         path: PathBuf::from(path),
     })
+}
+
+/// In a background AOT helper marked with
+/// [`BACKGROUND_AOT_AFTER_EXIT_ENV`], wait until the process that spawned
+/// the helper has exited, so the compile runs on an idle machine instead
+/// of competing with the build that spawned it. Returns true when the
+/// compile may proceed: the spawner exited, or the wait does not apply.
+/// Returns false when the spawner is still alive at the cap: the helper
+/// then exits without compiling rather than compete with a long build.
+/// (A reused pid can only cause the false case, never an early compile.)
+pub(crate) fn wait_for_background_spawner_exit() -> bool {
+    if env::var_os(BACKGROUND_AOT_AFTER_EXIT_ENV).is_none() {
+        return true;
+    }
+    let Some(pid) = env::var(BACKGROUND_AOT_SPAWNER_ENV)
+        .ok()
+        .and_then(|value| value.parse::<i32>().ok())
+    else {
+        return true;
+    };
+    if pid <= 0 || pid == std::process::id() as i32 {
+        return true;
+    }
+    let deadline = Instant::now() + Duration::from_secs(600);
+    while process_is_alive(pid) {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+    true
+}
+
+/// Acquires the compile lock for an after-exit helper, which is spawned
+/// without holding it (see [`BACKGROUND_AOT_SPAWNER_ENV`]). `Ok(None)`
+/// means another compile already holds the lock and this helper's work
+/// is redundant.
+pub(crate) fn acquire_deferred_background_aot_lock() -> io::Result<Option<BackgroundAotLock>> {
+    let Some(path) = env::var_os(BACKGROUND_AOT_LOCK_ENV) else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(path);
+    if acquire_background_aot_lock(&path)? {
+        Ok(Some(BackgroundAotLock { path }))
+    } else {
+        Ok(None)
+    }
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: i32) -> bool {
+    // Signal 0 performs error checking without delivering a signal.
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+#[cfg(not(unix))]
+fn process_is_alive(_pid: i32) -> bool {
+    false
 }
 
 impl Drop for BackgroundAotLock {
@@ -503,6 +690,10 @@ struct AotContext {
     workspace: Workspace,
     sdk_root: PathBuf,
     worker_path: PathBuf,
+    /// Digest of the worker source the cache key was computed from;
+    /// a compile binds its input to this digest (see
+    /// [`WorkerSourceSnapshot`]).
+    worker_digest: String,
     cache_key: String,
     aot_sdk_root: PathBuf,
     aot_path: PathBuf,
@@ -572,6 +763,53 @@ impl Drop for CompilerConfigSnapshot {
     }
 }
 
+/// A compile-only snapshot of the worker source, taken next to the
+/// source itself so relative URIs retain their base. A background
+/// helper compiles after the build that selected the worker has
+/// exited, when nothing else coordinates the entrypoint: a later
+/// build can regenerate it under a different configuration while
+/// the compile runs. Compiling this snapshot binds the published
+/// executable and its metadata to the exact bytes the context's
+/// cache key was computed from. The `._` prefix uses the existing
+/// source-discovery exclusion, so a killed compiler cannot leave
+/// a snapshot that later becomes a builder input.
+struct WorkerSourceSnapshot {
+    path: PathBuf,
+}
+
+impl WorkerSourceSnapshot {
+    fn create(worker_path: &Path) -> io::Result<Self> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let contents = fs::read(worker_path)?;
+        let parent = worker_path
+            .parent()
+            .ok_or_else(|| io::Error::other("worker entrypoint has no parent directory"))?;
+        loop {
+            let path = parent.join(format!(
+                "._worker-aot-source-{}-{}.dart",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed),
+            ));
+            let mut file = match create_compiler_config(&path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            };
+            let snapshot = Self { path };
+            let result = file.write_all(&contents).and_then(|()| file.flush());
+            drop(file);
+            result?;
+            return Ok(snapshot);
+        }
+    }
+}
+
+impl Drop for WorkerSourceSnapshot {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 fn prepare_aot_context(
     workspace: &Workspace,
     dart_binary: &str,
@@ -580,7 +818,11 @@ fn prepare_aot_context(
     let root = &workspace.root;
     let worker_path = absolute_worker_path(root, Path::new(worker_executable))?;
     let sdk_root = dart_sdk_root(dart_binary)?;
-    let cache_key = aot_cache_key(workspace, &worker_path, &sdk_root)?;
+    // One read of the worker source feeds both the context's digest
+    // and the cache key, so the snapshot check in prepare_worker_aot
+    // binds the compile to exactly the key it publishes under.
+    let worker_digest = digest_file(&worker_path)?;
+    let cache_key = aot_cache_key_with_worker_digest(workspace, &worker_digest, &sdk_root)?;
     let aot_sdk_root = worker_path
         .parent()
         .ok_or_else(|| io::Error::other("worker entrypoint has no parent directory"))?
@@ -619,6 +861,7 @@ fn prepare_aot_context(
         workspace: workspace.clone(),
         sdk_root,
         worker_path,
+        worker_digest,
         cache_key,
         aot_sdk_root,
         aot_path,
@@ -669,9 +912,9 @@ pub(crate) fn pinned_worker_artifact_is_current(
             let worker_path = absolute_worker_path(root, Path::new(worker_executable))?;
             let kernel_path = worker_path.with_extension("dill");
             let depfile_path = PathBuf::from(format!("{}.d", kernel_path.display()));
-            if !worker_artifact_is_current(&kernel_path, &depfile_path, &worker_path)
-                || !kernel_config_is_current(root, &kernel_path)
-            {
+            if !dart_sdk_root_for_binary(dart_binary).is_ok_and(|sdk_root| {
+                kernel_stamp_is_current(root, &sdk_root, &kernel_path, &depfile_path, &worker_path)
+            }) {
                 return Ok(false);
             }
             Ok(canonicalize(kernel_path)?.as_path() == path.as_path())
@@ -694,6 +937,57 @@ pub(crate) fn background_worker_aot_if_ready(
     }
     let context = prepare_aot_context(workspace, dart_binary, worker_executable)?;
     current_aot_from_context(&context)
+}
+
+/// Probe for an already-compiled AOT artifact for this worker: the
+/// workspace-local slot first, then the machine-wide shared cache. Never
+/// compiles; a miss returns `Ok(None)`.
+fn current_or_restored_aot(
+    workspace: &Workspace,
+    dart_binary: &str,
+    worker_executable: &str,
+) -> io::Result<Option<PathBuf>> {
+    let context = prepare_aot_context(workspace, dart_binary, worker_executable)?;
+    if let Some(aot) = current_aot_from_context(&context)? {
+        return Ok(Some(aot));
+    }
+    restore_shared_aot(&context)
+}
+
+/// Kick off the background AOT compile for a cold cache, mirroring the
+/// messages the background policy prints. Failures are reported and
+/// swallowed: the caller proceeds on a fallback artifact either way.
+fn start_background_aot_compile(
+    workspace: &Workspace,
+    dart_binary: &str,
+    worker_executable: &str,
+    fallback: &str,
+) {
+    // The helper defers its compile until the spawning process exits;
+    // that wait needs a process-liveness probe, implemented only on
+    // unix. Elsewhere the helper would compile alongside the build it
+    // is meant to stay out of the way of, so no helper is started.
+    #[cfg(not(unix))]
+    {
+        let _ = (workspace, dart_binary, worker_executable, fallback);
+    }
+    #[cfg(unix)]
+    {
+        let root = &workspace.root;
+        match prepare_aot_context(workspace, dart_binary, worker_executable).and_then(|context| {
+            spawn_background_worker_aot(root, dart_binary, worker_executable, &context, true)
+        }) {
+            Ok(true) => eprintln!(
+                "Rust worker AOT cache miss; using {fallback} while AOT compiles in background"
+            ),
+            Ok(false) => {
+                eprintln!("Rust worker AOT compile is already running; using {fallback}")
+            }
+            Err(error) => {
+                eprintln!("Rust worker background AOT unavailable; using {fallback} ({error})")
+            }
+        }
+    }
 }
 
 fn prepare_worker_aot(
@@ -787,12 +1081,39 @@ fn prepare_worker_aot(
         fs::create_dir_all(parent)?;
     }
     let package_config = CompilerConfigSnapshot::create(&context.workspace)?;
+    // Compile a snapshot of the generated worker source, bound to
+    // the digest the cache key was computed from: the generated
+    // entrypoint can be regenerated while a background compile
+    // runs, and publishing an executable compiled from different
+    // bytes under this key would validate against the wrong
+    // catalog. Explicit worker overrides are user-managed files
+    // that no other build rewrites, and renaming one would change
+    // its library URI, so those compile from their real path.
+    let source_snapshot = if context.worker_path
+        == context
+            .workspace
+            .root
+            .join(crate::frontend::WORKER_ENTRYPOINT_PATH)
+    {
+        let snapshot = WorkerSourceSnapshot::create(&context.worker_path)?;
+        if digest_file(&snapshot.path)? != context.worker_digest {
+            return Err(io::Error::other(
+                "worker source changed while preparing the AOT compile",
+            ));
+        }
+        Some(snapshot)
+    } else {
+        None
+    };
+    let compiled_worker_path = source_snapshot
+        .as_ref()
+        .map_or(&context.worker_path, |snapshot| &snapshot.path);
     let compile_start = Instant::now();
     let output = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "exe"])
         .arg(format!("--packages={}", package_config.path.display()))
         .arg(format!("--depfile={}", temp_depfile.display()))
-        .arg(&context.worker_path)
+        .arg(compiled_worker_path)
         .arg("-o")
         .arg(&temp_aot)
         .current_dir(&context.workspace.root)
@@ -820,6 +1141,7 @@ fn prepare_worker_aot(
         &context.workspace,
         &context.sdk_root,
         &context.worker_path,
+        compiled_worker_path,
         &package_config.path,
         &temp_depfile,
         &temp_aot,
@@ -844,21 +1166,29 @@ fn spawn_background_worker_aot(
     dart_binary: &str,
     worker_executable: &str,
     context: &AotContext,
+    after_exit: bool,
 ) -> io::Result<bool> {
     let lock_path = aot_compile_lock_path(context)
         .ok_or_else(|| io::Error::other("AOT SDK directory has no parent"))?;
-    if !acquire_background_aot_lock(&lock_path)? {
+    // An after-exit helper acquires the lock itself once the spawner has
+    // exited: holding it during the wait would leave a fresh-looking
+    // stale lock behind if the helper is killed with its build, and
+    // would block a retry on an artifact nobody is compiling.
+    if !after_exit && !acquire_background_aot_lock(&lock_path)? {
         return Ok(false);
     }
 
     let current_exe = match env::current_exe() {
         Ok(path) => path,
         Err(error) => {
-            remove_if_present(&lock_path);
+            if !after_exit {
+                remove_if_present(&lock_path);
+            }
             return Err(error);
         }
     };
-    let result = Command::new(current_exe)
+    let mut command = Command::new(current_exe);
+    command
         .args(["prewarm", "--root"])
         .arg(root)
         .args(["--dart"])
@@ -867,10 +1197,16 @@ fn spawn_background_worker_aot(
         .arg(worker_executable)
         .current_dir(root)
         .env(BACKGROUND_AOT_LOCK_ENV, &lock_path)
+        .env(BACKGROUND_AOT_HELPER_ENV, "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
+        .stderr(Stdio::null());
+    if after_exit {
+        command
+            .env(BACKGROUND_AOT_AFTER_EXIT_ENV, "1")
+            .env(BACKGROUND_AOT_SPAWNER_ENV, std::process::id().to_string());
+    }
+    let result = command.spawn();
     match result {
         Ok(mut child) => {
             // Reap the helper while the foreground process remains alive
@@ -883,7 +1219,11 @@ fn spawn_background_worker_aot(
             Ok(true)
         }
         Err(error) => {
-            remove_if_present(&lock_path);
+            // An after-exit spawn never acquired the lock; it may belong
+            // to another compile in progress.
+            if !after_exit {
+                remove_if_present(&lock_path);
+            }
             Err(error)
         }
     }
@@ -989,9 +1329,18 @@ fn background_aot_lock_is_stale(path: &Path) -> bool {
         .is_ok_and(|age| age > BACKGROUND_AOT_LOCK_MAX_AGE)
 }
 
+#[cfg(test)]
 pub(crate) fn aot_cache_key(
     workspace: &Workspace,
     worker_path: &Path,
+    sdk_root: &Path,
+) -> io::Result<String> {
+    aot_cache_key_with_worker_digest(workspace, &digest_file(worker_path)?, sdk_root)
+}
+
+fn aot_cache_key_with_worker_digest(
+    workspace: &Workspace,
+    worker_digest: &str,
     sdk_root: &Path,
 ) -> io::Result<String> {
     let (sdk_version, allowed_experiments) = aot_sdk_identity(sdk_root)?;
@@ -999,7 +1348,6 @@ pub(crate) fn aot_cache_key(
     // normalized lockfile contents, propagating read errors. Do not append
     // those identities again. The changed key shape invalidates old AOT slots.
     let manifest = workspace.builder_manifest_fingerprint()?;
-    let worker = digest_file(worker_path)?;
     Ok(format!(
         "build-runner-accelerator-aot-{AOT_CACHE_KEY_VERSION}-{}-{}-sdk{}-allowed{}-manifest{}-worker{}",
         std::env::consts::OS,
@@ -1007,7 +1355,7 @@ pub(crate) fn aot_cache_key(
         sdk_version,
         allowed_experiments,
         manifest,
-        worker,
+        worker_digest,
     ))
 }
 
@@ -1023,10 +1371,12 @@ pub(crate) fn aot_sdk_identity(sdk_root: &Path) -> io::Result<(String, String)> 
     Ok((digest_bytes(&version), digest_bytes(&allowed_experiments)))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_aot_metadata(
     workspace: &Workspace,
     sdk_root: &Path,
     worker_path: &Path,
+    compiled_worker_path: &Path,
     compiler_config: &Path,
     depfile: &Path,
     executable_path: &Path,
@@ -1036,6 +1386,7 @@ fn build_aot_metadata(
         .ok_or_else(|| io::Error::other("AOT compiler depfile has no dependencies"))?;
     let package_config_path = canonicalize(compiler_config)?;
     let canonical_sdk_root = canonicalize(sdk_root)?;
+    let compiled_worker = canonicalize(compiled_worker_path)?;
     let mut dependency_digests = BTreeMap::new();
     for dependency in dependencies {
         let dependency = canonicalize(dependency)?;
@@ -1043,15 +1394,21 @@ fn build_aot_metadata(
         {
             continue;
         }
-        let key = workspace
-            .logical_dependency_key(&dependency)
-            .ok_or_else(|| {
-                io::Error::other(format!(
-                    "AOT dependency is outside the workspace/package graph: {}",
-                    dependency.display()
-                ))
-            })?;
-        dependency_digests.insert(key, digest_file(&dependency)?);
+        // The compiler read a snapshot of the worker source; record
+        // that entry under the real entrypoint's key, with the
+        // digest of the bytes actually compiled.
+        let (key_path, digest_path) = if dependency == compiled_worker {
+            (worker_path, compiled_worker_path)
+        } else {
+            (dependency.as_path(), dependency.as_path())
+        };
+        let key = workspace.logical_dependency_key(key_path).ok_or_else(|| {
+            io::Error::other(format!(
+                "AOT dependency is outside the workspace/package graph: {}",
+                dependency.display()
+            ))
+        })?;
+        dependency_digests.insert(key, digest_file(digest_path)?);
     }
     let (sdk_version, allowed_experiments) = aot_sdk_identity(sdk_root)?;
     let metadata = AotMetadata {
@@ -1060,7 +1417,7 @@ fn build_aot_metadata(
         sdk_version,
         allowed_experiments,
         package_config: workspace.package_config_identity().to_owned(),
-        worker: digest_file(worker_path)?,
+        worker: digest_file(compiled_worker_path)?,
         executable: digest_file(executable_path)?,
         dependencies: dependency_digests,
     };
@@ -1388,9 +1745,11 @@ fn prepare_worker_kernel(
     let worker_path = absolute_worker_path(root, Path::new(worker_executable))?;
     let kernel_path = worker_path.with_extension("dill");
     let depfile_path = PathBuf::from(format!("{}.d", kernel_path.display()));
-    if worker_artifact_is_current(&kernel_path, &depfile_path, &worker_path)
-        && kernel_config_is_current(root, &kernel_path)
-    {
+    // The stamp binds the SDK of the binary that compiles and launches
+    // the kernel, not the DART_SDK override used for AOT preparation.
+    if dart_sdk_root_for_binary(dart_binary).is_ok_and(|sdk_root| {
+        kernel_stamp_is_current(root, &sdk_root, &kernel_path, &depfile_path, &worker_path)
+    }) {
         return canonicalize(kernel_path);
     }
 
@@ -1399,6 +1758,7 @@ fn prepare_worker_kernel(
     let temp_depfile = temporary_sibling(&depfile_path, process_id, "d");
     let package_config = crate::runner_compatibility::package_config(root)?;
     let config_key = kernel_package_config_key(&package_config)?;
+    let compile_started = std::time::SystemTime::now();
     let output = Command::new(dart_binary)
         .args(["--suppress-analytics", "compile", "kernel"])
         .arg("--no-embed-sources")
@@ -1427,7 +1787,31 @@ fn prepare_worker_kernel(
     }
     let config_stamp = kernel_path.with_extension("dill.config");
     let temp_config = temporary_sibling(&config_stamp, process_id, "config");
-    fs::write(&temp_config, config_key)?;
+    let stamp_json = match dart_sdk_root_for_binary(dart_binary)
+        .and_then(|sdk_root| {
+            build_kernel_stamp(
+                root,
+                &sdk_root,
+                &temp_kernel,
+                &temp_depfile,
+                &config_key,
+                compile_started,
+            )
+        })
+        .and_then(|stamp| serde_json::to_string(&stamp).map_err(io::Error::other))
+    {
+        Ok(json) => json,
+        Err(error) => {
+            remove_if_present(&temp_kernel);
+            remove_if_present(&temp_depfile);
+            return Err(error);
+        }
+    };
+    if let Err(error) = fs::write(&temp_config, stamp_json) {
+        remove_if_present(&temp_kernel);
+        remove_if_present(&temp_depfile);
+        return Err(error);
+    }
 
     // Publish the dependency list before the kernel. If the second rename is
     // interrupted, the old kernel is conservatively treated as stale.
@@ -1452,13 +1836,113 @@ fn kernel_package_config_key(path: &Path) -> io::Result<String> {
     Ok(digest_bytes(&inputs))
 }
 
-fn kernel_config_is_current(root: &Path, kernel: &Path) -> bool {
-    // Missing evidence invalidates this disposable cache in either mode.
-    fs::read_to_string(kernel.with_extension("dill.config")).is_ok_and(|expected| {
-        crate::runner_compatibility::package_config(root)
-            .and_then(|path| kernel_package_config_key(&path))
-            .is_ok_and(|actual| actual == expected)
+fn build_kernel_stamp(
+    root: &Path,
+    sdk_root: &Path,
+    kernel: &Path,
+    depfile: &Path,
+    config_key: &str,
+    compile_started: std::time::SystemTime,
+) -> io::Result<KernelStamp> {
+    let (sdk_version, allowed_experiments) = aot_sdk_identity(sdk_root)?;
+    let canonical_sdk_root = canonicalize(sdk_root)?;
+    let package_config = canonicalize(crate::runner_compatibility::package_config(root)?)?;
+    let dependencies = parse_depfile_dependencies(&fs::read_to_string(depfile)?)
+        .ok_or_else(|| io::Error::other("kernel compiler depfile has no dependencies"))?;
+    let mut digests = BTreeMap::new();
+    for dependency in dependencies {
+        let dependency = canonicalize(dependency)?;
+        if dependency == package_config || dependency.strip_prefix(&canonical_sdk_root).is_ok() {
+            continue;
+        }
+        // The digests are read after compilation; they only describe the
+        // bytes Dart consumed if the input did not change while the
+        // compiler ran. Reject the result otherwise and let the caller
+        // fall back (the next build retries on settled inputs).
+        let modified = fs::metadata(&dependency).and_then(|metadata| metadata.modified())?;
+        if modified > compile_started {
+            return Err(io::Error::other(format!(
+                "kernel input changed during compilation: {}",
+                dependency.display()
+            )));
+        }
+        digests.insert(
+            dependency.to_string_lossy().into_owned(),
+            digest_file(&dependency)?,
+        );
+    }
+    Ok(KernelStamp {
+        format: KERNEL_STAMP_VERSION,
+        config_key: config_key.to_owned(),
+        sdk_version,
+        allowed_experiments,
+        kernel_digest: digest_file(kernel)?,
+        dependencies: digests,
     })
+}
+
+fn read_kernel_stamp(kernel: &Path) -> Option<KernelStamp> {
+    // Missing or unreadable evidence invalidates this disposable cache.
+    let contents = fs::read_to_string(kernel.with_extension("dill.config")).ok()?;
+    let stamp = serde_json::from_str::<KernelStamp>(&contents).ok()?;
+    (stamp.format == KERNEL_STAMP_VERSION).then_some(stamp)
+}
+
+fn kernel_stamp_config_is_current(root: &Path, stamp: &KernelStamp) -> bool {
+    crate::runner_compatibility::package_config(root)
+        .and_then(|path| kernel_package_config_key(&path))
+        .is_ok_and(|actual| actual == stamp.config_key)
+}
+
+fn kernel_stamp_is_current(
+    root: &Path,
+    sdk_root: &Path,
+    kernel: &Path,
+    depfile: &Path,
+    worker: &Path,
+) -> bool {
+    if !kernel.is_file() {
+        return false;
+    }
+    let Some(stamp) = read_kernel_stamp(kernel) else {
+        return false;
+    };
+    if !kernel_stamp_config_is_current(root, &stamp) {
+        return false;
+    }
+    let Ok((sdk_version, allowed_experiments)) = aot_sdk_identity(sdk_root) else {
+        return false;
+    };
+    if stamp.sdk_version != sdk_version || stamp.allowed_experiments != allowed_experiments {
+        return false;
+    }
+    let Ok(contents) = fs::read_to_string(depfile) else {
+        return false;
+    };
+    let Some(dependencies) = parse_depfile_dependencies(&contents) else {
+        return false;
+    };
+    let mut current = std::collections::BTreeSet::new();
+    let mut current_keys = std::collections::BTreeSet::new();
+    for dependency in dependencies {
+        let Ok(dependency) = canonicalize(dependency) else {
+            return false;
+        };
+        current_keys.insert(dependency.to_string_lossy().into_owned());
+        current.insert(dependency);
+    }
+    if !current.contains(worker) {
+        return false;
+    }
+    let mut digests = crate::validated_digest::Cache::load(root);
+    let valid = digests.matches(kernel, &stamp.kernel_digest)
+        && stamp.dependencies.iter().all(|(key, expected)| {
+            current_keys.contains(key) && digests.matches(Path::new(key), expected)
+        });
+    if valid {
+        digests.save(root);
+    }
+    valid
 }
 
 fn absolute_worker_path(root: &Path, worker_path: &Path) -> io::Result<PathBuf> {
@@ -1468,25 +1952,6 @@ fn absolute_worker_path(root: &Path, worker_path: &Path) -> io::Result<PathBuf> 
         root.join(worker_path)
     };
     canonicalize(path)
-}
-
-fn worker_artifact_is_current(artifact: &Path, depfile: &Path, worker: &Path) -> bool {
-    let Ok(artifact_modified) = fs::metadata(artifact).and_then(|metadata| metadata.modified())
-    else {
-        return false;
-    };
-    let Ok(contents) = fs::read_to_string(depfile) else {
-        return false;
-    };
-    let Some(dependencies) = parse_depfile_dependencies(&contents) else {
-        return false;
-    };
-    dependencies.iter().any(|path| path == worker)
-        && dependencies.iter().all(|path| {
-            fs::metadata(path)
-                .and_then(|metadata| metadata.modified())
-                .is_ok_and(|modified| modified <= artifact_modified)
-        })
 }
 
 pub(crate) fn parse_depfile_dependencies(contents: &str) -> Option<Vec<PathBuf>> {
@@ -2015,6 +2480,7 @@ mod tests {
             &workspace,
             &root.join("sdk"),
             &worker,
+            &worker,
             &snapshot.path,
             &depfile,
             &artifact,
@@ -2149,6 +2615,7 @@ mod tests {
                 &workspace,
                 &root.join("sdk"),
                 &worker,
+                &worker,
                 &config_path,
                 &depfile,
                 &artifact,
@@ -2266,32 +2733,45 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    fn write_kernel_stamp(kernel: &std::path::Path, config_key: String) {
+        let stamp = super::KernelStamp {
+            format: super::KERNEL_STAMP_VERSION,
+            config_key,
+            sdk_version: String::new(),
+            allowed_experiments: String::new(),
+            kernel_digest: String::new(),
+            dependencies: Default::default(),
+        };
+        fs::write(
+            kernel.with_extension("dill.config"),
+            serde_json::to_string(&stamp).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn kernel_config_current(root: &std::path::Path, kernel: &std::path::Path) -> bool {
+        super::read_kernel_stamp(kernel)
+            .is_some_and(|stamp| super::kernel_stamp_config_is_current(root, &stamp))
+    }
+
     #[test]
     fn kernel_stamp_rejects_changed_effective_configuration() {
         let root = std::env::temp_dir().join(format!("kernel-config-stamp-{}", std::process::id()));
         fs::create_dir_all(root.join(".dart_tool")).unwrap();
         let config = root.join(".dart_tool/package_config.json");
         let kernel = root.join("worker.dill");
-        assert!(!super::kernel_config_is_current(&root, &kernel));
+        assert!(!kernel_config_current(&root, &kernel));
         let contents = r#"{"configVersion":2,"packages":[{"name":"dep","rootUri":"../dep/"}]}"#;
         fs::write(&config, contents).unwrap();
-        fs::write(
-            kernel.with_extension("dill.config"),
-            super::kernel_package_config_key(&config).unwrap(),
-        )
-        .unwrap();
-        assert!(super::kernel_config_is_current(&root, &kernel));
+        write_kernel_stamp(&kernel, super::kernel_package_config_key(&config).unwrap());
+        assert!(kernel_config_current(&root, &kernel));
         fs::remove_file(kernel.with_extension("dill.config")).unwrap();
-        assert!(!super::kernel_config_is_current(&root, &kernel));
-        fs::write(
-            kernel.with_extension("dill.config"),
-            super::kernel_package_config_key(&config).unwrap(),
-        )
-        .unwrap();
+        assert!(!kernel_config_current(&root, &kernel));
+        write_kernel_stamp(&kernel, super::kernel_package_config_key(&config).unwrap());
         fs::write(&config, "experimental configuration").unwrap();
-        assert!(!super::kernel_config_is_current(&root, &kernel));
+        assert!(!kernel_config_current(&root, &kernel));
         fs::write(&config, contents).unwrap();
-        assert!(super::kernel_config_is_current(&root, &kernel));
+        assert!(kernel_config_current(&root, &kernel));
         let alternate = root.join("alternate/.dart_tool");
         fs::create_dir_all(&alternate).unwrap();
         fs::copy(&config, alternate.join("package_config.json")).unwrap();
@@ -2306,7 +2786,7 @@ mod tests {
             r#"{"workspaceRoot":"../../alternate"}"#,
         )
         .unwrap();
-        assert!(!super::kernel_config_is_current(&root, &kernel));
+        assert!(!kernel_config_current(&root, &kernel));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2330,16 +2810,132 @@ mod tests {
         fs::write(&original, "original").unwrap();
         fs::write(&isolated, "isolated").unwrap();
         let stamp = kernel.with_extension("dill.config");
-        fs::write(&stamp, super::kernel_package_config_key(&original).unwrap()).unwrap();
-        assert!(!super::kernel_config_is_current(&root, &kernel));
-        fs::write(&stamp, super::kernel_package_config_key(&isolated).unwrap()).unwrap();
-        assert!(super::kernel_config_is_current(&root, &kernel));
+        write_kernel_stamp(
+            &kernel,
+            super::kernel_package_config_key(&original).unwrap(),
+        );
+        assert!(!kernel_config_current(&root, &kernel));
+        write_kernel_stamp(
+            &kernel,
+            super::kernel_package_config_key(&isolated).unwrap(),
+        );
+        assert!(kernel_config_current(&root, &kernel));
         fs::write(original, "changed original").unwrap();
-        assert!(super::kernel_config_is_current(&root, &kernel));
+        assert!(kernel_config_current(&root, &kernel));
         fs::write(isolated, "changed isolated").unwrap();
-        assert!(!super::kernel_config_is_current(&root, &kernel));
+        assert!(!kernel_config_current(&root, &kernel));
         fs::remove_file(stamp).unwrap();
-        assert!(!super::kernel_config_is_current(&root, &kernel));
+        assert!(!kernel_config_current(&root, &kernel));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn kernel_stamp_rejects_sdk_change_and_dependency_content_change() {
+        use std::io::Write as _;
+        let root =
+            std::env::temp_dir().join(format!("kernel-stamp-validation-{}", std::process::id()));
+        fs::create_dir_all(root.join(".dart_tool")).unwrap();
+        fs::write(root.join("pubspec.yaml"), "name: app\n").unwrap();
+        let config = root.join(".dart_tool/package_config.json");
+        fs::write(&config, r#"{"configVersion":2,"packages":[]}"#).unwrap();
+        for (sdk, version) in [("sdk_a", "3.13.3"), ("sdk_b", "3.14.0")] {
+            fs::create_dir_all(root.join(sdk).join("lib/_internal")).unwrap();
+            fs::write(root.join(sdk).join("version"), version).unwrap();
+            fs::write(
+                root.join(sdk)
+                    .join("lib/_internal/allowed_experiments.json"),
+                "{}",
+            )
+            .unwrap();
+        }
+        fs::write(root.join("worker.dart"), "worker").unwrap();
+        fs::write(root.join("dep.dart"), "before").unwrap();
+        let worker = super::canonicalize(root.join("worker.dart")).unwrap();
+        let dep = super::canonicalize(root.join("dep.dart")).unwrap();
+        let kernel = root.join("worker.dill");
+        let depfile = root.join("worker.dill.d");
+        fs::write(&kernel, "kernel").unwrap();
+        let escape = |path: &std::path::Path| {
+            path.to_string_lossy()
+                .replace('\\', "\\\\")
+                .replace(' ', "\\ ")
+        };
+        fs::write(
+            &depfile,
+            format!("out: {} {}\n", escape(&worker), escape(&dep)),
+        )
+        .unwrap();
+        let key = super::kernel_package_config_key(&config).unwrap();
+        // Inputs written after the compile started cannot be stamped: the
+        // digest would describe bytes the compiler may never have read.
+        assert!(
+            super::build_kernel_stamp(
+                &root,
+                &root.join("sdk_a"),
+                &kernel,
+                &depfile,
+                &key,
+                std::time::SystemTime::UNIX_EPOCH,
+            )
+            .is_err()
+        );
+        let stamp = super::build_kernel_stamp(
+            &root,
+            &root.join("sdk_a"),
+            &kernel,
+            &depfile,
+            &key,
+            std::time::SystemTime::now(),
+        )
+        .unwrap();
+        fs::write(
+            kernel.with_extension("dill.config"),
+            serde_json::to_string(&stamp).unwrap(),
+        )
+        .unwrap();
+        let current = |sdk: &str| {
+            super::kernel_stamp_is_current(&root, &root.join(sdk), &kernel, &depfile, &worker)
+        };
+        assert!(current("sdk_a"));
+        // A kernel compiled by another SDK must not be reused: its format
+        // version may not load under the selected VM.
+        assert!(!current("sdk_b"));
+        // Let the digest evidence settle, then change a dependency's
+        // contents while restoring its modification time: the mtime-only
+        // check this replaces would have reused the stale kernel. The
+        // settle window is Unix-only; elsewhere digests are compared
+        // directly and a short delay is enough.
+        #[cfg(unix)]
+        let settle = crate::file_stamp::STAMP_SETTLE + std::time::Duration::from_millis(100);
+        #[cfg(not(unix))]
+        let settle = std::time::Duration::from_millis(100);
+        thread::sleep(settle);
+        assert!(current("sdk_a"));
+        assert!(current("sdk_a"));
+        let mtime = fs::metadata(&dep).unwrap().modified().unwrap();
+        thread::sleep(std::time::Duration::from_millis(1100));
+        fs::write(&dep, "after!").unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&dep)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(mtime))
+            .unwrap();
+        assert!(!current("sdk_a"));
+        fs::write(&dep, "before").unwrap();
+        assert!(current("sdk_a"));
+        // The stamp also binds the kernel bytes themselves: a damaged or
+        // replaced .dill is not reused.
+        fs::write(&kernel, "tampered").unwrap();
+        assert!(!current("sdk_a"));
+        fs::write(&kernel, "kernel").unwrap();
+        assert!(current("sdk_a"));
+        // Stamps written before the format carried this evidence are
+        // treated as stale, not parsed leniently.
+        let mut plain = std::fs::File::create(kernel.with_extension("dill.config")).unwrap();
+        plain.write_all(key.as_bytes()).unwrap();
+        drop(plain);
+        assert!(!current("sdk_a"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2616,6 +3212,7 @@ mod tests {
             workspace: crate::workspace::Workspace::load(root.clone()).unwrap(),
             sdk_root: root.join("sdk"),
             worker_path: root.join("worker.dart"),
+            worker_digest: "unused".to_owned(),
             cache_key: "wait-deadline-test".to_owned(),
             aot_sdk_root: root.join("aot-sdk"),
             aot_path: root.join("aot-sdk/bin/worker"),

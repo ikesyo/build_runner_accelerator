@@ -63,6 +63,41 @@ fn run() -> io::Result<()> {
             options.command, options.build_arguments
         ));
     }
+    // A background AOT helper owns its compile lock from process start:
+    // exits before the prewarm body runs (a coordination conflict, the
+    // workspace-mode rejection) must not leave the lock behind for the
+    // next build to trip on. The guard lives until main returns.
+    // After-exit helpers are the exception: they acquire the lock only
+    // once their spawner has exited (in run_aot_prewarm), so there is
+    // no lock to own yet, and owning one here could remove a lock
+    // another helper holds when this helper finds it contended.
+    let _background_lock = if options.command == "prewarm"
+        && env::var_os(worker_kernel::BACKGROUND_AOT_AFTER_EXIT_ENV).is_none()
+    {
+        worker_kernel::take_background_aot_lock()
+    } else {
+        None
+    };
+    // An after-exit helper waits for its spawning build before taking
+    // any lock: an idle helper holding the workspace coordination lock
+    // could reject a concurrent workspace build. If the build outlives
+    // the wait, the helper exits without compiling. The workspace-mode
+    // rejection further below rechecks state after the wait.
+    let _deferred_lock = if options.command == "prewarm"
+        && env::var_os(worker_kernel::BACKGROUND_AOT_AFTER_EXIT_ENV).is_some()
+    {
+        if !worker_kernel::wait_for_background_spawner_exit() {
+            return Ok(());
+        }
+        match worker_kernel::acquire_deferred_background_aot_lock()? {
+            Some(lock) => Some(lock),
+            // Another compile already holds the lock; this helper's
+            // work is redundant.
+            None => return Ok(()),
+        }
+    } else {
+        None
+    };
     let original_root = options.root.clone();
     let discovery = if options.settings.workspace {
         if env::var("BUILD_RUNNER_ACCELERATOR_PLAN_ONLY").as_deref() == Ok("1") {

@@ -35,14 +35,31 @@ Use the following policy:
   worker lifetime whose invalidation rules are explicit. Do not share cache
   state across incompatible SDK, package, or workspace identities.
 - Treat worker AOT/kernel caches as derived artifacts. The launcher default
-  depends on the command: `watch`/`serve` compile the workspace-local AOT
+  depends on the command: `watch` compiles the workspace-local AOT
   worker in the background so the session does not wait on the one-time
-  compile, while one-shot commands like `build` compile synchronously
-  because the script worker's slower execution outweighs the deferred start
-  on large cold builds. This is worker AOT, not AOT
+  compile. One-shot commands like `build` start on a cached AOT artifact
+  when one exists; on a cold cache they start on a kernel worker and
+  leave the AOT compile to a background helper that waits for the build
+  to exit before compiling (on platforms without a process-liveness
+  probe, under workspace-mode state where the helper cannot run yet,
+  and in packages that take part in a Pub workspace, where the
+  helper's shared coordination lock would make a later workspace
+  build fail, no helper is started and the build keeps the
+  synchronous compile), because a synchronous AOT compile blocks
+  the first action for tens of seconds while a kernel compile is
+  several times faster and kernel workers start quickly (the older
+  synchronous-compile policy compared AOT only against the script
+  worker, whose slower execution outweighed the deferred start), and a
+  compile running alongside the build competes with its workers for
+  CPU. Manifest generation may still compile the worker AOT early for
+  its factory probe; when it does, the build reuses that artifact.
+  This is worker AOT, not AOT
   compilation of the project-facing launcher. A cache miss must preserve
   correctness and provide a usable kernel/script-worker path;
-  `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1` requests a synchronous compile,
+  `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=1` requests the automatic policy
+  (the one-shot default described above),
+  `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=force` keeps the strict synchronous
+  AOT compile,
   `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=background` requests the background
   compile, and `BUILD_RUNNER_ACCELERATOR_WORKER_AOT=0` remains an explicit
   opt-out. The

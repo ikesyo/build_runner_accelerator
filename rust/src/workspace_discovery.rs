@@ -129,7 +129,7 @@ fn pub_workspace_root(current: &Path) -> io::Result<Option<PathBuf>> {
 /// stock's `BuildPaths.load`: `resolution: workspace`, or a `workspace:`
 /// section with a non-null value. The pubspec is parsed as YAML (see
 /// `workspace::pubspec_yaml`), so every shape pub accepts is honored.
-fn pubspec_opts_into_workspace(path: &Path) -> io::Result<bool> {
+pub(crate) fn pubspec_opts_into_workspace(path: &Path) -> io::Result<bool> {
     let root = crate::workspace::pubspec_yaml(path)?;
     let Some(map) = root.as_hash() else {
         return Ok(false);
