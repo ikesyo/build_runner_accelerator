@@ -46,6 +46,8 @@ Future<void> main(List<String> args) async {
       stderr.writeln('Could not start Dart worker isolate $id: $error\n$stack');
       return true;
     } finally {
+      // The terminal isolate event is the lifetime boundary for native locks.
+      if (Platform.isLinux) native.releaseWorkerLocks(id);
       native.detach(id);
       events.close();
     }

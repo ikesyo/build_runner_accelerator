@@ -58,12 +58,13 @@ fn run(args: impl Iterator<Item = String>, in_process: bool) -> io::Result<()> {
         ));
     }
     if in_process
+        && !cfg!(target_os = "linux")
         && options.jobs > 1
         && (worker::shared_analysis_cache_enabled()
             || env::var("BUILD_RUNNER_ACCELERATOR_DEP_CACHE").as_deref() != Ok("0"))
     {
         return Err(io::Error::other(
-            "Parallel FFI workers require BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0 and BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0",
+            "Parallel FFI workers with shared caches require Linux",
         ));
     }
     if options.show_help {

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:build/build.dart';
+import 'package:build_runner_accelerator/src/cache_file_lock.dart';
 import 'package:build_runner_accelerator/src/protocol.dart';
 import 'package:build_runner_accelerator/src/worker.dart' as worker;
 
@@ -18,6 +19,9 @@ Future<void> runWorker({
 }) async {
   final native = SpikeBindings(arguments[0]);
   final workerId = int.parse(arguments[1]);
+  if (Platform.isLinux) {
+    cacheLockBackend = (path) => native.lockCache(workerId, path);
+  }
   final directRead =
       Platform.environment['BUILD_RUNNER_ACCELERATOR_FFI_DIRECT_READ'] == '1';
   final frames = directRead ? null : StreamController<List<int>>();

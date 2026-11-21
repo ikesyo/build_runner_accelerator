@@ -2,6 +2,7 @@
 """Compare BRA's pipe worker and the same worker running inside an AOT host."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -266,6 +267,41 @@ def check_interruption(package, root, command, env, logs, expected):
     print(f"{package}: SIGTERM after worker attach preserved the commit and retry matched stock", flush=True)
 
 
+def check_cold_shared_cache(package, fixture, pipe, ffi, commands, mode_env, logs, expected):
+    cache = Path(tempfile.mkdtemp(prefix="cold-shared-cache.", dir=logs.parent / package))
+    for root in (pipe, ffi):
+        restore(root, fixture)
+        clear_native_outputs(root)
+        summaries = root / ".dart_tool/build_resolvers"
+        if summaries.is_dir():
+            shutil.rmtree(summaries)
+
+    # Separate workspaces share the packed stores while their cold SDK
+    # summaries are used by several workers in each workspace.
+    with ThreadPoolExecutor(max_workers=2) as builds:
+        pending = [
+            builds.submit(
+                run, commands[root], root, dict(
+                    mode_env(root),
+                    BUILD_RUNNER_ACCELERATOR_CACHE=str(cache),
+                    BUILD_RUNNER_ACCELERATOR_METRICS="1",
+                    BUILD_RUNNER_ACCELERATOR_FFI_RESET_PROBE="1" if root == ffi else "0",
+                ), logs / f"{package}-{root.name}-cold-shared-cache",
+            )
+            for root in (pipe, ffi)
+        ]
+        for build in pending:
+            build.result()
+    for root in (pipe, ffi):
+        if not (root / ".dart_tool/build_resolvers/sdk.sum").is_file():
+            raise SystemExit(f"{package}: {root.name} did not produce an SDK summary")
+        assert_inventory(inventory(root, package), expected["clean"], f"{package} cold {root.name}")
+    for name in ("byte_store", "dep_parse"):
+        if not any(path.stat().st_size > 16 for path in (cache / name).rglob("data.index")):
+            raise SystemExit(f"{package}: no published entries in {name}")
+    print(f"{package}: concurrent cold pipe and FFI builds shared the stores and matched stock", flush=True)
+
+
 def make_mixed_fixture(count, destination):
     original = REPO / "fixtures/riverpod_app"
     for name in ("pubspec.yaml", "pubspec.lock"):
@@ -289,6 +325,7 @@ def main():
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--features", type=int, default=100, help="mixed application feature count")
     parser.add_argument("--sample-memory", action="store_true")
+    parser.add_argument("--disable-shared-caches", action="store_true")
     parser.add_argument("--ffi-reader", choices=("stream", "direct"), default="stream")
 
     parser.add_argument(
@@ -311,7 +348,11 @@ def main():
     sdk = results / "sdk"
     sdk_bin = sdk / "bin"
     sdk_bin.mkdir(parents=True)
-    (sdk / "lib").symlink_to(dart_bin.parent.parent / "lib", target_is_directory=True)
+    real_sdk = dart_bin.parent.parent
+    (sdk / "lib").symlink_to(real_sdk / "lib", target_is_directory=True)
+    (sdk / "version").symlink_to(real_sdk / "version")
+    for entry in (real_sdk / "bin").iterdir():
+        (sdk_bin / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
     host = sdk_bin / "host"
     env = dict(os.environ)
     env.pop("BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH", None)
@@ -320,9 +361,8 @@ def main():
     env.pop("BUILD_RUNNER_ACCELERATOR_FFI_DIRECT_READ", None)
     env.update(
         BUILD_RUNNER_ACCELERATOR_WORKER_AOT="0",
-        # The packed analyzer cache uses process-scoped fcntl locks.
-        BUILD_RUNNER_ACCELERATOR_BYTE_STORE="0",
-        BUILD_RUNNER_ACCELERATOR_DEP_CACHE="0",
+        BUILD_RUNNER_ACCELERATOR_BYTE_STORE="0" if args.disable_shared_caches else "1",
+        BUILD_RUNNER_ACCELERATOR_DEP_CACHE="0" if args.disable_shared_caches else "1",
         BUILD_RUNNER_ACCELERATOR_CACHE=str(results / "accelerator-cache"),
         BUILD_RUNNER_ACCELERATOR_SUPERVISED="1",
         BUILD_RUNNER_ACCELERATOR_METRICS="0",
@@ -335,8 +375,8 @@ def main():
         "source_head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
         "jobs": args.jobs,
         "mixed_features": args.features,
-        "shared_analyzer_byte_store": False,
-        "shared_dependency_cache": False,
+        "shared_analyzer_byte_store": not args.disable_shared_caches,
+        "shared_dependency_cache": not args.disable_shared_caches,
         "ffi_reader": args.ffi_reader,
         "mode": "AOT worker precompiled before measurements",
     }
@@ -459,6 +499,8 @@ def main():
         check_worker_boundary(package, fixture, pipe, ffi, commands, mode_env, logs, expected, args.jobs)
         if package == "mixed_application":
             check_interruption(package, ffi, commands[ffi], mode_env(ffi), logs, expected)
+            if not args.disable_shared_caches and args.jobs > 1:
+                check_cold_shared_cache(package, fixture, pipe, ffi, commands, mode_env, logs, expected)
 
     if diagnostics:
         (results / "memory.json").write_text(json.dumps(diagnostics, indent=2) + "\n")

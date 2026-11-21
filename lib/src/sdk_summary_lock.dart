@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:build_runner/src/build/resolver/sdk_summary.dart';
 import 'package:path/path.dart' as p;
 
+import 'cache_file_lock.dart';
+
 /// Outcome of one [sharedSdkSummaryPath] resolution.
 class SdkSummaryResult {
   const SdkSummaryResult(
@@ -69,37 +71,23 @@ Future<SdkSummaryResult> _resolve(
 ) async {
   final stopwatch = Stopwatch()..start();
   final lockFile = File(lockPath);
-  RandomAccessFile? handle;
+  CacheFileLock? handle;
   try {
     await lockFile.parent.create(recursive: true);
-    final opened = await lockFile.open(mode: FileMode.append);
-    handle = opened;
-    while (true) {
-      try {
-        await opened.lock(FileLock.exclusive);
-        break;
-      } on FileSystemException catch (error) {
-        if (!isSdkSummaryLockContention(
-              error,
-              operatingSystem: Platform.operatingSystem,
-            ) ||
-            stopwatch.elapsed >= lockTimeout) {
-          await opened.close();
-          handle = null;
-          break;
-        }
-        // Warm cache validation typically releases the lock in a few ms.
-        // Retry promptly at first, then back off during cold generation.
-        await Future<void>.delayed(
-          stopwatch.elapsed < const Duration(milliseconds: 100)
-              ? const Duration(milliseconds: 5)
-              : const Duration(milliseconds: 25),
-        );
-      }
-    }
+    handle = await lockCacheFile(
+      lockFile,
+      timeout: lockTimeout,
+      isContention: (error) => isSdkSummaryLockContention(
+        error,
+        operatingSystem: Platform.operatingSystem,
+      ),
+      retryDelay: (elapsed) => elapsed < const Duration(milliseconds: 100)
+          ? const Duration(milliseconds: 5)
+          : const Duration(milliseconds: 25),
+    );
   } on FileSystemException {
-    await handle?.close();
-    handle = null;
+    // The in-process backend must serialize summary writes across isolates.
+    if (cacheLockBackend != null) rethrow;
   }
   final lockWaitUs = stopwatch.elapsedMicroseconds;
   final generatorStopwatch = Stopwatch()..start();
@@ -111,6 +99,6 @@ Future<SdkSummaryResult> _resolve(
     );
   } finally {
     // Closing the handle releases the lock, without a delete/recreate race.
-    await handle?.close();
+    await releaseCacheFileLock(handle);
   }
 }

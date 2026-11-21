@@ -13,11 +13,13 @@ uses its existing pipe transport. The optional direct reader waits on the Rust
 queue notification and decodes an owned frame in Dart, keeping the same
 encoding and one native-to-Dart copy.
 
-The parallel spike requires the shared Analyzer byte store and directive
-dependency cache to be disabled. Their Unix file locks serialize processes.
-Multiple isolates in one process need additional coordination to share those
-stores. The benchmark warms the SDK summary in a separate single-worker build
-and uses that existing summary in both lanes.
+On Linux each worker installs open-file-description locks for the packed
+Analyzer and dependency caches, the cold analysis gate, and the SDK summary.
+These locks belong to the open file description and contend with the existing
+POSIX locks in pipe workers on the same files. The native host releases any
+remaining descriptors after a terminal isolate event. All BRA cache locks in
+the FFI process use this backend, including probes of its own PID's cache
+leases. Cache paths and on-disk formats are shared with the pipe worker.
 
 ## Reproduce on Linux
 
@@ -35,12 +37,13 @@ python3 scripts/ffi_spike/benchmark.py \
   --native rust/target/release/build_runner_accelerator \
   --library rust/target/release/libbuild_runner_accelerator.so \
   --jobs 4 --fixtures mixed_application --features 100 \
-  --sample-memory --ffi-reader direct \
+  --sample-memory --ffi-reader stream \
   --results /tmp/bra-ffi-benchmark
 ```
 
-Use `--ffi-reader stream` for the original FFI reader. The results directory
-must be new. Pass `--offline` when the fixture
+Use `--ffi-reader direct` to compare the direct reader and
+`--disable-shared-caches` to repeat the earlier cache-disabled setting.
+The results directory must be new. Pass `--offline` when the fixture
 dependencies are already cached. The harness checks source and cached generated
 files against stock build_runner for clean, no-op, one-file, and broad edits. It
 runs three samples per case and alternates the order of the two BRA lanes.
@@ -54,6 +57,15 @@ snapshot startup failure, and a successful retry with worker PID and connection
 tracing. A separate reset probe starts all FFI workers before the first phase
 so the real overlay reset is delivered to every isolate. The mixed fixture
 also checks SIGTERM after worker attachment and a successful subsequent build.
+With shared caches enabled, the final stress run starts a cold pipe build and
+a cold FFI build concurrently using the same empty shared cache directory.
+
+The focused isolate probe checks SDK summary exclusion and lease reclamation
+after forcibly stopping an isolate:
+
+```sh
+dart scripts/ffi_spike/cache_probe.dart rust/target/release/libbuild_runner_accelerator.so
+```
 
 `samples.json` retains the command, runtime, and resource counters for every
 sample. The peak RSS counter is the largest reported process high-water mark.
@@ -150,5 +162,38 @@ reacquired the workspace lock and matched stock again.
 The direct reader reduces frame processing. Its end-to-end medians track the
 stream reader closely and the broad-memory sample was higher. Cross-isolate
 cache coordination and comparison on a larger CPU quota take priority over
-further frame optimization. Watch and cold concurrent SDK summary generation
-remain outside the validated scope.
+further frame optimization. The shared-cache experiment below follows this
+comparison.
+
+## Four-worker comparison with shared caches
+
+Linux x64, Linux 6.18.57, Dart 3.13.3, Rust 1.98.1, the same generated
+100-feature application, `--jobs 4`, and a two-CPU quota. The pipe worker
+and streamed FFI worker used both shared caches, precompiled AOT artifacts,
+and warmed SDK summaries. All 48 timed builds matched the 403 stock source
+and cached outputs. Times are in milliseconds, median [minimum–maximum],
+with six samples per cell and alternating lane order.
+
+| Case | Pipes | FFI stream | Median change |
+| --- | ---: | ---: | ---: |
+| Clean | 1862 [1615–2217] | 1956 [1901–2170] | +5.0% |
+| No-op | 30.4 [28.6–36.1] | 36.6 [32.8–73.2] | +6.2 ms |
+| One file | 292 [274–331] | 280 [266–339] | −4.2% |
+| Broad | 1974 [1796–2122] | 1937 [1891–2191] | −1.9% |
+
+The ranges overlap. In the separate broad diagnostic, both variants ran four
+workers and completed 16 resolver resets. Sampled peak process-session PSS
+was 282.4 MiB for pipes and 270.4 MiB for FFI. The one-file diagnostic
+measured 90.2 and 94.3 MiB. Each PSS value comes from one run.
+
+In the cold stress run, the pipe build and the FFI build started concurrently
+against a fresh shared cache. Both generated their workspace SDK summaries and
+matched stock byte for byte. The Analyzer store and directive cache each
+published a nonempty index. The focused isolate probe also confirmed
+SDK summary exclusion, retention of a live generation lease, and reclamation
+after forced isolate exit. Native tests cover both directions of contention
+between OFD and traditional POSIX locks and cleanup by worker ID.
+
+This removes the shared-cache blocker for the Linux spike. The warm runs
+place most FFI differences within run-to-run variation. Watch and other
+operating systems remain to be evaluated.

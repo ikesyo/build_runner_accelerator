@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'cache_file_lock.dart';
 import 'sdk_summary_lock.dart' show isSdkSummaryLockContention;
 
 /// Cold linking calls own the cache until their analysis completes.
@@ -15,8 +16,8 @@ class AnalysisStartupGate {
   final bool Function() isWarm;
   bool _ready = false;
   bool get isReady => _ready;
-  Future<RandomAccessFile?>? _acquiring;
-  RandomAccessFile? _handle;
+  Future<CacheFileLock?>? _acquiring;
+  CacheFileLock? _handle;
   int _leases = 0;
 
   Future<AnalysisStartupLease?> acquire({
@@ -25,7 +26,7 @@ class AnalysisStartupGate {
     if (_ready) return null;
     _leases++;
     final pending = _acquiring ??= _acquire(timeout);
-    RandomAccessFile? handle;
+    CacheFileLock? handle;
     try {
       handle = await pending;
     } catch (_) {
@@ -39,32 +40,24 @@ class AnalysisStartupGate {
     return AnalysisStartupLease._(this);
   }
 
-  Future<RandomAccessFile?> _acquire(Duration timeout) async {
-    RandomAccessFile? handle;
-    final timer = Stopwatch()..start();
+  Future<CacheFileLock?> _acquire(Duration timeout) async {
+    CacheFileLock? handle;
     try {
       final file = File(lockPath);
       await file.parent.create(recursive: true);
-      handle = await file.open(mode: FileMode.append);
-      while (true) {
-        try {
-          await handle.lock(FileLock.exclusive);
-          break;
-        } on FileSystemException catch (error) {
-          if (!isSdkSummaryLockContention(
-                error,
-                operatingSystem: Platform.operatingSystem,
-              ) ||
-              timer.elapsed >= timeout) {
-            rethrow;
-          }
-          await Future<void>.delayed(const Duration(milliseconds: 25));
-        }
-      }
+      handle = await lockCacheFile(
+        file,
+        timeout: timeout,
+        isContention: (error) => isSdkSummaryLockContention(
+          error,
+          operatingSystem: Platform.operatingSystem,
+        ),
+        retryDelay: (_) => const Duration(milliseconds: 25),
+      );
       // Check only after taking ownership: the previous owner may still be
       // writing its first library even if some linked entries already exist.
       if (isWarm()) {
-        await handle.close();
+        await releaseCacheFileLock(handle);
         _ready = true;
         return null;
       }
@@ -90,7 +83,7 @@ class AnalysisStartupGate {
       _ready = false;
     } finally {
       try {
-        _handle?.closeSync();
+        _handle?.release();
       } on FileSystemException {
         // Releasing an optional optimization must not fail an action.
       }
@@ -99,9 +92,9 @@ class AnalysisStartupGate {
     }
   }
 
-  static Future<void> _close(RandomAccessFile? handle) async {
+  static Future<void> _close(CacheFileLock? handle) async {
     try {
-      await handle?.close();
+      await releaseCacheFileLock(handle);
     } on FileSystemException {
       // A failed lock/open may already have closed the descriptor.
     }

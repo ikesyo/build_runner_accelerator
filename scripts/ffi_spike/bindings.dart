@@ -1,5 +1,9 @@
+import 'dart:convert';
 import 'dart:ffi';
+import 'dart:io';
 import 'dart:typed_data';
+
+import 'package:build_runner_accelerator/src/cache_file_lock.dart';
 
 typedef HostNotification = Void Function(Int32, Uint64);
 typedef WorkerNotification = Void Function();
@@ -55,6 +59,37 @@ class SpikeBindings {
         int Function(int, Pointer<Uint8>, int)
       >('bra_spike_send');
 
+  late final _lock = _library
+      .lookupFunction<
+        Int64 Function(Uint64, Pointer<Uint8>, IntPtr),
+        int Function(int, Pointer<Uint8>, int)
+      >('bra_spike_cache_lock');
+  late final _unlock = _library
+      .lookupFunction<Void Function(Uint64, Int64), void Function(int, int)>(
+        'bra_spike_cache_unlock',
+      );
+  late final releaseWorkerLocks = _library
+      .lookupFunction<Void Function(Uint64), void Function(int)>(
+        'bra_spike_release_worker_locks',
+      );
+
+  CacheFileLock lockCache(int worker, String path) {
+    final bytes = utf8.encode(path);
+    final data = alloc(bytes.length);
+    data.asTypedList(bytes.length).setAll(0, bytes);
+    final token = _lock(worker, data, bytes.length);
+    if (token >= 0) return _WorkerCacheLock(() => _unlock(worker, token));
+    const openError = 4096;
+    if (token < -openError) {
+      throw FileSystemException(
+        'Cannot open cache lock file',
+        path,
+        OSError('', -token - openError),
+      );
+    }
+    throw CacheLockException(path, OSError('', -token));
+  }
+
   Uint8List? receiveFrame(int workerId) {
     final data = _take(workerId);
     if (data == nullptr) return null;
@@ -65,4 +100,13 @@ class SpikeBindings {
       free(data, size);
     }
   }
+}
+
+final class _WorkerCacheLock implements CacheFileLock {
+  _WorkerCacheLock(this.releaseLock);
+
+  final void Function() releaseLock;
+
+  @override
+  void release() => releaseLock();
 }

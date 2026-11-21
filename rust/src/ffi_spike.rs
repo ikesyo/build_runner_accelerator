@@ -1,5 +1,8 @@
 //! Single-package in-process transport, enabled only in the spike library.
 
+#[cfg(target_os = "linux")]
+mod cache_lock;
+
 use crate::worker::WorkerConnection;
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, Cursor, Read, Write};

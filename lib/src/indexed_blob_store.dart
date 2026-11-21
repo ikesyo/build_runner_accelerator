@@ -5,6 +5,8 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import 'cache_file_lock.dart';
+
 enum _LeaseState { live, inactive, unknown }
 
 /// Disposable bounded generations. Ordinary lookups use only the leased pack;
@@ -25,7 +27,7 @@ final class IndexedBlobStore {
   static final _liveLeases = <String>{};
   bool _openAttempted = false;
   IndexedBlobPack? _pack;
-  RandomAccessFile? _lease;
+  CacheFileLock? _lease;
   String? _leasePath;
   String? _name;
 
@@ -113,28 +115,18 @@ final class IndexedBlobStore {
   /// lock protects the small current pointer and lease creation/reclamation;
   /// each pack retains its own stable data-file writer lock.
   void _coordinate(void Function() action) {
-    RandomAccessFile? control;
-    var locked = false;
+    CacheFileLock? control;
     try {
       Directory(_root).createSync(recursive: true);
-      control = File('$_root/control').openSync(mode: FileMode.append);
-      control.lockSync(FileLock.exclusive);
-      locked = true;
+      control = lockCacheFileSync('$_root/control');
       action();
     } on Object {
       // Cache and maintenance failures never fail a build. Latch failed opens
       // even when a failed publication closed a newly attached generation.
       if (_pack == null) _openAttempted = true;
     } finally {
-      if (locked) {
-        try {
-          control!.unlockSync();
-        } on Object {
-          /* Best effort. */
-        }
-      }
       try {
-        control?.closeSync();
+        control?.release();
       } on Object {
         /* Best effort. */
       }
@@ -202,15 +194,10 @@ final class IndexedBlobStore {
       );
     }
     final leasePath = '${directory.path}/lease-$pid-${_randomName()}';
-    final lease = File(leasePath).openSync(mode: FileMode.append);
+    final CacheFileLock lease;
     try {
-      lease.lockSync(FileLock.exclusive);
+      lease = lockCacheFileSync(leasePath);
     } on Object {
-      try {
-        lease.closeSync();
-      } on Object {
-        /* Best effort. */
-      }
       try {
         File(leasePath).deleteSync();
       } on Object {
@@ -234,10 +221,8 @@ final class IndexedBlobStore {
     _pack = pack;
   }
 
-  /// Under control, no new leases can appear. Never even open a lease bearing
-  /// our PID: POSIX record locks are process-scoped and closing such a handle
-  /// could release another instance's lock. Own-process stale leases are kept
-  /// conservatively; another process can reclaim them after this process exits.
+  /// Under control, no new leases can appear. Traditional POSIX locks are
+  /// process-scoped, so only the descriptor-owned backend may probe our PID.
   bool _reclaim() {
     var reclaimed = true;
     final current = _current();
@@ -267,34 +252,23 @@ final class IndexedBlobStore {
 
   _LeaseState _leaseState(String path) {
     final name = p.basename(path);
-    if (name.startsWith('lease-$pid-')) {
+    if (cacheLockBackend == null && name.startsWith('lease-$pid-')) {
       return _liveLeases.contains(p.normalize(p.absolute(path)))
           ? _LeaseState.live
           : _LeaseState.unknown;
     }
-    RandomAccessFile? lease;
-    var state = _LeaseState.unknown;
     try {
-      lease = File(path).openSync(mode: FileMode.append);
-      lease.lockSync(FileLock.exclusive);
-      lease.unlockSync();
-      state = _LeaseState.inactive;
-    } on FileSystemException catch (error) {
-      final code = error.osError?.errorCode;
-      if (lease != null &&
-          (code == 11 || code == 13 || code == 33 || code == 35)) {
-        state = _LeaseState.live;
-      }
+      lockCacheFileSync(path).release();
+      return _LeaseState.inactive;
+    } on CacheLockException catch (error) {
+      return switch (error.osError?.errorCode) {
+        11 || 13 || 33 || 35 => _LeaseState.live,
+        _ => _LeaseState.unknown,
+      };
     } on Object {
       // Unknown ownership/access failures retain files and stop allocation.
-    } finally {
-      try {
-        lease?.closeSync();
-      } on Object {
-        state = _LeaseState.unknown;
-      }
+      return _LeaseState.unknown;
     }
-    return state;
   }
 
   bool _pruneLeases(Directory directory) {
@@ -321,7 +295,7 @@ final class IndexedBlobStore {
     _pack?.close();
     _pack = null;
     try {
-      _lease?.closeSync();
+      _lease?.release();
     } on Object {
       /* Best effort. */
     }
@@ -524,7 +498,7 @@ final class IndexedBlobPack {
       final keyBytes = utf8.encode(key);
       if (keyBytes.isEmpty || keyBytes.length > _maxKeyLength) return false;
       final raf = _raf ??= _openForWrite();
-      raf.lockSync(FileLock.exclusive);
+      final lock = lockCacheFileSync(_filePath, handle: raf);
       try {
         final journal = _journal ??= File(
           _indexPath,
@@ -586,7 +560,7 @@ final class IndexedBlobPack {
         _records++;
         return true;
       } finally {
-        raf.unlockSync();
+        lock.release();
       }
     } on Object {
       // Cache writes are best-effort.
@@ -685,7 +659,7 @@ final class IndexedBlobPack {
     if (values.isEmpty) return;
     try {
       final raf = _raf ??= _openForWrite();
-      raf.lockSync(FileLock.exclusive);
+      final lock = lockCacheFileSync(_filePath, handle: raf);
       try {
         final journal = _journal ??= File(
           _indexPath,
@@ -728,7 +702,7 @@ final class IndexedBlobPack {
         _writeGeneration(journal);
         journal.writeFromSync(entries.takeBytes());
       } finally {
-        raf.unlockSync();
+        lock.release();
       }
     } on Object {
       // The requested put still retries through the ordinary tail repair.
