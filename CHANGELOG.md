@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.19.6](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.5...v0.19.6) - 2026-11-21
+
+### Features
+- feat: API-signature early cutoff (ADR 0056) stage 1: fingerprint module by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/202
+- feat: API-signature early cutoff (ADR 0056) stage 2: recording by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/204
+- feat: API-signature early cutoff (ADR 0056) stage 3: opt-in plumbing by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/205
+- feat: API-signature early cutoff (ADR 0056) stage 4: preflight and dirty classification by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/217
+### Bug Fixes
+- fix: preserve applied builder input filters and workspace compatibility by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/206
+- fix: resolve Pub config from workspace members by @justin-jobvalley in https://github.com/ikesyo/build_runner_accelerator/pull/215
+- fix: refresh watch roots after Pub resolution changes by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/216
+### Performance
+- perf: memoize API fingerprint learning in the dep walk by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/211
+- perf: learn API fingerprints only for API-cutoff actions by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/212
+- perf: key fingerprint learning by the frontend digest by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/213
+- perf: start cold one-shot builds on a kernel worker by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/218
+### Other Changes
+- test: differential validation harness for the API cutoff (ADR 0056 stage 5) by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/221
+
 ## [v0.19.5](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.4...v0.19.5) - 2026-11-16
 
 ### Performance
