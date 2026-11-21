@@ -2,6 +2,28 @@ import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:build/build.dart';
 
+/// Lines describing one class for the summary-style outputs: the
+/// class header, one line per method with its documentation
+/// comment, and one per constructor with its parameter defaults.
+/// Including docs and defaults makes doc-only and const-default
+/// edits change a resolver-only builder's output, so a stale
+/// element model after a rerun is visible byte-for-byte.
+List<String> describeClass(ClassElement cls, String prefix) {
+  final methods = cls.methods.map((method) => method.name).join(',');
+  final lines = <String>['$prefix${cls.name} [$methods]'];
+  for (final method in cls.methods) {
+    final doc = method.documentationComment?.replaceAll('\n', ' ') ?? '-';
+    lines.add('$prefix${cls.name}.${method.name} doc=$doc');
+  }
+  for (final constructor in cls.constructors) {
+    final params = constructor.formalParameters
+        .map((param) => '${param.name}=${param.defaultValueCode ?? '-'}')
+        .join(',');
+    lines.add('$prefix${cls.name}.ctor [$params]');
+  }
+  return lines;
+}
+
 Builder summaryBuilder(BuilderOptions options) => _SummaryBuilder();
 
 /// A resolver-only builder: it observes the input library and its
@@ -21,8 +43,7 @@ class _SummaryBuilder implements Builder {
     void visit(LibraryElement lib) {
       if (!seen.add(lib.uri.toString())) return;
       for (final cls in lib.classes) {
-        final methods = cls.methods.map((method) => method.name).join(',');
-        lines.add('${lib.uri}: ${cls.name} [$methods]');
+        lines.addAll(describeClass(cls, '${lib.uri}: '));
       }
       for (final imported in lib.firstFragment.importedLibraries) {
         visit(imported);
@@ -58,8 +79,7 @@ class _ProbeBuilder implements Builder {
     final library = await buildStep.resolver.libraryFor(api);
     final lines = <String>[];
     for (final cls in library.classes) {
-      final methods = cls.methods.map((method) => method.name).join(',');
-      lines.add('${cls.name} [$methods]');
+      lines.addAll(describeClass(cls, ''));
     }
     lines.sort();
     await buildStep.writeAsString(

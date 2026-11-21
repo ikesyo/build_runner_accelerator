@@ -274,6 +274,7 @@ edit_all doc
 build_all doc
 assert_pattern doc 1 1 1 1 1
 assert_total doc 5
+assert_cutoff_output_contains doc lib/consumer.summary.txt 'Renders the widget nicely'
 
 edit_all comment
 build_all comment
@@ -284,6 +285,7 @@ edit_all const
 build_all const
 assert_pattern const 1 1 1 1 1
 assert_total const 5
+assert_cutoff_output_contains const lib/consumer.summary.txt 'maxItems=20'
 
 edit_all api
 build_all api

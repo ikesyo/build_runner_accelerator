@@ -259,9 +259,6 @@ run_quick() {
     bash "$script_dir/correctness_arbitrary_builder.sh"
     bash "$script_dir/correctness_arbitrary_package_target_builder.sh"
   fi
-  if [[ "${VERIFY_API_CUTOFF_DIFF:-0}" == 1 ]]; then
-    bash "$script_dir/correctness_api_cutoff_diff.sh"
-  fi
   if [[ "${VERIFY_WATCH:-0}" == 1 ]]; then
     bash "$script_dir/watch_smoke.sh"
     bash "$script_dir/watch_smoke_freezed.sh"
@@ -303,6 +300,7 @@ run_core_suite() {
   run_script_probe commit-recovery correctness_commit_recovery.sh 'commit-recovery: PASS'
   run_script_probe api-cutoff correctness_api_cutoff.sh 'api-cutoff: PASS'
   run_script_probe api-cutoff-watch correctness_api_cutoff_watch.sh 'api-cutoff-watch: PASS'
+  run_script_probe api-cutoff-diff correctness_api_cutoff_diff.sh 'api-cutoff-diff: PASS'
   run_script_probe watch watch_smoke.sh 'watch-smoke:'
   run_all_json_cases
   run_built_value_correctness
