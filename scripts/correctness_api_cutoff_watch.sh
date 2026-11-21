@@ -170,6 +170,11 @@ grep -Fq 'widget-v2' "$watch_dir/lib/consumer.ast.txt" || \
   fail 'ast output did not pick up the body edit in watch mode'
 cmp "$results_dir/summary.initial.txt" "$watch_dir/lib/consumer.summary.txt" || \
   fail 'summary output changed after a body-only edit in watch mode'
+# The downstream combine action consumes the waived summary
+# output, so it must stay idle too; identical output bytes would
+# hide an unnecessary rerun from the final comparison.
+[[ "$(combine_runs)" == "$combine_before" ]] || \
+  fail 'combine action reran after a body-only edit in watch mode'
 grep -Fq 'widget-v2' "$watch_dir/lib/consumer.echo.txt" || \
   fail 'echo output did not pick up the body edit in watch mode'
 summary_before=$(summary_runs)
@@ -196,6 +201,9 @@ wait_for_stable_watch_state 2 3
   fail 'summary action did not rerun after an API edit in watch mode'
 grep -Fq 'ready' "$watch_dir/lib/consumer.summary.txt" || \
   fail 'summary output did not observe the API edit in watch mode'
+# The summary rerun dirties its consumer: combine must advance.
+(( $(combine_runs) > combine_before )) || \
+  fail 'combine action did not rerun after the API edit in watch mode'
 grep -Fq 'ready' "$watch_dir/lib/consumer.probe.txt" || \
   fail 'probe output did not observe the API edit in watch mode'
 
