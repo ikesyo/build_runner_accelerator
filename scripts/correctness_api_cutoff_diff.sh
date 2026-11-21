@@ -157,6 +157,17 @@ assert_pattern() {
   done
 }
 
+# Control for the no-work steps: without the flag the same edit
+# must rerun the summary action, proving the cutoff build's silence
+# is a waiver and not a missed invalidation.
+assert_plain_summary_reruns() {
+  local step=$1
+  local actual
+  actual=$(builder_runs "$temporary_dir/$step.plain.log" summary)
+  [[ "$actual" == "1" ]] ||
+    fail "step $step: unflagged summary ran $actual time(s), expected 1 (control)"
+}
+
 assert_no_work() {
   local step=$1
   local log="$temporary_dir/$step.cutoff.log"

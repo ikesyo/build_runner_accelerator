@@ -201,5 +201,9 @@ cmp "$stock_dir/lib/consumer.echo.txt" "$watch_dir/lib/consumer.echo.txt" || \
   fail 'watch echo output differs from stock'
 cmp "$stock_dir/lib/consumer.probe.txt" "$watch_dir/lib/consumer.probe.txt" || \
   fail 'watch probe output differs from stock'
+cmp "$stock_dir/lib/consumer.ast.txt" "$watch_dir/lib/consumer.ast.txt" || \
+  fail 'watch ast output differs from stock'
+cmp "$stock_dir/lib/consumer.combined.txt" "$watch_dir/lib/consumer.combined.txt" || \
+  fail 'watch combined output differs from stock'
 
 printf 'api-cutoff-watch: PASS body-only-skip=yes api-rerun=yes stock-identical=yes\n'
