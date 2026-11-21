@@ -121,6 +121,7 @@ The launcher recognizes these options:
 | `--force-aot`, `--force-jit` | Select worker execution mode; mutually exclusive. |
 | `--only-check`, `--keep-modified-outputs` | Build-only output policies for the normal-builder demand subset; see [output policies](#output-policies). |
 | `--build-filter PATTERN` | Select build/watch outputs; syntax and manifest limits are in [ADR 0032](adr/0032-native-build-filter-demand-and-output-state.md). |
+| `--api-cutoff BUILDER` | Opt a builder into the API-signature early cutoff; repeatable. See [API-signature early cutoff](#api-signature-early-cutoff). |
 | `--workspace` | Build all packages in a Pub workspace within the subset below. |
 | `--define`, `--release`, `--no-release`, `--config` | Resolve `build_runner` settings; see [configuration](configuration.md). |
 | `--enable-experiment NAME` | Enable Dart language experiments in generated workers; repeat or comma-separate. Shared-part imports require `enhanced-parts`. |
@@ -232,6 +233,102 @@ never clears it automatically or imports stock logical digest history. Follow
 the [recovery guide](compatibility-cleanup.md#safe-recovery) to reset both states.
 Direct stock commands do not create or update accelerator ownership markers;
 stop all builders and follow the recovery guide before returning to native.
+
+## API-signature early cutoff
+
+`--api-cutoff <builder-key>` opts a builder into the early cutoff
+described in [ADR 0056](adr/0056-api-signature-early-cutoff.md). The
+flag is repeatable and is accepted by `build` and `watch`. A key is
+`package:builder`, or `:builder` for a builder in the root package.
+A bare name expands to `name:name`, not to the root package, so a
+builder in your own package whose name differs from the package
+needs one of the explicit forms, for example
+`--api-cutoff my_package:my_builder` or `--api-cutoff :my_builder`.
+
+Without the cutoff, an action reruns whenever the contents of any
+library it read change. With the cutoff, the frontend records an
+API fingerprint for each library the action observed through the
+analyzer's element model: the analyzer API signature, documentation
+comments, and the constant values the element model exposes, such
+as parameter defaults and constant initializers. On the next build,
+an opted-in action is skipped when every observed library's
+fingerprint is unchanged. Skipping needs recorded fingerprint
+evidence for the libraries the action observed: evidence is
+learned when an opted-in action actually runs. Adding the flag
+does not invalidate an up-to-date graph, so a no-op build learns
+nothing; the evidence accumulates from builds where the actions
+execute. Method bodies sit outside the
+fingerprint except for their modifiers (`async`, `async*`,
+`sync*`), and except for executables whose return type is
+omitted, whose bodies the analyzer needs for inference. A
+body-only edit that changes neither, or an edit to ordinary
+(non-documentation) comments, in a widely imported library
+therefore stops at the edited file instead of fanning out to
+every consumer. Documentation comments are part of the
+fingerprint, so editing one reruns the consumers, and so does
+changing a `// @dart = x.y` language-version directive, which
+the fingerprint records separately.
+
+The cutoff only waives invalidation that arrives through observed
+dependencies. An action still reruns when its own input changes
+or its output is missing, exactly as without the flag.
+
+The promise is narrow by design:
+
+- The builder must observe dependencies only through the resolver's
+  element model, and never through source positions. The
+  fingerprint ignores offsets and line numbers, so a builder whose
+  output embeds them must not be opted in.
+- A dependency read directly as source text through the build
+  step stays content-keyed for that read: changing it reruns the
+  action, but it does not affect the fingerprint treatment of the
+  libraries the action observed through the element model.
+- Reading source text or ASTs through the analyzer instead (an
+  element's source contents, a session's file content, or units
+  resolved through a session) is outside the contract entirely:
+  the build step never sees the read, so nothing keeps it
+  content-keyed and a waived action can go stale. Builders that
+  do this must not be opted in.
+- If an action reads a non-primary library through its AST via
+  the build step resolver's `compilationUnitFor` or `astNodeFor`,
+  the whole action is downgraded: all of its dependencies stay
+  content-keyed, exactly as without the flag. The downgrade is
+  silent and safe; the action simply gains nothing until its
+  observations are element-model only.
+- A generated asset anywhere in an action's observed closure
+  disqualifies the whole action: it stays content-keyed even when
+  the edit is to a different, handwritten dependency.
+  Augmentations are likewise never fingerprinted.
+
+The cutoff suits whole-graph builders that walk the element model,
+such as generators that read annotations and types across a
+package. It does not help builders that read the files they
+transform, which covers most per-file generators.
+
+On the stage 6 fan-out fixture (one shared library, 200 consumers,
+a whole-graph summary builder), a body-only edit to the shared
+library took 6.7 to 7.3 s without the cutoff and 0.7 to 1.5 s
+with it, running 200 actions versus none; in the other lanes the
+cutoff-on ranges overlapped the cutoff-off ranges, so the
+comparison does not resolve a preflight cost at this size. The
+full table is in the stage 6
+follow-up in ADR 0056. Reproduce with
+`scripts/benchmark_api_cutoff.sh`.
+
+Known limits: filtered builds (`--build-filter`), `--only-check`,
+and workspace builds stay content-keyed even when a builder is
+opted in. The preflight resolver pool starts in the package of
+the first candidate action, so a multi-package graph may restart
+it; files with a UTF-8 byte order mark stay content-keyed;
+fingerprints are not yet bound to the Dart SDK identity, so after
+switching the Dart SDK (`--dart`), rerun `dart pub get` with the
+selected SDK (the `dart` from that SDK, not one found on `PATH`)
+before relying on the cutoff: regenerating the package
+configuration invalidates evidence learned under the previous
+SDK. If the configuration does not change, follow the
+[recovery guide](compatibility-cleanup.md#safe-recovery) to reset
+native state first. No builder is opted in by default; that is a
+separate decision and has not been taken.
 
 ## Environment controls
 
