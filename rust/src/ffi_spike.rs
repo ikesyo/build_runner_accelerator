@@ -1,37 +1,78 @@
-//! One-build, one-worker in-process transport, enabled only in the spike library.
+//! Single-package in-process transport, enabled only in the spike library.
 
 use crate::worker::WorkerConnection;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{self, Cursor, Read, Write};
 use std::ptr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
-type HostNotification = extern "C" fn(i32);
+type HostNotification = extern "C" fn(i32, u64);
 type WorkerNotification = extern "C" fn();
 
 struct Bridge {
     notify: HostNotification,
-    worker: OnceLock<Worker>,
+    workers: Mutex<HashMap<u64, Arc<Worker>>>,
+    next_worker: AtomicU64,
+    profile: bool,
 }
 
 #[derive(Default)]
 struct WorkerOutput {
-    frames: VecDeque<Box<[u8]>>,
+    frames: VecDeque<QueuedFrame>,
     notify: Option<WorkerNotification>,
     finished: bool,
     detached: bool,
 }
 
+struct QueuedFrame {
+    bytes: Box<[u8]>,
+    queued: Option<Instant>,
+}
+
+#[derive(Default)]
+struct QueueMetrics {
+    frames: AtomicU64,
+    wait_us: AtomicU64,
+}
+
+impl QueueMetrics {
+    fn record(&self, queued: Option<Instant>) {
+        if let Some(queued) = queued {
+            self.frames.fetch_add(1, Ordering::Relaxed);
+            self.wait_us
+                .fetch_add(queued.elapsed().as_micros() as u64, Ordering::Relaxed);
+        }
+    }
+
+    fn snapshot(&self) -> (u64, u64) {
+        (
+            self.frames.load(Ordering::Relaxed),
+            self.wait_us.load(Ordering::Relaxed),
+        )
+    }
+}
+
 struct Worker {
     outgoing: Mutex<WorkerOutput>,
-    incoming: Mutex<Option<Sender<Box<[u8]>>>>,
+    incoming: Mutex<Option<Sender<QueuedFrame>>>,
+    profile: bool,
+    to_dart: QueueMetrics,
+    to_rust: QueueMetrics,
 }
 
 static BRIDGE: OnceLock<Bridge> = OnceLock::new();
 
-fn worker() -> Option<&'static Worker> {
-    BRIDGE.get()?.worker.get()
+fn worker(id: u64) -> Option<Arc<Worker>> {
+    BRIDGE.get()?.workers.lock().unwrap().get(&id).cloned()
+}
+
+// The reset probe starts the pool before the first phase produces an overlay.
+pub(crate) fn eager_workers_for_reset_probe() -> bool {
+    BRIDGE.get().is_some()
+        && std::env::var("BUILD_RUNNER_ACCELERATOR_FFI_RESET_PROBE").as_deref() == Ok("1")
 }
 
 pub(crate) fn connect() -> io::Result<Option<WorkerConnection>> {
@@ -39,21 +80,24 @@ pub(crate) fn connect() -> io::Result<Option<WorkerConnection>> {
         return Ok(None);
     };
     let (sender, receiver) = mpsc::channel();
-    bridge
-        .worker
-        .set(Worker {
-            outgoing: Mutex::default(),
-            incoming: Mutex::new(Some(sender)),
-        })
-        .map_err(|_| io::Error::other("FFI spike cannot start a second worker"))?;
-    let worker = bridge.worker.get().unwrap();
-    (bridge.notify)(1);
+    let worker = Arc::new(Worker {
+        outgoing: Mutex::default(),
+        incoming: Mutex::new(Some(sender)),
+        profile: bridge.profile,
+        to_dart: QueueMetrics::default(),
+        to_rust: QueueMetrics::default(),
+    });
+    let id = bridge.next_worker.fetch_add(1, Ordering::Relaxed);
+    bridge.workers.lock().unwrap().insert(id, worker.clone());
+    (bridge.notify)(1, id);
     Ok(Some(WorkerConnection::in_process(
+        id,
         FrameOutput {
-            worker,
+            worker: worker.clone(),
             buffer: Vec::new(),
         },
         FrameInput {
+            worker,
             receiver,
             current: Cursor::new(Box::default()),
         },
@@ -61,7 +105,7 @@ pub(crate) fn connect() -> io::Result<Option<WorkerConnection>> {
 }
 
 struct FrameOutput {
-    worker: &'static Worker,
+    worker: Arc<Worker>,
     buffer: Vec<u8>,
 }
 
@@ -71,6 +115,9 @@ impl Write for FrameOutput {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
         let mut output = self.worker.outgoing.lock().unwrap();
         if output.detached {
             return Err(io::Error::new(
@@ -78,9 +125,10 @@ impl Write for FrameOutput {
                 "Dart isolate exited",
             ));
         }
-        output
-            .frames
-            .push_back(std::mem::take(&mut self.buffer).into_boxed_slice());
+        output.frames.push_back(QueuedFrame {
+            bytes: std::mem::take(&mut self.buffer).into_boxed_slice(),
+            queued: self.worker.profile.then(Instant::now),
+        });
         if let Some(notify) = output.notify {
             notify();
         }
@@ -99,7 +147,8 @@ impl Drop for FrameOutput {
 }
 
 struct FrameInput {
-    receiver: Receiver<Box<[u8]>>,
+    worker: Arc<Worker>,
+    receiver: Receiver<QueuedFrame>,
     current: Cursor<Box<[u8]>>,
 }
 
@@ -112,7 +161,8 @@ impl Read for FrameInput {
             let Ok(frame) = self.receiver.recv() else {
                 return Ok(0);
             };
-            self.current = Cursor::new(frame);
+            self.worker.to_rust.record(frame.queued);
+            self.current = Cursor::new(frame.bytes);
         }
         self.current.read(bytes)
     }
@@ -146,7 +196,9 @@ unsafe extern "C" fn bra_spike_start(
     if BRIDGE
         .set(Bridge {
             notify,
-            worker: OnceLock::new(),
+            workers: Mutex::default(),
+            next_worker: AtomicU64::new(1),
+            profile: std::env::var("BUILD_RUNNER_ACCELERATOR_METRICS").as_deref() == Ok("1"),
         })
         .is_err()
     {
@@ -164,14 +216,14 @@ unsafe extern "C" fn bra_spike_start(
                 }
                 Err(_) => 3,
             };
-            notify(event);
+            notify(event, 0);
         });
     i32::from(engine.is_err())
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn bra_spike_attach(notify: WorkerNotification) -> i32 {
-    let Some(worker) = worker() else {
+extern "C" fn bra_spike_attach(id: u64, notify: WorkerNotification) -> i32 {
+    let Some(worker) = worker(id) else {
         return 1;
     };
     let mut output = worker.outgoing.lock().unwrap();
@@ -183,41 +235,65 @@ extern "C" fn bra_spike_attach(notify: WorkerNotification) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn bra_spike_detach() {
-    if let Some(worker) = worker() {
+extern "C" fn bra_spike_detach(id: u64) {
+    let Some(bridge) = BRIDGE.get() else { return };
+    // Keep the registry locked until the notification is disarmed. If the
+    // host and isolate detach concurrently, either can then close its port.
+    let mut workers = bridge.workers.lock().unwrap();
+    if let Some(worker) = workers.remove(&id) {
         let mut output = worker.outgoing.lock().unwrap();
         output.detached = true;
         output.notify = None;
         output.frames.clear();
         worker.incoming.lock().unwrap().take();
+        if worker.profile {
+            let (to_dart_frames, to_dart_wait_us) = worker.to_dart.snapshot();
+            let (to_rust_frames, to_rust_wait_us) = worker.to_rust.snapshot();
+            let line = format!(
+                "FFI queues: worker={id} to_dart_frames={to_dart_frames} to_dart_wait_us={to_dart_wait_us} to_rust_frames={to_rust_frames} to_rust_wait_us={to_rust_wait_us}\n"
+            );
+            let _ = io::stderr().write_all(line.as_bytes());
+        }
     }
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn bra_spike_take() -> *mut u8 {
-    worker()
-        .and_then(|worker| worker.outgoing.lock().unwrap().frames.pop_front())
-        .map_or(ptr::null_mut(), |frame| Box::into_raw(frame).cast())
+extern "C" fn bra_spike_take(id: u64) -> *mut u8 {
+    let Some(worker) = worker(id) else {
+        return ptr::null_mut();
+    };
+    let mut output = worker.outgoing.lock().unwrap();
+    output.frames.pop_front().map_or(ptr::null_mut(), |frame| {
+        worker.to_dart.record(frame.queued);
+        Box::into_raw(frame.bytes).cast()
+    })
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn bra_spike_finished() -> i32 {
-    i32::from(worker().is_some_and(|worker| {
+extern "C" fn bra_spike_finished(id: u64) -> i32 {
+    i32::from(worker(id).is_none_or(|worker| {
         let output = worker.outgoing.lock().unwrap();
         output.finished && output.frames.is_empty()
     }))
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn bra_spike_send(data: *mut u8, length: usize) -> i32 {
+unsafe extern "C" fn bra_spike_send(id: u64, data: *mut u8, length: usize) -> i32 {
     let frame = unsafe { take_buffer(data, length) };
-    let sent = worker().is_some_and(|worker| {
+    let sent = worker(id).is_some_and(|worker| {
         worker
             .incoming
             .lock()
             .unwrap()
             .as_ref()
-            .is_some_and(|sender| sender.send(frame).is_ok())
+            .is_some_and(|sender| {
+                sender
+                    .send(QueuedFrame {
+                        bytes: frame,
+                        queued: worker.profile.then(Instant::now),
+                    })
+                    .is_ok()
+            })
     });
     i32::from(!sent)
 }

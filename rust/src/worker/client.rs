@@ -1166,7 +1166,9 @@ impl WorkerClient {
     }
 
     pub(super) fn wall_span(&self, stage: &'static str, id: Option<u64>) -> crate::wall::Span {
-        crate::wall::Span::new(stage).worker(self.connection.id(), id)
+        crate::wall::Span::new(stage)
+            .worker(self.connection.id(), id)
+            .worker_connection(self.connection.isolate_id)
     }
 
     pub(super) fn next_id(&mut self) -> u64 {
@@ -1454,6 +1456,7 @@ impl WorkerClient {
 
 pub(crate) struct WorkerConnection {
     child: Option<Child>,
+    isolate_id: Option<u64>,
     input: Box<dyn Write + Send>,
     output: Box<dyn Read + Send>,
 }
@@ -1510,6 +1513,7 @@ impl WorkerConnection {
         );
         Ok(Self {
             child: Some(child),
+            isolate_id: None,
             input: Box::new(input),
             output: Box::new(output),
         })
@@ -1517,11 +1521,13 @@ impl WorkerConnection {
 
     #[cfg(feature = "ffi-spike")]
     pub(crate) fn in_process(
+        isolate_id: u64,
         input: impl Write + Send + 'static,
         output: impl Read + Send + 'static,
     ) -> Self {
         Self {
             child: None,
+            isolate_id: Some(isolate_id),
             input: Box::new(input),
             output: Box::new(output),
         }

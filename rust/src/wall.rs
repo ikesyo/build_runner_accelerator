@@ -32,6 +32,8 @@ struct Event {
     #[serde(skip_serializing_if = "Option::is_none")]
     worker_pid: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    worker_connection: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     batch_id: Option<u64>,
 }
 
@@ -122,6 +124,7 @@ impl Span {
                     phase: None,
                     builder: None,
                     worker_pid: None,
+                    worker_connection: None,
                     batch_id: None,
                 };
                 (recorder, event)
@@ -142,6 +145,13 @@ impl Span {
         if let Some((_, event)) = &mut self.0 {
             event.phase = Some(phase);
             event.builder = Some(builder.to_owned());
+        }
+        self
+    }
+
+    pub(crate) fn worker_connection(mut self, id: Option<u64>) -> Self {
+        if let Some((_, event)) = &mut self.0 {
+            event.worker_connection = id;
         }
         self
     }
@@ -186,6 +196,7 @@ mod tests {
                     phase: None,
                     builder: None,
                     worker_pid: None,
+                    worker_connection: None,
                     batch_id: None,
                 },
             )),

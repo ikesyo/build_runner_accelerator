@@ -602,12 +602,30 @@ List<WorkerBuildTrigger> _triggerList(Object? value, String label) {
 }
 
 class FrameReader {
-  FrameReader(Stream<List<int>> input) : _iterator = StreamIterator(input);
+  FrameReader(Stream<List<int>> input, {Stopwatch? decodeClock})
+    : _iterator = StreamIterator(input),
+      _decodeClock = decodeClock,
+      _readCompleteFrame = null;
 
-  final StreamIterator<List<int>> _iterator;
+  /// Reads a transport that delivers one complete, owned frame per request.
+  FrameReader.completeFrames(
+    Future<Uint8List?> Function() read, {
+    Stopwatch? decodeClock,
+  }) : _iterator = null,
+       _decodeClock = decodeClock,
+       _readCompleteFrame = read;
+
+  final StreamIterator<List<int>>? _iterator;
+  final Stopwatch? _decodeClock;
+  final Future<Uint8List?> Function()? _readCompleteFrame;
   final List<int> _buffer = <int>[];
 
   Future<JsonMap?> next() async {
+    final readCompleteFrame = _readCompleteFrame;
+    if (readCompleteFrame != null) {
+      final frame = await readCompleteFrame();
+      return frame == null ? null : _decodeCompleteFrame(frame);
+    }
     await _fill(4);
     if (_buffer.isEmpty) return null;
 
@@ -618,8 +636,40 @@ class FrameReader {
       throw const FormatException('IPC frame exceeds the 256 MiB safety limit');
     }
     await _fill(4 + length);
-    final payload = Uint8List.fromList(_buffer.sublist(4, 4 + length));
-    _buffer.removeRange(0, 4 + length);
+    _decodeClock?.start();
+    try {
+      final payload = Uint8List.fromList(_buffer.sublist(4, 4 + length));
+      _buffer.removeRange(0, 4 + length);
+      return _decodePayload(payload);
+    } finally {
+      _decodeClock?.stop();
+    }
+  }
+
+  JsonMap _decodeCompleteFrame(Uint8List frame) {
+    _decodeClock?.start();
+    try {
+      if (frame.length < 4) {
+        throw const FormatException('IPC frame header is truncated');
+      }
+      final length = ByteData.sublistView(frame, 0, 4).getUint32(0);
+      if (length > _maxFrameLength) {
+        throw const FormatException(
+          'IPC frame exceeds the 256 MiB safety limit',
+        );
+      }
+      if (frame.length != 4 + length) {
+        throw const FormatException(
+          'IPC frame length does not match its header',
+        );
+      }
+      return _decodePayload(Uint8List.sublistView(frame, 4));
+    } finally {
+      _decodeClock?.stop();
+    }
+  }
+
+  JsonMap _decodePayload(Uint8List payload) {
     if (_hasBinaryAssetResponseMagic(payload)) {
       return _decodeBinaryAssetResponse(payload);
     }
@@ -675,12 +725,13 @@ class FrameReader {
   }
 
   Future<void> _fill(int length) async {
+    final iterator = _iterator!;
     while (_buffer.length < length) {
-      if (!await _iterator.moveNext()) {
+      if (!await iterator.moveNext()) {
         if (_buffer.isEmpty) return;
         throw const FormatException('Unexpected EOF in IPC frame');
       }
-      _buffer.addAll(_iterator.current);
+      _buffer.addAll(iterator.current);
     }
   }
 }

@@ -323,6 +323,10 @@ impl WorkerPool {
         if self.workers.is_empty() {
             self.prepare_for_requests(workspace, 1)?;
         }
+        #[cfg(feature = "ffi-spike")]
+        if crate::ffi_spike::eager_workers_for_reset_probe() {
+            self.prepare_for_requests(workspace, self.max_jobs)?;
+        }
         let signature = PoolSignature {
             root: root.to_path_buf(),
             package: package.to_owned(),

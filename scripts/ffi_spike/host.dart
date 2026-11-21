@@ -14,46 +14,46 @@ Future<void> main(List<String> args) async {
   }
   final library = File(args[0]).absolute.path;
   final snapshot = File(args[1]).absolute.uri;
+  final clock = Stopwatch()..start();
+  final profiling =
+      Platform.environment['BUILD_RUNNER_ACCELERATOR_METRICS'] == '1';
   final native = SpikeBindings(library);
+  final libraryOpenUs = clock.elapsedMicroseconds;
   final engineFinished = Completer<int>();
-  final workerFinished = Completer<void>();
-  final workerEvents = ReceivePort();
-  var workerStarted = false;
-  var workerFailed = false;
-  final workerSubscription = workerEvents.listen((event) {
-    if (event == null) {
-      native.detach();
-      workerFinished.complete();
-    } else {
-      workerFailed = true;
-      stderr.writeln(
-        'Dart worker isolate failed: ${(event as List).join('\n')}',
-      );
-      native.detach();
-    }
-  });
+  final workers = <Future<bool>>[];
 
-  Future<void> spawnWorker() async {
+  Future<bool> spawnWorker(int id) async {
+    final events = ReceivePort();
+    var failed = false;
     try {
       await Isolate.spawnUri(
         snapshot,
-        [library],
+        [library, id.toString()],
         null,
-        onExit: workerEvents.sendPort,
-        onError: workerEvents.sendPort,
+        onExit: events.sendPort,
+        onError: events.sendPort,
       );
+      await for (final event in events) {
+        if (event == null) return failed;
+        failed = true;
+        stderr.writeln(
+          'Dart worker isolate $id failed: ${(event as List).join('\n')}',
+        );
+        native.detach(id);
+      }
+      return failed;
     } catch (error, stack) {
-      workerFailed = true;
-      stderr.writeln('Could not start Dart worker isolate: $error\n$stack');
-      native.detach();
-      workerFinished.complete();
+      stderr.writeln('Could not start Dart worker isolate $id: $error\n$stack');
+      return true;
+    } finally {
+      native.detach(id);
+      events.close();
     }
   }
 
-  void onEngineEvent(int event) {
+  void onEngineEvent(int event, int id) {
     if (event == 1) {
-      workerStarted = true;
-      unawaited(spawnWorker());
+      workers.add(spawnWorker(id));
     } else {
       engineFinished.complete(event == 2 ? 0 : 1);
     }
@@ -67,12 +67,18 @@ Future<void> main(List<String> args) async {
     if (native.start(data, encoded.length, notification.nativeFunction) != 0) {
       throw StateError('Could not start the Rust engine');
     }
+    final submittedUs = clock.elapsedMicroseconds;
     exitCode = await engineFinished.future;
-    if (workerStarted) await workerFinished.future;
-    if (workerFailed) exitCode = 1;
+    final engineDoneUs = clock.elapsedMicroseconds;
+    if ((await Future.wait(workers)).contains(true)) exitCode = 1;
+    if (profiling) {
+      stderr.writeln(
+        'FFI host: library_open_us=$libraryOpenUs submitted_us=$submittedUs '
+        'engine_done_us=$engineDoneUs host_done_us=${clock.elapsedMicroseconds} '
+        'workers=${workers.length}',
+      );
+    }
   } finally {
     notification.close();
-    await workerSubscription.cancel();
-    workerEvents.close();
   }
 }

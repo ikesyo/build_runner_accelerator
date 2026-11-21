@@ -8,6 +8,32 @@ import 'package:test/test.dart';
 
 void main() {
   test(
+    'complete frame transport validates boundaries and preserves payload',
+    () async {
+      final payload = utf8.encode('{"v":1,"type":"initialized"}');
+      final frame = Uint8List(4 + payload.length);
+      ByteData.sublistView(frame).setUint32(0, payload.length);
+      frame.setAll(4, payload);
+      final inputs = [frame, null].iterator;
+      final reader = FrameReader.completeFrames(
+        () async => inputs.moveNext() ? inputs.current : null,
+      );
+      expect(await reader.next(), {'v': 1, 'type': 'initialized'});
+      expect(await reader.next(), isNull);
+      for (final invalid in [
+        Uint8List.sublistView(frame, 0, 3),
+        Uint8List.sublistView(frame, 0, frame.length - 1),
+        Uint8List.fromList([...frame, 0]),
+      ]) {
+        await expectLater(
+          FrameReader.completeFrames(() async => invalid).next(),
+          throwsFormatException,
+        );
+      }
+    },
+  );
+
+  test(
     'concurrent JSON and binary frames retain order and complete bytes',
     () async {
       final stream = StreamController<List<int>>();

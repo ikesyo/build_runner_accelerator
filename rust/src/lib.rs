@@ -47,7 +47,6 @@ fn run(args: impl Iterator<Item = String>, in_process: bool) -> io::Result<()> {
     let mut options = cli::Options::parse(args)?;
     if in_process
         && (options.command != "build"
-            || options.jobs != 1
             || options.settings.workspace
             || options.settings.force_aot
             || options.settings.force_jit
@@ -55,7 +54,16 @@ fn run(args: impl Iterator<Item = String>, in_process: bool) -> io::Result<()> {
             || options.root.canonicalize()? != env::current_dir()?.canonicalize()?)
     {
         return Err(io::Error::other(
-            "FFI spike requires build --jobs 1 in the target package directory",
+            "FFI spike requires a single-package build in the target package directory",
+        ));
+    }
+    if in_process
+        && options.jobs > 1
+        && (worker::shared_analysis_cache_enabled()
+            || env::var("BUILD_RUNNER_ACCELERATOR_DEP_CACHE").as_deref() != Ok("0"))
+    {
+        return Err(io::Error::other(
+            "Parallel FFI workers require BUILD_RUNNER_ACCELERATOR_BYTE_STORE=0 and BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0",
         ));
     }
     if options.show_help {

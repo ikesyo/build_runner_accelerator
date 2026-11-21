@@ -10,6 +10,8 @@ import signal
 import statistics
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -18,7 +20,56 @@ GENERATED = (".g.dart", ".freezed.dart", ".g.part")
 CASES = ("clean", "no-op", "one-file", "broad")
 
 
-def run(command, cwd, env, log, *, expected_status=0):
+def sample_session(session):
+    pids = []
+    rss = 0
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdecimal():
+            continue
+        try:
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            if int(fields[3]) != session or fields[0] == "Z":
+                continue
+            rss += int(fields[21]) * os.sysconf("SC_PAGE_SIZE") // 1024
+            pids.append(entry)
+        except (OSError, IndexError, ValueError):
+            continue
+    pss = 0
+    for entry in pids:
+        try:
+            rollup = (entry / "smaps_rollup").read_text().splitlines()
+            pss += next(int(line.split()[1]) for line in rollup if line.startswith("Pss:"))
+        except (OSError, StopIteration):
+            return len(pids), rss, None
+    return len(pids), rss, pss if pids else None
+
+
+def sample_memory(process):
+    peak_rss = 0
+    peak_pss = None
+    peak_processes = 0
+    complete_pss_samples = 0
+    deadline = time.monotonic() + 240
+    while process.poll() is None:
+        count, rss, pss = sample_session(process.pid)
+        peak_rss = max(peak_rss, rss)
+        peak_processes = max(peak_processes, count)
+        if pss is not None:
+            peak_pss = max(peak_pss or 0, pss)
+            complete_pss_samples += 1
+        if time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired(process.args, 240)
+        time.sleep(0.01)
+    return {
+        "peak_session_rss_kib": peak_rss,
+        "peak_session_pss_kib": peak_pss,
+        "peak_processes": peak_processes,
+        "complete_pss_samples": complete_pss_samples,
+    }
+
+
+def run(command, cwd, env, log, *, expected_status=0, memory=False):
+    samples = None
     with log.with_suffix(".stdout").open("wb") as stdout, log.with_suffix(
         ".stderr"
     ).open("wb") as stderr:
@@ -27,6 +78,8 @@ def run(command, cwd, env, log, *, expected_status=0):
             start_new_session=True,
         )
         try:
+            if memory:
+                samples = sample_memory(process)
             status = process.wait(timeout=240)
         except BaseException:
             try:
@@ -40,6 +93,7 @@ def run(command, cwd, env, log, *, expected_status=0):
             f"Exit {status}, expected {expected_status}: {command!r}. "
             f"See {log.with_suffix('.stderr')}"
         )
+    return samples
 
 
 def source_files(root):
@@ -80,6 +134,18 @@ def inventory(root, package, stock=False):
 
 def edit(root, case):
     inputs = source_files(root)
+    if (root / "lib/shared.dart").exists():
+        models = sorted((root / "lib/features").glob("*/model.dart"))
+        for path in models[:1] if case == "one-file" else models:
+            source = path.read_text()
+            edited = source.replace("'title_base'", "'title_spike'")
+            if source == edited:
+                raise SystemExit(f"Missing edit anchor in {path}")
+            path.write_text(edited)
+        if case == "broad":
+            shared = root / "lib/shared.dart"
+            shared.write_text(shared.read_text().replace("active, archived }", "active, archived, paused }"))
+        return
     for path in inputs[:1] if case == "one-file" else inputs:
         source = path.read_text()
         if path.name == "model.dart":
@@ -122,7 +188,7 @@ def assert_inventory(actual, expected, label):
         raise SystemExit(f"{label} output mismatch: {differences[:12]}")
 
 
-def check_worker_boundary(package, fixture, pipe, ffi, commands, mode_env, logs, expected):
+def check_worker_boundary(package, fixture, pipe, ffi, commands, mode_env, logs, expected, jobs):
     graph = ffi / ".dart_tool/build_runner_accelerator/graph-v3.bin"
     old_graph = graph.read_bytes()
     missing = list(commands[ffi])
@@ -142,8 +208,10 @@ def check_worker_boundary(package, fixture, pipe, ffi, commands, mode_env, logs,
         restore(root, fixture)
         log = logs / f"{package}-{root.name}-pid"
         run(
-            commands[root], root, dict(mode_env(root), BUILD_RUNNER_ACCELERATOR_WALL_TRACE="1"),
-            log,
+            commands[root], root, dict(
+                mode_env(root), BUILD_RUNNER_ACCELERATOR_WALL_TRACE="1",
+                BUILD_RUNNER_ACCELERATOR_FFI_RESET_PROBE="1" if root == ffi else "0",
+            ), log,
         )
         events = [
             json.loads(line.removeprefix("Rust wall trace: "))
@@ -152,10 +220,62 @@ def check_worker_boundary(package, fixture, pipe, ffi, commands, mode_env, logs,
         ]
         (scheduler,) = [event["pid"] for event in events if event["stage"] == "native_build"]
         workers = {event["worker_pid"] for event in events if "worker_pid" in event}
-        if len(workers) != 1 or (scheduler in workers) != (root == ffi):
-            raise SystemExit(f"{package}: unexpected worker PIDs {workers} for scheduler {scheduler}")
+        connections = {event["worker_connection"] for event in events if "worker_connection" in event}
+        count = len(connections) if root == ffi else len(workers)
+        if (not 1 <= count <= jobs or
+            (root == ffi and workers != {scheduler}) or
+            (root == pipe and scheduler in workers)):
+            raise SystemExit(f"{package}: unexpected workers {workers}, connections {connections}")
+        reset_workers = {
+            event.get("worker_connection", event.get("worker_pid"))
+            for event in events if event["stage"] == "worker_resolver_reset"
+        }
+        if root == ffi and package == "mixed_application" and jobs > 1:
+            if count < 2 or len(reset_workers) < 2:
+                raise SystemExit(f"{package} {root.name}: expected phase resets in multiple workers")
         assert_inventory(inventory(root, package), expected["clean"], f"{package} retry")
-        print(f"{package} {root.name}: scheduler PID {scheduler}, worker PID {next(iter(workers))}")
+        print(f"{package} {root.name}: {count} workers, {len(reset_workers)} reset, PIDs {sorted(workers)}", flush=True)
+
+
+def check_interruption(package, root, command, env, logs, expected):
+    graph = root / ".dart_tool/build_runner_accelerator/graph-v3.bin"
+    old_graph = graph.read_bytes()
+    edit(root, "broad")
+    progress = logs / f"{package}-ffi-interrupted.stderr"
+    with progress.open("wb") as stderr, subprocess.Popen(
+        command, cwd=root, env=dict(env, BUILD_RUNNER_ACCELERATOR_METRICS="1"),
+        stdout=subprocess.DEVNULL, stderr=stderr, start_new_session=True,
+    ) as process:
+        try:
+            deadline = time.monotonic() + 45
+            while b"FFI worker attached:" not in progress.read_bytes():
+                if process.poll() is not None or time.monotonic() >= deadline:
+                    raise SystemExit(f"{package}: no attached worker before interruption")
+                time.sleep(0.005)
+            os.killpg(process.pid, signal.SIGTERM)
+            status = process.wait(timeout=15)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+    if status != -signal.SIGTERM or graph.read_bytes() != old_graph:
+        raise SystemExit(f"{package}: interrupted build changed the graph or exited unexpectedly")
+    assert_inventory(inventory(root, package), expected["clean"], f"{package} interrupted build")
+    run(command, root, env, logs / f"{package}-ffi-interrupted-retry")
+    assert_inventory(inventory(root, package), expected["broad"], f"{package} interrupted retry")
+    print(f"{package}: SIGTERM after worker attach preserved the commit and retry matched stock", flush=True)
+
+
+def make_mixed_fixture(count, destination):
+    original = REPO / "fixtures/riverpod_app"
+    for name in ("pubspec.yaml", "pubspec.lock"):
+        shutil.copyfile(original / name, destination / name)
+    pubspec = destination / "pubspec.yaml"
+    pubspec.write_text(pubspec.read_text().replace("name: riverpod_app", "name: mixed_application"))
+    subprocess.run(
+        [sys.executable, SCRIPTS / "generate_application_fixture.py", str(count), destination],
+        check=True,
+    )
 
 
 def main():
@@ -166,14 +286,19 @@ def main():
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument("--features", type=int, default=100, help="mixed application feature count")
+    parser.add_argument("--sample-memory", action="store_true")
+    parser.add_argument("--ffi-reader", choices=("stream", "direct"), default="stream")
+
     parser.add_argument(
         "--fixtures", nargs="+",
-        choices=("riverpod_app", "json_serializable_100_app"),
+        choices=("riverpod_app", "json_serializable_100_app", "mixed_application"),
         default=("riverpod_app", "json_serializable_100_app"),
     )
     args = parser.parse_args()
-    if args.repeats < 1:
-        parser.error("--repeats must be positive")
+    if min(args.repeats, args.jobs, args.features) < 1:
+        parser.error("--repeats, --jobs and --features must be positive")
     results = args.results.resolve()
     results.mkdir()
     logs = results / "logs"
@@ -191,8 +316,13 @@ def main():
     env = dict(os.environ)
     env.pop("BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH", None)
     env.pop("BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL", None)
+    env.pop("BUILD_RUNNER_ACCELERATOR_FFI_RESET_PROBE", None)
+    env.pop("BUILD_RUNNER_ACCELERATOR_FFI_DIRECT_READ", None)
     env.update(
         BUILD_RUNNER_ACCELERATOR_WORKER_AOT="0",
+        # The packed analyzer cache uses process-scoped fcntl locks.
+        BUILD_RUNNER_ACCELERATOR_BYTE_STORE="0",
+        BUILD_RUNNER_ACCELERATOR_DEP_CACHE="0",
         BUILD_RUNNER_ACCELERATOR_CACHE=str(results / "accelerator-cache"),
         BUILD_RUNNER_ACCELERATOR_SUPERVISED="1",
         BUILD_RUNNER_ACCELERATOR_METRICS="0",
@@ -203,22 +333,34 @@ def main():
     metadata = {
         "dart": subprocess.check_output([dart_bin, "--version"], text=True).strip(),
         "source_head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
-        "jobs": 1,
+        "jobs": args.jobs,
+        "mixed_features": args.features,
+        "shared_analyzer_byte_store": False,
+        "shared_dependency_cache": False,
+        "ffi_reader": args.ffi_reader,
         "mode": "AOT worker precompiled before measurements",
     }
     (results / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     records = []
+    diagnostics = []
 
     for package in args.fixtures:
         fixture = REPO / "fixtures" / package
         work = results / package
         work.mkdir()
+        if package == "mixed_application":
+            with tempfile.TemporaryDirectory(prefix="build-runner-accelerator-current-baseline-work.") as scratch:
+                generated = Path(scratch) / package
+                generated.mkdir()
+                make_mixed_fixture(args.features, generated)
+                fixture = work / "source"
+                shutil.copytree(generated, fixture)
         stock, pipe, ffi = (work / label for label in ("stock", "pipe", "ffi"))
         for root in (stock, pipe, ffi):
             prepare(fixture, root)
             run([*dart, "pub", "get", *(["--offline"] if args.offline else [])],
                 root, env, logs / f"{package}-{root.name}-pub")
-        cli_args = ["build", "--dart", dart_bin, "--jobs", "1"]
+        cli_args = ["build", "--dart", dart_bin, "--jobs", str(args.jobs)]
         stock_build = [*dart, "run", "build_runner", "build", "--force-jit"]
         expected = {}
         for case in CASES:
@@ -237,7 +379,7 @@ def main():
 
         worker_paths = {}
         for root in (pipe, ffi):
-            run([native, *cli_args], root, env, logs / f"{package}-{root.name}-prepare")
+            run([native, *cli_args, "--jobs", "1"], root, env, logs / f"{package}-{root.name}-prepare")
             assert_inventory(inventory(root, package), expected["clean"], f"{package} prepare")
             generated = root / ".dart_tool/build_runner_accelerator/dynamic_worker.dart"
             source = generated
@@ -263,7 +405,9 @@ def main():
         def mode_env(root):
             return (
                 dict(env, BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH=str(worker_paths[pipe]))
-                if root == pipe else env
+                if root == pipe else dict(
+                    env, BUILD_RUNNER_ACCELERATOR_FFI_DIRECT_READ="1" if args.ffi_reader == "direct" else "0",
+                )
             )
 
         for repeat in range(args.repeats):
@@ -296,16 +440,28 @@ def main():
                     print(f"{label}: {record['wall_ms']:.1f} ms, {len(actual)} outputs match stock",
                           flush=True)
 
+        (results / "samples.json").write_text(json.dumps(records, indent=2) + "\n")
         for root in (pipe, ffi):
-            restore(root, fixture)
-            run(commands[root], root, mode_env(root), logs / f"{package}-{root.name}-restore-metrics")
-            edit(root, "broad")
-            run(
-                commands[root], root, dict(mode_env(root), BUILD_RUNNER_ACCELERATOR_METRICS="1"),
-                logs / f"{package}-{root.name}-broad-metrics",
-            )
-            assert_inventory(inventory(root, package), expected["broad"], f"{package} metrics")
-        check_worker_boundary(package, fixture, pipe, ffi, commands, mode_env, logs, expected)
+            for case in ("no-op", "one-file", "broad"):
+                restore(root, fixture)
+                run(commands[root], root, mode_env(root), logs / f"{package}-{root.name}-{case}-restore-metrics")
+                if case != "no-op":
+                    edit(root, case)
+                record = run(
+                    commands[root], root, dict(mode_env(root), BUILD_RUNNER_ACCELERATOR_METRICS="1"),
+                    logs / f"{package}-{root.name}-{case}-metrics", memory=args.sample_memory,
+                )
+                if record is not None:
+                    diagnostics.append(dict(record, fixture=package, lane=root.name, case=case))
+                assert_inventory(inventory(root, package), expected[case], f"{package} metrics")
+        if diagnostics:
+            (results / "memory.json").write_text(json.dumps(diagnostics, indent=2) + "\n")
+        check_worker_boundary(package, fixture, pipe, ffi, commands, mode_env, logs, expected, args.jobs)
+        if package == "mixed_application":
+            check_interruption(package, ffi, commands[ffi], mode_env(ffi), logs, expected)
+
+    if diagnostics:
+        (results / "memory.json").write_text(json.dumps(diagnostics, indent=2) + "\n")
 
     (results / "samples.json").write_text(json.dumps(records, indent=2) + "\n")
     for package in args.fixtures:
