@@ -148,6 +148,8 @@ combine_before=$(combine_runs)
 ((probe_before >= 1)) || fail 'probe action did not run in the initial watch build'
 ((ast_before >= 1)) || fail 'ast action did not run in the initial watch build'
 cp "$watch_dir/lib/consumer.summary.txt" "$results_dir/summary.initial.txt"
+cp "$watch_dir/lib/consumer.probe.txt" "$results_dir/probe.initial.txt"
+cp "$watch_dir/lib/consumer.combined.txt" "$results_dir/combined.initial.txt"
 
 # Body-only edit: the resident worker must answer the preflight
 # with the unchanged fingerprint, so summary is skipped while the
