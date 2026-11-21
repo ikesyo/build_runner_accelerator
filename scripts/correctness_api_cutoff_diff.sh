@@ -133,6 +133,17 @@ compare_outputs() {
     fail "step $step: cutoff lib/ file set differs from stock"
   [[ "$stock_files" == "$plain_files" ]] ||
     fail "step $step: plain lib/ file set differs from stock"
+  # Compare bytes for every file in the matched trees, not only
+  # the five known outputs: the sources are identical by
+  # construction, so this extends byte parity to any generated
+  # file a future builder adds.
+  local file
+  while IFS= read -r file; do
+    cmp "$stock_dir/$file" "$cutoff_dir/$file" ||
+      fail "step $step: cutoff file differs from stock: $file"
+    cmp "$stock_dir/$file" "$plain_dir/$file" ||
+      fail "step $step: plain file differs from stock: $file"
+  done <<< "$stock_files"
   local output
   for output in "${outputs[@]}"; do
     [[ -f "$stock_dir/$output" ]] || fail "step $step: missing stock output: $output"

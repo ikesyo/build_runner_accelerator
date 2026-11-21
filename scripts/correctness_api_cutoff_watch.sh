@@ -138,9 +138,11 @@ wait_for_stable_watch_state 0 1
 summary_before=$(summary_runs)
 echo_before=$(echo_runs)
 probe_before=$(probe_runs)
+ast_before=$(ast_runs)
 ((summary_before >= 1)) || fail 'summary action did not run in the initial watch build'
 ((echo_before >= 1)) || fail 'echo action did not run in the initial watch build'
 ((probe_before >= 1)) || fail 'probe action did not run in the initial watch build'
+((ast_before >= 1)) || fail 'ast action did not run in the initial watch build'
 cp "$watch_dir/lib/consumer.summary.txt" "$results_dir/summary.initial.txt"
 
 # Body-only edit: the resident worker must answer the preflight
@@ -154,6 +156,14 @@ wait_for_stable_watch_state 1 2
   fail 'probe action reran after a body-only edit in watch mode'
 (( $(echo_runs) > echo_before )) || \
   fail 'echo action did not rerun after a body-only edit in watch mode'
+# The ast action is opted in but observes the dependency through
+# its AST, so the safety net downgrades it: it must rerun on the
+# body-only edit, and its output embeds the body text, so the new
+# body must be visible immediately, not only after a later edit.
+(( $(ast_runs) > ast_before )) || \
+  fail 'ast action did not rerun after a body-only edit in watch mode'
+grep -Fq 'widget-v2' "$watch_dir/lib/consumer.ast.txt" || \
+  fail 'ast output did not pick up the body edit in watch mode'
 cmp "$results_dir/summary.initial.txt" "$watch_dir/lib/consumer.summary.txt" || \
   fail 'summary output changed after a body-only edit in watch mode'
 grep -Fq 'widget-v2' "$watch_dir/lib/consumer.echo.txt" || \
