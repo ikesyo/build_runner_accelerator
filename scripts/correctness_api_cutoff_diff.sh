@@ -381,7 +381,8 @@ assert_plain_summary_reruns ast-cycle-body
 
 edit_all cycle-api
 build_all cycle-api
-assert_pattern cycle-api 1 - - 1 1
+assert_pattern cycle-api 1 1 1 1 1
+assert_total cycle-api 5
 assert_cutoff_output_contains cycle-api lib/consumer.summary.txt 'extraB'
 
 printf 'api-cutoff-diff: PASS steps=13 stock-identical=yes plain-identical=yes\n'
