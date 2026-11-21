@@ -105,7 +105,7 @@ run_rust_cutoff() {
   local directory=$1
   local log=$2
   run_rust "$directory" "$log" \
-    --api-cutoff api_cutoff_app:summary --api-cutoff api_cutoff_app:echo --api-cutoff api_cutoff_app:probe
+    --api-cutoff api_cutoff_app:summary --api-cutoff api_cutoff_app:echo --api-cutoff api_cutoff_app:probe --api-cutoff api_cutoff_app:ast
 }
 
 # Applies one scripted edit to a copy of lib/api.dart: "body" changes
@@ -154,10 +154,12 @@ prepare_pair
 
 run_stock "$stock_dir" "$temporary_dir/initial.stock.log" || fail 'stock initial build failed'
 run_rust_cutoff "$rust_dir" "$temporary_dir/initial.rust.log" || fail 'Rust initial build failed'
-assert_contains "$temporary_dir/initial.rust.log" 'Rust frontend: 3 build action(s)'
+assert_contains "$temporary_dir/initial.rust.log" 'Rust frontend: 5 build action(s)'
 assert_same_file "$stock_dir/lib/consumer.summary.txt" "$rust_dir/lib/consumer.summary.txt"
 assert_same_file "$stock_dir/lib/consumer.echo.txt" "$rust_dir/lib/consumer.echo.txt"
 assert_same_file "$stock_dir/lib/consumer.probe.txt" "$rust_dir/lib/consumer.probe.txt"
+assert_same_file "$stock_dir/lib/consumer.ast.txt" "$rust_dir/lib/consumer.ast.txt"
+assert_same_file "$stock_dir/lib/consumer.combined.txt" "$rust_dir/lib/consumer.combined.txt"
 
 run_rust_cutoff "$rust_dir" "$temporary_dir/noop.rust.log" || fail 'Rust no-op build failed'
 assert_contains "$temporary_dir/noop.rust.log" 'No work to do (Rust frontend)'
@@ -166,19 +168,24 @@ assert_contains "$temporary_dir/noop.rust.log" 'No work to do (Rust frontend)'
 # action is waived by the cutoff and keeps its previous output, and
 # so is the probe action, which resolves api.dart by asset id: the
 # resolver's internal readability probe must not turn that library
-# into a direct read. The echo action reruns: its read of api.dart
-# is a direct content read through the builder step and stays
-# content-keyed, even though the same library is also
-# resolver-observed.
+# into a direct read. Two actions rerun: echo, whose read of
+# api.dart is a direct content read through the builder step and
+# stays content-keyed even though the same library is also
+# resolver-observed, and ast, which is opted in but observes the
+# dependency through its AST, so the safety net downgrades it to a
+# content key. The combine action holds: the waived summary leaves
+# its previous output in place, so the generated input is unchanged.
 edit_api "$stock_dir" body
 edit_api "$rust_dir" body
 run_stock "$stock_dir" "$temporary_dir/body.stock.log" || fail 'stock body-edit build failed'
 run_rust_cutoff "$rust_dir" "$temporary_dir/body.rust.log" || fail 'Rust body-edit build failed'
-assert_contains "$temporary_dir/body.rust.log" 'Rust frontend: 1 build action(s)'
+assert_contains "$temporary_dir/body.rust.log" 'Rust frontend: 2 build action(s)'
 assert_contains "$rust_dir/lib/consumer.echo.txt" 'widget-v2'
 assert_same_file "$stock_dir/lib/consumer.summary.txt" "$rust_dir/lib/consumer.summary.txt"
 assert_same_file "$stock_dir/lib/consumer.echo.txt" "$rust_dir/lib/consumer.echo.txt"
 assert_same_file "$stock_dir/lib/consumer.probe.txt" "$rust_dir/lib/consumer.probe.txt"
+assert_same_file "$stock_dir/lib/consumer.ast.txt" "$rust_dir/lib/consumer.ast.txt"
+assert_same_file "$stock_dir/lib/consumer.combined.txt" "$rust_dir/lib/consumer.combined.txt"
 
 # An API edit changes the effective signature: both actions rerun
 # and the summary stays byte-identical to stock.
@@ -186,25 +193,33 @@ edit_api "$stock_dir" api
 edit_api "$rust_dir" api
 run_stock "$stock_dir" "$temporary_dir/api.stock.log" || fail 'stock api-edit build failed'
 run_rust_cutoff "$rust_dir" "$temporary_dir/api.rust.log" || fail 'Rust api-edit build failed'
-assert_contains "$temporary_dir/api.rust.log" 'Rust frontend: 3 build action(s)'
+assert_contains "$temporary_dir/api.rust.log" 'Rust frontend: 5 build action(s)'
 assert_contains "$rust_dir/lib/consumer.summary.txt" 'ready'
 assert_contains "$rust_dir/lib/consumer.echo.txt" 'ready'
 assert_contains "$rust_dir/lib/consumer.probe.txt" 'ready'
 assert_same_file "$stock_dir/lib/consumer.summary.txt" "$rust_dir/lib/consumer.summary.txt"
 assert_same_file "$stock_dir/lib/consumer.echo.txt" "$rust_dir/lib/consumer.echo.txt"
 assert_same_file "$stock_dir/lib/consumer.probe.txt" "$rust_dir/lib/consumer.probe.txt"
+assert_same_file "$stock_dir/lib/consumer.ast.txt" "$rust_dir/lib/consumer.ast.txt"
+assert_same_file "$stock_dir/lib/consumer.combined.txt" "$rust_dir/lib/consumer.combined.txt"
 
 # Without the flag the same kind of body-only edit is content-keyed
-# for both actions and reruns, so the skip above comes from the
-# cutoff rather than from generally weaker invalidation.
+# and reruns every action observing api.dart, so the skip above
+# comes from the cutoff rather than from generally weaker
+# invalidation. The combine action reruns as well: the native
+# frontend propagates dirtiness from a rerun producer to its
+# downstream actions even when the produced output is unchanged
+# (stock build_runner skips it by digest in this case).
 edit_api "$stock_dir" body
 edit_api "$rust_dir" body
 run_stock "$stock_dir" "$temporary_dir/unflagged.stock.log" || fail 'stock unflagged build failed'
 run_rust "$rust_dir" "$temporary_dir/unflagged.rust.log" || fail 'Rust unflagged build failed'
-assert_contains "$temporary_dir/unflagged.rust.log" 'Rust frontend: 3 build action(s)'
+assert_contains "$temporary_dir/unflagged.rust.log" 'Rust frontend: 5 build action(s)'
 assert_contains "$rust_dir/lib/consumer.echo.txt" 'widget-v3'
 assert_same_file "$stock_dir/lib/consumer.summary.txt" "$rust_dir/lib/consumer.summary.txt"
 assert_same_file "$stock_dir/lib/consumer.echo.txt" "$rust_dir/lib/consumer.echo.txt"
 assert_same_file "$stock_dir/lib/consumer.probe.txt" "$rust_dir/lib/consumer.probe.txt"
+assert_same_file "$stock_dir/lib/consumer.ast.txt" "$rust_dir/lib/consumer.ast.txt"
+assert_same_file "$stock_dir/lib/consumer.combined.txt" "$rust_dir/lib/consumer.combined.txt"
 
-printf 'api-cutoff: PASS body-only-skip=yes probe-skip=yes direct-read-rerun=yes api-rerun=yes unflagged-rerun=yes stock-identical=yes\n'
+printf 'api-cutoff: PASS body-only-skip=yes probe-skip=yes direct-read-rerun=yes ast-downgrade-rerun=yes chain-hold=yes api-rerun=yes unflagged-rerun=yes stock-identical=yes\n'

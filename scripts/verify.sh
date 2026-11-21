@@ -259,6 +259,9 @@ run_quick() {
     bash "$script_dir/correctness_arbitrary_builder.sh"
     bash "$script_dir/correctness_arbitrary_package_target_builder.sh"
   fi
+  if [[ "${VERIFY_API_CUTOFF_DIFF:-0}" == 1 ]]; then
+    bash "$script_dir/correctness_api_cutoff_diff.sh"
+  fi
   if [[ "${VERIFY_WATCH:-0}" == 1 ]]; then
     bash "$script_dir/watch_smoke.sh"
     bash "$script_dir/watch_smoke_freezed.sh"

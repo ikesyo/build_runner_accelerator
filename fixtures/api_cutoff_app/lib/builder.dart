@@ -1,3 +1,4 @@
+import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:build/build.dart';
 
@@ -65,6 +66,80 @@ class _ProbeBuilder implements Builder {
       buildStep.inputId.changeExtension('.probe.txt'),
       lines.join('\n'),
     );
+  }
+}
+
+Builder astBuilder(BuilderOptions options) => _AstBuilder();
+
+/// An opted-in builder that observes a dependency through its AST
+/// (compilationUnitFor) instead of the element model. AST access
+/// observes source text, including bodies the API fingerprint does
+/// not cover, so the cutoff's safety net must downgrade this
+/// builder: the dependency stays content-keyed and a body-only edit
+/// reruns the action even though the builder is opted in. The
+/// output embeds method body lengths, so a stale waiver would be
+/// visible as a mismatch against stock.
+class _AstBuilder implements Builder {
+  @override
+  Map<String, List<String>> get buildExtensions => const {
+    '.dart': ['.ast.txt'],
+  };
+
+  @override
+  Future<void> build(BuildStep buildStep) async {
+    final api = AssetId(buildStep.inputId.package, 'lib/api.dart');
+    final unit = await buildStep.resolver.compilationUnitFor(api);
+    final lines = <String>[];
+    for (final declaration in unit.declarations) {
+      if (declaration is! ClassDeclaration) continue;
+      final className = declaration.namePart.typeName.lexeme;
+      for (final member in declaration.body.members) {
+        if (member is MethodDeclaration) {
+          lines.add(
+            '$className.${member.name.lexeme}:${member.body.toSource().length}',
+          );
+        } else if (member is ConstructorDeclaration) {
+          lines.add('$className.ctor:${member.parameters.toSource()}');
+        } else if (member is FieldDeclaration) {
+          for (final field in member.fields.variables) {
+            lines.add('$className.${field.name.lexeme}');
+          }
+        }
+      }
+    }
+    lines.sort();
+    await buildStep.writeAsString(
+      buildStep.inputId.changeExtension('.ast.txt'),
+      lines.join('\n'),
+    );
+  }
+}
+
+Builder combineBuilder(BuilderOptions options) => _CombineBuilder();
+
+/// A combining builder downstream of the summary builder. Its input
+/// is a generated asset, which stays content-keyed: when the summary
+/// action is waived by the cutoff its previous output stays in
+/// place, so this builder sees no change and also holds; when the
+/// summary content changes, this builder reruns.
+class _CombineBuilder implements Builder {
+  @override
+  Map<String, List<String>> get buildExtensions => const {
+    '.summary.txt': ['.combined.txt'],
+  };
+
+  @override
+  Future<void> build(BuildStep buildStep) async {
+    final summary = await buildStep.readAsString(buildStep.inputId);
+    // changeExtension would only replace the trailing '.txt'; the
+    // declared output replaces the whole '.summary.txt' suffix.
+    final inputPath = buildStep.inputId.path;
+    final outputId = AssetId(
+      buildStep.inputId.package,
+      '${inputPath.substring(0, inputPath.length - '.summary.txt'.length)}'
+      '.combined.txt',
+    );
+    await buildStep.writeAsString(outputId, 'combined summary\n$summary');
   }
 }
 
