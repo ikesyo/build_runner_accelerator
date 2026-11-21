@@ -106,7 +106,11 @@ Builder astBuilder(BuilderOptions options) => _AstBuilder();
 /// builder: the dependency stays content-keyed and a body-only edit
 /// reruns the action even though the builder is opted in. The
 /// output embeds the method bodies themselves, so a stale waiver
-/// would be visible as a mismatch against stock.
+/// would be visible as a mismatch against stock. The builder also
+/// resolves a second library through the element model: the
+/// downgrade applies to the whole action (ADR 0056), so a body-only
+/// edit to that library must rerun the action too, even though the
+/// element-model observation alone would be fingerprint-covered.
 class _AstBuilder implements Builder {
   @override
   Map<String, List<String>> get buildExtensions => const {
@@ -134,6 +138,12 @@ class _AstBuilder implements Builder {
           }
         }
       }
+    }
+    final cycle = await buildStep.resolver.libraryFor(
+      AssetId(buildStep.inputId.package, 'lib/cycle_a.dart'),
+    );
+    for (final cls in cycle.classes) {
+      lines.addAll(describeClass(cls, 'elt: '));
     }
     lines.sort();
     await buildStep.writeAsString(

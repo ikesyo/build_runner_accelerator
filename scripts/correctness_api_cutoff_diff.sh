@@ -196,6 +196,14 @@ assert_plain_resolver_reruns() {
   done
 }
 
+assert_plain_summary_reruns() {
+  local step=$1
+  local actual
+  actual=$(builder_runs "$temporary_dir/$step.plain.log" summary)
+  [[ "$actual" == "1" ]] ||
+    fail "step $step: unflagged summary ran $actual time(s), expected 1 (control)"
+}
+
 assert_no_work() {
   local step=$1
   local log="$temporary_dir/$step.cutoff.log"
@@ -264,6 +272,8 @@ elif mode == "part-api":
          "  /// Whether the part widget is ready.\n  bool partReady() => true;\n}")
 elif mode == "cycle-body":
     edit("cycle_b.dart", "'cycle-b-v1'", "'cycle-b-v2'")
+elif mode == "ast-cycle-body":
+    edit("cycle_a.dart", "int valueA() => 1;", "int valueA() => 2;")
 elif mode == "cycle-api":
     edit("cycle_b.dart",
          "  int valueB() => CycleA().valueA();\n}",
@@ -358,9 +368,15 @@ build_all cycle-body
 assert_no_work cycle-body
 assert_plain_resolver_reruns cycle-body
 
+edit_all ast-cycle-body
+build_all ast-cycle-body
+assert_pattern ast-cycle-body 0 0 0 1 0
+assert_total ast-cycle-body 1
+assert_plain_summary_reruns ast-cycle-body
+
 edit_all cycle-api
 build_all cycle-api
 assert_pattern cycle-api 1 - - 0 1
 assert_cutoff_output_contains cycle-api lib/consumer.summary.txt 'extraB'
 
-printf 'api-cutoff-diff: PASS steps=12 stock-identical=yes plain-identical=yes\n'
+printf 'api-cutoff-diff: PASS steps=13 stock-identical=yes plain-identical=yes\n'
