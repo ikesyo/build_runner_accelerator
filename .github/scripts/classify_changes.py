@@ -49,7 +49,8 @@ FULL_SCRIPTS = {
 # Scripts PR CI never executes. Every other script must derive to at least
 # one gated job; check_ci.py enforces the partition.
 NO_CI_SCRIPTS = {
-    'aot_prewarm.sh', 'benchmark_build_filter.py', 'benchmark_cold_aot.py',
+    'aot_prewarm.sh', 'benchmark_api_cutoff.sh', 'benchmark_build_filter.py',
+    'benchmark_cold_aot.py',
     'benchmark_cold_build.py', 'benchmark_cold_startup.sh',
     'benchmark_cross_workspace_startup.sh', 'benchmark_current_baseline.sh',
     'benchmark_environment.py', 'benchmark_freezed.sh',
@@ -64,6 +65,7 @@ NO_CI_SCRIPTS = {
     'correctness_aot_prewarm.sh', 'correctness_arbitrary_dependency_builder.sh',
     'correctness_current_json.sh', 'create_release_manifest.py',
     'diagnose_riverpod_resolver.py', 'evaluate_aot_matrix.sh',
+    'generate_api_cutoff_fanout_fixture.sh',
     'generate_application_fixture.py', 'generate_json_serializable_fixture.sh',
     'measure_process.py', 'prepare_cycle_read_fixture.py',
     'prepare_resolver_digest_fixture.py', 'probe_fvm.py',
