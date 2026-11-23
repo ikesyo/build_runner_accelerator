@@ -324,7 +324,10 @@ was decided (signature unchanged, or the disqualifying rule:
 generated asset, deleted or appeared unit, unanswered unit,
 missing evidence, or a changed signature), including
 candidates dropped before evaluation because no changed unit
-in their closure could be queried. No lines appear when the
+in their closure could be queried. When the recorded graph
+alone proves every candidate blocked by a generated or
+deleted/appeared unit, the preflight pool is not started at
+all and the metrics attribute those candidates directly. No lines appear when the
 assessment does not run, for example on a first build with no
 recorded graph or a build where nothing changed. A candidate
 counted as signature unchanged can still run when dirty

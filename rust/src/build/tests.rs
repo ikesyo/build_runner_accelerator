@@ -1780,6 +1780,171 @@ fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<(
 }
 
 #[test]
+fn api_cutoff_assess_skips_preflight_when_every_candidate_is_blocked() -> io::Result<()> {
+    use super::{cutoff, planning};
+    use crate::snapshot::AssetSnapshot;
+    let (_temporary, workspace, config, base_snapshot) = planning_fixture(1)?;
+    let entry = "app|lib/entry.dart";
+    let gen_unit = "app|lib/gen_unit.dart";
+    let lib2 = "app|lib/lib2.dart";
+    let mut old_snapshot = base_snapshot.clone();
+    for asset in [entry, gen_unit, lib2] {
+        old_snapshot.insert(
+            asset.into(),
+            AssetSnapshot {
+                exists: true,
+                digest: "v1".into(),
+                size: 2,
+            },
+        );
+    }
+    let mut state = GraphState {
+        schema_version: crate::graph::GRAPH_SCHEMA_VERSION,
+        config_digest: "config".into(),
+        assets: old_snapshot.clone(),
+        ..GraphState::default()
+    };
+    state
+        .resolver_dep_graph
+        .insert(entry.into(), vec![gen_unit.into(), lib2.into()]);
+    let cutoff_set: BTreeSet<String> = ["app:factory".to_owned()].into_iter().collect();
+    let plan = planning::create(&workspace, &state, &config, &old_snapshot, &cutoff_set)?;
+    let spec = plan
+        .specs
+        .iter()
+        .find(|spec| spec.instance.api_cutoff)
+        .expect("the factory spec opted in")
+        .clone();
+    state.actions.insert(
+        spec.action_key(),
+        ActionState {
+            builder: spec.instance.builder.id.clone(),
+            input: spec.input.clone(),
+            outputs: spec.outputs.clone(),
+            resolver_entrypoints: vec![entry.into()],
+            status: "success".into(),
+            ..ActionState::default()
+        },
+    );
+    let gen_uniterated: BTreeSet<String> = [gen_unit.to_owned()].into_iter().collect();
+    // Both closure units changed; lib2 keeps the query non-empty,
+    // so only the recorded-graph proof can skip the preflight.
+    let mut changed_snapshot = old_snapshot.clone();
+    for asset in [gen_unit, lib2] {
+        changed_snapshot
+            .get_mut(asset)
+            .expect("unit recorded")
+            .digest = "v2".into();
+    }
+    // Control: without the gen_uniterated marker the same change is a
+    // preflight candidate.
+    {
+        let context = state.dirty_context(&changed_snapshot);
+        let mut diagnostics = cutoff::CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
+        let assessment = cutoff::assess(
+            &state,
+            &plan.specs,
+            &context,
+            &changed_snapshot,
+            &BTreeSet::new(),
+            &mut diagnostics,
+        );
+        assert!(assessment.is_some(), "control change must be a candidate");
+        assert!(!diagnostics.preflight_skipped);
+    }
+    // Every candidate's closure reaches the gen_uniterated unit: the
+    // preflight is skipped and the outcome is attributed.
+    {
+        let context = state.dirty_context(&changed_snapshot);
+        let mut diagnostics = cutoff::CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
+        let assessment = cutoff::assess(
+            &state,
+            &plan.specs,
+            &context,
+            &changed_snapshot,
+            &gen_uniterated,
+            &mut diagnostics,
+        );
+        assert!(
+            assessment.is_none(),
+            "a proven-blocked candidate set must skip the preflight"
+        );
+        assert!(diagnostics.preflight_skipped);
+        assert_eq!(
+            diagnostics
+                .evaluate
+                .values()
+                .map(|counts| counts.generated_asset)
+                .sum::<usize>(),
+            1,
+            "the skip must attribute the candidate to the gen_uniterated-asset rule"
+        );
+    }
+    // The skip is a decision, not a diagnostics feature: it also
+    // applies with the metrics output off.
+    {
+        let context = state.dirty_context(&changed_snapshot);
+        let mut diagnostics = cutoff::CutoffDiagnostics::default();
+        let assessment = cutoff::assess(
+            &state,
+            &plan.specs,
+            &context,
+            &changed_snapshot,
+            &gen_uniterated,
+            &mut diagnostics,
+        );
+        assert!(
+            assessment.is_none(),
+            "the skip must not depend on diagnostics"
+        );
+    }
+    // A deleted unit in the closure proves the same block, with
+    // the lifecycle attribution.
+    let mut deleted_snapshot = old_snapshot.clone();
+    deleted_snapshot.remove(gen_unit);
+    deleted_snapshot
+        .get_mut(lib2)
+        .expect("unit recorded")
+        .digest = "v2".into();
+    {
+        let context = state.dirty_context(&deleted_snapshot);
+        let mut diagnostics = cutoff::CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
+        let assessment = cutoff::assess(
+            &state,
+            &plan.specs,
+            &context,
+            &deleted_snapshot,
+            &BTreeSet::new(),
+            &mut diagnostics,
+        );
+        assert!(
+            assessment.is_none(),
+            "a deleted unit in the closure must skip the preflight"
+        );
+        assert!(diagnostics.preflight_skipped);
+        assert_eq!(
+            diagnostics
+                .evaluate
+                .values()
+                .map(|counts| counts.deleted_or_appeared)
+                .sum::<usize>(),
+            1,
+            "the skip must attribute the candidate to the lifecycle rule"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn undemanded_optional_stays_demandable_without_changing_successful_empty_reuse() -> io::Result<()>
 {
     use super::{dirty, planning};

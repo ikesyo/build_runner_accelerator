@@ -519,3 +519,23 @@ by the generated-asset rule (visible in the cutoff metrics),
 all actions rerun on a body-only edit, and outputs stay
 byte-identical to stock. This is the regression harness for
 the preflight-skip and generated-asset follow-ups.
+
+Preflight-skip follow-up (2026-11-23): when the recorded graph
+alone proves every candidate blocked (each candidate's
+recorded closure reaches a generated or deleted/appeared
+unit), assess now returns no preflight plan and the worker
+pool is never started; the old-side block is decisive because
+a candidate whose new closure no longer reached the
+disqualifying unit got there through an edit inside the
+closure, which changes its fold, so it could not be waived
+either. The cutoff metrics still attribute the skipped
+candidates to the blocking rule. On a generated-part fixture
+(100 consumers whose shared library has a generated part,
+body-only edit, this VM), the build took 6.6 to 7.9 s with
+the skip against 6.8 to 8.9 s without, interleaved; the
+removed cost is the pool start and query, which grows with
+the app's analysis context (the field report measured about
+10% of wall time on a production app). The generated-part
+correctness harness added alongside the fixture work keeps
+passing unchanged, since the skip preserves the metrics
+attribution it asserts.

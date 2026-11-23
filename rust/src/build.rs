@@ -594,6 +594,9 @@ fn prepare_cutoff(
     let Some(assessment) = assessment else {
         if diagnostics.enabled {
             diagnostics.print_assess();
+            if diagnostics.preflight_skipped {
+                diagnostics.print_evaluate();
+            }
         }
         return Ok((None, None));
     };
