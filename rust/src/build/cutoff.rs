@@ -338,7 +338,6 @@ pub(super) fn assess(
         }
         return None;
     }
-    diagnostics.query_units = query.len();
     let deleted: BTreeSet<String> = changed
         .iter()
         .filter(|asset| {
@@ -378,7 +377,14 @@ pub(super) fn assess(
         .chain(appeared.iter())
         .map(String::as_str)
         .collect();
-    if diagnostics.enabled {
+    // The forward closure is already computed for the query; when
+    // it holds no disqualifying unit at all, no candidate can be
+    // proven blocked and the reverse walks below would be pure
+    // overhead on the common source-only path.
+    let any_blocker_in_closure = closure
+        .iter()
+        .any(|asset| generated.contains(asset) || lifecycle.contains(asset.as_str()));
+    if any_blocker_in_closure && diagnostics.enabled {
         let generated_targets: BTreeSet<&str> = generated.iter().map(String::as_str).collect();
         let [generated_reached, lifecycle_reached] =
             reverse_reachable_sets(&recorded, &all_roots, [&generated_targets, &lifecycle]);
@@ -405,7 +411,7 @@ pub(super) fn assess(
             diagnostics.preflight_skipped = true;
             return None;
         }
-    } else {
+    } else if any_blocker_in_closure {
         let blocked_targets: BTreeSet<&str> = generated
             .iter()
             .map(String::as_str)
@@ -421,6 +427,7 @@ pub(super) fn assess(
             return None;
         }
     }
+    diagnostics.query_units = query.len();
     Some(Assessment {
         query: query.into_iter().collect(),
         first_package: first_package.expect("a candidate supplied a package"),
