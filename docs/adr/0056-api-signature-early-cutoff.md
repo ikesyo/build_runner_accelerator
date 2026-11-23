@@ -548,7 +548,15 @@ fixture (50 consumers blocked through the generated part,
 50 waived through a handwritten library) took 3.8 s with
 the check against 4.2 s without, and a source-only fan-out
 whose body edit is fully waived took 0.43 s against 0.44 s,
-outputs byte-identical in both comparisons. The
+outputs byte-identical in both comparisons. Measurement
+setup: debug frontend builds, Dart SDK 3.13.3, `--jobs 2`,
+fixtures generated with the fan-out generator
+(`GENERATED_PART=1`, count 100; the mixed fixture repoints
+half the consumers at a second, handwritten shared library
+and edits both libraries), each app first built once to
+record the graph, then timed on the body-only edit build;
+the skipped builds' metrics headers show `query_units=0
+preflight_skipped=1`, confirming no query was sent. The
 generated-part correctness harness added alongside the
 fixture work keeps passing unchanged, since the skip
 preserves the metrics attribution it asserts.
