@@ -526,20 +526,28 @@ pub(super) fn evaluate(
         // that view (missing fingerprint evidence at or below it),
         // which leaves the action content-keyed exactly as a failed
         // fold did; a present root fold also implies the root's
-        // whole closure is folded in that view.
-        if !candidate
-            .roots
-            .iter()
-            .all(|root| old_folds.contains_key(root) && new_folds.contains_key(root))
-        {
+        // whole closure is folded in that view. One pass over the
+        // roots classifies presence and equality together.
+        let mut all_present = true;
+        let mut all_equal = true;
+        for root in &candidate.roots {
+            match (old_folds.get(root), new_folds.get(root)) {
+                (Some(old_fold), Some(new_fold)) => {
+                    if old_fold != new_fold {
+                        all_equal = false;
+                    }
+                }
+                _ => {
+                    all_present = false;
+                    all_equal = false;
+                }
+            }
+        }
+        if !all_present {
             counts.missing_evidence += 1;
             continue;
         }
-        if candidate.roots.iter().all(|root| {
-            old_folds
-                .get(root)
-                .is_some_and(|fold| new_folds.get(root) == Some(fold))
-        }) {
+        if all_equal {
             counts.signature_unchanged += 1;
             clean_actions.insert(candidate.key.clone());
         } else {
