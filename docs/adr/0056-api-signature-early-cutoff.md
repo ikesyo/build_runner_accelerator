@@ -508,3 +508,14 @@ actions, and evaluate's outcome per candidate (signature
 unchanged, or the disqualifying rule). Supporting generated
 assets in the closure remains the open follow-up; the counters
 are what let a user see that it is the blocker.
+
+Generated-part fixture follow-up (2026-11-23): the fan-out
+fixture generator gained a `GENERATED_PART=1` variant whose
+shared library has a generated part (a freezed-style partgen
+builder in the same package), and
+`scripts/correctness_api_cutoff_generated_part.sh` locks in the
+current behavior on that shape: every candidate is disqualified
+by the generated-asset rule (visible in the cutoff metrics),
+all actions rerun on a body-only edit, and outputs stay
+byte-identical to stock. This is the regression harness for
+the preflight-skip and generated-asset follow-ups.
