@@ -579,11 +579,27 @@ fn prepare_cutoff(
                 .flat_map(|action| action.outputs.iter().cloned()),
         )
         .collect();
-    let Some(assessment) =
-        cutoff::assess(state, &plan.specs, context, current_snapshot, &generated)
-    else {
+    let mut diagnostics = cutoff::CutoffDiagnostics {
+        enabled: runtime_metrics_enabled(),
+        ..Default::default()
+    };
+    let assessment = cutoff::assess(
+        state,
+        &plan.specs,
+        context,
+        current_snapshot,
+        &generated,
+        &mut diagnostics,
+    );
+    let Some(assessment) = assessment else {
+        if diagnostics.enabled {
+            diagnostics.print_assess();
+        }
         return Ok((None, None));
     };
+    if diagnostics.enabled {
+        diagnostics.print_assess();
+    }
     let mut owned_pool: Option<WorkerPool> = None;
     let active_pool = match pool {
         Some(existing) => existing,
@@ -630,7 +646,17 @@ fn prepare_cutoff(
     // The query is read-only: let execution reuse this initialization
     // when its signature matches instead of resetting the workers.
     active_pool.mark_preflight_initialization();
-    let evidence = cutoff::evaluate(state, &assessment, &results, &generated, config_digest);
+    let evidence = cutoff::evaluate(
+        state,
+        &assessment,
+        &results,
+        &generated,
+        config_digest,
+        &mut diagnostics,
+    );
+    if diagnostics.enabled {
+        diagnostics.print_evaluate();
+    }
     Ok((Some(evidence), owned_pool))
 }
 

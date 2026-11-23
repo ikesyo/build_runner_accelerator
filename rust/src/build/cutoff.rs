@@ -54,9 +54,100 @@ pub(super) struct Assessment {
 
 struct Candidate {
     key: String,
+    /// Builder definition id, for diagnostics attribution.
+    builder: String,
     /// Resolver observation roots: entrypoints plus direct resolver
     /// reads. The action's effective signature is the fold of these.
     roots: Vec<String>,
+}
+
+/// Per-builder counters behind the cutoff metrics output
+/// (`BUILD_RUNNER_ACCELERATOR_METRICS=1`). They explain why an
+/// opt-in did or did not pay off: how [`assess`] filtered the
+/// opted-in actions, and how [`evaluate`] decided each candidate.
+/// Counting never changes a decision.
+#[derive(Debug, Default)]
+pub(super) struct CutoffDiagnostics {
+    /// Counting costs a map entry per opted-in action, so it only
+    /// runs when the metrics output is on; `prepare_cutoff` sets
+    /// this from the same flag that gates printing.
+    pub(super) enabled: bool,
+    pub(super) assess: BTreeMap<String, AssessCounts>,
+    pub(super) evaluate: BTreeMap<String, EvaluateCounts>,
+    pub(super) changed_units: usize,
+    pub(super) generated_assets: usize,
+    pub(super) query_units: usize,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct AssessCounts {
+    pub(super) candidates: usize,
+    pub(super) no_recorded_action: usize,
+    pub(super) ast_or_content_read: usize,
+    pub(super) own_input_or_direct_read_changed: usize,
+    pub(super) no_resolver_observation: usize,
+    pub(super) not_reached_by_change: usize,
+    pub(super) no_roots: usize,
+    /// Candidates dropped before evaluation because no unit in
+    /// their changed closures could be queried: a generated unit
+    /// changed, or the changed units are absent from the current
+    /// snapshot. Split by which of the two applies.
+    pub(super) no_query_generated_asset: usize,
+    pub(super) no_query_deleted_or_appeared: usize,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct EvaluateCounts {
+    /// The signature proof passed. Dirty planning can still run
+    /// the action for reasons outside the resolver observations
+    /// (a changed glob, a missing output), so this counts proven
+    /// unchanged signatures, not final skips.
+    pub(super) signature_unchanged: usize,
+    pub(super) generated_asset: usize,
+    pub(super) deleted_or_appeared: usize,
+    pub(super) unanswered_unit: usize,
+    pub(super) missing_evidence: usize,
+    pub(super) signature_changed: usize,
+}
+
+impl CutoffDiagnostics {
+    /// The assessment counters print before the fallible worker
+    /// preflight starts, so a failed query still leaves them in
+    /// the output; the evaluation counters print after evaluation.
+    pub(super) fn print_assess(&self) {
+        eprintln!(
+            "Rust cutoff metrics: changed_units={} generated_assets={} query_units={}",
+            self.changed_units, self.generated_assets, self.query_units,
+        );
+        for (builder, counts) in &self.assess {
+            eprintln!(
+                "Rust cutoff metrics: stage=assess builder={builder} candidates={} no_recorded_action={} ast_or_content_read={} own_input_or_direct_read_changed={} no_resolver_observation={} not_reached_by_change={} no_roots={} no_query_generated_asset={} no_query_deleted_or_appeared={}",
+                counts.candidates,
+                counts.no_recorded_action,
+                counts.ast_or_content_read,
+                counts.own_input_or_direct_read_changed,
+                counts.no_resolver_observation,
+                counts.not_reached_by_change,
+                counts.no_roots,
+                counts.no_query_generated_asset,
+                counts.no_query_deleted_or_appeared,
+            );
+        }
+    }
+
+    pub(super) fn print_evaluate(&self) {
+        for (builder, counts) in &self.evaluate {
+            eprintln!(
+                "Rust cutoff metrics: stage=evaluate builder={builder} signature_unchanged={} generated_asset={} deleted_or_appeared={} unanswered_unit={} missing_evidence={} signature_changed={}",
+                counts.signature_unchanged,
+                counts.generated_asset,
+                counts.deleted_or_appeared,
+                counts.unanswered_unit,
+                counts.missing_evidence,
+                counts.signature_changed,
+            );
+        }
+    }
 }
 
 /// Finds the opted-in actions a preflight could waive. Returns `None`
@@ -69,8 +160,11 @@ pub(super) fn assess(
     context: &DirtyContext<'_>,
     current_snapshot: &Snapshot,
     generated: &BTreeSet<String>,
+    diagnostics: &mut CutoffDiagnostics,
 ) -> Option<Assessment> {
     let changed = context.changed();
+    diagnostics.changed_units = changed.len();
+    diagnostics.generated_assets = generated.len();
     if changed.is_empty() || state.actions.is_empty() {
         return None;
     }
@@ -81,14 +175,27 @@ pub(super) fn assess(
         overrides: None,
     };
     let mut candidates = Vec::new();
+    // Counts land in this scratch entry when diagnostics are off,
+    // so the disabled path pays no builder-id clone or map entry.
+    let mut scratch_counts: AssessCounts;
     let mut query: BTreeMap<String, String> = BTreeMap::new();
     let mut first_package = None;
     for spec in specs {
         if !spec.instance.api_cutoff {
             continue;
         }
+        let counts = if diagnostics.enabled {
+            diagnostics
+                .assess
+                .entry(spec.instance.builder.id.clone())
+                .or_default()
+        } else {
+            scratch_counts = AssessCounts::default();
+            &mut scratch_counts
+        };
         let key = spec.action_key();
         let Some(action) = state.actions.get(&key) else {
+            counts.no_recorded_action += 1;
             continue;
         };
         // Recorded AST access to a non-primary library breaks the
@@ -97,6 +204,7 @@ pub(super) fn assess(
         // content-keyed, not just the accessed asset's, so such
         // actions are never candidates.
         if !action.resolver_content_reads.is_empty() {
+            counts.ast_or_content_read += 1;
             continue;
         }
         // An action whose primary input or direct reads changed is
@@ -110,9 +218,11 @@ pub(super) fn assess(
                 .iter()
                 .any(|asset| changed.contains(asset.as_str()))
         {
+            counts.own_input_or_direct_read_changed += 1;
             continue;
         }
         if action.resolver_entrypoints.is_empty() && action.resolver_reads.is_empty() {
+            counts.no_resolver_observation += 1;
             continue;
         }
         let reaches = action
@@ -124,6 +234,7 @@ pub(super) fn assess(
                 .iter()
                 .any(|entrypoint| tainted.contains(entrypoint.as_str()));
         if !reaches {
+            counts.not_reached_by_change += 1;
             continue;
         }
         // Signature roots are the action's resolver observations:
@@ -151,12 +262,18 @@ pub(super) fn assess(
             .into_iter()
             .collect();
         if roots.is_empty() {
+            counts.no_roots += 1;
             continue;
         }
         if first_package.is_none() {
             first_package = Some(spec.instance.package.clone());
         }
-        candidates.push(Candidate { key, roots });
+        counts.candidates += 1;
+        candidates.push(Candidate {
+            key,
+            builder: spec.instance.builder.id.clone(),
+            roots,
+        });
     }
     if candidates.is_empty() {
         return None;
@@ -182,8 +299,40 @@ pub(super) fn assess(
         }
     }
     if query.is_empty() {
+        if diagnostics.enabled {
+            // No unit in the changed closures can be queried, so
+            // evaluate never runs; attribute each candidate here
+            // instead. Every changed unit in a candidate's recorded
+            // closure is generated or absent from the current
+            // snapshot (anything else would have been queried), so
+            // one shared reverse walk over the candidates' roots
+            // classifies them all.
+            let changed_generated: BTreeSet<&str> = changed_set
+                .iter()
+                .map(String::as_str)
+                .filter(|asset| generated.contains(*asset))
+                .collect();
+            let [generated_reached] =
+                reverse_reachable_sets(&recorded, &all_roots, [&changed_generated]);
+            for candidate in &candidates {
+                let counts = diagnostics
+                    .assess
+                    .entry(candidate.builder.clone())
+                    .or_default();
+                if candidate
+                    .roots
+                    .iter()
+                    .any(|root| generated_reached.contains(root))
+                {
+                    counts.no_query_generated_asset += 1;
+                } else {
+                    counts.no_query_deleted_or_appeared += 1;
+                }
+            }
+        }
         return None;
     }
+    diagnostics.query_units = query.len();
     let deleted = changed
         .iter()
         .filter(|asset| {
@@ -226,6 +375,7 @@ pub(super) fn evaluate(
     results: &BTreeMap<String, ApiUnitEvidence>,
     generated: &BTreeSet<String>,
     seed: &str,
+    diagnostics: &mut CutoffDiagnostics,
 ) -> CutoffEvidence {
     let mut learned: BTreeMap<String, Option<ApiFingerprintRecord>> = BTreeMap::new();
     for (asset, digest) in &assessment.query {
@@ -319,11 +469,12 @@ pub(super) fn evaluate(
     // fold would silently reuse stale evidence). Compute the roots
     // each set taints once per view by walking the reverse graph,
     // instead of walking every candidate's closure.
-    let blocked_targets: BTreeSet<&str> = generated
+    let generated_targets: BTreeSet<&str> = generated.iter().map(String::as_str).collect();
+    let lifecycle_targets: BTreeSet<&str> = assessment
+        .deleted
         .iter()
+        .chain(assessment.appeared.iter())
         .map(String::as_str)
-        .chain(assessment.deleted.iter().map(String::as_str))
-        .chain(assessment.appeared.iter().map(String::as_str))
         .collect();
     let unanswered_targets: BTreeSet<&str> = queried
         .iter()
@@ -334,32 +485,135 @@ pub(super) fn evaluate(
                 .is_none_or(|evidence| evidence.fingerprint.is_none() || evidence.deps.is_none())
         })
         .collect();
-    let blocked_old = reverse_reachable(&old_graph, &all_roots, &blocked_targets);
-    let blocked_new = reverse_reachable(&new_graph, &all_roots, &blocked_targets);
-    let unanswered_old = reverse_reachable(&old_graph, &all_roots, &unanswered_targets);
-    let unanswered_new = reverse_reachable(&new_graph, &all_roots, &unanswered_targets);
+    // With diagnostics on, the generated and lifecycle splits stay
+    // separate so a disqualification can be attributed to the rule
+    // that caused it. With diagnostics off, only their union (the
+    // blocked set the decision uses) is walked, as before, and it
+    // is reported through the generated slots with the lifecycle
+    // slots empty; the counts land in scratch and are discarded.
+    let (
+        generated_old,
+        lifecycle_old,
+        unanswered_old,
+        generated_new,
+        lifecycle_new,
+        unanswered_new,
+    ) = if diagnostics.enabled {
+        let [generated_old, lifecycle_old, unanswered_old] = reverse_reachable_sets(
+            &old_graph,
+            &all_roots,
+            [&generated_targets, &lifecycle_targets, &unanswered_targets],
+        );
+        let [generated_new, lifecycle_new, unanswered_new] = reverse_reachable_sets(
+            &new_graph,
+            &all_roots,
+            [&generated_targets, &lifecycle_targets, &unanswered_targets],
+        );
+        (
+            generated_old,
+            lifecycle_old,
+            unanswered_old,
+            generated_new,
+            lifecycle_new,
+            unanswered_new,
+        )
+    } else {
+        let blocked_targets: BTreeSet<&str> = generated_targets
+            .iter()
+            .chain(lifecycle_targets.iter())
+            .copied()
+            .collect();
+        let [blocked_old, unanswered_old] = reverse_reachable_sets(
+            &old_graph,
+            &all_roots,
+            [&blocked_targets, &unanswered_targets],
+        );
+        let [blocked_new, unanswered_new] = reverse_reachable_sets(
+            &new_graph,
+            &all_roots,
+            [&blocked_targets, &unanswered_targets],
+        );
+        (
+            blocked_old,
+            BTreeSet::new(),
+            unanswered_old,
+            blocked_new,
+            BTreeSet::new(),
+            unanswered_new,
+        )
+    };
     let mut clean_actions = BTreeSet::new();
+    let mut scratch_counts: EvaluateCounts;
     for candidate in &assessment.candidates {
-        let disqualified = candidate.roots.iter().any(|root| {
-            blocked_old.contains(root.as_str())
-                || blocked_new.contains(root.as_str())
-                || unanswered_old.contains(root.as_str())
-                || unanswered_new.contains(root.as_str())
-        });
-        if disqualified {
+        let reaches = |set: &BTreeSet<String>| {
+            candidate
+                .roots
+                .iter()
+                .any(|root| set.contains(root.as_str()))
+        };
+        let counts = if diagnostics.enabled {
+            diagnostics
+                .evaluate
+                .entry(candidate.builder.clone())
+                .or_default()
+        } else {
+            scratch_counts = EvaluateCounts::default();
+            &mut scratch_counts
+        };
+        if reaches(&generated_old) || reaches(&generated_new) {
+            counts.generated_asset += 1;
+            continue;
+        }
+        if reaches(&lifecycle_old) || reaches(&lifecycle_new) {
+            counts.deleted_or_appeared += 1;
+            continue;
+        }
+        if reaches(&unanswered_old) || reaches(&unanswered_new) {
+            counts.unanswered_unit += 1;
             continue;
         }
         // A root absent from a fold map has no determined fold in
         // that view (missing fingerprint evidence at or below it),
         // which leaves the action content-keyed exactly as a failed
         // fold did; a present root fold also implies the root's
-        // whole closure is folded in that view.
-        if candidate.roots.iter().all(|root| {
-            old_folds
-                .get(root)
-                .is_some_and(|fold| new_folds.get(root) == Some(fold))
-        }) {
+        // whole closure is folded in that view. With diagnostics
+        // off, the single short-circuiting comparison decides; with
+        // diagnostics on, one pass over the roots classifies
+        // presence and equality together for the counters.
+        if !diagnostics.enabled {
+            if candidate.roots.iter().all(|root| {
+                old_folds
+                    .get(root)
+                    .is_some_and(|fold| new_folds.get(root) == Some(fold))
+            }) {
+                clean_actions.insert(candidate.key.clone());
+            }
+            continue;
+        }
+        let mut all_present = true;
+        let mut all_equal = true;
+        for root in &candidate.roots {
+            match (old_folds.get(root), new_folds.get(root)) {
+                (Some(old_fold), Some(new_fold)) => {
+                    if old_fold != new_fold {
+                        all_equal = false;
+                    }
+                }
+                _ => {
+                    all_present = false;
+                    all_equal = false;
+                }
+            }
+        }
+        if !all_present {
+            counts.missing_evidence += 1;
+            continue;
+        }
+        if all_equal {
+            counts.signature_unchanged += 1;
             clean_actions.insert(candidate.key.clone());
+        } else {
+            counts.signature_changed += 1;
         }
     }
     CutoffEvidence {
@@ -368,14 +622,16 @@ pub(super) fn evaluate(
     }
 }
 
-/// The subset of `roots` that can reach any of `targets` over the
-/// dep graph, computed by walking the reverse graph from the
-/// targets within the region reachable from `roots`.
-fn reverse_reachable(
+/// For each target set, the subset of `roots` that can reach any of
+/// its targets over the dep graph. The forward closure and the
+/// reverse map are built once and shared by every set; each set
+/// then walks the reverse graph from its own targets within the
+/// region reachable from `roots`.
+fn reverse_reachable_sets<const N: usize>(
     graph: &GraphView<'_>,
     roots: &[String],
-    targets: &BTreeSet<&str>,
-) -> BTreeSet<String> {
+    target_sets: [&BTreeSet<&str>; N],
+) -> [BTreeSet<String>; N] {
     let reachable = forward_closure(graph, roots);
     let mut reverse: HashMap<&str, Vec<&str>> = HashMap::new();
     for asset in &reachable {
@@ -389,29 +645,31 @@ fn reverse_reachable(
         }
     }
     let root_set: BTreeSet<&str> = roots.iter().map(String::as_str).collect();
-    let mut reached_roots = BTreeSet::new();
-    let mut seen: BTreeSet<&str> = BTreeSet::new();
-    let mut stack: Vec<&str> = targets
-        .iter()
-        .copied()
-        .filter(|target| reachable.contains(*target))
-        .collect();
-    for target in &stack {
-        seen.insert(target);
-    }
-    while let Some(asset) = stack.pop() {
-        if root_set.contains(asset) {
-            reached_roots.insert(asset.to_owned());
+    target_sets.map(|targets| {
+        let mut reached_roots = BTreeSet::new();
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut stack: Vec<&str> = targets
+            .iter()
+            .copied()
+            .filter(|target| reachable.contains(*target))
+            .collect();
+        for target in &stack {
+            seen.insert(target);
         }
-        if let Some(dependents) = reverse.get(asset) {
-            for dependent in dependents {
-                if seen.insert(dependent) {
-                    stack.push(dependent);
+        while let Some(asset) = stack.pop() {
+            if root_set.contains(asset) {
+                reached_roots.insert(asset.to_owned());
+            }
+            if let Some(dependents) = reverse.get(asset) {
+                for dependent in dependents {
+                    if seen.insert(dependent) {
+                        stack.push(dependent);
+                    }
                 }
             }
         }
-    }
-    reached_roots
+        reached_roots
+    })
 }
 
 /// The forward closure of `roots` over the dep graph, roots included.
@@ -767,6 +1025,7 @@ mod tests {
             first_package: "app".into(),
             candidates: vec![Candidate {
                 key: "app|target:app:consumer".into(),
+                builder: "app:consumer".into(),
                 roots: vec!["app|lib/main.dart".into()],
             }],
             deleted: BTreeSet::new(),
@@ -779,7 +1038,14 @@ mod tests {
                 deps: Some(vec![]),
             },
         )]);
-        let evidence = evaluate(&state, &assessment, &unchanged, &BTreeSet::new(), "seed");
+        let evidence = evaluate(
+            &state,
+            &assessment,
+            &unchanged,
+            &BTreeSet::new(),
+            "seed",
+            &mut CutoffDiagnostics::default(),
+        );
         assert!(evidence.clean_actions.contains("app|target:app:consumer"));
         assert_eq!(
             evidence.learned.get("app|lib/dep.dart"),
@@ -795,7 +1061,14 @@ mod tests {
                 deps: Some(vec![]),
             },
         )]);
-        let evidence = evaluate(&state, &assessment, &changed, &BTreeSet::new(), "seed");
+        let evidence = evaluate(
+            &state,
+            &assessment,
+            &changed,
+            &BTreeSet::new(),
+            "seed",
+            &mut CutoffDiagnostics::default(),
+        );
         assert!(evidence.clean_actions.is_empty());
         // An unanswered unit is no evidence at all.
         let evidence = evaluate(
@@ -804,6 +1077,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeSet::new(),
             "seed",
+            &mut CutoffDiagnostics::default(),
         );
         assert!(evidence.clean_actions.is_empty());
         // A unit that appeared since the previous snapshot is an
@@ -814,6 +1088,7 @@ mod tests {
             first_package: assessment.first_package.clone(),
             candidates: vec![Candidate {
                 key: "app|target:app:consumer".into(),
+                builder: "app:consumer".into(),
                 roots: vec!["app|lib/main.dart".into()],
             }],
             deleted: BTreeSet::new(),
@@ -825,6 +1100,7 @@ mod tests {
             &unchanged,
             &BTreeSet::new(),
             "seed",
+            &mut CutoffDiagnostics::default(),
         );
         assert!(evidence.clean_actions.is_empty());
         // Evidence for a unit that was never queried binds to no
@@ -845,8 +1121,77 @@ mod tests {
             &with_volunteered,
             &BTreeSet::new(),
             "seed",
+            &mut CutoffDiagnostics::default(),
         );
         assert!(evidence.clean_actions.contains("app|target:app:consumer"));
+    }
+
+    #[test]
+    fn evaluate_diagnostics_attribute_outcomes() {
+        let action = ActionState {
+            builder: "app:consumer".into(),
+            input: "app|lib/main.dart".into(),
+            resolver_entrypoints: vec!["app|lib/main.dart".into()],
+            ..ActionState::default()
+        };
+        let state = state_with(
+            &[("app|lib/main.dart", &["app|lib/dep.dart"])],
+            &[
+                ("app|lib/main.dart", "f-main"),
+                ("app|lib/dep.dart", "f-dep"),
+            ],
+            action,
+        );
+        let assessment = Assessment {
+            query: vec![("app|lib/dep.dart".into(), "d2".into())],
+            first_package: "app".into(),
+            candidates: vec![Candidate {
+                key: "app|target:app:consumer".into(),
+                builder: "app:consumer".into(),
+                roots: vec!["app|lib/main.dart".into()],
+            }],
+            deleted: BTreeSet::new(),
+            appeared: BTreeSet::new(),
+        };
+        let unchanged = BTreeMap::from([(
+            "app|lib/dep.dart".to_string(),
+            ApiUnitEvidence {
+                fingerprint: Some("f-dep".into()),
+                deps: Some(vec![]),
+            },
+        )]);
+        let mut diagnostics = CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
+        let evidence = evaluate(
+            &state,
+            &assessment,
+            &unchanged,
+            &BTreeSet::new(),
+            "seed",
+            &mut diagnostics,
+        );
+        assert!(evidence.clean_actions.contains("app|target:app:consumer"));
+        assert_eq!(diagnostics.evaluate["app:consumer"].signature_unchanged, 1);
+        // A generated asset in the closure disqualifies the whole
+        // action, and the diagnostics attribute it to that rule.
+        let mut diagnostics = CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
+        let generated = BTreeSet::from(["app|lib/dep.dart".to_string()]);
+        let evidence = evaluate(
+            &state,
+            &assessment,
+            &unchanged,
+            &generated,
+            "seed",
+            &mut diagnostics,
+        );
+        assert!(evidence.clean_actions.is_empty());
+        assert_eq!(diagnostics.evaluate["app:consumer"].generated_asset, 1);
+        assert_eq!(diagnostics.evaluate["app:consumer"].signature_unchanged, 0);
     }
 
     #[test]
@@ -880,6 +1225,7 @@ mod tests {
             first_package: "app".into(),
             candidates: vec![Candidate {
                 key: "app|target:app:consumer".into(),
+                builder: "app:consumer".into(),
                 roots: vec!["app|lib/main.dart".into()],
             }],
             deleted: BTreeSet::new(),
@@ -892,7 +1238,14 @@ mod tests {
                 deps: Some(vec![]),
             },
         )]);
-        let evidence = evaluate(&state, &assessment, &answers, &BTreeSet::new(), "seed");
+        let evidence = evaluate(
+            &state,
+            &assessment,
+            &answers,
+            &BTreeSet::new(),
+            "seed",
+            &mut CutoffDiagnostics::default(),
+        );
         assert!(evidence.clean_actions.is_empty());
     }
 }
