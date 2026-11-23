@@ -579,7 +579,10 @@ fn prepare_cutoff(
                 .flat_map(|action| action.outputs.iter().cloned()),
         )
         .collect();
-    let mut diagnostics = cutoff::CutoffDiagnostics::default();
+    let mut diagnostics = cutoff::CutoffDiagnostics {
+        enabled: runtime_metrics_enabled(),
+        ..Default::default()
+    };
     let assessment = cutoff::assess(
         state,
         &plan.specs,
@@ -589,7 +592,7 @@ fn prepare_cutoff(
         &mut diagnostics,
     );
     let Some(assessment) = assessment else {
-        if runtime_metrics_enabled() {
+        if diagnostics.enabled {
             diagnostics.print();
         }
         return Ok((None, None));
@@ -648,7 +651,7 @@ fn prepare_cutoff(
         config_digest,
         &mut diagnostics,
     );
-    if runtime_metrics_enabled() {
+    if diagnostics.enabled {
         diagnostics.print();
     }
     Ok((Some(evidence), owned_pool))

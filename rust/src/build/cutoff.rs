@@ -68,11 +68,19 @@ struct Candidate {
 /// Counting never changes a decision.
 #[derive(Debug, Default)]
 pub(super) struct CutoffDiagnostics {
+    /// Counting costs a map entry per opted-in action, so it only
+    /// runs when the metrics output is on; `prepare_cutoff` sets
+    /// this from the same flag that gates printing.
+    pub(super) enabled: bool,
     pub(super) assess: BTreeMap<String, AssessCounts>,
     pub(super) evaluate: BTreeMap<String, EvaluateCounts>,
     pub(super) changed_units: usize,
     pub(super) generated_assets: usize,
     pub(super) query_units: usize,
+    /// Candidates dropped because no unit in their changed
+    /// closures could be queried (every one is generated or
+    /// absent from the current snapshot), so no preflight ran.
+    pub(super) skipped_no_query: usize,
 }
 
 #[derive(Debug, Default)]
@@ -99,8 +107,8 @@ pub(super) struct EvaluateCounts {
 impl CutoffDiagnostics {
     pub(super) fn print(&self) {
         eprintln!(
-            "Rust cutoff metrics: changed_units={} generated_assets={} query_units={}",
-            self.changed_units, self.generated_assets, self.query_units,
+            "Rust cutoff metrics: changed_units={} generated_assets={} query_units={} skipped_no_query={}",
+            self.changed_units, self.generated_assets, self.query_units, self.skipped_no_query,
         );
         for (builder, counts) in &self.assess {
             eprintln!(
@@ -153,16 +161,24 @@ pub(super) fn assess(
         overrides: None,
     };
     let mut candidates = Vec::new();
+    // Counts land in this scratch entry when diagnostics are off,
+    // so the disabled path pays no builder-id clone or map entry.
+    let mut scratch_counts = AssessCounts::default();
     let mut query: BTreeMap<String, String> = BTreeMap::new();
     let mut first_package = None;
     for spec in specs {
         if !spec.instance.api_cutoff {
             continue;
         }
-        let counts = diagnostics
-            .assess
-            .entry(spec.instance.builder.id.clone())
-            .or_default();
+        let counts = if diagnostics.enabled {
+            diagnostics
+                .assess
+                .entry(spec.instance.builder.id.clone())
+                .or_default()
+        } else {
+            scratch_counts = AssessCounts::default();
+            &mut scratch_counts
+        };
         let key = spec.action_key();
         let Some(action) = state.actions.get(&key) else {
             counts.no_recorded_action += 1;
@@ -269,6 +285,7 @@ pub(super) fn assess(
         }
     }
     if query.is_empty() {
+        diagnostics.skipped_no_query = candidates.len();
         return None;
     }
     diagnostics.query_units = query.len();
@@ -438,6 +455,7 @@ pub(super) fn evaluate(
         [&generated_targets, &lifecycle_targets, &unanswered_targets],
     );
     let mut clean_actions = BTreeSet::new();
+    let mut scratch_counts = EvaluateCounts::default();
     for candidate in &assessment.candidates {
         let reaches = |set: &BTreeSet<String>| {
             candidate
@@ -445,10 +463,15 @@ pub(super) fn evaluate(
                 .iter()
                 .any(|root| set.contains(root.as_str()))
         };
-        let counts = diagnostics
-            .evaluate
-            .entry(candidate.builder.clone())
-            .or_default();
+        let counts = if diagnostics.enabled {
+            diagnostics
+                .evaluate
+                .entry(candidate.builder.clone())
+                .or_default()
+        } else {
+            scratch_counts = EvaluateCounts::default();
+            &mut scratch_counts
+        };
         if reaches(&generated_old) || reaches(&generated_new) {
             counts.generated_asset += 1;
             continue;
@@ -1029,7 +1052,10 @@ mod tests {
                 deps: Some(vec![]),
             },
         )]);
-        let mut diagnostics = CutoffDiagnostics::default();
+        let mut diagnostics = CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
         let evidence = evaluate(
             &state,
             &assessment,
@@ -1042,7 +1068,10 @@ mod tests {
         assert_eq!(diagnostics.evaluate["app:consumer"].waived, 1);
         // A generated asset in the closure disqualifies the whole
         // action, and the diagnostics attribute it to that rule.
-        let mut diagnostics = CutoffDiagnostics::default();
+        let mut diagnostics = CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
         let generated = BTreeSet::from(["app|lib/dep.dart".to_string()]);
         let evidence = evaluate(
             &state,

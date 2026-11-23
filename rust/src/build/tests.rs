@@ -1614,7 +1614,10 @@ fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<(
     // it a preflight candidate.
     {
         let context = state.dirty_context(&current_snapshot);
-        let mut diagnostics = cutoff::CutoffDiagnostics::default();
+        let mut diagnostics = cutoff::CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
         let assessment = cutoff::assess(
             &state,
             &plan.specs,
@@ -1659,7 +1662,10 @@ fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<(
     );
     {
         let context = state.dirty_context(&current_snapshot);
-        let mut diagnostics = cutoff::CutoffDiagnostics::default();
+        let mut diagnostics = cutoff::CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
         let assessment = cutoff::assess(
             &state,
             &plan.specs,
@@ -1710,7 +1716,10 @@ fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<(
     state.actions.get_mut(&key).expect("action recorded").reads = vec![dep.into()];
     {
         let context = state.dirty_context(&current_snapshot);
-        let mut diagnostics = cutoff::CutoffDiagnostics::default();
+        let mut diagnostics = cutoff::CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
         let assessment = cutoff::assess(
             &state,
             &plan.specs,
@@ -1742,7 +1751,10 @@ fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<(
         .expect("action recorded")
         .resolver_content_reads = vec![dep.into()];
     let context = state.dirty_context(&current_snapshot);
-    let mut diagnostics = cutoff::CutoffDiagnostics::default();
+    let mut diagnostics = cutoff::CutoffDiagnostics {
+        enabled: true,
+        ..Default::default()
+    };
     let assessment = cutoff::assess(
         &state,
         &plan.specs,
