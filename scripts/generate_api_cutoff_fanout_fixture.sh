@@ -12,6 +12,15 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 count=${1:?usage: generate_api_cutoff_fanout_fixture.sh COUNT [DESTINATION]}
 destination=${2:-"$repo_root/fixtures/api_cutoff_fanout_app"}
+# With GENERATED_PART=1 the shared library gains a generated part
+# (a freezed-style .g.dart emitted by a partgen builder in the same
+# package), modelling production apps where most handwritten
+# libraries have generated parts. The default shape is unchanged.
+generated_part=${GENERATED_PART:-0}
+if [[ "$generated_part" != 0 && "$generated_part" != 1 ]]; then
+  printf 'GENERATED_PART must be 0 or 1: %s\n' "$generated_part" >&2
+  exit 2
+fi
 
 if [[ ! "$count" =~ ^[1-9][0-9]*$ ]]; then
   printf 'COUNT must be a positive integer: %s\n' "$count" >&2
@@ -68,7 +77,41 @@ open(path, "w").write("".join(out))
 PY
 fi
 
-cat >"$destination/build.yaml" <<'YAML'
+if [[ "$generated_part" == 1 ]]; then
+  cat >"$destination/build.yaml" <<'YAML'
+targets:
+  $default:
+    builders:
+      api_cutoff_fanout_app:summary:
+        generate_for:
+          - lib/consumer_*.dart
+      api_cutoff_fanout_app:partgen:
+        generate_for:
+          - lib/shared.dart
+builders:
+  summary:
+    import: "package:api_cutoff_fanout_app/builder.dart"
+    builder_factories:
+      - summaryBuilder
+    build_extensions:
+      ".dart":
+        - ".summary.txt"
+    auto_apply: none
+    build_to: source
+  partgen:
+    import: "package:api_cutoff_fanout_app/builder.dart"
+    builder_factories:
+      - partgenBuilder
+    build_extensions:
+      ".dart":
+        - ".g.dart"
+    auto_apply: none
+    build_to: source
+    runs_before:
+      - api_cutoff_fanout_app:summary
+YAML
+else
+  cat >"$destination/build.yaml" <<'YAML'
 targets:
   $default:
     builders:
@@ -86,6 +129,7 @@ builders:
     auto_apply: none
     build_to: source
 YAML
+fi
 
 cat >"$destination/lib/builder.dart" <<'DART'
 import 'package:analyzer/dart/element/element.dart';
@@ -141,6 +185,7 @@ class _SummaryBuilder implements Builder {
       for (final cls in lib.classes) {
         lines.addAll(describeClass(cls, '${lib.uri}: '));
       }
+      // MIXIN_VISIT
       for (final imported in lib.firstFragment.importedLibraries) {
         visit(imported);
       }
@@ -156,7 +201,85 @@ class _SummaryBuilder implements Builder {
 }
 DART
 
-cat >"$destination/lib/shared.dart" <<'DART'
+if [[ "$generated_part" == 1 ]]; then
+  cat >>"$destination/lib/builder.dart" <<'DART'
+
+/// Lines describing one mixin for the summary output, in the
+/// same shape as [describeClass]: the header and one line per
+/// method with its documentation comment. A mixin declared in a
+/// generated part shows up here, which proves the resolver loaded
+/// the part when it visited the library.
+List<String> describeMixin(MixinElement mixin, String prefix) {
+  final methods = mixin.methods.map((method) => method.name).join(',');
+  final lines = <String>['$prefix${mixin.name} [$methods]'];
+  for (final method in mixin.methods) {
+    final doc = method.documentationComment?.replaceAll('\n', ' ') ?? '-';
+    lines.add('$prefix${mixin.name}.${method.name} doc=$doc');
+  }
+  return lines;
+}
+
+Builder partgenBuilder(BuilderOptions options) => _PartgenBuilder();
+
+/// A freezed-style part generator for the shared library: it emits
+/// a `.g.dart` part declaring the mixin the library applies, so
+/// resolving the library always pulls a generated asset into the
+/// resolver's unit graph.
+class _PartgenBuilder implements Builder {
+  @override
+  Map<String, List<String>> get buildExtensions => const {
+    '.dart': ['.g.dart'],
+  };
+
+  @override
+  Future<void> build(BuildStep buildStep) async {
+    final source = await buildStep.readAsString(buildStep.inputId);
+    if (!source.contains('class Shared')) {
+      return;
+    }
+    await buildStep.writeAsString(
+      buildStep.inputId.changeExtension('.g.dart'),
+      "part of 'shared.dart';\n\n"
+      '/// Part generated for the shared library.\n'
+      'mixin _SharedParts {\n'
+      "  String partGreeting() => 'generated part';\n"
+      '}\n',
+    );
+  }
+}
+DART
+fi
+
+python3 - "$destination/lib/builder.dart" "$generated_part" <<'PYEOF'
+import sys
+
+path, variant = sys.argv[1], sys.argv[2]
+source = open(path).read()
+loop = ""
+if variant == "1":
+    loop = """      for (final mixin in lib.mixins) {
+        lines.addAll(describeMixin(mixin, '${lib.uri}: '));
+      }
+"""
+if source.count("      // MIXIN_VISIT\n") != 1:
+    raise SystemExit("MIXIN_VISIT placeholder not found exactly once")
+open(path, "w").write(source.replace("      // MIXIN_VISIT\n", loop))
+PYEOF
+
+if [[ "$generated_part" == 1 ]]; then
+  cat >"$destination/lib/shared.dart" <<'DART'
+part 'shared.g.dart';
+
+/// Shared library v1.
+class Shared with _SharedParts {
+  /// Greets with the current revision.
+  String greet() => 'shared-v1';
+
+  int compute(int input) => input * 2;
+}
+DART
+else
+  cat >"$destination/lib/shared.dart" <<'DART'
 /// Shared library v1.
 class Shared {
   /// Greets with the current revision.
@@ -165,6 +288,7 @@ class Shared {
   int compute(int input) => input * 2;
 }
 DART
+fi
 
 find "$destination/lib" -maxdepth 1 -type f -name 'consumer_*.dart' -delete
 for index in $(seq 1 "$count"); do
@@ -178,5 +302,5 @@ class Consumer${number} {
 DART
 done
 
-printf 'generated fan-out fixture: count=%s destination=%s\n' \
-  "$count" "$destination"
+printf 'generated fan-out fixture: count=%s generated_part=%s destination=%s\n' \
+  "$count" "$generated_part" "$destination"

@@ -124,7 +124,7 @@ fail() {
 
 worker_ensure_frontend || fail 'frontend build failed'
 
-bash "$script_dir/generate_api_cutoff_fanout_fixture.sh" "$count" \
+GENERATED_PART=0 bash "$script_dir/generate_api_cutoff_fanout_fixture.sh" "$count" \
   "$work/template" >/dev/null || fail 'fixture generation failed'
 
 pub_get_args=()
