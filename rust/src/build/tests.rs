@@ -2154,6 +2154,23 @@ fn api_cutoff_generated_asset_stability_inheritance() -> io::Result<()> {
         );
         assert!(diagnostics.preflight_skipped);
     }
+    // The producer observing its own previous output through the
+    // input library (the part is a member of the library it is
+    // generated from) is a self-reference, not a cascade: the
+    // waiver still holds.
+    {
+        let mut state = state.clone();
+        state
+            .resolver_dep_graph
+            .insert(src.into(), vec![gen_unit.into()]);
+        let snapshot = changed_snapshot(&[lib2]);
+        let (assessment, diagnostics) = assess(&state, &snapshot);
+        assert!(
+            assessment.is_some(),
+            "a producer's self-observation must not block the waiver"
+        );
+        assert!(!diagnostics.preflight_skipped);
+    }
     // State left by a filtered build cannot prove stability.
     {
         let mut state = state.clone();

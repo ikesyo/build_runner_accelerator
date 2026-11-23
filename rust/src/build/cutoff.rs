@@ -599,7 +599,13 @@ impl GeneratedStability<'_> {
         // Glob reads observe a set, not recorded members: a changed
         // asset the pattern matches can rerun the producer, and a
         // generated member's bytes are only as stable as its own
-        // producer.
+        // producer. The producer's own outputs are exempt from the
+        // cascade checks: a producer that resolves its input
+        // library observes the previous version of its own output
+        // (a part of that library, or a glob member it wrote), and
+        // that self-observation carries no information beyond the
+        // content checks above, which already key on the outputs.
+        let own_outputs: BTreeSet<&str> = action.outputs.iter().map(String::as_str).collect();
         for glob in &action.glob_reads {
             let changed_matches = self.changed.iter().any(|asset| glob_matches(glob, asset));
             if changed_matches {
@@ -608,7 +614,7 @@ impl GeneratedStability<'_> {
             let generated_members: Vec<String> = self
                 .generated
                 .iter()
-                .filter(|asset| glob_matches(glob, asset))
+                .filter(|asset| glob_matches(glob, asset) && !own_outputs.contains(asset.as_str()))
                 .cloned()
                 .collect();
             if !generated_members
@@ -637,13 +643,15 @@ impl GeneratedStability<'_> {
         // input, a direct read, or through the resolver) is
         // regenerated before the producer whenever its own
         // producer runs, and a rerun upstream producer reruns
-        // this one.
+        // this one. Own outputs are exempt, as above.
         let consumed: Vec<String> = action
             .reads
             .iter()
             .chain(std::iter::once(&action.input))
             .chain(closure.iter())
-            .filter(|asset| self.generated.contains(asset.as_str()))
+            .filter(|asset| {
+                self.generated.contains(asset.as_str()) && !own_outputs.contains(asset.as_str())
+            })
             .cloned()
             .collect();
         consumed.iter().all(|asset| self.asset_stable(asset))
