@@ -1168,6 +1168,20 @@ fn spawn_background_worker_aot(
     context: &AotContext,
     after_exit: bool,
 ) -> io::Result<bool> {
+    // A hosted engine's current executable is the Dart host, whose
+    // positional arguments cannot handle the native helper command.
+    #[cfg(feature = "ffi-spike")]
+    let helper = if crate::ffi_spike::active() {
+        let path = env::var_os("BUILD_RUNNER_ACCELERATOR_FFI_NATIVE")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute() && path.is_file())
+            .ok_or_else(|| io::Error::other("FFI background AOT requires an absolute BUILD_RUNNER_ACCELERATOR_FFI_NATIVE executable"))?;
+        Ok(path)
+    } else {
+        env::current_exe()
+    };
+    #[cfg(not(feature = "ffi-spike"))]
+    let helper = env::current_exe();
     let lock_path = aot_compile_lock_path(context)
         .ok_or_else(|| io::Error::other("AOT SDK directory has no parent"))?;
     // An after-exit helper acquires the lock itself once the spawner has
@@ -1178,7 +1192,7 @@ fn spawn_background_worker_aot(
         return Ok(false);
     }
 
-    let current_exe = match env::current_exe() {
+    let current_exe = match helper {
         Ok(path) => path,
         Err(error) => {
             if !after_exit {

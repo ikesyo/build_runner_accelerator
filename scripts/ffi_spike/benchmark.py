@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import statistics
@@ -169,11 +170,14 @@ def restore(root, fixture):
             shutil.copyfile(path, target)
 
 
-def clear_native_outputs(root):
+def clear_native_outputs(root, *, keep_worker=False):
     for path in (root / "lib").rglob("*"):
         if path.is_file() and path.name.endswith(GENERATED):
             path.unlink()
     tool = root / ".dart_tool/build_runner_accelerator"
+    if not keep_worker:
+        shutil.rmtree(tool)
+        return
     (tool / "graph-v3.bin").unlink(missing_ok=True)
     cache = tool / "cache"
     if cache.is_dir():
@@ -187,6 +191,46 @@ def assert_inventory(actual, expected, label):
     )
     if differences:
         raise SystemExit(f"{label} output mismatch: {differences[:12]}")
+
+
+def executors(log, *, clean, no_op):
+    diagnostics = log.read_text()
+    result = {}
+    for stage, prefix in (
+        ("triggers", "Dart manifest triggers"),
+        ("factory_probe", "Dart manifest probe"),
+        ("worker", "Rust pipe worker|Dart FFI worker"),
+    ):
+        selected = sorted(set(re.findall(rf"^(?:{prefix}): executor=([\w-]+)", diagnostics, re.M)))
+        if selected and selected != ["worker-aot"]:
+            raise SystemExit(f"{stage}: unexpected executor {selected} in {log}")
+        result[stage] = selected
+    if (clean and not result["triggers"]) or (not no_op and not result["worker"]):
+        raise SystemExit(f"Missing executor evidence in {log}: {result}")
+    if "Rust worker AOT compile:" in diagnostics:
+        raise SystemExit(f"Unexpected cold AOT compile in {log}")
+    return result
+
+
+def digest_metrics(log):
+    totals = dict.fromkeys(
+        ("resolver_reads_digest_computations", "resolver_reads_digest_reuses", "resolver_reads_digest_us"),
+        0,
+    )
+    for line in log.read_text().splitlines():
+        if line.startswith("Dart action metrics: "):
+            try:
+                metrics = json.loads(line.removeprefix("Dart action metrics: "))
+            except json.JSONDecodeError as error:
+                raise SystemExit(f"Invalid action metrics in {log}: {error}") from error
+            for key in totals:
+                totals[key] += metrics[key]
+    scan = re.findall(r"Rust external asset digests: files=(\d+) bytes=(\d+) elapsed_us=(\d+)", log.read_text())
+    if scan:
+        (files, size, elapsed), = scan
+        totals.update(frontend_digest_files=int(files), frontend_digest_bytes=int(size),
+                      frontend_digest_us=int(elapsed))
+    return totals
 
 
 def check_worker_boundary(package, fixture, pipe, ffi, commands, mode_env, logs, expected, jobs):
@@ -271,7 +315,7 @@ def check_cold_shared_cache(package, fixture, pipe, ffi, commands, mode_env, log
     cache = Path(tempfile.mkdtemp(prefix="cold-shared-cache.", dir=logs.parent / package))
     for root in (pipe, ffi):
         restore(root, fixture)
-        clear_native_outputs(root)
+        clear_native_outputs(root, keep_worker=True)
         summaries = root / ".dart_tool/build_resolvers"
         if summaries.is_dir():
             shutil.rmtree(summaries)
@@ -326,6 +370,8 @@ def main():
     parser.add_argument("--features", type=int, default=100, help="mixed application feature count")
     parser.add_argument("--sample-memory", action="store_true")
     parser.add_argument("--disable-shared-caches", action="store_true")
+    parser.add_argument("--external-digest-packages",
+                        help="add a pipe lane sharing digests for these comma-separated packages")
     parser.add_argument("--ffi-reader", choices=("stream", "direct"), default="stream")
 
     parser.add_argument(
@@ -336,14 +382,16 @@ def main():
     args = parser.parse_args()
     if min(args.repeats, args.jobs, args.features) < 1:
         parser.error("--repeats, --jobs and --features must be positive")
-    results = args.results.resolve()
-    results.mkdir()
-    logs = results / "logs"
-    logs.mkdir()
     dart_bin = args.dart.resolve()
     dart = [dart_bin, "--suppress-analytics"]
     native = args.native.resolve()
     library = args.library.resolve()
+    if not all(path.is_file() for path in (dart_bin, native, library)):
+        parser.error("--dart, --native and --library must point to existing files")
+    results = args.results.resolve()
+    results.mkdir()
+    logs = results / "logs"
+    logs.mkdir()
     # build_runner finds the SDK relative to the current AOT executable.
     sdk = results / "sdk"
     sdk_bin = sdk / "bin"
@@ -359,8 +407,12 @@ def main():
     env.pop("BUILD_RUNNER_ACCELERATOR_WORKER_KERNEL", None)
     env.pop("BUILD_RUNNER_ACCELERATOR_FFI_RESET_PROBE", None)
     env.pop("BUILD_RUNNER_ACCELERATOR_FFI_DIRECT_READ", None)
+    env.pop("BUILD_RUNNER_ACCELERATOR_EXTERNAL_DIGEST_PACKAGES", None)
+    env.pop("BUILD_RUNNER_ACCELERATOR_EARLY_CATALOG", None)
     env.update(
-        BUILD_RUNNER_ACCELERATOR_WORKER_AOT="0",
+        BUILD_RUNNER_ACCELERATOR_WORKER_AOT="force",
+        BUILD_RUNNER_ACCELERATOR_FFI_NATIVE=str(native),
+        BUILD_RUNNER_ACCELERATOR_ANALYSIS_PREWARM="0",
         BUILD_RUNNER_ACCELERATOR_BYTE_STORE="0" if args.disable_shared_caches else "1",
         BUILD_RUNNER_ACCELERATOR_DEP_CACHE="0" if args.disable_shared_caches else "1",
         BUILD_RUNNER_ACCELERATOR_CACHE=str(results / "accelerator-cache"),
@@ -378,7 +430,8 @@ def main():
         "shared_analyzer_byte_store": not args.disable_shared_caches,
         "shared_dependency_cache": not args.disable_shared_caches,
         "ffi_reader": args.ffi_reader,
-        "mode": "AOT worker precompiled before measurements",
+        "mode": "Warm AOT, shared user caches and workspace SDK summaries, metrics enabled",
+        "external_digest_packages": args.external_digest_packages,
     }
     (results / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     records = []
@@ -396,10 +449,14 @@ def main():
                 fixture = work / "source"
                 shutil.copytree(generated, fixture)
         stock, pipe, ffi = (work / label for label in ("stock", "pipe", "ffi"))
-        for root in (stock, pipe, ffi):
+        shared = work / "pipe-shared"
+        native_roots = (pipe, ffi, shared) if args.external_digest_packages else (pipe, ffi)
+        for root in (stock, *native_roots):
             prepare(fixture, root)
             run([*dart, "pub", "get", *(["--offline"] if args.offline else [])],
                 root, env, logs / f"{package}-{root.name}-pub")
+            if (root / "pubspec.lock").read_bytes() != (stock / "pubspec.lock").read_bytes():
+                raise SystemExit(f"{package}: {root.name} resolved a different lockfile")
         cli_args = ["build", "--dart", dart_bin, "--jobs", str(args.jobs)]
         stock_build = [*dart, "run", "build_runner", "build", "--force-jit"]
         expected = {}
@@ -417,13 +474,11 @@ def main():
             if expected[case] == expected["clean"]:
                 raise SystemExit(f"{package}: {case} edit did not change outputs")
 
-        worker_paths = {}
-        for root in (pipe, ffi):
+        snapshot = work / "worker.aot"
+        for root in native_roots:
             run([native, *cli_args, "--jobs", "1"], root, env, logs / f"{package}-{root.name}-prepare")
             assert_inventory(inventory(root, package), expected["clean"], f"{package} prepare")
             generated = root / ".dart_tool/build_runner_accelerator/dynamic_worker.dart"
-            source = generated
-            output = sdk_bin / f"{package}-worker" if root == pipe else work / "worker.aot"
             if root == ffi:
                 shim = (SCRIPTS / "ffi_spike/worker.dart").as_uri()
                 worker_import = "package:build_runner_accelerator/src/worker.dart"
@@ -432,27 +487,27 @@ def main():
                     raise SystemExit(f"Unexpected generated worker import: {generated}")
                 source = generated.with_name("ffi_worker.dart")
                 source.write_text(generated_source.replace(worker_import, shim))
-            run(
-                [*dart, "compile", "exe" if root == pipe else "aot-snapshot", source, "-o", output],
-                root, env, logs / f"{package}-{root.name}-compile",
-            )
-            worker_paths[root] = output
+                run([*dart, "compile", "aot-snapshot", source, "-o", snapshot],
+                    root, env, logs / f"{package}-{root.name}-compile")
         commands = {
             pipe: [native, *cli_args],
-            ffi: [host, library, worker_paths[ffi], *cli_args],
+            ffi: [host, library, snapshot, *cli_args],
+            shared: [native, *cli_args],
         }
 
         def mode_env(root):
-            return (
-                dict(env, BUILD_RUNNER_ACCELERATOR_WORKER_AOT_PATH=str(worker_paths[pipe]))
-                if root == pipe else dict(
+            if root == shared:
+                return dict(env, BUILD_RUNNER_ACCELERATOR_EXTERNAL_DIGEST_PACKAGES=args.external_digest_packages)
+            if root == ffi:
+                return dict(
                     env, BUILD_RUNNER_ACCELERATOR_FFI_DIRECT_READ="1" if args.ffi_reader == "direct" else "0",
                 )
-            )
+            return env
 
         for repeat in range(args.repeats):
-            lanes = (pipe, ffi) if repeat % 2 == 0 else (ffi, pipe)
+            lanes = native_roots if repeat % 2 == 0 else native_roots[::-1]
             for case in CASES:
+                case_executors = []
                 for root in lanes:
                     label = f"{package}-{root.name}-{case}-{repeat + 1}"
                     if case == "clean":
@@ -470,17 +525,24 @@ def main():
                             "--metrics", sample, "--stdout", logs / f"{label}.build.stdout",
                             "--stderr", logs / f"{label}.build.stderr", "--", *commands[root],
                         ],
-                        root, mode_env(root), logs / f"{label}-measure",
+                        root, dict(mode_env(root), BUILD_RUNNER_ACCELERATOR_METRICS="1"),
+                        logs / f"{label}-measure",
                     )
                     actual = inventory(root, package)
                     assert_inventory(actual, expected[case], label)
                     record = json.loads(sample.read_text())
-                    record.update(fixture=package, lane=root.name, case=case, outputs=len(actual))
+                    log = logs / f"{label}.build.stderr"
+                    selected = executors(log, clean=case == "clean", no_op=case == "no-op")
+                    case_executors.append(selected)
+                    record.update(fixture=package, lane=root.name, case=case, outputs=len(actual),
+                                  executors=selected, **digest_metrics(log))
                     records.append(record)
                     print(f"{label}: {record['wall_ms']:.1f} ms, {len(actual)} outputs match stock",
                           flush=True)
+                if any(selected != case_executors[0] for selected in case_executors):
+                    raise SystemExit(f"{package} {case}: executor mismatch: {case_executors}")
 
-        (results / "samples.json").write_text(json.dumps(records, indent=2) + "\n")
+                (results / "samples.json").write_text(json.dumps(records, indent=2) + "\n")
         for root in (pipe, ffi):
             for case in ("no-op", "one-file", "broad"):
                 restore(root, fixture)
@@ -508,7 +570,7 @@ def main():
     (results / "samples.json").write_text(json.dumps(records, indent=2) + "\n")
     for package in args.fixtures:
         for case in CASES:
-            for lane in ("pipe", "ffi"):
+            for lane in ("pipe", "ffi", "pipe-shared") if args.external_digest_packages else ("pipe", "ffi"):
                 subset = [
                     s for s in records
                     if s["fixture"] == package and s["case"] == case and s["lane"] == lane

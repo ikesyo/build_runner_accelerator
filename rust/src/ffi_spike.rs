@@ -68,6 +68,10 @@ struct Worker {
 
 static BRIDGE: OnceLock<Bridge> = OnceLock::new();
 
+pub(crate) fn active() -> bool {
+    BRIDGE.get().is_some()
+}
+
 fn worker(id: u64) -> Option<Arc<Worker>> {
     BRIDGE.get()?.workers.lock().unwrap().get(&id).cloned()
 }

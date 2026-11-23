@@ -144,3 +144,14 @@ content feed. Additional workers stop re-paying the removed parts.
 The frontend pays nothing new: the digests are the ones its snapshot
 already computes, and the per-build transport cost is one digest
 delta keyed by interned asset ids.
+
+## Opt-in external digest experiment
+
+On a clean single-package build the spike can stage additional digests for
+explicitly named external packages. It scans discoverable Dart files under
+`lib/`, checks the same source paths used by asset RPC, and excludes declared
+outputs. The graph retains build-start evidence only for dependencies workers
+report. Subsequent builds use the normal tracked-dependency scan, so an edit
+after the scan remains visible to dirty checking. Cache misses still hash the
+worker's actual input bytes before writing a content-keyed entry. See the
+[matched-executor measurements](../../scripts/ffi_spike/README.md#matched-executor-run-on-main-at-add8cd7).

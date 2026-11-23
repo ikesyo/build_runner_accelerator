@@ -1499,6 +1499,14 @@ impl WorkerConnection {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()?;
+        if crate::metrics::runtime_metrics_enabled() {
+            let executor = match worker_artifact {
+                WorkerArtifact::Aot(_) => "worker-aot",
+                WorkerArtifact::Kernel(_) => "kernel",
+                WorkerArtifact::Script => "source",
+            };
+            eprintln!("Rust pipe worker: executor={executor} pid={}", child.id());
+        }
         let input = BufWriter::new(
             child
                 .stdin

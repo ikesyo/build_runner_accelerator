@@ -33,6 +33,9 @@ Future<void> main(List<String> args) async {
         onExit: events.sendPort,
         onError: events.sendPort,
       );
+      if (profiling) {
+        stderr.writeln('Dart FFI worker: executor=worker-aot isolate=$id');
+      }
       await for (final event in events) {
         if (event == null) return failed;
         failed = true;

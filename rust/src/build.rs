@@ -442,6 +442,20 @@ pub(crate) fn run_with_config_session(
         (None, Some(started)) => Some(started),
         (None, None) => None,
     };
+    let mut external_snapshot = if state.config_digest.is_empty() {
+        crate::snapshot::scan_external_digest_sources(
+            &workspace,
+            &current_snapshot,
+            &declared_outputs,
+        )
+    } else {
+        crate::snapshot::Snapshot::new()
+    };
+    let mut asset_digests = crate::snapshot::asset_digests(&current_snapshot, &declared_outputs);
+    asset_digests.extend(crate::snapshot::asset_digests(
+        &external_snapshot,
+        &declared_outputs,
+    ));
     let execution = execution::run(
         execution_pool,
         execution::ExecutionInputs {
@@ -453,7 +467,7 @@ pub(crate) fn run_with_config_session(
             plan: &plan,
             dirty_plan,
             retained_output_guard,
-            asset_digests: crate::snapshot::asset_digests(&current_snapshot, &declared_outputs),
+            asset_digests,
         },
     )?;
     drop(executing);
@@ -463,6 +477,19 @@ pub(crate) fn run_with_config_session(
         pool_metrics,
         part_filtered_actions,
     } = execution;
+    if !external_snapshot.is_empty() {
+        // Keep build-start evidence for observed dependencies so a later
+        // filesystem scan cannot make an in-flight edit look up to date.
+        for asset in transaction.pending_actions.values().flat_map(|action| {
+            std::iter::once(&action.input)
+                .chain(&action.reads)
+                .chain(&action.resolver_reads)
+        }) {
+            if let Some(entry) = external_snapshot.remove(asset) {
+                current_snapshot.insert(asset.clone(), entry);
+            }
+        }
+    }
     if state.was_filtered {
         let _reconcile = crate::wall::Span::new("cache_reconcile");
         for (package, _) in workspace.packages() {

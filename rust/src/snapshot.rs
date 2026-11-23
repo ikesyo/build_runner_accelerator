@@ -42,6 +42,74 @@ pub fn asset_digests(
         .collect()
 }
 
+/// Optional clean-build snapshot of selected external libraries. Workers
+/// use it for cache lookups, and only observed assets enter the graph.
+pub(crate) fn scan_external_digest_sources(
+    workspace: &Workspace,
+    snapshot: &Snapshot,
+    declared_outputs: &BTreeSet<String>,
+) -> Snapshot {
+    let mut external = Snapshot::new();
+    let Ok(packages) = std::env::var("BUILD_RUNNER_ACCELERATOR_EXTERNAL_DIGEST_PACKAGES") else {
+        return external;
+    };
+    let started = std::time::Instant::now();
+    let (mut files, mut bytes) = (0, 0);
+    for package in packages.split(',').map(str::trim).collect::<BTreeSet<_>>() {
+        let Ok(root) = workspace
+            .package_root(package)
+            .and_then(crate::workspace::canonicalize)
+        else {
+            continue;
+        };
+        let pub_root = workspace.pub_resolution_root();
+        if root.starts_with(pub_root) || pub_root.starts_with(&root) {
+            continue;
+        }
+        // Discovery excludes symlinks and honors source restrictions. Resolve
+        // through the same source path used by the worker's asset RPC.
+        let Ok(assets) = workspace.list_package_assets(package) else {
+            continue;
+        };
+        for (asset, discovered_path) in assets {
+            if !asset
+                .split_once('|')
+                .is_some_and(|(_, path)| path.starts_with("lib/") && path.ends_with(".dart"))
+                || snapshot.contains_key(&asset)
+                || declared_outputs.contains(&asset)
+            {
+                continue;
+            }
+            let Ok(path) = workspace.source_path_for_asset(&asset) else {
+                continue;
+            };
+            if path != discovered_path {
+                continue;
+            }
+            let Ok(content) = std::fs::read(path) else {
+                continue;
+            };
+            external.insert(
+                asset,
+                AssetSnapshot {
+                    exists: true,
+                    digest: digest_bytes(&content),
+                    size: content.len() as u64,
+                },
+            );
+            files += 1;
+            bytes += content.len();
+        }
+    }
+    if crate::metrics::runtime_metrics_enabled() {
+        eprintln!(
+            "Rust external asset digests: files={files} bytes={bytes} elapsed_us={}",
+            started.elapsed().as_micros()
+        );
+    }
+    external
+}
+
 /// A stable internal snapshot key for a `findAssets` query.
 ///
 /// This is intentionally not an `AssetId`: build_runner represents globs as
