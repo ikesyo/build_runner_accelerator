@@ -301,6 +301,7 @@ run_core_suite() {
   run_script_probe api-cutoff correctness_api_cutoff.sh 'api-cutoff: PASS'
   run_script_probe api-cutoff-watch correctness_api_cutoff_watch.sh 'api-cutoff-watch: PASS'
   run_script_probe api-cutoff-diff correctness_api_cutoff_diff.sh 'api-cutoff-diff: PASS'
+  run_script_probe api-cutoff-generated-part correctness_api_cutoff_generated_part.sh 'api-cutoff-generated-part: PASS'
   run_script_probe watch watch_smoke.sh 'watch-smoke:'
   run_all_json_cases
   run_built_value_correctness

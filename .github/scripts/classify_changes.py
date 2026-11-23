@@ -65,7 +65,6 @@ NO_CI_SCRIPTS = {
     'correctness_aot_prewarm.sh', 'correctness_arbitrary_dependency_builder.sh',
     'correctness_current_json.sh', 'create_release_manifest.py',
     'diagnose_riverpod_resolver.py', 'evaluate_aot_matrix.sh',
-    'generate_api_cutoff_fanout_fixture.sh',
     'generate_application_fixture.py', 'generate_json_serializable_fixture.sh',
     'measure_process.py', 'prepare_cycle_read_fixture.py',
     'prepare_resolver_digest_fixture.py', 'probe_fvm.py',
