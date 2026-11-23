@@ -77,10 +77,6 @@ pub(super) struct CutoffDiagnostics {
     pub(super) changed_units: usize,
     pub(super) generated_assets: usize,
     pub(super) query_units: usize,
-    /// Candidates dropped because no unit in their changed
-    /// closures could be queried (every one is generated or
-    /// absent from the current snapshot), so no preflight ran.
-    pub(super) skipped_no_query: usize,
 }
 
 #[derive(Debug, Default)]
@@ -92,6 +88,12 @@ pub(super) struct AssessCounts {
     pub(super) no_resolver_observation: usize,
     pub(super) not_reached_by_change: usize,
     pub(super) no_roots: usize,
+    /// Candidates dropped before evaluation because no unit in
+    /// their changed closures could be queried: a generated unit
+    /// changed, or the changed units are absent from the current
+    /// snapshot. Split by which of the two applies.
+    pub(super) no_query_generated_asset: usize,
+    pub(super) no_query_deleted_or_appeared: usize,
 }
 
 #[derive(Debug, Default)]
@@ -107,12 +109,12 @@ pub(super) struct EvaluateCounts {
 impl CutoffDiagnostics {
     pub(super) fn print(&self) {
         eprintln!(
-            "Rust cutoff metrics: changed_units={} generated_assets={} query_units={} skipped_no_query={}",
-            self.changed_units, self.generated_assets, self.query_units, self.skipped_no_query,
+            "Rust cutoff metrics: changed_units={} generated_assets={} query_units={}",
+            self.changed_units, self.generated_assets, self.query_units,
         );
         for (builder, counts) in &self.assess {
             eprintln!(
-                "Rust cutoff metrics: stage=assess builder={builder} candidates={} no_recorded_action={} ast_or_content_read={} own_input_or_direct_read_changed={} no_resolver_observation={} not_reached_by_change={} no_roots={}",
+                "Rust cutoff metrics: stage=assess builder={builder} candidates={} no_recorded_action={} ast_or_content_read={} own_input_or_direct_read_changed={} no_resolver_observation={} not_reached_by_change={} no_roots={} no_query_generated_asset={} no_query_deleted_or_appeared={}",
                 counts.candidates,
                 counts.no_recorded_action,
                 counts.ast_or_content_read,
@@ -120,6 +122,8 @@ impl CutoffDiagnostics {
                 counts.no_resolver_observation,
                 counts.not_reached_by_change,
                 counts.no_roots,
+                counts.no_query_generated_asset,
+                counts.no_query_deleted_or_appeared,
             );
         }
         for (builder, counts) in &self.evaluate {
@@ -163,7 +167,7 @@ pub(super) fn assess(
     let mut candidates = Vec::new();
     // Counts land in this scratch entry when diagnostics are off,
     // so the disabled path pays no builder-id clone or map entry.
-    let mut scratch_counts = AssessCounts::default();
+    let mut scratch_counts: AssessCounts;
     let mut query: BTreeMap<String, String> = BTreeMap::new();
     let mut first_package = None;
     for spec in specs {
@@ -285,7 +289,30 @@ pub(super) fn assess(
         }
     }
     if query.is_empty() {
-        diagnostics.skipped_no_query = candidates.len();
+        if diagnostics.enabled {
+            // No unit in the changed closures can be queried, so
+            // evaluate never runs; attribute each candidate here
+            // instead. Every changed unit in a candidate's recorded
+            // closure is generated or absent from the current
+            // snapshot (anything else would have been queried).
+            // This path is rare and diagnostics-only, so a closure
+            // walk per candidate is acceptable here.
+            for candidate in &candidates {
+                let closure = forward_closure(&recorded, &candidate.roots);
+                let generated_hit = closure
+                    .intersection(&changed_set)
+                    .any(|asset| generated.contains(asset));
+                let counts = diagnostics
+                    .assess
+                    .entry(candidate.builder.clone())
+                    .or_default();
+                if generated_hit {
+                    counts.no_query_generated_asset += 1;
+                } else {
+                    counts.no_query_deleted_or_appeared += 1;
+                }
+            }
+        }
         return None;
     }
     diagnostics.query_units = query.len();
@@ -455,7 +482,7 @@ pub(super) fn evaluate(
         [&generated_targets, &lifecycle_targets, &unanswered_targets],
     );
     let mut clean_actions = BTreeSet::new();
-    let mut scratch_counts = EvaluateCounts::default();
+    let mut scratch_counts: EvaluateCounts;
     for candidate in &assessment.candidates {
         let reaches = |set: &BTreeSet<String>| {
             candidate

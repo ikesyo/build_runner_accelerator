@@ -319,10 +319,11 @@ To see why an opt-in did or did not skip work, run with
 `BUILD_RUNNER_ACCELERATOR_METRICS=1`: each build then prints
 `Rust cutoff metrics` lines with per-builder counts of the
 candidates assess found, the filter reasons for the actions it
-excluded, and how evaluate decided each candidate (waived, or
-the disqualifying rule: generated asset, deleted or appeared
-unit, unanswered unit, missing evidence, or a changed
-signature).
+excluded, and how each candidate was decided (waived, or the
+disqualifying rule: generated asset, deleted or appeared unit,
+unanswered unit, missing evidence, or a changed signature),
+including candidates dropped before evaluation because no
+changed unit in their closure could be queried.
 
 Known limits: filtered builds (`--build-filter`), `--only-check`,
 and workspace builds stay content-keyed even when a builder is
