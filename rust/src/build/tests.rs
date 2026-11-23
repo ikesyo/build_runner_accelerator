@@ -1698,10 +1698,10 @@ fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<(
             diagnostics
                 .evaluate
                 .values()
-                .map(|counts| counts.waived)
+                .map(|counts| counts.signature_unchanged)
                 .sum::<usize>(),
             1,
-            "the waived action must be counted as waived"
+            "the waived action must be counted as signature unchanged"
         );
     }
     {

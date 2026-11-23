@@ -504,6 +504,7 @@ was only visible after ad hoc instrumentation. With
 `BUILD_RUNNER_ACCELERATOR_METRICS=1`, each build now prints
 per-builder cutoff counters: the candidates assess found, the
 filter reasons for excluded actions, and evaluate's outcome per
-candidate (waived, or the disqualifying rule). Supporting
+candidate (signature unchanged, or the disqualifying rule).
+Supporting
 generated assets in the closure remains the open follow-up;
 the counters are what let a user see that it is the blocker.

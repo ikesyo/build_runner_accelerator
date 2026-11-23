@@ -98,7 +98,11 @@ pub(super) struct AssessCounts {
 
 #[derive(Debug, Default)]
 pub(super) struct EvaluateCounts {
-    pub(super) waived: usize,
+    /// The signature proof passed. Dirty planning can still run
+    /// the action for reasons outside the resolver observations
+    /// (a changed glob, a missing output), so this counts proven
+    /// unchanged signatures, not final skips.
+    pub(super) signature_unchanged: usize,
     pub(super) generated_asset: usize,
     pub(super) deleted_or_appeared: usize,
     pub(super) unanswered_unit: usize,
@@ -128,8 +132,8 @@ impl CutoffDiagnostics {
         }
         for (builder, counts) in &self.evaluate {
             eprintln!(
-                "Rust cutoff metrics: stage=evaluate builder={builder} waived={} generated_asset={} deleted_or_appeared={} unanswered_unit={} missing_evidence={} signature_changed={}",
-                counts.waived,
+                "Rust cutoff metrics: stage=evaluate builder={builder} signature_unchanged={} generated_asset={} deleted_or_appeared={} unanswered_unit={} missing_evidence={} signature_changed={}",
+                counts.signature_unchanged,
                 counts.generated_asset,
                 counts.deleted_or_appeared,
                 counts.unanswered_unit,
@@ -294,19 +298,26 @@ pub(super) fn assess(
             // evaluate never runs; attribute each candidate here
             // instead. Every changed unit in a candidate's recorded
             // closure is generated or absent from the current
-            // snapshot (anything else would have been queried).
-            // This path is rare and diagnostics-only, so a closure
-            // walk per candidate is acceptable here.
+            // snapshot (anything else would have been queried), so
+            // one shared reverse walk over the candidates' roots
+            // classifies them all.
+            let changed_generated: BTreeSet<&str> = changed_set
+                .iter()
+                .map(String::as_str)
+                .filter(|asset| generated.contains(*asset))
+                .collect();
+            let [generated_reached] =
+                reverse_reachable_sets(&recorded, &all_roots, [&changed_generated]);
             for candidate in &candidates {
-                let closure = forward_closure(&recorded, &candidate.roots);
-                let generated_hit = closure
-                    .intersection(&changed_set)
-                    .any(|asset| generated.contains(asset));
                 let counts = diagnostics
                     .assess
                     .entry(candidate.builder.clone())
                     .or_default();
-                if generated_hit {
+                if candidate
+                    .roots
+                    .iter()
+                    .any(|root| generated_reached.contains(root))
+                {
                     counts.no_query_generated_asset += 1;
                 } else {
                     counts.no_query_deleted_or_appeared += 1;
@@ -529,7 +540,7 @@ pub(super) fn evaluate(
                 .get(root)
                 .is_some_and(|fold| new_folds.get(root) == Some(fold))
         }) {
-            counts.waived += 1;
+            counts.signature_unchanged += 1;
             clean_actions.insert(candidate.key.clone());
         } else {
             counts.signature_changed += 1;
@@ -1092,7 +1103,7 @@ mod tests {
             &mut diagnostics,
         );
         assert!(evidence.clean_actions.contains("app|target:app:consumer"));
-        assert_eq!(diagnostics.evaluate["app:consumer"].waived, 1);
+        assert_eq!(diagnostics.evaluate["app:consumer"].signature_unchanged, 1);
         // A generated asset in the closure disqualifies the whole
         // action, and the diagnostics attribute it to that rule.
         let mut diagnostics = CutoffDiagnostics {
@@ -1110,7 +1121,7 @@ mod tests {
         );
         assert!(evidence.clean_actions.is_empty());
         assert_eq!(diagnostics.evaluate["app:consumer"].generated_asset, 1);
-        assert_eq!(diagnostics.evaluate["app:consumer"].waived, 0);
+        assert_eq!(diagnostics.evaluate["app:consumer"].signature_unchanged, 0);
     }
 
     #[test]
