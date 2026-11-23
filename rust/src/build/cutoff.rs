@@ -77,6 +77,10 @@ pub(super) struct CutoffDiagnostics {
     pub(super) changed_units: usize,
     pub(super) generated_assets: usize,
     pub(super) query_units: usize,
+    /// Set when assess proved every candidate blocked from the
+    /// recorded graph alone, so `prepare_cutoff` prints the
+    /// evaluate counters even though no preflight ran.
+    pub(super) preflight_skipped: bool,
 }
 
 #[derive(Debug, Default)]
@@ -115,10 +119,22 @@ impl CutoffDiagnostics {
     /// preflight starts, so a failed query still leaves them in
     /// the output; the evaluation counters print after evaluation.
     pub(super) fn print_assess(&self) {
-        eprintln!(
-            "Rust cutoff metrics: changed_units={} generated_assets={} query_units={}",
-            self.changed_units, self.generated_assets, self.query_units,
-        );
+        // The evaluate lines that follow a skipped preflight are
+        // recorded-graph attributions, not evaluation outcomes (a
+        // candidate blocked by a deleted unit on the recorded
+        // graph might have reached a generated unit through a
+        // refreshed edge), so the header marks them as such.
+        if self.preflight_skipped {
+            eprintln!(
+                "Rust cutoff metrics: changed_units={} generated_assets={} query_units={} preflight_skipped=1",
+                self.changed_units, self.generated_assets, self.query_units,
+            );
+        } else {
+            eprintln!(
+                "Rust cutoff metrics: changed_units={} generated_assets={} query_units={}",
+                self.changed_units, self.generated_assets, self.query_units,
+            );
+        }
         for (builder, counts) in &self.assess {
             eprintln!(
                 "Rust cutoff metrics: stage=assess builder={builder} candidates={} no_recorded_action={} ast_or_content_read={} own_input_or_direct_read_changed={} no_resolver_observation={} not_reached_by_change={} no_roots={} no_query_generated_asset={} no_query_deleted_or_appeared={}",
@@ -152,8 +168,10 @@ impl CutoffDiagnostics {
 
 /// Finds the opted-in actions a preflight could waive. Returns `None`
 /// when no changed source reaches any opted-in action's recorded
-/// resolver observations, in which case planning proceeds exactly as
-/// without cutoff and no worker is started for classification.
+/// resolver observations, and when the recorded graph alone proves
+/// every candidate blocked by a generated or deleted/appeared unit;
+/// in both cases planning proceeds exactly as without cutoff and
+/// no worker is started for classification.
 pub(super) fn assess(
     state: &GraphState,
     specs: &[BuildSpec],
@@ -332,8 +350,7 @@ pub(super) fn assess(
         }
         return None;
     }
-    diagnostics.query_units = query.len();
-    let deleted = changed
+    let deleted: BTreeSet<String> = changed
         .iter()
         .filter(|asset| {
             current_snapshot
@@ -342,7 +359,7 @@ pub(super) fn assess(
         })
         .map(|asset| (*asset).to_owned())
         .collect();
-    let appeared = changed
+    let appeared: BTreeSet<String> = changed
         .iter()
         .filter(|asset| {
             current_snapshot
@@ -355,6 +372,74 @@ pub(super) fn assess(
         })
         .map(|asset| (*asset).to_owned())
         .collect();
+    // Preflight skip: when every candidate's recorded closure
+    // already reaches a generated or deleted/appeared unit, the
+    // recorded graph alone proves evaluation would block them
+    // all, so starting a worker pool to learn that is a pure tax
+    // (the production shape behind this is an app whose libraries
+    // all have generated parts, where the tax was about 10% of
+    // wall time). The old-side block is decisive on its own: a
+    // candidate whose new closure no longer reached the
+    // disqualifying unit got there through an edit inside the
+    // closure, which changes its fold, so it could not be waived
+    // either. With diagnostics on, attribute each candidate to
+    // the rule that blocks it, generated first, as evaluate does.
+    let lifecycle: BTreeSet<&str> = deleted
+        .iter()
+        .chain(appeared.iter())
+        .map(String::as_str)
+        .collect();
+    // The forward closure is already computed for the query; when
+    // it holds no disqualifying unit at all, no candidate can be
+    // proven blocked and the reverse walks below would be pure
+    // overhead on the common source-only path.
+    let any_blocker_in_closure = closure
+        .iter()
+        .any(|asset| generated.contains(asset) || lifecycle.contains(asset.as_str()));
+    if any_blocker_in_closure && diagnostics.enabled {
+        let generated_targets: BTreeSet<&str> = generated.iter().map(String::as_str).collect();
+        let [generated_reached, lifecycle_reached] =
+            reverse_reachable_sets(&recorded, &all_roots, [&generated_targets, &lifecycle]);
+        let reaches = |candidate: &Candidate, set: &BTreeSet<String>| {
+            candidate
+                .roots
+                .iter()
+                .any(|root| set.contains(root.as_str()))
+        };
+        if candidates.iter().all(|candidate| {
+            reaches(candidate, &generated_reached) || reaches(candidate, &lifecycle_reached)
+        }) {
+            for candidate in &candidates {
+                let counts = diagnostics
+                    .evaluate
+                    .entry(candidate.builder.clone())
+                    .or_default();
+                if reaches(candidate, &generated_reached) {
+                    counts.generated_asset += 1;
+                } else {
+                    counts.deleted_or_appeared += 1;
+                }
+            }
+            diagnostics.preflight_skipped = true;
+            return None;
+        }
+    } else if any_blocker_in_closure {
+        let blocked_targets: BTreeSet<&str> = generated
+            .iter()
+            .map(String::as_str)
+            .chain(lifecycle.iter().copied())
+            .collect();
+        let [blocked_reached] = reverse_reachable_sets(&recorded, &all_roots, [&blocked_targets]);
+        if candidates.iter().all(|candidate| {
+            candidate
+                .roots
+                .iter()
+                .any(|root| blocked_reached.contains(root.as_str()))
+        }) {
+            return None;
+        }
+    }
+    diagnostics.query_units = query.len();
     Some(Assessment {
         query: query.into_iter().collect(),
         first_package: first_package.expect("a candidate supplied a package"),
