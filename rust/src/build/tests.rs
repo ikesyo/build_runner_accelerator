@@ -1682,14 +1682,7 @@ fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<(
                 deps: Some(Vec::new()),
             },
         )]);
-        let evidence = cutoff::evaluate(
-            &state,
-            &assessment,
-            &results,
-            &generated,
-            "config",
-            &mut diagnostics,
-        );
+        let evidence = cutoff::evaluate(&state, &assessment, &results, "config", &mut diagnostics);
         assert!(
             evidence.clean_actions.contains(&key),
             "matching fingerprints must waive the action despite the direct config read"
@@ -1940,6 +1933,238 @@ fn api_cutoff_assess_skips_preflight_when_every_candidate_is_blocked() -> io::Re
             1,
             "the skip must attribute the candidate to the lifecycle rule"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn api_cutoff_generated_asset_stability_inheritance() -> io::Result<()> {
+    use super::{cutoff, planning};
+    use crate::plan::BuildAction;
+    use crate::protocol::ApiFingerprintRecord;
+    use crate::snapshot::AssetSnapshot;
+    use crate::worker::ApiUnitEvidence;
+    use std::sync::Arc;
+    let (_temporary, workspace, config, base_snapshot) = planning_fixture(1)?;
+    let entry = "app|lib/entry.dart";
+    let gen_unit = "app|lib/gen_unit.dart";
+    let gen2 = "app|lib/gen2_unit.dart";
+    let src = "app|lib/src.dart";
+    let lib2 = "app|lib/lib2.dart";
+    let mut old_snapshot = base_snapshot.clone();
+    for asset in [entry, gen_unit, gen2, src, lib2] {
+        old_snapshot.insert(
+            asset.into(),
+            AssetSnapshot {
+                exists: true,
+                digest: "v1".into(),
+                size: 2,
+            },
+        );
+    }
+    let mut state = GraphState {
+        schema_version: crate::graph::GRAPH_SCHEMA_VERSION,
+        config_digest: "config".into(),
+        assets: old_snapshot.clone(),
+        ..GraphState::default()
+    };
+    state.resolver_dep_graph.insert(
+        entry.into(),
+        vec![gen_unit.into(), gen2.into(), lib2.into()],
+    );
+    state.resolver_dep_graph.insert(src.into(), vec![]);
+    for (asset, fingerprint) in [
+        (entry, "f-entry"),
+        (gen_unit, "f-gen_unit"),
+        (gen2, "f-gen2"),
+        (lib2, "f-lib2"),
+    ] {
+        state.asset_fingerprints.insert(
+            asset.into(),
+            ApiFingerprintRecord {
+                digest: "v1".into(),
+                fingerprint: fingerprint.into(),
+            },
+        );
+    }
+    let cutoff_set: BTreeSet<String> = ["app:factory".to_owned()].into_iter().collect();
+    let plan = planning::create(&workspace, &state, &config, &old_snapshot, &cutoff_set)?;
+    let spec = plan
+        .specs
+        .iter()
+        .find(|spec| spec.instance.api_cutoff)
+        .expect("the factory spec opted in")
+        .clone();
+    state.actions.insert(
+        spec.action_key(),
+        ActionState {
+            builder: spec.instance.builder.id.clone(),
+            input: spec.input.clone(),
+            outputs: spec.outputs.clone(),
+            resolver_entrypoints: vec![entry.into()],
+            status: "success".into(),
+            ..ActionState::default()
+        },
+    );
+    // Two producers: src -> gen_unit, and gen_unit -> gen2 (a generated unit
+    // feeding another producer, for the cascade). Producers are
+    // not themselves opted in: the opted-in builders are the
+    // consumers, as in the production shape.
+    let producer_instance = plan
+        .specs
+        .iter()
+        .find(|other| !other.instance.api_cutoff)
+        .expect("a non-opted-in spec exists")
+        .instance
+        .clone();
+    let producer = Arc::new(BuildAction {
+        instance: producer_instance.clone(),
+        input: src.into(),
+        outputs: vec![gen_unit.into()],
+    });
+    let producer2 = Arc::new(BuildAction {
+        instance: producer_instance,
+        input: gen_unit.into(),
+        outputs: vec![gen2.into()],
+    });
+    for producer_spec in [&producer, &producer2] {
+        state.actions.insert(
+            producer_spec.action_key(),
+            ActionState {
+                builder: producer_spec.instance.builder.id.clone(),
+                input: producer_spec.input.clone(),
+                outputs: producer_spec.outputs.clone(),
+                resolver_entrypoints: vec![producer_spec.input.clone()],
+                status: "success".into(),
+                ..ActionState::default()
+            },
+        );
+    }
+    let mut specs = plan.specs.clone();
+    specs.push(producer);
+    specs.push(producer2);
+    let generated: BTreeSet<String> = [gen_unit.to_owned(), gen2.to_owned()].into_iter().collect();
+    let changed_snapshot = |assets: &[&str]| {
+        let mut snapshot = old_snapshot.clone();
+        for asset in assets {
+            snapshot.get_mut(*asset).expect("unit recorded").digest = "v2".into();
+        }
+        snapshot
+    };
+    let assess = |state: &GraphState, snapshot: &crate::snapshot::Snapshot| {
+        let context = state.dirty_context(snapshot);
+        let mut diagnostics = cutoff::CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
+        let assessment = cutoff::assess(
+            state,
+            &specs,
+            &context,
+            snapshot,
+            &generated,
+            &mut diagnostics,
+        );
+        (assessment, diagnostics)
+    };
+    // Only the handwritten lib2 changed: both producers are idle,
+    // so the generated units fold with their recorded fingerprints
+    // and the candidate is waived when lib2's API is unchanged.
+    {
+        let snapshot = changed_snapshot(&[lib2]);
+        let (assessment, diagnostics) = assess(&state, &snapshot);
+        let assessment = assessment.expect("stable generated assets keep the candidate");
+        assert!(!diagnostics.preflight_skipped);
+        let results = BTreeMap::from([(
+            lib2.to_string(),
+            ApiUnitEvidence {
+                fingerprint: Some("f-lib2".into()),
+                deps: Some(vec![]),
+            },
+        )]);
+        let mut diagnostics = cutoff::CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
+        let evidence = cutoff::evaluate(&state, &assessment, &results, "config", &mut diagnostics);
+        assert!(
+            evidence.clean_actions.contains(&spec.action_key()),
+            "a stable generated part must not block the waiver"
+        );
+        assert_eq!(
+            diagnostics
+                .evaluate
+                .values()
+                .map(|counts| counts.signature_unchanged)
+                .sum::<usize>(),
+            1
+        );
+        assert_eq!(
+            diagnostics
+                .evaluate
+                .values()
+                .map(|counts| counts.generated_asset)
+                .sum::<usize>(),
+            0
+        );
+    }
+    // The first producer's input changed: gen_unit is unstable, gen2
+    // cascades, and the preflight skip proves the block.
+    {
+        let snapshot = changed_snapshot(&[lib2, src]);
+        let (assessment, diagnostics) = assess(&state, &snapshot);
+        assert!(
+            assessment.is_none(),
+            "an unstable producer must block the candidate"
+        );
+        assert!(diagnostics.preflight_skipped);
+        assert_eq!(
+            diagnostics
+                .evaluate
+                .values()
+                .map(|counts| counts.generated_asset)
+                .sum::<usize>(),
+            1
+        );
+    }
+    // No fingerprint record for the generated unit: unstable.
+    {
+        let mut state = state.clone();
+        state.asset_fingerprints.remove(gen_unit);
+        let snapshot = changed_snapshot(&[lib2]);
+        let (assessment, diagnostics) = assess(&state, &snapshot);
+        assert!(
+            assessment.is_none(),
+            "an unrecorded generated unit must block"
+        );
+        assert!(diagnostics.preflight_skipped);
+    }
+    // The producer's resolver closure reaches the changed unit:
+    // unstable even though its content channels are clean.
+    {
+        let mut state = state.clone();
+        state
+            .resolver_dep_graph
+            .insert(src.into(), vec![lib2.into()]);
+        let snapshot = changed_snapshot(&[lib2]);
+        let (assessment, diagnostics) = assess(&state, &snapshot);
+        assert!(
+            assessment.is_none(),
+            "a producer observing the change must block"
+        );
+        assert!(diagnostics.preflight_skipped);
+    }
+    // State left by a filtered build cannot prove stability.
+    {
+        let mut state = state.clone();
+        state.was_filtered = true;
+        let snapshot = changed_snapshot(&[lib2]);
+        let (assessment, diagnostics) = assess(&state, &snapshot);
+        assert!(
+            assessment.is_none(),
+            "filtered state must keep generated assets blocking"
+        );
+        assert!(diagnostics.preflight_skipped);
     }
     Ok(())
 }

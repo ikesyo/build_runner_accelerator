@@ -653,7 +653,6 @@ fn prepare_cutoff(
         state,
         &assessment,
         &results,
-        &generated,
         config_digest,
         &mut diagnostics,
     );

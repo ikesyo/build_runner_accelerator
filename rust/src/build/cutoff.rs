@@ -11,8 +11,9 @@
 //! clean exactly when every root fold matches and none of its
 //! resolver content reads changed. Any missing evidence (no recorded
 //! fingerprint, a recorded fingerprint not bound to the previous
-//! snapshot's bytes, an unavailable unit, a deleted, newly appeared
-//! or generated asset in the closure) leaves the action content-keyed.
+//! snapshot's bytes, an unavailable unit, a deleted or newly appeared
+//! asset in the closure, or a generated asset whose producer cannot
+//! be proven stable) leaves the action content-keyed.
 
 use crate::graph::{DirtyContext, GraphState};
 use crate::plan::BuildSpec;
@@ -50,6 +51,12 @@ pub(super) struct Assessment {
     /// API-changed: the recorded output may have been produced while
     /// it was missing, which fingerprint evidence cannot rule out.
     appeared: BTreeSet<String>,
+    /// Generated assets in the candidates' recorded closures whose
+    /// recorded fingerprint cannot stand in for the bytes the
+    /// resolver will read in this build (see
+    /// [`unstable_generated_assets`]). Stable generated assets fold
+    /// with their recorded fingerprint like source units.
+    unstable_generated: BTreeSet<String>,
 }
 
 struct Candidate {
@@ -372,15 +379,21 @@ pub(super) fn assess(
         })
         .map(|asset| (*asset).to_owned())
         .collect();
+    // Generated assets a candidate can still be waived through:
+    // only the unstable ones (no bound fingerprint record, or a
+    // producer that cannot be proven idle in this build) keep
+    // blocking. The rest fold with their recorded fingerprint.
+    let unstable_generated =
+        unstable_generated_assets(state, specs, &changed_set, generated, &closure, &recorded);
     // Preflight skip: when every candidate's recorded closure
-    // already reaches a generated or deleted/appeared unit, the
-    // recorded graph alone proves evaluation would block them
-    // all, so starting a worker pool to learn that is a pure tax
-    // (the production shape behind this is an app whose libraries
-    // all have generated parts, where the tax was about 10% of
-    // wall time). The old-side block is decisive on its own: a
-    // candidate whose new closure no longer reached the
-    // disqualifying unit got there through an edit inside the
+    // already reaches an unstable generated or deleted/appeared
+    // unit, the recorded graph alone proves evaluation would
+    // block them all, so starting a worker pool to learn that is
+    // a pure tax (the production shape behind this is an app
+    // whose libraries all have generated parts, where the tax
+    // was about 10% of wall time). The old-side block is decisive
+    // on its own: a candidate whose new closure no longer reached
+    // the disqualifying unit got there through an edit inside the
     // closure, which changes its fold, so it could not be waived
     // either. With diagnostics on, attribute each candidate to
     // the rule that blocks it, generated first, as evaluate does.
@@ -395,9 +408,10 @@ pub(super) fn assess(
     // overhead on the common source-only path.
     let any_blocker_in_closure = closure
         .iter()
-        .any(|asset| generated.contains(asset) || lifecycle.contains(asset.as_str()));
+        .any(|asset| unstable_generated.contains(asset) || lifecycle.contains(asset.as_str()));
     if any_blocker_in_closure && diagnostics.enabled {
-        let generated_targets: BTreeSet<&str> = generated.iter().map(String::as_str).collect();
+        let generated_targets: BTreeSet<&str> =
+            unstable_generated.iter().map(String::as_str).collect();
         let [generated_reached, lifecycle_reached] =
             reverse_reachable_sets(&recorded, &all_roots, [&generated_targets, &lifecycle]);
         let reaches = |candidate: &Candidate, set: &BTreeSet<String>| {
@@ -424,7 +438,7 @@ pub(super) fn assess(
             return None;
         }
     } else if any_blocker_in_closure {
-        let blocked_targets: BTreeSet<&str> = generated
+        let blocked_targets: BTreeSet<&str> = unstable_generated
             .iter()
             .map(String::as_str)
             .chain(lifecycle.iter().copied())
@@ -446,6 +460,199 @@ pub(super) fn assess(
         candidates,
         deleted,
         appeared,
+        unstable_generated,
+    })
+}
+
+/// The generated assets in `closure` (the candidates' recorded
+/// closure) whose recorded fingerprint cannot stand in for the
+/// bytes the resolver will read in this build.
+///
+/// A generated asset is stable when all of these hold: the asset
+/// itself did not change; a fingerprint record bound to the
+/// recorded snapshot's bytes exists for it; it has a producer in
+/// the current plan that is not an assembled shared part; and the
+/// producer provably does not run in this build (see
+/// [`GeneratedStability::producer_stable`]). Anything else stays
+/// unstable and keeps blocking candidates exactly as every
+/// generated asset did before producer-stability inheritance.
+fn unstable_generated_assets(
+    state: &GraphState,
+    specs: &[BuildSpec],
+    changed: &BTreeSet<String>,
+    generated: &BTreeSet<String>,
+    closure: &BTreeSet<String>,
+    recorded: &GraphView<'_>,
+) -> BTreeSet<String> {
+    let relevant: Vec<&String> = generated
+        .iter()
+        .filter(|asset| closure.contains(*asset))
+        .collect();
+    if relevant.is_empty() {
+        return BTreeSet::new();
+    }
+    if state.was_filtered {
+        // The first unfiltered build after a filtered one inherits
+        // action records a filtered commit pruned or kept under
+        // different demand, so producer stability cannot be proven
+        // from them. The next build relearns from a full commit.
+        return relevant.iter().map(|asset| (*asset).clone()).collect();
+    }
+    let bound = bound_fingerprints(state);
+    let mut producers: BTreeMap<&str, &BuildSpec> = BTreeMap::new();
+    for spec in specs {
+        for output in &spec.outputs {
+            producers.entry(output.as_str()).or_insert(spec);
+        }
+    }
+    let mut stability = GeneratedStability {
+        state,
+        changed,
+        generated,
+        bound: &bound,
+        producers: &producers,
+        recorded,
+        asset_verdicts: BTreeMap::new(),
+        producer_verdicts: BTreeMap::new(),
+        assets_in_progress: BTreeSet::new(),
+        producers_in_progress: BTreeSet::new(),
+    };
+    relevant
+        .iter()
+        .filter(|asset| !stability.asset_stable(asset))
+        .map(|asset| (*asset).clone())
+        .collect()
+}
+
+/// Recursive producer-stability proof for generated assets.
+/// Verdicts are memoized per asset and per producer action; a
+/// cycle in the producer graph is unstable, since the recursion
+/// itself is the only proof available and it cannot ground out.
+struct GeneratedStability<'a> {
+    state: &'a GraphState,
+    changed: &'a BTreeSet<String>,
+    generated: &'a BTreeSet<String>,
+    bound: &'a BTreeMap<String, String>,
+    producers: &'a BTreeMap<&'a str, &'a BuildSpec>,
+    recorded: &'a GraphView<'a>,
+    asset_verdicts: BTreeMap<String, bool>,
+    producer_verdicts: BTreeMap<String, bool>,
+    assets_in_progress: BTreeSet<String>,
+    producers_in_progress: BTreeSet<String>,
+}
+
+impl GeneratedStability<'_> {
+    fn asset_stable(&mut self, asset: &str) -> bool {
+        if let Some(verdict) = self.asset_verdicts.get(asset) {
+            return *verdict;
+        }
+        if !self.assets_in_progress.insert(asset.to_owned()) {
+            return false;
+        }
+        let producer = self.producers.get(asset).copied();
+        let verdict = !self.changed.contains(asset)
+            && self.bound.contains_key(asset)
+            && producer.is_some_and(|spec| {
+                // Assembled shared parts are assembled per phase
+                // from every contributor of the library, so no
+                // single producer's idleness proves their bytes.
+                !super::shared_parts::owns_part(spec, asset) && self.producer_stable(spec)
+            });
+        self.assets_in_progress.remove(asset);
+        self.asset_verdicts.insert(asset.to_owned(), verdict);
+        verdict
+    }
+
+    fn producer_stable(&mut self, spec: &BuildSpec) -> bool {
+        let key = spec.action_key();
+        if let Some(verdict) = self.producer_verdicts.get(&key) {
+            return *verdict;
+        }
+        if !self.producers_in_progress.insert(key.clone()) {
+            return false;
+        }
+        let verdict = self.producer_stable_inner(spec);
+        self.producers_in_progress.remove(&key);
+        self.producer_verdicts.insert(key, verdict);
+        verdict
+    }
+
+    fn producer_stable_inner(&mut self, spec: &BuildSpec) -> bool {
+        let Some(action) = self.state.actions.get(&spec.action_key()) else {
+            return false;
+        };
+        // Content channel: the recorded input, direct reads and
+        // outputs are what dirty analysis keys on; a change among
+        // them can rerun the producer.
+        if self.changed.contains(action.input.as_str())
+            || action
+                .reads
+                .iter()
+                .any(|asset| self.changed.contains(asset.as_str()))
+            || action
+                .outputs
+                .iter()
+                .any(|asset| self.changed.contains(asset.as_str()))
+        {
+            return false;
+        }
+        // Glob reads observe a set, not recorded members: a changed
+        // asset the pattern matches can rerun the producer, and a
+        // generated member's bytes are only as stable as its own
+        // producer.
+        for glob in &action.glob_reads {
+            let changed_matches = self.changed.iter().any(|asset| glob_matches(glob, asset));
+            if changed_matches {
+                return false;
+            }
+            let generated_members: Vec<String> = self
+                .generated
+                .iter()
+                .filter(|asset| glob_matches(glob, asset))
+                .cloned()
+                .collect();
+            if !generated_members
+                .iter()
+                .all(|asset| self.asset_stable(asset))
+            {
+                return false;
+            }
+        }
+        // Resolver channel: the producer reruns if anything its
+        // resolver observations reach has changed.
+        let roots: Vec<String> = action
+            .resolver_entrypoints
+            .iter()
+            .cloned()
+            .chain(action.resolver_reads.iter().cloned())
+            .collect();
+        let closure = forward_closure(self.recorded, &roots);
+        if closure
+            .iter()
+            .any(|asset| self.changed.contains(asset.as_str()))
+        {
+            return false;
+        }
+        // Cascade: a generated unit the producer consumes (as its
+        // input, a direct read, or through the resolver) is
+        // regenerated before the producer whenever its own
+        // producer runs, and a rerun upstream producer reruns
+        // this one.
+        let consumed: Vec<String> = action
+            .reads
+            .iter()
+            .chain(std::iter::once(&action.input))
+            .chain(closure.iter())
+            .filter(|asset| self.generated.contains(asset.as_str()))
+            .cloned()
+            .collect();
+        consumed.iter().all(|asset| self.asset_stable(asset))
+    }
+}
+
+fn glob_matches(glob: &crate::protocol::GlobRead, asset: &str) -> bool {
+    asset.split_once('|').is_some_and(|(package, path)| {
+        package == glob.package && crate::workspace::matches_glob(&glob.pattern, path)
     })
 }
 
@@ -471,13 +678,12 @@ fn bound_fingerprints(state: &GraphState) -> BTreeMap<String, String> {
 /// Compares effective signatures for every assessed candidate using
 /// the preflight answers in `results`. Units the worker did not
 /// answer for, answered without a fingerprint or deps, deleted units,
-/// and generated assets in a closure all leave the action
-/// content-keyed.
+/// and generated assets whose producer cannot be proven stable all
+/// leave the action content-keyed.
 pub(super) fn evaluate(
     state: &GraphState,
     assessment: &Assessment,
     results: &BTreeMap<String, ApiUnitEvidence>,
-    generated: &BTreeSet<String>,
     seed: &str,
     diagnostics: &mut CutoffDiagnostics,
 ) -> CutoffEvidence {
@@ -559,7 +765,11 @@ pub(super) fn evaluate(
     // fold would silently reuse stale evidence). Compute the roots
     // each set taints once per view by walking the reverse graph,
     // instead of walking every candidate's closure.
-    let generated_targets: BTreeSet<&str> = generated.iter().map(String::as_str).collect();
+    let generated_targets: BTreeSet<&str> = assessment
+        .unstable_generated
+        .iter()
+        .map(String::as_str)
+        .collect();
     let lifecycle_targets: BTreeSet<&str> = assessment
         .deleted
         .iter()
@@ -1120,6 +1330,7 @@ mod tests {
             }],
             deleted: BTreeSet::new(),
             appeared: BTreeSet::new(),
+            unstable_generated: BTreeSet::new(),
         };
         let unchanged = BTreeMap::from([(
             "app|lib/dep.dart".to_string(),
@@ -1132,7 +1343,6 @@ mod tests {
             &state,
             &assessment,
             &unchanged,
-            &BTreeSet::new(),
             "seed",
             &mut CutoffDiagnostics::default(),
         );
@@ -1155,7 +1365,6 @@ mod tests {
             &state,
             &assessment,
             &changed,
-            &BTreeSet::new(),
             "seed",
             &mut CutoffDiagnostics::default(),
         );
@@ -1165,7 +1374,6 @@ mod tests {
             &state,
             &assessment,
             &BTreeMap::new(),
-            &BTreeSet::new(),
             "seed",
             &mut CutoffDiagnostics::default(),
         );
@@ -1183,12 +1391,12 @@ mod tests {
             }],
             deleted: BTreeSet::new(),
             appeared: BTreeSet::from(["app|lib/dep.dart".to_string()]),
+            unstable_generated: BTreeSet::new(),
         };
         let evidence = evaluate(
             &state,
             &appeared_assessment,
             &unchanged,
-            &BTreeSet::new(),
             "seed",
             &mut CutoffDiagnostics::default(),
         );
@@ -1209,7 +1417,6 @@ mod tests {
             &state,
             &assessment,
             &with_volunteered,
-            &BTreeSet::new(),
             "seed",
             &mut CutoffDiagnostics::default(),
         );
@@ -1242,6 +1449,7 @@ mod tests {
             }],
             deleted: BTreeSet::new(),
             appeared: BTreeSet::new(),
+            unstable_generated: BTreeSet::new(),
         };
         let unchanged = BTreeMap::from([(
             "app|lib/dep.dart".to_string(),
@@ -1254,28 +1462,32 @@ mod tests {
             enabled: true,
             ..Default::default()
         };
-        let evidence = evaluate(
-            &state,
-            &assessment,
-            &unchanged,
-            &BTreeSet::new(),
-            "seed",
-            &mut diagnostics,
-        );
+        let evidence = evaluate(&state, &assessment, &unchanged, "seed", &mut diagnostics);
         assert!(evidence.clean_actions.contains("app|target:app:consumer"));
         assert_eq!(diagnostics.evaluate["app:consumer"].signature_unchanged, 1);
-        // A generated asset in the closure disqualifies the whole
-        // action, and the diagnostics attribute it to that rule.
+        // An unstable generated asset in the closure disqualifies
+        // the whole action, and the diagnostics attribute it to
+        // that rule.
         let mut diagnostics = CutoffDiagnostics {
             enabled: true,
             ..Default::default()
         };
-        let generated = BTreeSet::from(["app|lib/dep.dart".to_string()]);
+        let blocked_assessment = Assessment {
+            query: assessment.query.clone(),
+            first_package: assessment.first_package.clone(),
+            candidates: vec![Candidate {
+                key: "app|target:app:consumer".into(),
+                builder: "app:consumer".into(),
+                roots: vec!["app|lib/main.dart".into()],
+            }],
+            deleted: BTreeSet::new(),
+            appeared: BTreeSet::new(),
+            unstable_generated: BTreeSet::from(["app|lib/dep.dart".to_string()]),
+        };
         let evidence = evaluate(
             &state,
-            &assessment,
+            &blocked_assessment,
             &unchanged,
-            &generated,
             "seed",
             &mut diagnostics,
         );
@@ -1320,6 +1532,7 @@ mod tests {
             }],
             deleted: BTreeSet::new(),
             appeared: BTreeSet::new(),
+            unstable_generated: BTreeSet::new(),
         };
         let answers = BTreeMap::from([(
             "app|lib/dep.dart".to_string(),
@@ -1332,7 +1545,6 @@ mod tests {
             &state,
             &assessment,
             &answers,
-            &BTreeSet::new(),
             "seed",
             &mut CutoffDiagnostics::default(),
         );
