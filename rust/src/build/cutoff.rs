@@ -479,19 +479,63 @@ pub(super) fn evaluate(
                 .is_none_or(|evidence| evidence.fingerprint.is_none() || evidence.deps.is_none())
         })
         .collect();
-    // The generated and lifecycle splits stay separate so the
-    // diagnostics can attribute a disqualification to the rule that
-    // caused it; their union is the blocked set the decision uses.
-    let [generated_old, lifecycle_old, unanswered_old] = reverse_reachable_sets(
-        &old_graph,
-        &all_roots,
-        [&generated_targets, &lifecycle_targets, &unanswered_targets],
-    );
-    let [generated_new, lifecycle_new, unanswered_new] = reverse_reachable_sets(
-        &new_graph,
-        &all_roots,
-        [&generated_targets, &lifecycle_targets, &unanswered_targets],
-    );
+    // With diagnostics on, the generated and lifecycle splits stay
+    // separate so a disqualification can be attributed to the rule
+    // that caused it. With diagnostics off, only their union (the
+    // blocked set the decision uses) is walked, as before, and it
+    // is reported through the generated slots with the lifecycle
+    // slots empty; the counts land in scratch and are discarded.
+    let (
+        generated_old,
+        lifecycle_old,
+        unanswered_old,
+        generated_new,
+        lifecycle_new,
+        unanswered_new,
+    ) = if diagnostics.enabled {
+        let [generated_old, lifecycle_old, unanswered_old] = reverse_reachable_sets(
+            &old_graph,
+            &all_roots,
+            [&generated_targets, &lifecycle_targets, &unanswered_targets],
+        );
+        let [generated_new, lifecycle_new, unanswered_new] = reverse_reachable_sets(
+            &new_graph,
+            &all_roots,
+            [&generated_targets, &lifecycle_targets, &unanswered_targets],
+        );
+        (
+            generated_old,
+            lifecycle_old,
+            unanswered_old,
+            generated_new,
+            lifecycle_new,
+            unanswered_new,
+        )
+    } else {
+        let blocked_targets: BTreeSet<&str> = generated_targets
+            .iter()
+            .chain(lifecycle_targets.iter())
+            .copied()
+            .collect();
+        let [blocked_old, unanswered_old] = reverse_reachable_sets(
+            &old_graph,
+            &all_roots,
+            [&blocked_targets, &unanswered_targets],
+        );
+        let [blocked_new, unanswered_new] = reverse_reachable_sets(
+            &new_graph,
+            &all_roots,
+            [&blocked_targets, &unanswered_targets],
+        );
+        (
+            blocked_old,
+            BTreeSet::new(),
+            unanswered_old,
+            blocked_new,
+            BTreeSet::new(),
+            unanswered_new,
+        )
+    };
     let mut clean_actions = BTreeSet::new();
     let mut scratch_counts: EvaluateCounts;
     for candidate in &assessment.candidates {
@@ -526,8 +570,20 @@ pub(super) fn evaluate(
         // that view (missing fingerprint evidence at or below it),
         // which leaves the action content-keyed exactly as a failed
         // fold did; a present root fold also implies the root's
-        // whole closure is folded in that view. One pass over the
-        // roots classifies presence and equality together.
+        // whole closure is folded in that view. With diagnostics
+        // off, the single short-circuiting comparison decides; with
+        // diagnostics on, one pass over the roots classifies
+        // presence and equality together for the counters.
+        if !diagnostics.enabled {
+            if candidate.roots.iter().all(|root| {
+                old_folds
+                    .get(root)
+                    .is_some_and(|fold| new_folds.get(root) == Some(fold))
+            }) {
+                clean_actions.insert(candidate.key.clone());
+            }
+            continue;
+        }
         let mut all_present = true;
         let mut all_equal = true;
         for root in &candidate.roots {
