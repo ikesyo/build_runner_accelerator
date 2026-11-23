@@ -5,17 +5,24 @@ set -euo pipefail
 # library has a generated part: the fan-out fixture generated with
 # GENERATED_PART=1, where a partgen builder emits lib/shared.g.dart
 # and every consumer's summary action observes the shared library
-# through the resolver. The generated part sits in every candidate's
-# observed closure, and generated assets carry no fingerprints, so
-# every candidate is disqualified by the generated-asset rule: a
-# body-only edit to the shared library reruns every action, exactly
-# as with the cutoff off, and the outputs stay byte-identical. The
-# cutoff metrics lines (BUILD_RUNNER_ACCELERATOR_METRICS=1) must
-# attribute the outcome: candidates=3 at assess and
-# generated_asset=3 at evaluate. This is the production shape from
-# the stage 6 field report (generated parts in nearly every
-# library), kept as a regression harness for follow-up work on
-# generated assets.
+# through the resolver. Two lanes run on this shape:
+#
+# - A body-only edit to the shared library itself reruns the
+#   producer, so the part is unstable and every candidate is
+#   disqualified by the generated-asset rule: all four actions
+#   rerun, exactly as with the cutoff off, the outputs stay
+#   byte-identical, and the cutoff metrics lines
+#   (BUILD_RUNNER_ACCELERATOR_METRICS=1) attribute the outcome:
+#   candidates=3 at assess and generated_asset=3 at evaluate.
+# - An edit the producer cannot observe (a body-only edit to
+#   lib/util.dart, which only the consumers import) leaves the
+#   producer idle, so once a build has primed the part's
+#   fingerprint record the summaries are waived through the part:
+#   candidates=3, signature_unchanged=3, generated_asset=0, no
+#   action reruns, and the outputs stay byte-identical with stock.
+#
+# This is the production shape from the stage 6 field report
+# (generated parts in nearly every library).
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
@@ -195,6 +202,47 @@ assert_metrics_line "$temporary_dir/body.on.log" assess 'candidates=3'
 assert_metrics_line "$temporary_dir/body.on.log" evaluate 'generated_asset=3'
 assert_metrics_line "$temporary_dir/body.on.log" evaluate 'signature_unchanged=0'
 compare_outputs "$on_dir" "$off_dir"
+compare_outputs "$stock_dir" "$on_dir"
+
+# Producer-stability inheritance: prime the part's fingerprint
+# record with a build the producer sits out (a comment-only edit
+# to one consumer reruns just its summary, whose dep walk learns
+# the part's fingerprint while the producer does not rewrite it),
+# then edit a library only the consumers observe.
+python3 - "$on_dir/lib/consumer_002.dart" <<'PYEOF' || fail 'priming edit failed'
+import sys
+
+path = sys.argv[1]
+source = open(path).read()
+anchor = "class Consumer002 {"
+if source.count(anchor) != 1:
+    raise SystemExit("priming anchor not found")
+open(path, "w").write(source.replace(anchor, anchor + "\n  // Priming revision."))
+PYEOF
+run_on "$temporary_dir/prime.on.log" || fail 'cutoff-on priming build failed'
+assert_contains "$temporary_dir/prime.on.log" 'Rust frontend: 1 build action(s)'
+
+edit_util() {
+  local directory=$1
+  python3 - "$directory/lib/util.dart" <<'PYEOF' || fail "util edit failed for $directory"
+import sys
+
+path = sys.argv[1]
+source = open(path).read()
+if source.count("'util-v1'") != 1:
+    raise SystemExit("util edit anchor not found")
+open(path, "w").write(source.replace("'util-v1'", "'util-v2'"))
+PYEOF
+}
+edit_util "$stock_dir"
+edit_util "$on_dir"
+run_stock "$stock_dir" "$temporary_dir/util.stock.log" || fail 'stock util build failed'
+BUILD_RUNNER_ACCELERATOR_METRICS=1 run_on "$temporary_dir/util.on.log" \
+  || fail 'cutoff-on util build failed'
+assert_contains "$temporary_dir/util.on.log" 'No work to do (Rust frontend)'
+assert_metrics_line "$temporary_dir/util.on.log" assess 'candidates=3'
+assert_metrics_line "$temporary_dir/util.on.log" evaluate 'signature_unchanged=3'
+assert_metrics_line "$temporary_dir/util.on.log" evaluate 'generated_asset=0'
 compare_outputs "$stock_dir" "$on_dir"
 
 printf 'api-cutoff-generated-part: PASS\n'
