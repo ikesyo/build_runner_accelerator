@@ -449,6 +449,25 @@ pub(super) fn assess(
     })
 }
 
+/// The recorded fingerprints that are baseline evidence for this
+/// build: a record counts only when it is bound to the previous
+/// snapshot's bytes for that unit. A worker can learn a fingerprint
+/// from content newer than the snapshot a watch build commits (an
+/// edit that arrives mid-build), and such a record must never stand
+/// in for the earlier content.
+fn bound_fingerprints(state: &GraphState) -> BTreeMap<String, String> {
+    state
+        .asset_fingerprints
+        .iter()
+        .filter(|(asset, record)| {
+            state.assets.get(*asset).is_some_and(|previous| {
+                previous.exists && bare_digest(&previous.digest) == record.digest
+            })
+        })
+        .map(|(asset, record)| (asset.clone(), record.fingerprint.clone()))
+        .collect()
+}
+
 /// Compares effective signatures for every assessed candidate using
 /// the preflight answers in `results`. Units the worker did not
 /// answer for, answered without a fingerprint or deps, deleted units,
@@ -509,21 +528,7 @@ pub(super) fn evaluate(
         base: &state.resolver_dep_graph,
         overrides: Some(&edge_overrides),
     };
-    // A recorded fingerprint is baseline evidence only when it is
-    // bound to the previous snapshot's bytes for that unit. A worker
-    // can learn a fingerprint from content newer than the snapshot a
-    // watch build commits (an edit that arrives mid-build), and such
-    // a record must never stand in for the earlier content.
-    let bound_fingerprints: BTreeMap<String, String> = state
-        .asset_fingerprints
-        .iter()
-        .filter(|(asset, record)| {
-            state.assets.get(*asset).is_some_and(|previous| {
-                previous.exists && bare_digest(&previous.digest) == record.digest
-            })
-        })
-        .map(|(asset, record)| (asset.clone(), record.fingerprint.clone()))
-        .collect();
+    let bound_fingerprints = bound_fingerprints(state);
     let old_fingerprints = FingerprintView {
         base: &bound_fingerprints,
         overrides: None,
