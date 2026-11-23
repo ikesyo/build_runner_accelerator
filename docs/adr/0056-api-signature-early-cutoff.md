@@ -529,13 +529,26 @@ a candidate whose new closure no longer reached the
 disqualifying unit got there through an edit inside the
 closure, which changes its fold, so it could not be waived
 either. The cutoff metrics still attribute the skipped
-candidates to the blocking rule. On a generated-part fixture
+candidates to the blocking rule, with the header marked
+`preflight_skipped=1`: the attribution comes from the
+recorded graph, so it names the recorded-graph reason, which
+can differ from the rule a full evaluation would have
+reported for a candidate whose refreshed edges reach a
+different disqualifying unit. On a generated-part fixture
 (100 consumers whose shared library has a generated part,
 body-only edit, this VM), the build took 6.6 to 7.9 s with
 the skip against 6.8 to 8.9 s without, interleaved; the
 removed cost is the pool start and query, which grows with
 the app's analysis context (the field report measured about
-10% of wall time on a production app). The generated-part
-correctness harness added alongside the fixture work keeps
-passing unchanged, since the skip preserves the metrics
-attribution it asserts.
+10% of wall time on a production app). The check itself is
+gated on a disqualifying unit appearing in the candidates'
+forward closure, and the paths that still run the preflight
+showed no measurable cost from it at this size: a mixed
+fixture (50 consumers blocked through the generated part,
+50 waived through a handwritten library) took 3.8 s with
+the check against 4.2 s without, and a source-only fan-out
+whose body edit is fully waived took 0.43 s against 0.44 s,
+outputs byte-identical in both comparisons. The
+generated-part correctness harness added alongside the
+fixture work keeps passing unchanged, since the skip
+preserves the metrics attribution it asserts.

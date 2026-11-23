@@ -119,10 +119,22 @@ impl CutoffDiagnostics {
     /// preflight starts, so a failed query still leaves them in
     /// the output; the evaluation counters print after evaluation.
     pub(super) fn print_assess(&self) {
-        eprintln!(
-            "Rust cutoff metrics: changed_units={} generated_assets={} query_units={}",
-            self.changed_units, self.generated_assets, self.query_units,
-        );
+        // The evaluate lines that follow a skipped preflight are
+        // recorded-graph attributions, not evaluation outcomes (a
+        // candidate blocked by a deleted unit on the recorded
+        // graph might have reached a generated unit through a
+        // refreshed edge), so the header marks them as such.
+        if self.preflight_skipped {
+            eprintln!(
+                "Rust cutoff metrics: changed_units={} generated_assets={} query_units={} preflight_skipped=1",
+                self.changed_units, self.generated_assets, self.query_units,
+            );
+        } else {
+            eprintln!(
+                "Rust cutoff metrics: changed_units={} generated_assets={} query_units={}",
+                self.changed_units, self.generated_assets, self.query_units,
+            );
+        }
         for (builder, counts) in &self.assess {
             eprintln!(
                 "Rust cutoff metrics: stage=assess builder={builder} candidates={} no_recorded_action={} ast_or_content_read={} own_input_or_direct_read_changed={} no_resolver_observation={} not_reached_by_change={} no_roots={} no_query_generated_asset={} no_query_deleted_or_appeared={}",
