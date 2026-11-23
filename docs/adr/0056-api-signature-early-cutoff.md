@@ -495,3 +495,15 @@ Readings:
   critical path worth moving to commit time.
 - No builder is opted in by default; that remains a separate
   decision.
+
+Diagnostics follow-up (2026-11-23): a field report from a
+production Flutter app showed the cutoff waiving nothing there,
+because every candidate's observed closure reaches a generated
+asset (generated `part` files in nearly every library), which
+was only visible after ad hoc instrumentation. With
+`BUILD_RUNNER_ACCELERATOR_METRICS=1`, each build now prints
+per-builder cutoff counters: the candidates assess found, the
+filter reasons for excluded actions, and evaluate's outcome per
+candidate (waived, or the disqualifying rule). Supporting
+generated assets in the closure remains the open follow-up;
+the counters are what let a user see that it is the blocker.
