@@ -1614,9 +1614,25 @@ fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<(
     // it a preflight candidate.
     {
         let context = state.dirty_context(&current_snapshot);
-        let assessment =
-            cutoff::assess(&state, &plan.specs, &context, &current_snapshot, &generated);
+        let mut diagnostics = cutoff::CutoffDiagnostics::default();
+        let assessment = cutoff::assess(
+            &state,
+            &plan.specs,
+            &context,
+            &current_snapshot,
+            &generated,
+            &mut diagnostics,
+        );
         assert!(assessment.is_some(), "control action must be a candidate");
+        assert_eq!(
+            diagnostics
+                .assess
+                .values()
+                .map(|counts| counts.candidates)
+                .sum::<usize>(),
+            1,
+            "the control action must be counted as a candidate"
+        );
     }
     // A direct read of a non-Dart file rides along in the recorded
     // resolver_reads union, but it is not a signature root: it has
@@ -1643,9 +1659,16 @@ fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<(
     );
     {
         let context = state.dirty_context(&current_snapshot);
-        let assessment =
-            cutoff::assess(&state, &plan.specs, &context, &current_snapshot, &generated)
-                .expect("a direct non-Dart read must not block candidacy");
+        let mut diagnostics = cutoff::CutoffDiagnostics::default();
+        let assessment = cutoff::assess(
+            &state,
+            &plan.specs,
+            &context,
+            &current_snapshot,
+            &generated,
+            &mut diagnostics,
+        )
+        .expect("a direct non-Dart read must not block candidacy");
         let results = BTreeMap::from([(
             dep.to_string(),
             crate::worker::ApiUnitEvidence {
@@ -1653,10 +1676,26 @@ fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<(
                 deps: Some(Vec::new()),
             },
         )]);
-        let evidence = cutoff::evaluate(&state, &assessment, &results, &generated, "config");
+        let evidence = cutoff::evaluate(
+            &state,
+            &assessment,
+            &results,
+            &generated,
+            "config",
+            &mut diagnostics,
+        );
         assert!(
             evidence.clean_actions.contains(&key),
             "matching fingerprints must waive the action despite the direct config read"
+        );
+        assert_eq!(
+            diagnostics
+                .evaluate
+                .values()
+                .map(|counts| counts.waived)
+                .sum::<usize>(),
+            1,
+            "the waived action must be counted as waived"
         );
     }
     {
@@ -1671,11 +1710,27 @@ fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<(
     state.actions.get_mut(&key).expect("action recorded").reads = vec![dep.into()];
     {
         let context = state.dirty_context(&current_snapshot);
-        let assessment =
-            cutoff::assess(&state, &plan.specs, &context, &current_snapshot, &generated);
+        let mut diagnostics = cutoff::CutoffDiagnostics::default();
+        let assessment = cutoff::assess(
+            &state,
+            &plan.specs,
+            &context,
+            &current_snapshot,
+            &generated,
+            &mut diagnostics,
+        );
         assert!(
             assessment.is_none(),
             "an action with a changed direct read must not be a candidate"
+        );
+        assert_eq!(
+            diagnostics
+                .assess
+                .values()
+                .map(|counts| counts.own_input_or_direct_read_changed)
+                .sum::<usize>(),
+            1,
+            "the exclusion must be counted with its reason"
         );
     }
     state.actions.get_mut(&key).expect("action recorded").reads = Vec::new();
@@ -1687,10 +1742,27 @@ fn api_cutoff_assess_excludes_actions_with_recorded_ast_access() -> io::Result<(
         .expect("action recorded")
         .resolver_content_reads = vec![dep.into()];
     let context = state.dirty_context(&current_snapshot);
-    let assessment = cutoff::assess(&state, &plan.specs, &context, &current_snapshot, &generated);
+    let mut diagnostics = cutoff::CutoffDiagnostics::default();
+    let assessment = cutoff::assess(
+        &state,
+        &plan.specs,
+        &context,
+        &current_snapshot,
+        &generated,
+        &mut diagnostics,
+    );
     assert!(
         assessment.is_none(),
         "an action with recorded AST access must not be a candidate"
+    );
+    assert_eq!(
+        diagnostics
+            .assess
+            .values()
+            .map(|counts| counts.ast_or_content_read)
+            .sum::<usize>(),
+        1,
+        "the downgrade must be counted with its reason"
     );
     Ok(())
 }
