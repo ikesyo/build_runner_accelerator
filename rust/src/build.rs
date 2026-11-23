@@ -593,10 +593,13 @@ fn prepare_cutoff(
     );
     let Some(assessment) = assessment else {
         if diagnostics.enabled {
-            diagnostics.print();
+            diagnostics.print_assess();
         }
         return Ok((None, None));
     };
+    if diagnostics.enabled {
+        diagnostics.print_assess();
+    }
     let mut owned_pool: Option<WorkerPool> = None;
     let active_pool = match pool {
         Some(existing) => existing,
@@ -652,7 +655,7 @@ fn prepare_cutoff(
         &mut diagnostics,
     );
     if diagnostics.enabled {
-        diagnostics.print();
+        diagnostics.print_evaluate();
     }
     Ok((Some(evidence), owned_pool))
 }

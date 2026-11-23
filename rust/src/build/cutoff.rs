@@ -111,7 +111,10 @@ pub(super) struct EvaluateCounts {
 }
 
 impl CutoffDiagnostics {
-    pub(super) fn print(&self) {
+    /// The assessment counters print before the fallible worker
+    /// preflight starts, so a failed query still leaves them in
+    /// the output; the evaluation counters print after evaluation.
+    pub(super) fn print_assess(&self) {
         eprintln!(
             "Rust cutoff metrics: changed_units={} generated_assets={} query_units={}",
             self.changed_units, self.generated_assets, self.query_units,
@@ -130,6 +133,9 @@ impl CutoffDiagnostics {
                 counts.no_query_deleted_or_appeared,
             );
         }
+    }
+
+    pub(super) fn print_evaluate(&self) {
         for (builder, counts) in &self.evaluate {
             eprintln!(
                 "Rust cutoff metrics: stage=evaluate builder={builder} signature_unchanged={} generated_asset={} deleted_or_appeared={} unanswered_unit={} missing_evidence={} signature_changed={}",
