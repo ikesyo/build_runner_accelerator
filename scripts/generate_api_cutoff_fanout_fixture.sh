@@ -163,21 +163,6 @@ List<String> describeClass(ClassElement cls, String prefix) {
   return lines;
 }
 
-/// Lines describing one mixin for the summary output, in the
-/// same shape as [describeClass]: the header and one line per
-/// method with its documentation comment. A mixin declared in a
-/// generated part shows up here, which proves the resolver loaded
-/// the part when it visited the library.
-List<String> describeMixin(MixinElement mixin, String prefix) {
-  final methods = mixin.methods.map((method) => method.name).join(',');
-  final lines = <String>['$prefix${mixin.name} [$methods]'];
-  for (final method in mixin.methods) {
-    final doc = method.documentationComment?.replaceAll('\n', ' ') ?? '-';
-    lines.add('$prefix${mixin.name}.${method.name} doc=$doc');
-  }
-  return lines;
-}
-
 Builder summaryBuilder(BuilderOptions options) => _SummaryBuilder();
 
 /// A resolver-only whole-graph builder: it observes the input
@@ -200,9 +185,7 @@ class _SummaryBuilder implements Builder {
       for (final cls in lib.classes) {
         lines.addAll(describeClass(cls, '${lib.uri}: '));
       }
-      for (final mixin in lib.mixins) {
-        lines.addAll(describeMixin(mixin, '${lib.uri}: '));
-      }
+      // MIXIN_VISIT
       for (final imported in lib.firstFragment.importedLibraries) {
         visit(imported);
       }
@@ -220,6 +203,21 @@ DART
 
 if [[ "$generated_part" == 1 ]]; then
   cat >>"$destination/lib/builder.dart" <<'DART'
+
+/// Lines describing one mixin for the summary output, in the
+/// same shape as [describeClass]: the header and one line per
+/// method with its documentation comment. A mixin declared in a
+/// generated part shows up here, which proves the resolver loaded
+/// the part when it visited the library.
+List<String> describeMixin(MixinElement mixin, String prefix) {
+  final methods = mixin.methods.map((method) => method.name).join(',');
+  final lines = <String>['$prefix${mixin.name} [$methods]'];
+  for (final method in mixin.methods) {
+    final doc = method.documentationComment?.replaceAll('\n', ' ') ?? '-';
+    lines.add('$prefix${mixin.name}.${method.name} doc=$doc');
+  }
+  return lines;
+}
 
 Builder partgenBuilder(BuilderOptions options) => _PartgenBuilder();
 
@@ -251,6 +249,22 @@ class _PartgenBuilder implements Builder {
 }
 DART
 fi
+
+python3 - "$destination/lib/builder.dart" "$generated_part" <<'PYEOF'
+import sys
+
+path, variant = sys.argv[1], sys.argv[2]
+source = open(path).read()
+loop = ""
+if variant == "1":
+    loop = """      for (final mixin in lib.mixins) {
+        lines.addAll(describeMixin(mixin, '${lib.uri}: '));
+      }
+"""
+if source.count("      // MIXIN_VISIT\n") != 1:
+    raise SystemExit("MIXIN_VISIT placeholder not found exactly once")
+open(path, "w").write(source.replace("      // MIXIN_VISIT\n", loop))
+PYEOF
 
 if [[ "$generated_part" == 1 ]]; then
   cat >"$destination/lib/shared.dart" <<'DART'
