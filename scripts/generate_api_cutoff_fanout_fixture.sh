@@ -163,6 +163,21 @@ List<String> describeClass(ClassElement cls, String prefix) {
   return lines;
 }
 
+/// Lines describing one mixin for the summary output, in the
+/// same shape as [describeClass]: the header and one line per
+/// method with its documentation comment. A mixin declared in a
+/// generated part shows up here, which proves the resolver loaded
+/// the part when it visited the library.
+List<String> describeMixin(MixinElement mixin, String prefix) {
+  final methods = mixin.methods.map((method) => method.name).join(',');
+  final lines = <String>['$prefix${mixin.name} [$methods]'];
+  for (final method in mixin.methods) {
+    final doc = method.documentationComment?.replaceAll('\n', ' ') ?? '-';
+    lines.add('$prefix${mixin.name}.${method.name} doc=$doc');
+  }
+  return lines;
+}
+
 Builder summaryBuilder(BuilderOptions options) => _SummaryBuilder();
 
 /// A resolver-only whole-graph builder: it observes the input
@@ -184,6 +199,9 @@ class _SummaryBuilder implements Builder {
       if (!seen.add(lib.uri.toString())) return;
       for (final cls in lib.classes) {
         lines.addAll(describeClass(cls, '${lib.uri}: '));
+      }
+      for (final mixin in lib.mixins) {
+        lines.addAll(describeMixin(mixin, '${lib.uri}: '));
       }
       for (final imported in lib.firstFragment.importedLibraries) {
         visit(imported);

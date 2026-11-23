@@ -168,6 +168,10 @@ run_stock "$stock_dir" "$temporary_dir/initial.stock.log" || fail 'stock initial
 run_on "$temporary_dir/initial.on.log" || fail 'cutoff-on initial build failed'
 run_off "$temporary_dir/initial.off.log" || fail 'cutoff-off initial build failed'
 assert_contains "$temporary_dir/initial.on.log" 'Rust frontend: 4 build action(s)'
+# The summaries record the mixin the generated part declares,
+# which proves the summary builders resolved the part itself,
+# not just its file.
+assert_contains "$on_dir/lib/consumer_001.summary.txt" '_SharedParts [partGreeting]'
 compare_outputs "$stock_dir" "$on_dir"
 compare_outputs "$stock_dir" "$off_dir"
 
