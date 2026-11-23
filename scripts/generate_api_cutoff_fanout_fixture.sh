@@ -107,6 +107,8 @@ builders:
         - ".g.dart"
     auto_apply: none
     build_to: source
+    runs_before:
+      - api_cutoff_fanout_app:summary
 YAML
 else
   cat >"$destination/build.yaml" <<'YAML'

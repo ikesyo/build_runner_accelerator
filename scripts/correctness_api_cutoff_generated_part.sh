@@ -178,8 +178,10 @@ assert_contains "$temporary_dir/noop.on.log" 'No work to do (Rust frontend)'
 # A body-only edit to the shared library: every summary candidate's
 # closure reaches the generated part, so the cutoff waives nothing
 # and all four actions rerun, on and off alike.
+edit_body "$stock_dir"
 edit_body "$on_dir"
 edit_body "$off_dir"
+run_stock "$stock_dir" "$temporary_dir/body.stock.log" || fail 'stock body build failed'
 BUILD_RUNNER_ACCELERATOR_METRICS=1 run_on "$temporary_dir/body.on.log" \
   || fail 'cutoff-on body build failed'
 run_off "$temporary_dir/body.off.log" || fail 'cutoff-off body build failed'
@@ -189,9 +191,6 @@ assert_metrics_line "$temporary_dir/body.on.log" assess 'candidates=3'
 assert_metrics_line "$temporary_dir/body.on.log" evaluate 'generated_asset=3'
 assert_metrics_line "$temporary_dir/body.on.log" evaluate 'signature_unchanged=0'
 compare_outputs "$on_dir" "$off_dir"
-# The edit was body-only, so the API surface the summaries record
-# is unchanged: the rerun outputs still match the stock baseline
-# byte for byte.
 compare_outputs "$stock_dir" "$on_dir"
 
 printf 'api-cutoff-generated-part: PASS\n'
