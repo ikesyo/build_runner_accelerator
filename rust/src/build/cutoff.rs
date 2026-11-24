@@ -559,10 +559,11 @@ struct GeneratedStability<'a> {
     producer_verdicts: BTreeMap<String, bool>,
     assets_in_progress: BTreeSet<String>,
     producers_in_progress: BTreeSet<String>,
-    /// Forward closures per resolver root, shared across
-    /// producers: only the generated members of a closure feed
-    /// the cascade, and producers on wide fan-out shapes share
-    /// most of their roots' subgraphs through this cache's roots.
+    /// Generated members of each resolver root's forward
+    /// closure, shared across producers: only those members feed
+    /// the cascade, so the cache retains them instead of whole
+    /// closures (on wide fan-out shapes a root's closure can be
+    /// a large shared tree with a single generated member).
     closure_cache: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -632,6 +633,18 @@ impl GeneratedStability<'_> {
         // content checks above, which already key on the outputs.
         let own_outputs: BTreeSet<&str> = action.outputs.iter().map(String::as_str).collect();
         for glob in &action.glob_reads {
+            // The recorded glob snapshot entry is what dirty
+            // analysis compares: its digest covers the matched
+            // set and contents, so a membership change reruns the
+            // producer even when no member itself changed (a lost
+            // member can stay in the snapshot through another
+            // tracked read). That entry is decisive on its own.
+            if self
+                .changed
+                .contains(crate::snapshot::glob_asset_key(glob).as_str())
+            {
+                return false;
+            }
             // A glob only sees sources and earlier-phase outputs
             // (the visibility rule glob dirty expansion uses), so
             // a changed or generated asset from the producer's own
@@ -710,14 +723,19 @@ impl GeneratedStability<'_> {
             .is_none_or(|member_phase| *member_phase < phase)
     }
 
-    /// The forward closure of `roots` over the recorded graph,
-    /// sharing per-root walks across producers through the cache.
+    /// The generated members of the forward closure of `roots`
+    /// over the recorded graph, sharing per-root walks across
+    /// producers through the cache.
     fn closure_of(&mut self, roots: &[String]) -> BTreeSet<String> {
         let mut closure = BTreeSet::new();
         for root in roots {
             if !self.closure_cache.contains_key(root) {
-                let walked = forward_closure(self.recorded, std::slice::from_ref(root));
-                self.closure_cache.insert(root.clone(), walked);
+                let members: BTreeSet<String> =
+                    forward_closure(self.recorded, std::slice::from_ref(root))
+                        .into_iter()
+                        .filter(|asset| self.generated.contains(asset))
+                        .collect();
+                self.closure_cache.insert(root.clone(), members);
             }
             closure.extend(self.closure_cache[root].iter().cloned());
         }
