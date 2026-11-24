@@ -88,7 +88,7 @@ class CiCachePolicyTest(unittest.TestCase):
                 for lane in step.get('parallel', [step]):
                     if 'bash scripts/correctness_workspace_json.sh' in lane.get('run', ''):
                         owners.append((job, lane['name']))
-        self.assertEqual(owners, [('integration-settings-watch', 'Trigger lifecycle and JSON workspace')])
+        self.assertEqual(owners, [('integration-settings-watch', 'Trigger lifecycle, JSON workspace, and compile isolation')])
 
 
 if __name__ == '__main__':

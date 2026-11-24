@@ -19,3 +19,5 @@ upload/
 
 # Local benchmark workspaces (results are summarized in docs/benchmarks.md).
 bench_*/
+
+__pycache__/

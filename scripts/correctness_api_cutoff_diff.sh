@@ -248,6 +248,8 @@ def edit(relpath, old, new):
 
 if mode == "body":
     edit("api.dart", "'widget-v1'", "'widget-v2'")
+elif mode == "body2":
+    edit("api.dart", "'widget-v2'", "'widget-v3'")
 elif mode == "doc":
     edit("api.dart", "/// Renders the widget.", "/// Renders the widget nicely.")
 elif mode == "comment":
@@ -320,6 +322,7 @@ edit_all body
 build_all body
 assert_pattern body 0 0 1 1 0
 assert_total body 2
+assert_cutoff_output_contains body lib/consumer.echo.txt 'widget-v2'
 assert_plain_resolver_reruns body
 
 edit_all doc
@@ -351,6 +354,8 @@ build_all api
 assert_pattern api 1 1 1 1 1
 assert_total api 5
 assert_cutoff_output_contains api lib/consumer.summary.txt 'ready'
+assert_cutoff_output_contains api lib/consumer.echo.txt 'ready'
+assert_cutoff_output_contains api lib/consumer.probe.txt 'ready'
 
 edit_all part-body
 build_all part-body
@@ -385,4 +390,17 @@ assert_pattern cycle-api 1 1 1 1 1
 assert_total cycle-api 5
 assert_cutoff_output_contains cycle-api lib/consumer.summary.txt 'extraB'
 
-printf 'api-cutoff-diff: PASS steps=13 stock-identical=yes plain-identical=yes\n'
+# Removing the flag from a workspace that ran with the cutoff must
+# restore plain content-keyed behavior in that same workspace: the
+# cutoff copy now builds unflagged, so a body-only edit reruns
+# every action and the outputs still match stock byte-for-byte.
+edit_all body2
+run_stock "$stock_dir" "$temporary_dir/unflagged.stock.log" || fail 'step unflagged: stock build failed'
+run_native "$cutoff_dir" "$temporary_dir/unflagged.cutoff.log" || fail 'step unflagged: unflagged build failed'
+run_plain "$temporary_dir/unflagged.plain.log" || fail 'step unflagged: plain build failed'
+compare_outputs unflagged
+assert_pattern unflagged 1 1 1 1 1
+assert_total unflagged 5
+assert_cutoff_output_contains unflagged lib/consumer.echo.txt 'widget-v3'
+
+printf 'api-cutoff-diff: PASS steps=14 stock-identical=yes plain-identical=yes\n'
