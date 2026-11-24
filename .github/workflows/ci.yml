@@ -370,13 +370,12 @@ jobs:
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=errors,boundaries bash scripts/correctness_settings.sh
-          - name: Precedence, post-process, arbitrary watch, and compile isolation
+          - name: Precedence, post-process, and arbitrary watch
             shell: bash
             run: |
               SETTINGS_CASE_GROUP=precedence bash scripts/correctness_settings.sh
               bash scripts/correctness_post_process_builder.sh
               bash scripts/watch_smoke_arbitrary_builder.sh
-              python3 scripts/correctness_compile_isolation.py
           - name: JIT/AOT compile and publication recovery
             shell: bash
             # Keep prewarm and compile coverage cold, independent of other lanes.
@@ -384,11 +383,12 @@ jobs:
               BUILD_RUNNER_ACCELERATOR_CACHE: ${{ runner.temp }}/settings-compile-cold-cache
             run: |
               SETTINGS_CASE_GROUP=compile bash scripts/correctness_settings.sh
-          - name: Trigger lifecycle and JSON workspace
+          - name: Trigger lifecycle, JSON workspace, and compile isolation
             shell: bash
             run: |
               bash scripts/correctness_trigger_builder.sh
               bash scripts/correctness_workspace_json.sh
+              python3 scripts/correctness_compile_isolation.py
 
   integration-output-policies:
     needs: changes
@@ -420,15 +420,15 @@ jobs:
             run: |
               OUTPUT_POLICY_CASE_GROUP=source bash scripts/correctness_output_policies.sh
               bash scripts/package_smoke.sh
-          - name: Cache output policies and scheduler reuse
+          - name: Cache output policies
             shell: bash
             run: |
               OUTPUT_POLICY_CASE_GROUP=cache bash scripts/correctness_output_policies.sh
-              bash scripts/correctness_workspace_scheduler_reuse.sh
-          - name: Failure recovery and routing
+          - name: Failure recovery, routing, and scheduler reuse
             shell: bash
             run: |
               OUTPUT_POLICY_CASE_GROUP=failure,routing bash scripts/correctness_output_policies.sh
+              bash scripts/correctness_workspace_scheduler_reuse.sh
           - name: Runner 2.16.1 / Analyzer 14.5 and config watches
             shell: bash
             run: |
@@ -502,19 +502,22 @@ jobs:
             (cd "fixtures/$fixture" && dart --suppress-analytics pub get)
           done
       - parallel:
-          - name: Freezed with one shared baseline
+          - name: Freezed with one shared baseline and API cutoff watch
             shell: bash
             run: |
               bash scripts/correctness_freezed.sh
               bash scripts/watch_smoke_empty_input_mapping.sh
+              bash scripts/correctness_api_cutoff_watch.sh
             env:
               PUB_GET_OFFLINE: '1'
-          - name: Riverpod lifecycle, watch, and multiple mappings
+          - name: Riverpod lifecycle, watch, multiple mappings, and API cutoff matrices
             shell: bash
             run: |
               bash scripts/correctness_riverpod.sh
               bash scripts/watch_smoke_riverpod.sh
               bash scripts/correctness_multi_mapping_builder.sh
+              bash scripts/correctness_api_cutoff_diff.sh
+              bash scripts/correctness_api_cutoff_generated_part.sh
             env:
               PUB_GET_OFFLINE: '1'
           - name: JSON Serializable shared baseline, capture mapping, and early catalog
@@ -523,10 +526,6 @@ jobs:
               CASE_FILTER=shared-baseline bash scripts/correctness_json_serializable.sh
               bash scripts/correctness_capture_builder.sh
               bash scripts/correctness_early_catalog.sh
-              bash scripts/correctness_api_cutoff.sh
-              bash scripts/correctness_api_cutoff_watch.sh
-              bash scripts/correctness_api_cutoff_diff.sh
-              bash scripts/correctness_api_cutoff_generated_part.sh
             env:
               PUB_GET_OFFLINE: '1'
           - name: Freezed watch and generic mappings
