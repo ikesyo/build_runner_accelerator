@@ -290,14 +290,34 @@ class Shared {
 DART
 fi
 
+if [[ "$generated_part" == 1 ]]; then
+  # A handwritten library only the consumers import: the part
+  # producer never observes it, so an edit to it is the shape
+  # producer-stability inheritance can waive (the harness primes
+  # the part's fingerprint record first).
+  cat >"$destination/lib/util.dart" <<'DART'
+/// Utility library v1.
+class Util {
+  /// Greets with the current revision.
+  String greet() => 'util-v1';
+}
+DART
+  consumer_extra_import="
+import 'util.dart';"
+  consumer_describe='Shared().greet() + Util().greet()'
+else
+  consumer_extra_import=''
+  consumer_describe='Shared().greet()'
+fi
+
 find "$destination/lib" -maxdepth 1 -type f -name 'consumer_*.dart' -delete
 for index in $(seq 1 "$count"); do
   number=$(printf '%03d' "$index")
   cat >"$destination/lib/consumer_${number}.dart" <<DART
-import 'shared.dart';
+import 'shared.dart';${consumer_extra_import}
 
 class Consumer${number} {
-  String describe() => Shared().greet();
+  String describe() => ${consumer_describe};
 }
 DART
 done

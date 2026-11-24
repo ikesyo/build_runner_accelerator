@@ -295,9 +295,16 @@ The promise is narrow by design:
   content-keyed, exactly as without the flag. The downgrade is
   silent and safe; the action simply gains nothing until its
   observations are element-model only.
-- A generated asset anywhere in an action's observed closure
-  disqualifies the whole action: it stays content-keyed even when
-  the edit is to a different, handwritten dependency.
+- A generated asset in an action's observed closure disqualifies
+  the action unless all three of these hold: the asset itself
+  is unchanged, a recorded fingerprint bound to the previous
+  snapshot's bytes exists for it, and its producing action is
+  proven idle in this build (it observes no change, and neither
+  does anything it consumes). An asset meeting all three folds
+  with its recorded fingerprint like a handwritten unit, so an
+  edit to a different dependency can still be waived. An
+  assembled shared part, and any generated asset in the first
+  build after a filtered build, keep disqualifying.
   Augmentations are likewise never fingerprinted.
 
 The cutoff suits whole-graph builders that walk the element model,
@@ -325,9 +332,10 @@ generated asset, deleted or appeared unit, unanswered unit,
 missing evidence, or a changed signature), including
 candidates dropped before evaluation because no changed unit
 in their closure could be queried. When the recorded graph
-alone proves every candidate blocked by a generated or
-deleted/appeared unit, the preflight pool is not started at
-all and the metrics attribute those candidates directly. No lines appear when the
+alone proves every candidate blocked by an unstable generated
+asset or a deleted/appeared unit, the preflight pool is not
+started at all and the metrics attribute those candidates
+directly. No lines appear when the
 assessment does not run, for example on a first build with no
 recorded graph or a build where nothing changed. A candidate
 counted as signature unchanged can still run when dirty
