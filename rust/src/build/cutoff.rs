@@ -549,6 +549,7 @@ fn unstable_generated_assets(
     // Discover the subgraph first, computing each producer's
     // consumed generated assets (the propagation edges) once.
     let mut specs_by_key: BTreeMap<String, &BuildSpec> = BTreeMap::new();
+    let mut closure_cache: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut consumed_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut consumers_of: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut subgraph_assets: BTreeSet<String> = BTreeSet::new();
@@ -565,8 +566,15 @@ fn unstable_generated_assets(
             continue;
         }
         specs_by_key.insert(key.clone(), spec);
-        let consumed =
-            producer_consumed_assets(state, spec, generated, &glob_universe, &phases, recorded);
+        let consumed = producer_consumed_assets(
+            state,
+            spec,
+            generated,
+            &glob_universe,
+            &phases,
+            recorded,
+            &mut closure_cache,
+        );
         for member in &consumed {
             consumers_of
                 .entry(member.clone())
@@ -710,6 +718,7 @@ fn producer_consumed_assets(
     glob_universe: &BTreeSet<String>,
     phases: &BTreeMap<&str, u32>,
     recorded: &GraphView<'_>,
+    closure_cache: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Vec<String> {
     let Some(action) = state.actions.get(&spec.action_key()) else {
         return Vec::new();
@@ -723,7 +732,20 @@ fn producer_consumed_assets(
         .collect();
     let mut candidates: Vec<String> = vec![action.input.clone()];
     candidates.extend(action.reads.iter().cloned());
-    candidates.extend(forward_closure(recorded, &roots));
+    // Only the generated members of a root's closure feed the
+    // cascade, so the cache retains those per root and producers
+    // sharing roots (a hub library many producers resolve) reuse
+    // the walk instead of repeating it.
+    for root in &roots {
+        if !closure_cache.contains_key(root) {
+            let members: BTreeSet<String> = forward_closure(recorded, std::slice::from_ref(root))
+                .into_iter()
+                .filter(|asset| generated.contains(asset))
+                .collect();
+            closure_cache.insert(root.clone(), members);
+        }
+        candidates.extend(closure_cache[root].iter().cloned());
+    }
     let mut consumed: BTreeSet<String> = BTreeSet::new();
     for asset in candidates {
         if generated.contains(&asset) && !own_outputs.contains(asset.as_str()) {
