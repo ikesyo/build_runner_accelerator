@@ -5,7 +5,9 @@
 Target 5–6 minutes from a PR update to completed checks, including runner queues.
 Keep PR CI within **16 jobs**, reserving four of the account's 20 concurrent
 runner slots for CodeQL and other checks. Other workflow runs still share that
-account limit. Cancel superseded runs by PR number.
+account limit. Cancel superseded runs by PR number; scheduled and manual runs
+form their own groups so a push cannot cancel the full-coverage runs that
+deferred checks rely on.
 
 Prefer parallel steps within existing jobs over new matrix entries. Share
 SDK, toolchain and dependency setup, and limit each parallel group to four
