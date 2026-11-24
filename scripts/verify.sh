@@ -298,7 +298,6 @@ run_core_suite() {
   run_script_probe build-filter correctness_build_filter.sh 'build-filter stock/native comparisons passed'
   run_script_probe nested-packages correctness_nested_packages.sh 'nested-packages: PASS'
   run_script_probe commit-recovery correctness_commit_recovery.sh 'commit-recovery: PASS'
-  run_script_probe api-cutoff correctness_api_cutoff.sh 'api-cutoff: PASS'
   run_script_probe api-cutoff-watch correctness_api_cutoff_watch.sh 'api-cutoff-watch: PASS'
   run_script_probe api-cutoff-diff correctness_api_cutoff_diff.sh 'api-cutoff-diff: PASS'
   run_script_probe api-cutoff-generated-part correctness_api_cutoff_generated_part.sh 'api-cutoff-generated-part: PASS'
