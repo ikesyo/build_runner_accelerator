@@ -2294,6 +2294,126 @@ fn api_cutoff_generated_asset_stability_inheritance() -> io::Result<()> {
         );
         assert!(diagnostics.preflight_skipped);
     }
+    // An asset that gains a producer in this build (a checked-in
+    // file a new builder now emits) is not stable until that
+    // producer is proven idle: a recorded producer reading it
+    // inherits its instability even though it was a plain source
+    // in the recorded graph.
+    {
+        let transitioned = "app|lib/transitioned.dart";
+        let mut state = state.clone();
+        state.assets.insert(
+            transitioned.into(),
+            AssetSnapshot {
+                exists: true,
+                digest: "v1".into(),
+                size: 2,
+            },
+        );
+        state
+            .actions
+            .get_mut(&producer_key)
+            .expect("producer action recorded")
+            .reads = vec![data_asset.into(), transitioned.into()];
+        let producer_instance = specs
+            .iter()
+            .find(|other| !other.instance.api_cutoff)
+            .expect("a non-opted-in spec exists")
+            .instance
+            .clone();
+        let new_producer = Arc::new(BuildAction {
+            instance: producer_instance,
+            input: lib2.into(),
+            outputs: vec![transitioned.into()],
+        });
+        let mut specs = specs.clone();
+        specs.push(new_producer);
+        let mut snapshot = state.assets.clone();
+        snapshot.get_mut(lib2).expect("unit recorded").digest = "v2".into();
+        let context = state.dirty_context(&snapshot);
+        let mut diagnostics = cutoff::CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
+        let assessment = cutoff::assess(
+            &state,
+            &specs,
+            &context,
+            &snapshot,
+            &generated,
+            &mut diagnostics,
+        );
+        assert!(
+            assessment.is_none(),
+            "a producer reading an asset that gained a producer must block"
+        );
+        assert!(diagnostics.preflight_skipped);
+    }
+    // The same transition blocks at the candidate level: the
+    // candidate observes the transitioned asset directly, and its
+    // recorded fingerprint (learned while it was a source) must
+    // not fold while its new producer is unproven.
+    {
+        let transitioned = "app|lib/transitioned.dart";
+        let mut state = state.clone();
+        state.assets.insert(
+            transitioned.into(),
+            AssetSnapshot {
+                exists: true,
+                digest: "v1".into(),
+                size: 2,
+            },
+        );
+        state.asset_fingerprints.insert(
+            transitioned.into(),
+            ApiFingerprintRecord {
+                digest: "v1".into(),
+                fingerprint: "f-transitioned".into(),
+            },
+        );
+        state.resolver_dep_graph.insert(
+            entry.into(),
+            vec![
+                gen_unit.into(),
+                gen2.into(),
+                lib2.into(),
+                transitioned.into(),
+            ],
+        );
+        let producer_instance = specs
+            .iter()
+            .find(|other| !other.instance.api_cutoff)
+            .expect("a non-opted-in spec exists")
+            .instance
+            .clone();
+        let new_producer = Arc::new(BuildAction {
+            instance: producer_instance,
+            input: lib2.into(),
+            outputs: vec![transitioned.into()],
+        });
+        let mut specs = specs.clone();
+        specs.push(new_producer);
+        let mut snapshot = state.assets.clone();
+        snapshot.get_mut(lib2).expect("unit recorded").digest = "v2".into();
+        let context = state.dirty_context(&snapshot);
+        let mut diagnostics = cutoff::CutoffDiagnostics {
+            enabled: true,
+            ..Default::default()
+        };
+        let assessment = cutoff::assess(
+            &state,
+            &specs,
+            &context,
+            &snapshot,
+            &generated,
+            &mut diagnostics,
+        );
+        assert!(
+            assessment.is_none(),
+            "an observed asset that gained a producer must block"
+        );
+        assert!(diagnostics.preflight_skipped);
+    }
     Ok(())
 }
 

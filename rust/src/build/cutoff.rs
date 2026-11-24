@@ -476,15 +476,18 @@ pub(super) fn assess(
 
 /// The generated assets in `closure` (the candidates' recorded
 /// closure) whose recorded fingerprint cannot stand in for the
-/// bytes the resolver will read in this build.
+/// bytes the resolver will read in this build. The proof's
+/// universe covers recorded outputs and outputs the current
+/// plan declares, so an asset that gains a producer in this
+/// build is judged by the same rule as a recorded output.
 ///
 /// A generated asset is stable when all of these hold: the asset
 /// itself did not change; a fingerprint record bound to the
 /// recorded snapshot's bytes exists for it; it has a producer in
 /// the current plan that is not an assembled shared part; and the
 /// producer provably does not run in this build (see
-/// [`GeneratedStability::producer_stable`]). Anything else stays
-/// unstable and keeps blocking candidates exactly as every
+/// [`producer_seed_dirty`] and the fixpoint below). Anything else
+/// stays unstable and keeps blocking candidates exactly as every
 /// generated asset did before producer-stability inheritance.
 /// The build-wide evidence the producer-stability proof reads.
 struct StabilityInputs<'a> {
@@ -503,7 +506,22 @@ fn unstable_generated_assets(
 ) -> BTreeSet<String> {
     let changed = inputs.changed;
     let generated = inputs.generated;
-    let relevant: Vec<&String> = generated
+    // The proof's asset universe is the recorded generated assets
+    // plus every output the current plan declares. An asset can
+    // gain a producer in this build (a checked-in file a builder
+    // now emits), and until that producer is proven idle the
+    // asset's bytes are no more stable than a recorded output's.
+    // Glob reads observe the same widened set: their matches can
+    // gain members from actions planned for the first time in
+    // this build (an added input creating an earlier-phase
+    // action).
+    let mut glob_universe: BTreeSet<String> = generated.clone();
+    for spec in specs {
+        for output in &spec.outputs {
+            glob_universe.insert(output.clone());
+        }
+    }
+    let relevant: Vec<&String> = glob_universe
         .iter()
         .filter(|asset| closure.contains(*asset))
         .collect();
@@ -517,20 +535,12 @@ fn unstable_generated_assets(
         // from them. The next build relearns from a full commit.
         return relevant.iter().map(|asset| (*asset).clone()).collect();
     }
-    let bound = bound_fingerprints(state);
     let mut producers: BTreeMap<&str, &BuildSpec> = BTreeMap::new();
     let mut phases: BTreeMap<&str, u32> = BTreeMap::new();
-    // Glob reads observe a set that can gain members from actions
-    // planned for the first time in this build (an added input
-    // creating an earlier-phase action), so glob propagation
-    // edges are built over declared outputs as well as the
-    // recorded ones in `generated`.
-    let mut glob_universe: BTreeSet<String> = generated.clone();
     for spec in specs {
         for output in &spec.outputs {
             producers.entry(output.as_str()).or_insert(spec);
             phases.entry(output.as_str()).or_insert(spec.instance.phase);
-            glob_universe.insert(output.clone());
         }
     }
     // Byte stability is a least fixpoint over the producer
@@ -569,7 +579,6 @@ fn unstable_generated_assets(
         let consumed = producer_consumed_assets(
             state,
             spec,
-            generated,
             &glob_universe,
             &phases,
             recorded,
@@ -637,7 +646,7 @@ fn unstable_generated_assets(
     relevant
         .iter()
         .filter(|asset| {
-            unstable_assets.contains(asset.as_str()) || !bound.contains_key(asset.as_str())
+            unstable_assets.contains(asset.as_str()) || !fingerprint_bound(state, asset)
         })
         .map(|asset| (*asset).clone())
         .collect()
@@ -702,20 +711,20 @@ fn producer_seed_dirty(
         .any(|root| inputs.tainted.contains(root.as_str()))
 }
 
-/// The generated assets a producer consumes, as propagation
-/// edges: its input and direct reads, the generated members of
-/// its resolver closure, and the visible generated members of
-/// its glob reads. The producer's own outputs are exempt: a
-/// producer that resolves its input library observes the
-/// previous version of its own output (a part is a member of
-/// the library it is generated from), and that self-observation
-/// carries no information beyond the content checks, which
-/// already key on the outputs.
+/// The assets in the proof's universe (recorded generated
+/// assets and outputs the current plan declares) that a producer
+/// consumes, as propagation edges: its input and direct reads,
+/// the universe members of its resolver closure, and the visible
+/// universe members of its glob reads. The producer's own
+/// outputs are exempt: a producer that resolves its input
+/// library observes the previous version of its own output (a
+/// part is a member of the library it is generated from), and
+/// that self-observation carries no information beyond the
+/// content checks, which already key on the outputs.
 fn producer_consumed_assets(
     state: &GraphState,
     spec: &BuildSpec,
-    generated: &BTreeSet<String>,
-    glob_universe: &BTreeSet<String>,
+    universe: &BTreeSet<String>,
     phases: &BTreeMap<&str, u32>,
     recorded: &GraphView<'_>,
     closure_cache: &mut BTreeMap<String, BTreeSet<String>>,
@@ -732,7 +741,7 @@ fn producer_consumed_assets(
         .collect();
     let mut candidates: Vec<String> = vec![action.input.clone()];
     candidates.extend(action.reads.iter().cloned());
-    // Only the generated members of a root's closure feed the
+    // Only the universe members of a root's closure feed the
     // cascade, so the cache retains those per root and producers
     // sharing roots (a hub library many producers resolve) reuse
     // the walk instead of repeating it.
@@ -740,7 +749,7 @@ fn producer_consumed_assets(
         if !closure_cache.contains_key(root) {
             let members: BTreeSet<String> = forward_closure(recorded, std::slice::from_ref(root))
                 .into_iter()
-                .filter(|asset| generated.contains(asset))
+                .filter(|asset| universe.contains(asset))
                 .collect();
             closure_cache.insert(root.clone(), members);
         }
@@ -748,12 +757,12 @@ fn producer_consumed_assets(
     }
     let mut consumed: BTreeSet<String> = BTreeSet::new();
     for asset in candidates {
-        if generated.contains(&asset) && !own_outputs.contains(asset.as_str()) {
+        if universe.contains(&asset) && !own_outputs.contains(asset.as_str()) {
             consumed.insert(asset);
         }
     }
     for glob in &action.glob_reads {
-        for asset in glob_universe {
+        for asset in universe {
             if glob_matches(glob, asset)
                 && !own_outputs.contains(asset.as_str())
                 && phases
@@ -865,13 +874,20 @@ fn bound_fingerprints(state: &GraphState) -> BTreeMap<String, String> {
     state
         .asset_fingerprints
         .iter()
-        .filter(|(asset, record)| {
-            state.assets.get(*asset).is_some_and(|previous| {
-                previous.exists && bare_digest(&previous.digest) == record.digest
-            })
-        })
+        .filter(|(asset, _)| fingerprint_bound(state, asset))
         .map(|(asset, record)| (asset.clone(), record.fingerprint.clone()))
         .collect()
+}
+
+/// Whether one unit's recorded fingerprint is bound to the
+/// previous snapshot's bytes for that unit (see
+/// [`bound_fingerprints`]).
+fn fingerprint_bound(state: &GraphState, asset: &str) -> bool {
+    state.asset_fingerprints.get(asset).is_some_and(|record| {
+        state.assets.get(asset).is_some_and(|previous| {
+            previous.exists && bare_digest(&previous.digest) == record.digest
+        })
+    })
 }
 
 /// Compares effective signatures for every assessed candidate using

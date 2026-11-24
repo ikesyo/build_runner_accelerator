@@ -296,15 +296,16 @@ The promise is narrow by design:
   silent and safe; the action simply gains nothing until its
   observations are element-model only.
 - A generated asset in an action's observed closure disqualifies
-  the action only when its producer cannot be proven idle in
-  this build: a generated asset whose producing action observes
-  no change folds with its recorded fingerprint like a
-  handwritten unit, so an edit to a different dependency can
-  still be waived. A generated asset with no recorded
-  fingerprint, one that changed itself, an assembled shared
-  part, and any generated asset in the first build after a
-  filtered build keep disqualifying. Augmentations are likewise
-  never fingerprinted.
+  the action unless all three of these hold: the asset itself
+  is unchanged, a recorded fingerprint bound to the previous
+  snapshot's bytes exists for it, and its producing action is
+  proven idle in this build (it observes no change, and neither
+  does anything it consumes). An asset meeting all three folds
+  with its recorded fingerprint like a handwritten unit, so an
+  edit to a different dependency can still be waived. An
+  assembled shared part, and any generated asset in the first
+  build after a filtered build, keep disqualifying.
+  Augmentations are likewise never fingerprinted.
 
 The cutoff suits whole-graph builders that walk the element model,
 such as generators that read annotations and types across a
