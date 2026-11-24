@@ -386,9 +386,12 @@ pub(super) fn assess(
     let unstable_generated = unstable_generated_assets(
         state,
         specs,
-        &changed_set,
-        tainted,
-        generated,
+        &StabilityInputs {
+            changed: &changed_set,
+            tainted,
+            generated,
+            current_snapshot,
+        },
         &closure,
         &recorded,
     );
@@ -483,15 +486,23 @@ pub(super) fn assess(
 /// [`GeneratedStability::producer_stable`]). Anything else stays
 /// unstable and keeps blocking candidates exactly as every
 /// generated asset did before producer-stability inheritance.
+/// The build-wide evidence the producer-stability proof reads.
+struct StabilityInputs<'a> {
+    changed: &'a BTreeSet<String>,
+    tainted: &'a std::collections::HashSet<&'a str>,
+    generated: &'a BTreeSet<String>,
+    current_snapshot: &'a Snapshot,
+}
+
 fn unstable_generated_assets(
     state: &GraphState,
     specs: &[BuildSpec],
-    changed: &BTreeSet<String>,
-    tainted: &std::collections::HashSet<&str>,
-    generated: &BTreeSet<String>,
+    inputs: &StabilityInputs<'_>,
     closure: &BTreeSet<String>,
     recorded: &GraphView<'_>,
 ) -> BTreeSet<String> {
+    let changed = inputs.changed;
+    let generated = inputs.generated;
     let relevant: Vec<&String> = generated
         .iter()
         .filter(|asset| closure.contains(*asset))
@@ -515,232 +526,200 @@ fn unstable_generated_assets(
             phases.entry(output.as_str()).or_insert(spec.instance.phase);
         }
     }
-    let mut stability = GeneratedStability {
-        state,
-        changed,
-        tainted,
-        generated,
-        bound: &bound,
-        producers: &producers,
-        phases: &phases,
-        recorded,
-        asset_verdicts: BTreeMap::new(),
-        producer_verdicts: BTreeMap::new(),
-        assets_in_progress: BTreeSet::new(),
-        producers_in_progress: BTreeSet::new(),
-        closure_cache: BTreeMap::new(),
-    };
+    // Byte stability is a least fixpoint over the producer
+    // subgraph the relevant assets reach: an asset is unstable
+    // when it changed, has no producer in the plan, is assembled
+    // as a shared part, or its producer is dirty; a producer is
+    // dirty when a non-recursive channel says it can rerun (see
+    // producer_seed_dirty) or when a generated asset it consumes
+    // is unstable. Byte stability is deliberately separate from
+    // fingerprint availability: an intermediate generated asset
+    // (a generated JSON a part producer reads, say) has no API
+    // fingerprint and needs none; only the relevant assets, the
+    // ones entering a candidate's signature fold, require a bound
+    // record, checked at the end.
+    //
+    // Discover the subgraph first, computing each producer's
+    // consumed generated assets (the propagation edges) once.
+    let mut specs_by_key: BTreeMap<String, &BuildSpec> = BTreeMap::new();
+    let mut consumed_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut consumers_of: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut subgraph_assets: BTreeSet<String> = BTreeSet::new();
+    let mut stack: Vec<String> = relevant.iter().map(|asset| (*asset).clone()).collect();
+    while let Some(asset) = stack.pop() {
+        if !subgraph_assets.insert(asset.clone()) {
+            continue;
+        }
+        let Some(spec) = producers.get(asset.as_str()) else {
+            continue;
+        };
+        let key = spec.action_key();
+        if consumed_by.contains_key(&key) {
+            continue;
+        }
+        specs_by_key.insert(key.clone(), spec);
+        let consumed = producer_consumed_assets(state, spec, generated, &phases, recorded);
+        for member in &consumed {
+            consumers_of
+                .entry(member.clone())
+                .or_default()
+                .push(key.clone());
+            stack.push(member.clone());
+        }
+        consumed_by.insert(key, consumed);
+    }
+    // Seeds.
+    let mut unstable_assets: BTreeSet<String> = BTreeSet::new();
+    for asset in &subgraph_assets {
+        let seeded = changed.contains(asset)
+            || match producers.get(asset.as_str()) {
+                None => true,
+                Some(spec) => super::shared_parts::owns_part(spec, asset),
+            };
+        if seeded {
+            unstable_assets.insert(asset.clone());
+        }
+    }
+    let mut dirty_producers: BTreeSet<String> = BTreeSet::new();
+    let mut asset_queue: Vec<String> = unstable_assets.iter().cloned().collect();
+    for (key, spec) in &specs_by_key {
+        if producer_seed_dirty(state, spec, inputs, &phases) && dirty_producers.insert(key.clone())
+        {
+            asset_queue.extend(spec.outputs.iter().cloned());
+        }
+    }
+    // Propagation: an unstable asset dirties its consumers; a
+    // dirty producer's outputs are unstable.
+    while let Some(asset) = asset_queue.pop() {
+        if !unstable_assets.insert(asset.clone()) {
+            continue;
+        }
+        let Some(consumers) = consumers_of.get(&asset) else {
+            continue;
+        };
+        for key in consumers {
+            if dirty_producers.insert(key.clone()) {
+                let spec = specs_by_key[key.as_str()];
+                asset_queue.extend(spec.outputs.iter().cloned());
+            }
+        }
+    }
     relevant
         .iter()
-        .filter(|asset| !stability.asset_stable(asset))
+        .filter(|asset| {
+            unstable_assets.contains(asset.as_str()) || !bound.contains_key(asset.as_str())
+        })
         .map(|asset| (*asset).clone())
         .collect()
 }
 
-/// Recursive producer-stability proof for generated assets.
-/// Verdicts are memoized per asset and per producer action; a
-/// cycle in the producer graph is unstable, since the recursion
-/// itself is the only proof available and it cannot ground out.
-struct GeneratedStability<'a> {
-    state: &'a GraphState,
-    changed: &'a BTreeSet<String>,
-    /// Units whose recorded resolver closure reaches a changed
-    /// unit (the dirty context's reverse taint, computed once per
-    /// build): a producer with a tainted resolver root observes
-    /// the change and can rerun.
-    tainted: &'a std::collections::HashSet<&'a str>,
-    generated: &'a BTreeSet<String>,
-    bound: &'a BTreeMap<String, String>,
-    producers: &'a BTreeMap<&'a str, &'a BuildSpec>,
-    /// Producing phase per generated asset, for glob visibility.
-    phases: &'a BTreeMap<&'a str, u32>,
-    recorded: &'a GraphView<'a>,
-    asset_verdicts: BTreeMap<String, bool>,
-    producer_verdicts: BTreeMap<String, bool>,
-    assets_in_progress: BTreeSet<String>,
-    producers_in_progress: BTreeSet<String>,
-    /// Generated members of each resolver root's forward
-    /// closure, shared across producers: only those members feed
-    /// the cascade, so the cache retains them instead of whole
-    /// closures (on wide fan-out shapes a root's closure can be
-    /// a large shared tree with a single generated member).
-    closure_cache: BTreeMap<String, BTreeSet<String>>,
-}
-
-impl GeneratedStability<'_> {
-    fn asset_stable(&mut self, asset: &str) -> bool {
-        if let Some(verdict) = self.asset_verdicts.get(asset) {
-            return *verdict;
-        }
-        if !self.assets_in_progress.insert(asset.to_owned()) {
-            return false;
-        }
-        let producer = self.producers.get(asset).copied();
-        let verdict = !self.changed.contains(asset)
-            && self.bound.contains_key(asset)
-            && producer.is_some_and(|spec| {
-                // Assembled shared parts are assembled per phase
-                // from every contributor of the library, so no
-                // single producer's idleness proves their bytes.
-                !super::shared_parts::owns_part(spec, asset) && self.producer_stable(spec)
-            });
-        self.assets_in_progress.remove(asset);
-        self.asset_verdicts.insert(asset.to_owned(), verdict);
-        verdict
-    }
-
-    fn producer_stable(&mut self, spec: &BuildSpec) -> bool {
-        let key = spec.action_key();
-        if let Some(verdict) = self.producer_verdicts.get(&key) {
-            return *verdict;
-        }
-        if !self.producers_in_progress.insert(key.clone()) {
-            return false;
-        }
-        let verdict = self.producer_stable_inner(spec);
-        self.producers_in_progress.remove(&key);
-        self.producer_verdicts.insert(key, verdict);
-        verdict
-    }
-
-    fn producer_stable_inner(&mut self, spec: &BuildSpec) -> bool {
-        let Some(action) = self.state.actions.get(&spec.action_key()) else {
-            return false;
-        };
-        // Content channel: the recorded input, direct reads and
-        // outputs are what dirty analysis keys on; a change among
-        // them can rerun the producer.
-        if self.changed.contains(action.input.as_str())
-            || action
-                .reads
-                .iter()
-                .any(|asset| self.changed.contains(asset.as_str()))
-            || action
-                .outputs
-                .iter()
-                .any(|asset| self.changed.contains(asset.as_str()))
-        {
-            return false;
-        }
-        // Glob reads observe a set, not recorded members: a changed
-        // asset the pattern matches can rerun the producer, and a
-        // generated member's bytes are only as stable as its own
-        // producer. The producer's own outputs are exempt from the
-        // cascade checks: a producer that resolves its input
-        // library observes the previous version of its own output
-        // (a part of that library, or a glob member it wrote), and
-        // that self-observation carries no information beyond the
-        // content checks above, which already key on the outputs.
-        let own_outputs: BTreeSet<&str> = action.outputs.iter().map(String::as_str).collect();
-        for glob in &action.glob_reads {
-            // The recorded glob snapshot entry is what dirty
-            // analysis compares: its digest covers the matched
-            // set and contents, so a membership change reruns the
-            // producer even when no member itself changed (a lost
-            // member can stay in the snapshot through another
-            // tracked read). That entry is decisive on its own.
-            if self
-                .changed
-                .contains(crate::snapshot::glob_asset_key(glob).as_str())
-            {
-                return false;
-            }
-            // A glob only sees sources and earlier-phase outputs
-            // (the visibility rule glob dirty expansion uses), so
-            // a changed or generated asset from the producer's own
-            // phase or a later one cannot be a member.
-            let changed_matches = self.changed.iter().any(|asset| {
-                glob_matches(glob, asset) && self.glob_visible(spec.instance.phase, asset)
-            });
-            if changed_matches {
-                return false;
-            }
-            let generated_members: Vec<String> = self
-                .generated
-                .iter()
-                .filter(|asset| {
-                    glob_matches(glob, asset)
-                        && !own_outputs.contains(asset.as_str())
-                        && self.glob_visible(spec.instance.phase, asset)
-                })
-                .cloned()
-                .collect();
-            if !generated_members
-                .iter()
-                .all(|asset| self.asset_stable(asset))
-            {
-                return false;
-            }
-        }
-        // Resolver channel: the producer reruns if anything its
-        // resolver observations reach has changed. The dirty
-        // context's taint is exactly the set of units whose
-        // recorded closure reaches a change, computed once for
-        // the whole build, so this check is a root lookup rather
-        // than another closure walk per producer.
-        let roots: Vec<String> = action
-            .resolver_entrypoints
-            .iter()
-            .cloned()
-            .chain(action.resolver_reads.iter().cloned())
-            .collect();
-        if roots
-            .iter()
-            .any(|root| self.tainted.contains(root.as_str()))
-        {
-            return false;
-        }
-        let closure = self.closure_of(&roots);
-        // Cascade: a generated unit the producer consumes (as its
-        // input, a direct read, or through the resolver) is
-        // regenerated before the producer whenever its own
-        // producer runs, and a rerun upstream producer reruns
-        // this one. Own outputs are exempt, as above.
-        let consumed: Vec<String> = action
+/// The non-recursive channels that can rerun a producer in this
+/// build, mirroring what dirty analysis keys on: a missing or
+/// changed recorded action, a declared output that now exists
+/// but was never recorded (dirty analysis reruns the action to
+/// resolve that conflict), a changed glob snapshot entry or a
+/// changed visible glob match, and a resolver root the change
+/// taints.
+fn producer_seed_dirty(
+    state: &GraphState,
+    spec: &BuildSpec,
+    inputs: &StabilityInputs<'_>,
+    phases: &BTreeMap<&str, u32>,
+) -> bool {
+    let changed = inputs.changed;
+    let current_snapshot = inputs.current_snapshot;
+    let Some(action) = state.actions.get(&spec.action_key()) else {
+        return true;
+    };
+    if changed.contains(action.input.as_str())
+        || action
             .reads
             .iter()
-            .chain(std::iter::once(&action.input))
-            .chain(closure.iter())
-            .filter(|asset| {
-                self.generated.contains(asset.as_str()) && !own_outputs.contains(asset.as_str())
-            })
-            .cloned()
-            .collect();
-        consumed.iter().all(|asset| self.asset_stable(asset))
+            .any(|asset| changed.contains(asset.as_str()))
+        || action
+            .outputs
+            .iter()
+            .any(|asset| changed.contains(asset.as_str()))
+    {
+        return true;
     }
-
-    /// Whether a glob evaluated for an action in `phase` can see
-    /// `asset`: sources are always visible; a generated asset is
-    /// visible only when its producer runs in an earlier phase.
-    /// A generated asset with no producer in the current plan is
-    /// treated as visible (conservative).
-    fn glob_visible(&self, phase: u32, asset: &str) -> bool {
-        if !self.generated.contains(asset) {
+    if spec.outputs.iter().any(|output| {
+        !action.outputs.iter().any(|actual| actual == output)
+            && current_snapshot
+                .get(output)
+                .is_some_and(|entry| entry.exists)
+    }) {
+        return true;
+    }
+    for glob in &action.glob_reads {
+        if changed.contains(crate::snapshot::glob_asset_key(glob).as_str()) {
             return true;
         }
-        self.phases
-            .get(asset)
-            .is_none_or(|member_phase| *member_phase < phase)
-    }
-
-    /// The generated members of the forward closure of `roots`
-    /// over the recorded graph, sharing per-root walks across
-    /// producers through the cache.
-    fn closure_of(&mut self, roots: &[String]) -> BTreeSet<String> {
-        let mut closure = BTreeSet::new();
-        for root in roots {
-            if !self.closure_cache.contains_key(root) {
-                let members: BTreeSet<String> =
-                    forward_closure(self.recorded, std::slice::from_ref(root))
-                        .into_iter()
-                        .filter(|asset| self.generated.contains(asset))
-                        .collect();
-                self.closure_cache.insert(root.clone(), members);
-            }
-            closure.extend(self.closure_cache[root].iter().cloned());
+        if changed.iter().any(|asset| {
+            glob_matches(glob, asset)
+                && (!inputs.generated.contains(asset)
+                    || phases
+                        .get(asset.as_str())
+                        .is_none_or(|phase| *phase < spec.instance.phase))
+        }) {
+            return true;
         }
-        closure
     }
+    action
+        .resolver_entrypoints
+        .iter()
+        .chain(action.resolver_reads.iter())
+        .any(|root| inputs.tainted.contains(root.as_str()))
+}
+
+/// The generated assets a producer consumes, as propagation
+/// edges: its input and direct reads, the generated members of
+/// its resolver closure, and the visible generated members of
+/// its glob reads. The producer's own outputs are exempt: a
+/// producer that resolves its input library observes the
+/// previous version of its own output (a part is a member of
+/// the library it is generated from), and that self-observation
+/// carries no information beyond the content checks, which
+/// already key on the outputs.
+fn producer_consumed_assets(
+    state: &GraphState,
+    spec: &BuildSpec,
+    generated: &BTreeSet<String>,
+    phases: &BTreeMap<&str, u32>,
+    recorded: &GraphView<'_>,
+) -> Vec<String> {
+    let Some(action) = state.actions.get(&spec.action_key()) else {
+        return Vec::new();
+    };
+    let own_outputs: BTreeSet<&str> = action.outputs.iter().map(String::as_str).collect();
+    let roots: Vec<String> = action
+        .resolver_entrypoints
+        .iter()
+        .cloned()
+        .chain(action.resolver_reads.iter().cloned())
+        .collect();
+    let mut candidates: Vec<String> = vec![action.input.clone()];
+    candidates.extend(action.reads.iter().cloned());
+    candidates.extend(forward_closure(recorded, &roots));
+    let mut consumed: BTreeSet<String> = BTreeSet::new();
+    for asset in candidates {
+        if generated.contains(&asset) && !own_outputs.contains(asset.as_str()) {
+            consumed.insert(asset);
+        }
+    }
+    for glob in &action.glob_reads {
+        for asset in generated {
+            if glob_matches(glob, asset)
+                && !own_outputs.contains(asset.as_str())
+                && phases
+                    .get(asset.as_str())
+                    .is_none_or(|phase| *phase < spec.instance.phase)
+            {
+                consumed.insert(asset.clone());
+            }
+        }
+    }
+    consumed.into_iter().collect()
 }
 
 fn glob_matches(glob: &crate::protocol::GlobRead, asset: &str) -> bool {

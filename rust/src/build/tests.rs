@@ -1951,8 +1951,10 @@ fn api_cutoff_generated_asset_stability_inheritance() -> io::Result<()> {
     let gen2 = "app|lib/gen2_unit.dart";
     let src = "app|lib/src.dart";
     let lib2 = "app|lib/lib2.dart";
+    let data_src = "app|lib/gen_data_src.txt";
+    let data_asset = "app|lib/gen_data.json";
     let mut old_snapshot = base_snapshot.clone();
-    for asset in [entry, gen_unit, gen2, src, lib2] {
+    for asset in [entry, gen_unit, gen2, src, lib2, data_src, data_asset] {
         old_snapshot.insert(
             asset.into(),
             AssetSnapshot {
@@ -1992,8 +1994,8 @@ fn api_cutoff_generated_asset_stability_inheritance() -> io::Result<()> {
     let spec = plan
         .specs
         .iter()
-        .find(|spec| spec.instance.api_cutoff)
-        .expect("the factory spec opted in")
+        .find(|spec| spec.instance.api_cutoff && spec.input == "app|lib/input_00000.txt")
+        .expect("the factory spec on the fixture input opted in")
         .clone();
     state.actions.insert(
         spec.action_key(),
@@ -2040,10 +2042,38 @@ fn api_cutoff_generated_asset_stability_inheritance() -> io::Result<()> {
             },
         );
     }
+    // A third producer emits a generated non-Dart asset the first
+    // producer reads. It has no API fingerprint record anywhere:
+    // byte stability must not require one for an intermediate
+    // asset only a producer consumes.
+    let datagen = Arc::new(BuildAction {
+        instance: producer2.instance.clone(),
+        input: data_src.into(),
+        outputs: vec![data_asset.into()],
+    });
+    state.actions.insert(
+        datagen.action_key(),
+        ActionState {
+            builder: datagen.instance.builder.id.clone(),
+            input: datagen.input.clone(),
+            outputs: datagen.outputs.clone(),
+            resolver_entrypoints: vec![data_src.into()],
+            status: "success".into(),
+            ..ActionState::default()
+        },
+    );
+    state
+        .actions
+        .get_mut(&producer.action_key())
+        .expect("producer action recorded")
+        .reads = vec![data_asset.into()];
     let mut specs = plan.specs.clone();
     specs.push(producer);
     specs.push(producer2);
-    let generated: BTreeSet<String> = [gen_unit.to_owned(), gen2.to_owned()].into_iter().collect();
+    specs.push(datagen);
+    let generated: BTreeSet<String> = [gen_unit.to_owned(), gen2.to_owned(), data_asset.to_owned()]
+        .into_iter()
+        .collect();
     let changed_snapshot = |assets: &[&str]| {
         let mut snapshot = old_snapshot.clone();
         for asset in assets {
@@ -2151,6 +2181,19 @@ fn api_cutoff_generated_asset_stability_inheritance() -> io::Result<()> {
         assert!(
             assessment.is_none(),
             "a producer observing the change must block"
+        );
+        assert!(diagnostics.preflight_skipped);
+    }
+    // The non-Dart producer's input changed: its output's bytes
+    // are unstable, the first producer inherits that, and the
+    // waiver is blocked even though the changed file is not a
+    // Dart unit in any candidate closure.
+    {
+        let snapshot = changed_snapshot(&[lib2, data_src]);
+        let (assessment, diagnostics) = assess(&state, &snapshot);
+        assert!(
+            assessment.is_none(),
+            "a dirty non-Dart producer must block the waiver"
         );
         assert!(diagnostics.preflight_skipped);
     }
