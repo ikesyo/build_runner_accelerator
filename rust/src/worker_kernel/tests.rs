@@ -1,7 +1,9 @@
+use super::compile::link_sdk_bin;
+use super::lock::background_aot_lock_is_stale;
 use super::{
     ANALYSIS_PREWARM_ACTIVE, WorkerArtifact, acquire_background_aot_lock, analysis_prewarm_enabled,
-    background_aot_lock_is_stale, catch_worker_aot_panic, link_sdk_bin, parse_depfile_dependencies,
-    pinned_worker_artifact_is_current, spawn_analysis_prewarm,
+    catch_worker_aot_panic, parse_depfile_dependencies, pinned_worker_artifact_is_current,
+    spawn_analysis_prewarm,
 };
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -24,7 +26,7 @@ fn compiler_snapshot_keeps_prepared_roots_and_is_not_a_persistent_dependency() {
     let workspace = crate::workspace::Workspace::load(root.clone()).unwrap();
     // Simulate abrupt termination: Drop cannot clean up the file. A later
     // workspace must not discover it, even with all JSON files included.
-    let orphan = super::CompilerConfigSnapshot::create(&workspace).unwrap();
+    let orphan = super::compile::CompilerConfigSnapshot::create(&workspace).unwrap();
     let orphan_path = orphan.path.clone();
     #[cfg(unix)]
     {
@@ -79,7 +81,7 @@ fn compiler_snapshot_keeps_prepared_roots_and_is_not_a_persistent_dependency() {
         crate::runner_compatibility::package_config(&root).unwrap(),
         original_path
     );
-    let snapshot = super::CompilerConfigSnapshot::create(&workspace).unwrap();
+    let snapshot = super::compile::CompilerConfigSnapshot::create(&workspace).unwrap();
     let snapshot_path = snapshot.path.clone();
     assert_eq!(fs::read_to_string(&snapshot.path).unwrap(), original);
     let parsed: serde_json::Value = serde_json::from_str(original).unwrap();
@@ -88,13 +90,13 @@ fn compiler_snapshot_keeps_prepared_roots_and_is_not_a_persistent_dependency() {
         parsed["packages"][0]["rootUri"].as_str().unwrap(),
     );
     assert_eq!(
-        super::canonicalize(resolved).unwrap(),
-        super::canonicalize(root.join("first")).unwrap()
+        crate::workspace::canonicalize(resolved).unwrap(),
+        crate::workspace::canonicalize(root.join("first")).unwrap()
     );
     // Rewrites, including change-and-restore, never touch this snapshot.
     fs::write(&selector, original).unwrap();
     assert_eq!(fs::read_to_string(&snapshot.path).unwrap(), original);
-    let second = super::CompilerConfigSnapshot::create(&workspace).unwrap();
+    let second = super::compile::CompilerConfigSnapshot::create(&workspace).unwrap();
     assert_ne!(snapshot.path, second.path);
     let second_path = second.path.clone();
     drop(second);
@@ -120,7 +122,7 @@ fn compiler_snapshot_keeps_prepared_roots_and_is_not_a_persistent_dependency() {
         format!("out: {} {}\n", escape(&worker), escape(&snapshot.path)),
     )
     .unwrap();
-    let metadata = super::build_aot_metadata(
+    let metadata = super::shared_cache::build_aot_metadata(
         &workspace,
         &root.join("sdk"),
         &worker,
@@ -136,7 +138,7 @@ fn compiler_snapshot_keeps_prepared_roots_and_is_not_a_persistent_dependency() {
     assert!(!snapshot_path.exists());
     let metadata_path = root.join("worker.sdk");
     fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
-    assert!(super::aot_metadata_is_current(
+    assert!(super::shared_cache::aot_metadata_is_current(
         &artifact,
         &metadata_path,
         &workspace,
@@ -146,7 +148,7 @@ fn compiler_snapshot_keeps_prepared_roots_and_is_not_a_persistent_dependency() {
     ));
     let mut failed_path = None;
     let failed = (|| -> std::io::Result<()> {
-        let snapshot = super::CompilerConfigSnapshot::create(&workspace)?;
+        let snapshot = super::compile::CompilerConfigSnapshot::create(&workspace)?;
         failed_path = Some(snapshot.path.clone());
         Command::new(root.join("missing-compiler")).status()?;
         Ok(())
@@ -220,20 +222,20 @@ fn aot_key_tracks_lock_contents_through_manifest_and_rejects_read_errors() {
     let artifact = root.join("worker");
     fs::write(&artifact, "artifact").unwrap();
     let (sdk_version, allowed_experiments) = super::aot_sdk_identity(&root.join("sdk")).unwrap();
-    let mut metadata = super::AotMetadata {
-        format: super::AOT_METADATA_VERSION,
+    let mut metadata = super::shared_cache::AotMetadata {
+        format: super::shared_cache::AOT_METADATA_VERSION,
         cache_key: second.clone(),
         sdk_version,
         allowed_experiments,
         package_config: workspace.package_config_identity().into(),
-        worker: super::digest_file(&worker).unwrap(),
-        executable: super::digest_file(&artifact).unwrap(),
+        worker: super::shared_cache::digest_file(&worker).unwrap(),
+        executable: super::shared_cache::digest_file(&artifact).unwrap(),
         dependencies: Default::default(),
     };
     let metadata_path = root.join("worker.sdk");
     fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     let current = || {
-        super::aot_metadata_is_current(
+        super::shared_cache::aot_metadata_is_current(
             &artifact,
             &metadata_path,
             &workspace,
@@ -247,14 +249,14 @@ fn aot_key_tracks_lock_contents_through_manifest_and_rejects_read_errors() {
     fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     assert!(!current());
     let depfile = root.join("worker.d");
-    let dependency = super::canonicalize(&worker)
+    let dependency = crate::workspace::canonicalize(&worker)
         .unwrap()
         .to_string_lossy()
         .replace('\\', "\\\\")
         .replace(' ', "\\ ");
     fs::write(&depfile, format!("out: {dependency}\n")).unwrap();
     let build_metadata = || {
-        super::build_aot_metadata(
+        super::shared_cache::build_aot_metadata(
             &workspace,
             &root.join("sdk"),
             &worker,
@@ -313,8 +315,8 @@ fn cached_aot_validation_rejects_source_and_artifact_edits() {
     }
     let (sdk_version, allowed_experiments) = super::aot_sdk_identity(&root.join("sdk")).unwrap();
     let digest = crate::digest::digest_bytes(b"before");
-    let metadata = super::AotMetadata {
-        format: super::AOT_METADATA_VERSION,
+    let metadata = super::shared_cache::AotMetadata {
+        format: super::shared_cache::AOT_METADATA_VERSION,
         cache_key: "test".into(),
         sdk_version,
         allowed_experiments,
@@ -327,7 +329,7 @@ fn cached_aot_validation_rejects_source_and_artifact_edits() {
     };
     fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     let current = || {
-        super::aot_metadata_is_current(
+        super::shared_cache::aot_metadata_is_current(
             &artifact,
             &metadata_path,
             &workspace,
@@ -375,8 +377,8 @@ fn cached_aot_validation_rejects_source_and_artifact_edits() {
 }
 
 fn write_kernel_stamp(kernel: &std::path::Path, config_key: String) {
-    let stamp = super::KernelStamp {
-        format: super::KERNEL_STAMP_VERSION,
+    let stamp = super::shared_cache::KernelStamp {
+        format: super::shared_cache::KERNEL_STAMP_VERSION,
         config_key,
         sdk_version: String::new(),
         allowed_experiments: String::new(),
@@ -391,8 +393,8 @@ fn write_kernel_stamp(kernel: &std::path::Path, config_key: String) {
 }
 
 fn kernel_config_current(root: &std::path::Path, kernel: &std::path::Path) -> bool {
-    super::read_kernel_stamp(kernel)
-        .is_some_and(|stamp| super::kernel_stamp_config_is_current(root, &stamp))
+    super::shared_cache::read_kernel_stamp(kernel)
+        .is_some_and(|stamp| super::shared_cache::kernel_stamp_config_is_current(root, &stamp))
 }
 
 #[test]
@@ -404,11 +406,17 @@ fn kernel_stamp_rejects_changed_effective_configuration() {
     assert!(!kernel_config_current(&root, &kernel));
     let contents = r#"{"configVersion":2,"packages":[{"name":"dep","rootUri":"../dep/"}]}"#;
     fs::write(&config, contents).unwrap();
-    write_kernel_stamp(&kernel, super::kernel_package_config_key(&config).unwrap());
+    write_kernel_stamp(
+        &kernel,
+        super::shared_cache::kernel_package_config_key(&config).unwrap(),
+    );
     assert!(kernel_config_current(&root, &kernel));
     fs::remove_file(kernel.with_extension("dill.config")).unwrap();
     assert!(!kernel_config_current(&root, &kernel));
-    write_kernel_stamp(&kernel, super::kernel_package_config_key(&config).unwrap());
+    write_kernel_stamp(
+        &kernel,
+        super::shared_cache::kernel_package_config_key(&config).unwrap(),
+    );
     fs::write(&config, "experimental configuration").unwrap();
     assert!(!kernel_config_current(&root, &kernel));
     fs::write(&config, contents).unwrap();
@@ -452,12 +460,12 @@ fn kernel_stamp_tracks_isolated_configuration_in_child_process() {
     let stamp = kernel.with_extension("dill.config");
     write_kernel_stamp(
         &kernel,
-        super::kernel_package_config_key(&original).unwrap(),
+        super::shared_cache::kernel_package_config_key(&original).unwrap(),
     );
     assert!(!kernel_config_current(&root, &kernel));
     write_kernel_stamp(
         &kernel,
-        super::kernel_package_config_key(&isolated).unwrap(),
+        super::shared_cache::kernel_package_config_key(&isolated).unwrap(),
     );
     assert!(kernel_config_current(&root, &kernel));
     fs::write(original, "changed original").unwrap();
@@ -489,8 +497,8 @@ fn kernel_stamp_rejects_sdk_change_and_dependency_content_change() {
     }
     fs::write(root.join("worker.dart"), "worker").unwrap();
     fs::write(root.join("dep.dart"), "before").unwrap();
-    let worker = super::canonicalize(root.join("worker.dart")).unwrap();
-    let dep = super::canonicalize(root.join("dep.dart")).unwrap();
+    let worker = crate::workspace::canonicalize(root.join("worker.dart")).unwrap();
+    let dep = crate::workspace::canonicalize(root.join("dep.dart")).unwrap();
     let kernel = root.join("worker.dill");
     let depfile = root.join("worker.dill.d");
     fs::write(&kernel, "kernel").unwrap();
@@ -504,11 +512,11 @@ fn kernel_stamp_rejects_sdk_change_and_dependency_content_change() {
         format!("out: {} {}\n", escape(&worker), escape(&dep)),
     )
     .unwrap();
-    let key = super::kernel_package_config_key(&config).unwrap();
+    let key = super::shared_cache::kernel_package_config_key(&config).unwrap();
     // Inputs written after the compile started cannot be stamped: the
     // digest would describe bytes the compiler may never have read.
     assert!(
-        super::build_kernel_stamp(
+        super::shared_cache::build_kernel_stamp(
             &root,
             &root.join("sdk_a"),
             &kernel,
@@ -518,7 +526,7 @@ fn kernel_stamp_rejects_sdk_change_and_dependency_content_change() {
         )
         .is_err()
     );
-    let stamp = super::build_kernel_stamp(
+    let stamp = super::shared_cache::build_kernel_stamp(
         &root,
         &root.join("sdk_a"),
         &kernel,
@@ -533,7 +541,13 @@ fn kernel_stamp_rejects_sdk_change_and_dependency_content_change() {
     )
     .unwrap();
     let current = |sdk: &str| {
-        super::kernel_stamp_is_current(&root, &root.join(sdk), &kernel, &depfile, &worker)
+        super::shared_cache::kernel_stamp_is_current(
+            &root,
+            &root.join(sdk),
+            &kernel,
+            &depfile,
+            &worker,
+        )
     };
     assert!(current("sdk_a"));
     // A kernel compiled by another SDK must not be reused: its format
@@ -845,7 +859,7 @@ fn aot_wait_retries_share_the_deadline() {
         r#"{"configVersion":2,"packages":[]}"#,
     )
     .unwrap();
-    let context = super::AotContext {
+    let context = super::compile::AotContext {
         workspace: crate::workspace::Workspace::load(root.clone()).unwrap(),
         sdk_root: root.join("sdk"),
         worker_path: root.join("worker.dart"),
@@ -871,7 +885,7 @@ fn aot_wait_retries_share_the_deadline() {
     let deadline = std::time::Instant::now();
     for _ in 0..2 {
         assert!(
-            super::wait_for_aot_winner(&context, &lock_path, deadline)
+            super::lock::wait_for_aot_winner(&context, &lock_path, deadline)
                 .unwrap()
                 .is_none()
         );

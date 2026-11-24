@@ -35,17 +35,6 @@ use policy::{
 };
 use shared_cache::{kernel_stamp_is_current, restore_shared_aot};
 
-#[cfg(test)]
-use compile::{AotContext, CompilerConfigSnapshot, link_sdk_bin};
-#[cfg(test)]
-use lock::{background_aot_lock_is_stale, wait_for_aot_winner};
-#[cfg(test)]
-use shared_cache::{
-    AOT_METADATA_VERSION, AotMetadata, KERNEL_STAMP_VERSION, KernelStamp, aot_metadata_is_current,
-    build_aot_metadata, build_kernel_stamp, digest_file, kernel_package_config_key,
-    kernel_stamp_config_is_current, read_kernel_stamp,
-};
-
 use crate::workspace::{Workspace, canonicalize};
 use std::env;
 use std::fs;
