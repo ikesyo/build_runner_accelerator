@@ -2062,9 +2062,10 @@ fn api_cutoff_generated_asset_stability_inheritance() -> io::Result<()> {
             ..ActionState::default()
         },
     );
+    let producer_key = producer.action_key();
     state
         .actions
-        .get_mut(&producer.action_key())
+        .get_mut(&producer_key)
         .expect("producer action recorded")
         .reads = vec![data_asset.into()];
     let mut specs = plan.specs.clone();
@@ -2194,6 +2195,48 @@ fn api_cutoff_generated_asset_stability_inheritance() -> io::Result<()> {
         assert!(
             assessment.is_none(),
             "a dirty non-Dart producer must block the waiver"
+        );
+        assert!(diagnostics.preflight_skipped);
+    }
+    // A changed generated asset is a seed: the candidate observes
+    // only gen2, and gen_unit reaches it solely as gen2's producer
+    // input, so the seed's instability must propagate to gen2.
+    {
+        let mut state = state.clone();
+        state
+            .resolver_dep_graph
+            .insert(entry.into(), vec![gen2.into(), lib2.into()]);
+        let snapshot = changed_snapshot(&[lib2, gen_unit]);
+        let (assessment, diagnostics) = assess(&state, &snapshot);
+        assert!(
+            assessment.is_none(),
+            "a changed generated asset must poison its consumers"
+        );
+        assert!(diagnostics.preflight_skipped);
+        assert_eq!(
+            diagnostics
+                .evaluate
+                .values()
+                .map(|counts| counts.generated_asset)
+                .sum::<usize>(),
+            1
+        );
+    }
+    // A producer cycle has no grounding proof: each producer
+    // consumes the other's output, neither channel is dirty, and
+    // the waiver must still be blocked.
+    {
+        let mut state = state.clone();
+        state
+            .actions
+            .get_mut(&producer_key)
+            .expect("producer action recorded")
+            .reads = vec![gen2.into()];
+        let snapshot = changed_snapshot(&[lib2]);
+        let (assessment, diagnostics) = assess(&state, &snapshot);
+        assert!(
+            assessment.is_none(),
+            "a producer cycle must block the waiver"
         );
         assert!(diagnostics.preflight_skipped);
     }

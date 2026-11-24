@@ -520,10 +520,17 @@ fn unstable_generated_assets(
     let bound = bound_fingerprints(state);
     let mut producers: BTreeMap<&str, &BuildSpec> = BTreeMap::new();
     let mut phases: BTreeMap<&str, u32> = BTreeMap::new();
+    // Glob reads observe a set that can gain members from actions
+    // planned for the first time in this build (an added input
+    // creating an earlier-phase action), so glob propagation
+    // edges are built over declared outputs as well as the
+    // recorded ones in `generated`.
+    let mut glob_universe: BTreeSet<String> = generated.clone();
     for spec in specs {
         for output in &spec.outputs {
             producers.entry(output.as_str()).or_insert(spec);
             phases.entry(output.as_str()).or_insert(spec.instance.phase);
+            glob_universe.insert(output.clone());
         }
     }
     // Byte stability is a least fixpoint over the producer
@@ -558,7 +565,8 @@ fn unstable_generated_assets(
             continue;
         }
         specs_by_key.insert(key.clone(), spec);
-        let consumed = producer_consumed_assets(state, spec, generated, &phases, recorded);
+        let consumed =
+            producer_consumed_assets(state, spec, generated, &glob_universe, &phases, recorded);
         for member in &consumed {
             consumers_of
                 .entry(member.clone())
@@ -588,12 +596,26 @@ fn unstable_generated_assets(
             asset_queue.extend(spec.outputs.iter().cloned());
         }
     }
+    // A cycle in the producer consumption graph has no grounding
+    // proof (ADR 0056), so producers on a multi-producer cycle
+    // are seeded dirty even when no channel fires. A producer
+    // observing its own output cannot form such an edge: own
+    // outputs are exempt from the consumed sets.
+    for key in producer_cycle_members(&consumed_by, &producers) {
+        if dirty_producers.insert(key.clone()) {
+            asset_queue.extend(specs_by_key[key.as_str()].outputs.iter().cloned());
+        }
+    }
     // Propagation: an unstable asset dirties its consumers; a
-    // dirty producer's outputs are unstable.
+    // dirty producer's outputs are unstable. Visited is tracked
+    // separately from the unstable set: seed assets are already
+    // in the set, and their consumers still need visiting.
+    let mut visited: BTreeSet<String> = BTreeSet::new();
     while let Some(asset) = asset_queue.pop() {
-        if !unstable_assets.insert(asset.clone()) {
+        if !visited.insert(asset.clone()) {
             continue;
         }
+        unstable_assets.insert(asset.clone());
         let Some(consumers) = consumers_of.get(&asset) else {
             continue;
         };
@@ -685,6 +707,7 @@ fn producer_consumed_assets(
     state: &GraphState,
     spec: &BuildSpec,
     generated: &BTreeSet<String>,
+    glob_universe: &BTreeSet<String>,
     phases: &BTreeMap<&str, u32>,
     recorded: &GraphView<'_>,
 ) -> Vec<String> {
@@ -708,7 +731,7 @@ fn producer_consumed_assets(
         }
     }
     for glob in &action.glob_reads {
-        for asset in generated {
+        for asset in glob_universe {
             if glob_matches(glob, asset)
                 && !own_outputs.contains(asset.as_str())
                 && phases
@@ -720,6 +743,88 @@ fn producer_consumed_assets(
         }
     }
     consumed.into_iter().collect()
+}
+
+/// Producers sitting on a multi-producer cycle of the
+/// consumption graph (producer -> producers of the generated
+/// assets it consumes), by Kosaraju's algorithm over the
+/// subgraph's producers. Single-producer components are not
+/// cycles: own outputs never appear in consumed sets, so no
+/// self-edge exists.
+fn producer_cycle_members(
+    consumed_by: &BTreeMap<String, Vec<String>>,
+    producers: &BTreeMap<&str, &BuildSpec>,
+) -> Vec<String> {
+    // Edges between producer action keys.
+    let mut edges: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    let mut reverse: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (key, consumed) in consumed_by {
+        let mut targets: Vec<String> = Vec::new();
+        for asset in consumed {
+            if let Some(other) = producers.get(asset.as_str()) {
+                let other_key = other.action_key();
+                if other_key != *key {
+                    targets.push(other_key);
+                }
+            }
+        }
+        targets.sort();
+        targets.dedup();
+        edges.insert(key.as_str(), targets);
+    }
+    for (key, targets) in &edges {
+        for target in targets {
+            reverse.entry(target.as_str()).or_default().push(key);
+        }
+    }
+    // First pass: finishing order by iterative DFS.
+    let mut finished: Vec<&str> = Vec::new();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for start in edges.keys() {
+        if !seen.insert(start) {
+            continue;
+        }
+        let mut stack: Vec<(&str, usize)> = vec![(start, 0)];
+        while let Some((node, index)) = stack.last_mut() {
+            let node = *node;
+            let targets = &edges[node];
+            if *index < targets.len() {
+                let next = targets[*index].as_str();
+                *index += 1;
+                if seen.insert(next) {
+                    stack.push((next, 0));
+                }
+            } else {
+                finished.push(node);
+                stack.pop();
+            }
+        }
+    }
+    // Second pass: components on the reversed graph, in reverse
+    // finishing order.
+    let mut assigned: BTreeSet<&str> = BTreeSet::new();
+    let mut members: Vec<String> = Vec::new();
+    for start in finished.iter().rev() {
+        if !assigned.insert(start) {
+            continue;
+        }
+        let mut component: Vec<&str> = vec![start];
+        let mut stack: Vec<&str> = vec![start];
+        while let Some(node) = stack.pop() {
+            if let Some(parents) = reverse.get(node) {
+                for parent in parents {
+                    if assigned.insert(parent) {
+                        component.push(parent);
+                        stack.push(parent);
+                    }
+                }
+            }
+        }
+        if component.len() > 1 {
+            members.extend(component.iter().map(|key| (*key).to_owned()));
+        }
+    }
+    members
 }
 
 fn glob_matches(glob: &crate::protocol::GlobRead, asset: &str) -> bool {
