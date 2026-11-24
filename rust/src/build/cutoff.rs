@@ -383,8 +383,15 @@ pub(super) fn assess(
     // only the unstable ones (no bound fingerprint record, or a
     // producer that cannot be proven idle in this build) keep
     // blocking. The rest fold with their recorded fingerprint.
-    let unstable_generated =
-        unstable_generated_assets(state, specs, &changed_set, generated, &closure, &recorded);
+    let unstable_generated = unstable_generated_assets(
+        state,
+        specs,
+        &changed_set,
+        tainted,
+        generated,
+        &closure,
+        &recorded,
+    );
     // Preflight skip: when every candidate's recorded closure
     // already reaches an unstable generated or deleted/appeared
     // unit, the recorded graph alone proves evaluation would
@@ -480,6 +487,7 @@ fn unstable_generated_assets(
     state: &GraphState,
     specs: &[BuildSpec],
     changed: &BTreeSet<String>,
+    tainted: &std::collections::HashSet<&str>,
     generated: &BTreeSet<String>,
     closure: &BTreeSet<String>,
     recorded: &GraphView<'_>,
@@ -500,22 +508,27 @@ fn unstable_generated_assets(
     }
     let bound = bound_fingerprints(state);
     let mut producers: BTreeMap<&str, &BuildSpec> = BTreeMap::new();
+    let mut phases: BTreeMap<&str, u32> = BTreeMap::new();
     for spec in specs {
         for output in &spec.outputs {
             producers.entry(output.as_str()).or_insert(spec);
+            phases.entry(output.as_str()).or_insert(spec.instance.phase);
         }
     }
     let mut stability = GeneratedStability {
         state,
         changed,
+        tainted,
         generated,
         bound: &bound,
         producers: &producers,
+        phases: &phases,
         recorded,
         asset_verdicts: BTreeMap::new(),
         producer_verdicts: BTreeMap::new(),
         assets_in_progress: BTreeSet::new(),
         producers_in_progress: BTreeSet::new(),
+        closure_cache: BTreeMap::new(),
     };
     relevant
         .iter()
@@ -531,14 +544,26 @@ fn unstable_generated_assets(
 struct GeneratedStability<'a> {
     state: &'a GraphState,
     changed: &'a BTreeSet<String>,
+    /// Units whose recorded resolver closure reaches a changed
+    /// unit (the dirty context's reverse taint, computed once per
+    /// build): a producer with a tainted resolver root observes
+    /// the change and can rerun.
+    tainted: &'a std::collections::HashSet<&'a str>,
     generated: &'a BTreeSet<String>,
     bound: &'a BTreeMap<String, String>,
     producers: &'a BTreeMap<&'a str, &'a BuildSpec>,
+    /// Producing phase per generated asset, for glob visibility.
+    phases: &'a BTreeMap<&'a str, u32>,
     recorded: &'a GraphView<'a>,
     asset_verdicts: BTreeMap<String, bool>,
     producer_verdicts: BTreeMap<String, bool>,
     assets_in_progress: BTreeSet<String>,
     producers_in_progress: BTreeSet<String>,
+    /// Forward closures per resolver root, shared across
+    /// producers: only the generated members of a closure feed
+    /// the cascade, and producers on wide fan-out shapes share
+    /// most of their roots' subgraphs through this cache's roots.
+    closure_cache: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl GeneratedStability<'_> {
@@ -607,14 +632,24 @@ impl GeneratedStability<'_> {
         // content checks above, which already key on the outputs.
         let own_outputs: BTreeSet<&str> = action.outputs.iter().map(String::as_str).collect();
         for glob in &action.glob_reads {
-            let changed_matches = self.changed.iter().any(|asset| glob_matches(glob, asset));
+            // A glob only sees sources and earlier-phase outputs
+            // (the visibility rule glob dirty expansion uses), so
+            // a changed or generated asset from the producer's own
+            // phase or a later one cannot be a member.
+            let changed_matches = self.changed.iter().any(|asset| {
+                glob_matches(glob, asset) && self.glob_visible(spec.instance.phase, asset)
+            });
             if changed_matches {
                 return false;
             }
             let generated_members: Vec<String> = self
                 .generated
                 .iter()
-                .filter(|asset| glob_matches(glob, asset) && !own_outputs.contains(asset.as_str()))
+                .filter(|asset| {
+                    glob_matches(glob, asset)
+                        && !own_outputs.contains(asset.as_str())
+                        && self.glob_visible(spec.instance.phase, asset)
+                })
                 .cloned()
                 .collect();
             if !generated_members
@@ -625,20 +660,24 @@ impl GeneratedStability<'_> {
             }
         }
         // Resolver channel: the producer reruns if anything its
-        // resolver observations reach has changed.
+        // resolver observations reach has changed. The dirty
+        // context's taint is exactly the set of units whose
+        // recorded closure reaches a change, computed once for
+        // the whole build, so this check is a root lookup rather
+        // than another closure walk per producer.
         let roots: Vec<String> = action
             .resolver_entrypoints
             .iter()
             .cloned()
             .chain(action.resolver_reads.iter().cloned())
             .collect();
-        let closure = forward_closure(self.recorded, &roots);
-        if closure
+        if roots
             .iter()
-            .any(|asset| self.changed.contains(asset.as_str()))
+            .any(|root| self.tainted.contains(root.as_str()))
         {
             return false;
         }
+        let closure = self.closure_of(&roots);
         // Cascade: a generated unit the producer consumes (as its
         // input, a direct read, or through the resolver) is
         // regenerated before the producer whenever its own
@@ -655,6 +694,34 @@ impl GeneratedStability<'_> {
             .cloned()
             .collect();
         consumed.iter().all(|asset| self.asset_stable(asset))
+    }
+
+    /// Whether a glob evaluated for an action in `phase` can see
+    /// `asset`: sources are always visible; a generated asset is
+    /// visible only when its producer runs in an earlier phase.
+    /// A generated asset with no producer in the current plan is
+    /// treated as visible (conservative).
+    fn glob_visible(&self, phase: u32, asset: &str) -> bool {
+        if !self.generated.contains(asset) {
+            return true;
+        }
+        self.phases
+            .get(asset)
+            .is_none_or(|member_phase| *member_phase < phase)
+    }
+
+    /// The forward closure of `roots` over the recorded graph,
+    /// sharing per-root walks across producers through the cache.
+    fn closure_of(&mut self, roots: &[String]) -> BTreeSet<String> {
+        let mut closure = BTreeSet::new();
+        for root in roots {
+            if !self.closure_cache.contains_key(root) {
+                let walked = forward_closure(self.recorded, std::slice::from_ref(root));
+                self.closure_cache.insert(root.clone(), walked);
+            }
+            closure.extend(self.closure_cache[root].iter().cloned());
+        }
+        closure
     }
 }
 

@@ -2154,6 +2154,31 @@ fn api_cutoff_generated_asset_stability_inheritance() -> io::Result<()> {
         );
         assert!(diagnostics.preflight_skipped);
     }
+    // Cascade isolation: the candidate observes only gen2, and
+    // gen_unit reaches it solely as gen2's producer input. Changing
+    // gen_unit's producer input must still block, purely through
+    // gen2's inherited instability.
+    {
+        let mut state = state.clone();
+        state
+            .resolver_dep_graph
+            .insert(entry.into(), vec![gen2.into(), lib2.into()]);
+        let snapshot = changed_snapshot(&[lib2, src]);
+        let (assessment, diagnostics) = assess(&state, &snapshot);
+        assert!(
+            assessment.is_none(),
+            "instability must cascade from gen_unit to gen2"
+        );
+        assert!(diagnostics.preflight_skipped);
+        assert_eq!(
+            diagnostics
+                .evaluate
+                .values()
+                .map(|counts| counts.generated_asset)
+                .sum::<usize>(),
+            1
+        );
+    }
     // The producer observing its own previous output through the
     // input library (the part is a member of the library it is
     // generated from) is a self-reference, not a cascade: the
