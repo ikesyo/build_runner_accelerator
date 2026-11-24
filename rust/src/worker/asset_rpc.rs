@@ -6,7 +6,7 @@ use crate::plan::BuildSpec;
 use crate::protocol::{BINARY_ASSET_RESPONSE_MAGIC, MAX_FRAME_LENGTH};
 use crate::visibility::AssetVisibility;
 use crate::worker::LazyBuildState;
-use crate::workspace::{Workspace, glob_candidates, matches_glob};
+use crate::workspace::{Workspace, asset_matches_glob, glob_candidates};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -240,11 +240,7 @@ impl WorkerClient {
                     .collect();
                 candidates.extend(
                     glob_candidates(overlay, package, pattern)
-                        .filter(|asset| {
-                            asset.split_once('|').is_some_and(|(pkg, path)| {
-                                pkg == package && matches_glob(pattern, path)
-                            })
-                        })
+                        .filter(|asset| asset_matches_glob(asset, package, pattern))
                         .cloned(),
                 );
                 let mut assets = Vec::new();

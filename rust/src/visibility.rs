@@ -113,11 +113,8 @@ impl AssetVisibility {
         package: &'a str,
         pattern: &'a str,
     ) -> impl Iterator<Item = &'a String> {
-        crate::workspace::glob_candidates(&self.locations, package, pattern).filter(move |asset| {
-            asset.split_once('|').is_some_and(|(pkg, path)| {
-                pkg == package && crate::workspace::matches_glob(pattern, path)
-            })
-        })
+        crate::workspace::glob_candidates(&self.locations, package, pattern)
+            .filter(move |asset| crate::workspace::asset_matches_glob(asset, package, pattern))
     }
 
     /// Returns the logical assets hidden from an action at [phase].

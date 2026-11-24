@@ -1020,6 +1020,13 @@ pub(crate) fn glob_candidates<'a, V>(
         .take_while(move |asset| asset.starts_with(&prefix))
 }
 
+/// Matches a logical `package|path` asset id against a package and path glob.
+pub(crate) fn asset_matches_glob(asset: &str, package: &str, pattern: &str) -> bool {
+    asset.split_once('|').is_some_and(|(asset_package, path)| {
+        asset_package == package && matches_glob(pattern, path)
+    })
+}
+
 fn matches_non_recursive_glob(pattern: &str, path: &str) -> bool {
     let mut pattern_segments = pattern.split('/');
     let mut path_segments = path.split('/');
@@ -1119,7 +1126,10 @@ fn segment_matches(pattern: &str, value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_files, glob_candidates, glob_literal_prefix, lower_bound, matches_glob};
+    use super::{
+        asset_matches_glob, collect_files, glob_candidates, glob_literal_prefix, lower_bound,
+        matches_glob,
+    };
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1415,6 +1425,27 @@ mod tests {
             before
         );
         assert_eq!(glob_candidates(&assets, "app", "**").count(), 5);
+    }
+
+    #[test]
+    fn asset_matches_glob_checks_package_path_and_separator() {
+        assert!(asset_matches_glob(
+            "app|lib/src/model.dart",
+            "app",
+            "lib/**/*.dart"
+        ));
+        assert!(!asset_matches_glob(
+            "other|lib/src/model.dart",
+            "app",
+            "lib/**/*.dart"
+        ));
+        assert!(!asset_matches_glob(
+            "app|lib/src/model.txt",
+            "app",
+            "lib/**/*.dart"
+        ));
+        assert!(!asset_matches_glob("lib/src/model.dart", "app", "**"));
+        assert!(asset_matches_glob("app|lib/a|b.dart", "app", "lib/*.dart"));
     }
 
     #[test]
