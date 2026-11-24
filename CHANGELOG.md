@@ -1,5 +1,32 @@
 # Changelog
 
+## [v0.20.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.5...v0.20.0) - 2026-11-24
+
+### Features
+- feat: API-signature early cutoff (ADR 0056) stage 1: fingerprint module by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/202
+- feat: API-signature early cutoff (ADR 0056) stage 2: recording by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/204
+- feat: API-signature early cutoff (ADR 0056) stage 3: opt-in plumbing by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/205
+- feat: API-signature early cutoff (ADR 0056) stage 4: preflight and dirty classification by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/217
+- feat: cutoff diagnostics counters in the metrics output by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/223
+- feat: inherit producer stability for generated assets in the API cutoff by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/227
+### Bug Fixes
+- fix: preserve applied builder input filters and workspace compatibility by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/206
+- fix: resolve Pub config from workspace members by @justin-jobvalley in https://github.com/ikesyo/build_runner_accelerator/pull/215
+- fix: refresh watch roots after Pub resolution changes by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/216
+### Performance
+- perf: memoize API fingerprint learning in the dep walk by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/211
+- perf: learn API fingerprints only for API-cutoff actions by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/212
+- perf: key fingerprint learning by the frontend digest by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/213
+- perf: start cold one-shot builds on a kernel worker by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/218
+- perf: skip the API cutoff preflight when every candidate is proven blocked by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/225
+- perf: rebalance CI lanes and defer the interior dependency-window case by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/228
+### Documentation
+- docs: move the ADR 0056 follow-up measurements to a benchmark note by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/226
+### Other Changes
+- test: differential validation harness for the API cutoff (ADR 0056 stage 5) by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/221
+- test: fan-out benchmark and user docs for the API cutoff (ADR 0056 stage 6) by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/222
+- test: generated-part fixture and correctness harness for the API cutoff by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/224
+
 ## [v0.19.5](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.4...v0.19.5) - 2026-11-16
 
 ### Performance
