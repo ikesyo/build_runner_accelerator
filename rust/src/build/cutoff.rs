@@ -15,11 +15,13 @@
 //! asset in the closure, or a generated asset whose producer cannot
 //! be proven stable) leaves the action content-keyed.
 
+use crate::digest::bare_digest;
 use crate::graph::{DirtyContext, GraphState};
 use crate::plan::BuildSpec;
 use crate::protocol::ApiFingerprintRecord;
 use crate::snapshot::Snapshot;
 use crate::worker::ApiUnitEvidence;
+use crate::workspace::asset_matches_glob;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// The outcome of a stage 4 preflight: the actions whose resolver
@@ -28,12 +30,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub(super) struct CutoffEvidence {
     pub(super) clean_actions: BTreeSet<String>,
     pub(super) learned: BTreeMap<String, Option<ApiFingerprintRecord>>,
-}
-
-/// The bare BLAKE3 hex of a snapshot digest, which carries a `b3-`
-/// prefix unlike the digests workers report.
-fn bare_digest(digest: &str) -> &str {
-    digest.strip_prefix("b3-").unwrap_or(digest)
 }
 
 /// A preflight plan: the units to ask a worker about, and the
@@ -695,7 +691,7 @@ fn producer_seed_dirty(
             return true;
         }
         if changed.iter().any(|asset| {
-            glob_matches(glob, asset)
+            asset_matches_glob(asset, &glob.package, &glob.pattern)
                 && (!inputs.generated.contains(asset)
                     || phases
                         .get(asset.as_str())
@@ -763,7 +759,7 @@ fn producer_consumed_assets(
     }
     for glob in &action.glob_reads {
         for asset in universe {
-            if glob_matches(glob, asset)
+            if asset_matches_glob(asset, &glob.package, &glob.pattern)
                 && !own_outputs.contains(asset.as_str())
                 && phases
                     .get(asset.as_str())
@@ -856,12 +852,6 @@ fn producer_cycle_members(
         }
     }
     members
-}
-
-fn glob_matches(glob: &crate::protocol::GlobRead, asset: &str) -> bool {
-    asset.split_once('|').is_some_and(|(package, path)| {
-        package == glob.package && crate::workspace::matches_glob(&glob.pattern, path)
-    })
 }
 
 /// The recorded fingerprints that are baseline evidence for this

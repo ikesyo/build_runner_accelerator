@@ -8,6 +8,12 @@ pub fn digest_bytes(bytes: &[u8]) -> String {
     digest
 }
 
+/// The bare BLAKE3 hex of a snapshot digest, which carries a `b3-`
+/// prefix unlike the digests workers report.
+pub(crate) fn bare_digest(digest: &str) -> &str {
+    digest.strip_prefix("b3-").unwrap_or(digest)
+}
+
 /// The manifest emitter's worker-source identity is a separate Rust/Dart
 /// contract, not an internal cache digest. Keep matching workerSourceDigest
 /// in lib/src/manifest/emitter.dart. This is not a security authenticator.
@@ -26,7 +32,7 @@ pub(crate) fn fnv1a_64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::digest_bytes;
+    use super::{bare_digest, digest_bytes};
 
     #[test]
     fn digest_is_deterministic_and_content_sensitive() {
@@ -37,6 +43,17 @@ mod tests {
             digest_bytes(b""),
             "b3-af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
         );
+    }
+
+    #[test]
+    fn bare_digest_strips_b3_prefix_only() {
+        assert_eq!(
+            bare_digest(&digest_bytes(b"")),
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+        );
+        assert_eq!(bare_digest("b3-aaaa"), "aaaa");
+        assert_eq!(bare_digest("aaaa"), "aaaa");
+        assert_eq!(bare_digest("b3-b3-aaaa"), "b3-aaaa");
     }
 
     #[test]

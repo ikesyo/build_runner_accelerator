@@ -727,10 +727,11 @@ fn expand_with_source_changes(
             if let Some(source_phase) = impact.glob_phase {
                 dependent_keys.extend(glob_dependents.iter().filter_map(|(key, phase, glob)| {
                     (source_phase < *phase
-                        && output.split_once('|').is_some_and(|(package, path)| {
-                            package == glob.package
-                                && crate::workspace::matches_glob(&glob.pattern, path)
-                        }))
+                        && crate::workspace::asset_matches_glob(
+                            output,
+                            &glob.package,
+                            &glob.pattern,
+                        ))
                     .then_some(*key)
                 }));
             }

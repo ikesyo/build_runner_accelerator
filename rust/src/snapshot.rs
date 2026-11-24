@@ -1,4 +1,4 @@
-use crate::digest::digest_bytes;
+use crate::digest::{bare_digest, digest_bytes};
 use crate::protocol::GlobRead;
 use crate::workspace::Workspace;
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,16 +29,7 @@ pub fn asset_digests(
                 && !declared_outputs.contains(*asset)
                 && !crate::placeholders::is_placeholder_asset(asset)
         })
-        .map(|(asset, entry)| {
-            (
-                asset.clone(),
-                entry
-                    .digest
-                    .strip_prefix("b3-")
-                    .unwrap_or(&entry.digest)
-                    .to_owned(),
-            )
-        })
+        .map(|(asset, entry)| (asset.clone(), bare_digest(&entry.digest).to_owned()))
         .collect()
 }
 

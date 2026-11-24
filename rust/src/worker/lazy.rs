@@ -11,7 +11,7 @@ use crate::protocol::{
     decode_build_result_frame,
 };
 use crate::visibility::AssetVisibility;
-use crate::workspace::{Workspace, glob_candidates, matches_glob};
+use crate::workspace::{Workspace, asset_matches_glob, glob_candidates};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
@@ -41,11 +41,7 @@ fn filtered_glob_members(
     candidates.extend(visibility.generated_assets(package, pattern).cloned());
     candidates.extend(
         glob_candidates(overlay, package, pattern)
-            .filter(|asset| {
-                asset
-                    .split_once('|')
-                    .is_some_and(|(pkg, path)| pkg == package && matches_glob(pattern, path))
-            })
+            .filter(|asset| asset_matches_glob(asset, package, pattern))
             .cloned(),
     );
     let mut sources = Vec::new();
@@ -1027,11 +1023,8 @@ impl WorkerClient {
                     .and_then(Value::as_str)
                     .unwrap_or("**");
                 let candidates = glob_candidates(lazy_specs, package, pattern)
-                    .filter_map(|asset| {
-                        let (asset_package, asset_path) = asset.split_once('|')?;
-                        (asset_package == package && matches_glob(pattern, asset_path))
-                            .then_some(asset.clone())
-                    })
+                    .filter(|asset| asset_matches_glob(asset, package, pattern))
+                    .cloned()
                     .collect::<Vec<_>>();
                 for asset in candidates {
                     if lazy.filtered_previous.is_none()
@@ -1461,11 +1454,7 @@ impl FilteredExecution<'_> {
                     for glob in &previous.glob_reads {
                         let candidates: Vec<String> = lazy_specs
                             .keys()
-                            .filter(|asset| {
-                                asset.split_once('|').is_some_and(|(package, path)| {
-                                    package == glob.package && matches_glob(&glob.pattern, path)
-                                })
-                            })
+                            .filter(|asset| asset_matches_glob(asset, &glob.package, &glob.pattern))
                             .cloned()
                             .collect();
                         for asset in candidates {
