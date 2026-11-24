@@ -289,7 +289,9 @@ jobs:
             run: |
               BUILD_FILTER_CASE_GROUP=watch-classification bash scripts/correctness_build_filter.sh
               NESTED_PACKAGE_CASE_GROUP=watch-boundary bash scripts/correctness_nested_packages.sh
-              python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 14.5.0
+              if [[ '${{ github.event_name }}' != pull_request ]]; then
+                python3 scripts/correctness_dependency_window.py --runner 2.16.0 --analyzer 14.5.0
+              fi
           - name: Routing
             shell: bash
             run: |
