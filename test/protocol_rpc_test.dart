@@ -52,6 +52,21 @@ void main() {
     expect(await reader.next(), isNull);
   });
 
+  test('returned assets survive reuse of a drained receive buffer', () async {
+    final asset = List.generate(128, (index) => index);
+    final next = {'type': 'next', 'value': 'é' * 70};
+    final reader = FrameReader(
+      Stream.fromIterable([
+        Uint8List.fromList(_assetFrame(asset)),
+        Uint8List.fromList(_frame(utf8.encode(jsonEncode(next)))),
+      ]),
+    );
+
+    final binary = (await reader.next())!;
+    expect(await reader.next(), next);
+    expect(binary['bytes'], asset);
+  });
+
   test('distinguishes a clean EOF from invalid frame boundaries', () async {
     expect(await FrameReader(Stream.value(<int>[])).next(), isNull);
     final frame = _frame(utf8.encode('{"type":"message"}'));
