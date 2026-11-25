@@ -1,4 +1,5 @@
 mod assets;
+mod atomic_file;
 mod build;
 mod build_filter;
 mod builder;

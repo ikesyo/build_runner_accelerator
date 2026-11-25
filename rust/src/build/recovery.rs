@@ -1,6 +1,6 @@
 //! Undo journal for the publication boundary. The workspace writer lock must
 //! cover preparation, publication, and recovery. No fsync/power-loss promise.
-use crate::assets::write_atomic;
+use crate::atomic_file::write_atomic;
 use crate::digest::digest_bytes;
 use crate::graph::GraphState;
 use serde::{Deserialize, Serialize};
