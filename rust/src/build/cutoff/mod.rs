@@ -448,11 +448,6 @@ pub(super) fn evaluate(
     // Folds are per-unit values: compute them once per view over the
     // union of all candidates' roots instead of re-walking the
     // shared dependency tree (and re-hashing it) for every action.
-    let queried: BTreeSet<&str> = assessment
-        .query
-        .iter()
-        .map(|(asset, _)| asset.as_str())
-        .collect();
     let all_roots: Vec<String> = assessment
         .candidates
         .iter()
