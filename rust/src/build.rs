@@ -332,6 +332,7 @@ pub(crate) fn run_with_config_session(
     // dirty analysis can waive actions whose effective signature is
     // unchanged. A pool started here is handed to execution below, so
     // the preflight worker stays on as a build worker.
+    let mut cached_asset_digests = None;
     let (cutoff_evidence, cutoff_pool) = prepare_cutoff(
         options,
         &workspace,
@@ -344,6 +345,7 @@ pub(crate) fn run_with_config_session(
         has_shared_parts,
         retained_output_guard,
         pool.as_deref_mut(),
+        &mut cached_asset_digests,
     )?;
     let mut cutoff_pool = cutoff_pool;
     let dirty = crate::wall::Span::new("dirty_check");
@@ -432,11 +434,9 @@ pub(crate) fn run_with_config_session(
     }
 
     let executing = crate::wall::Span::new("execution");
-    let declared_outputs: std::collections::BTreeSet<String> = plan
-        .specs
-        .iter()
-        .flat_map(|spec| spec.outputs.iter().cloned())
-        .collect();
+    let asset_digests = cached_asset_digests.unwrap_or_else(|| {
+        crate::snapshot::asset_digests(&current_snapshot, &plan.expected_outputs())
+    });
     let execution_pool: Option<&mut WorkerPool> = match (pool, cutoff_pool.as_mut()) {
         (Some(existing), _) => Some(existing),
         (None, Some(started)) => Some(started),
@@ -453,7 +453,7 @@ pub(crate) fn run_with_config_session(
             plan: &plan,
             dirty_plan,
             retained_output_guard,
-            asset_digests: crate::snapshot::asset_digests(&current_snapshot, &declared_outputs),
+            asset_digests,
         },
     )?;
     drop(executing);
@@ -481,15 +481,8 @@ pub(crate) fn run_with_config_session(
             .into_iter()
             .map(|asset| (crate::builder::BuildTo::Source, asset)),
     );
-    let mut generated_assets: std::collections::BTreeSet<String> =
-        state.output_locations.keys().cloned().collect();
+    let mut generated_assets = state.recorded_generated_assets();
     generated_assets.extend(state.watch_generated_sources.iter().cloned());
-    generated_assets.extend(
-        state
-            .actions
-            .values()
-            .flat_map(|action| action.outputs.iter().cloned()),
-    );
     generated_assets.extend(expected_outputs.iter().cloned());
     let committing = crate::wall::Span::new("commit");
     let graph_metrics = commit::commit(
@@ -556,6 +549,7 @@ fn prepare_cutoff(
     has_shared_parts: bool,
     retained_output_guard: bool,
     pool: Option<&mut WorkerPool>,
+    cached_asset_digests: &mut Option<std::collections::BTreeMap<String, String>>,
 ) -> io::Result<(Option<cutoff::CutoffEvidence>, Option<WorkerPool>)> {
     if options.api_cutoff.is_empty()
         || options.settings.only_check
@@ -568,17 +562,7 @@ fn prepare_cutoff(
         // pool could not be reused and would only add workers.
         return Ok((None, None));
     }
-    let generated: std::collections::BTreeSet<String> = state
-        .output_locations
-        .keys()
-        .cloned()
-        .chain(
-            state
-                .actions
-                .values()
-                .flat_map(|action| action.outputs.iter().cloned()),
-        )
-        .collect();
+    let generated = state.recorded_generated_assets();
     let mut diagnostics = cutoff::CutoffDiagnostics {
         enabled: runtime_metrics_enabled(),
         ..Default::default()
@@ -603,46 +587,32 @@ fn prepare_cutoff(
     if diagnostics.enabled {
         diagnostics.print_assess();
     }
-    let mut owned_pool: Option<WorkerPool> = None;
-    let active_pool = match pool {
-        Some(existing) => existing,
-        None => {
-            let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
-            let worker_command = crate::frontend::worker_executable(options, build_config)?;
-            let started = WorkerPool::start(
-                workspace,
-                dart_binary,
-                &worker_command,
-                options.jobs,
-                options.worker.is_none(),
-            )?;
-            owned_pool = Some(started);
-            owned_pool.as_mut().expect("pool was just started")
-        }
-    };
+    let mut active_pool =
+        execution::PoolHandle::start_or_reuse(pool, options, workspace, build_config)?;
     // Both pool paths get the per-build pool state execution would
     // set before initializing: a resident pool that has not executed
     // a build yet must not let the preflight initialization skip the
     // shared-parts capability check or answer from stale digests,
     // and execution may reuse this initialization as-is.
-    active_pool.set_retained_output_guard(retained_output_guard);
-    active_pool.set_native_overlay(has_shared_parts);
-    let declared_outputs: std::collections::BTreeSet<String> = plan
-        .specs
-        .iter()
-        .flat_map(|spec| spec.outputs.iter().cloned())
-        .collect();
-    active_pool.set_asset_digests(crate::snapshot::asset_digests(
-        current_snapshot,
-        &declared_outputs,
-    ));
-    active_pool.initialize(
-        workspace,
-        &assessment.first_package,
-        config_digest,
-        build_config.phase_count(),
-        !execution::optional_specs_by_output(&plan.specs).is_empty(),
-        &options.api_cutoff,
+    let asset_digests = cached_asset_digests
+        .get_or_insert_with(|| {
+            crate::snapshot::asset_digests(current_snapshot, &plan.expected_outputs())
+        })
+        .clone();
+    execution::configure_and_initialize_pool(
+        &mut active_pool,
+        execution::PoolInit {
+            workspace,
+            package: &assessment.first_package,
+            config_digest,
+            phase_count: build_config.phase_count(),
+            requires_optional_builder: plan.has_optional_normal_outputs(),
+            api_cutoff: &options.api_cutoff,
+            retained_output_guard,
+            native_overlay: has_shared_parts,
+            asset_digests,
+            reuse_preflight: false,
+        },
     )?;
     let results =
         active_pool.api_fingerprint_query(workspace, &assessment.query, &plan.visibility)?;
@@ -659,7 +629,7 @@ fn prepare_cutoff(
     if diagnostics.enabled {
         diagnostics.print_evaluate();
     }
-    Ok((Some(evidence), owned_pool))
+    Ok((Some(evidence), active_pool.into_owned()))
 }
 
 pub(crate) fn empty_filtered_result(spec: &crate::plan::BuildSpec) -> crate::protocol::BuildResult {
