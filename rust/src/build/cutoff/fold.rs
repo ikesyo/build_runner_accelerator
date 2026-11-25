@@ -25,7 +25,7 @@ pub(super) fn bound_fingerprints(state: &GraphState) -> BTreeMap<String, String>
 /// within `reachable`.
 pub(super) fn reverse_reachable_sets<const N: usize>(
     graph: &GraphView<'_>,
-    roots: &[String],
+    roots: &[&str],
     reachable: &BTreeSet<String>,
     target_sets: [&BTreeSet<&str>; N],
 ) -> [BTreeSet<String>; N] {
@@ -40,7 +40,7 @@ pub(super) fn reverse_reachable_sets<const N: usize>(
             }
         }
     }
-    let root_set: BTreeSet<&str> = roots.iter().map(String::as_str).collect();
+    let root_set: BTreeSet<&str> = roots.iter().copied().collect();
     target_sets.map(|targets| {
         let mut reached_roots = BTreeSet::new();
         let mut seen: BTreeSet<&str> = BTreeSet::new();
@@ -69,9 +69,9 @@ pub(super) fn reverse_reachable_sets<const N: usize>(
 }
 
 /// The forward closure of `roots` over the dep graph, roots included.
-pub(super) fn forward_closure(graph: &GraphView<'_>, roots: &[String]) -> BTreeSet<String> {
-    let mut seen: BTreeSet<String> = roots.iter().cloned().collect();
-    let mut stack: Vec<String> = roots.to_vec();
+pub(super) fn forward_closure(graph: &GraphView<'_>, roots: &[&str]) -> BTreeSet<String> {
+    let mut seen: BTreeSet<String> = roots.iter().map(|root| (*root).to_owned()).collect();
+    let mut stack: Vec<String> = seen.iter().cloned().collect();
     while let Some(asset) = stack.pop() {
         for dep in graph.deps(&asset) {
             if seen.insert(dep.clone()) {
@@ -124,7 +124,8 @@ pub(super) fn fold_all(
     fingerprints: &FingerprintView<'_>,
     seed: &str,
 ) -> Option<BTreeMap<String, String>> {
-    let reachable = forward_closure(graph, roots);
+    let root_refs: Vec<&str> = roots.iter().map(String::as_str).collect();
+    let reachable = forward_closure(graph, &root_refs);
     let folds = fold_map(&reachable, graph, fingerprints, seed);
     let mut result = BTreeMap::new();
     for root in roots {

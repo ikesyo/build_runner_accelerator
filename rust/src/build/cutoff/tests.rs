@@ -119,9 +119,9 @@ fn state_with(edges: &[(&str, &[&str])], fps: &[(&str, &str)], action: ActionSta
 }
 
 fn recorded_closure(state: &GraphState, candidates: &[Candidate]) -> BTreeSet<String> {
-    let roots: Vec<String> = candidates
+    let roots: Vec<&str> = candidates
         .iter()
-        .flat_map(|candidate| candidate.roots.iter().cloned())
+        .flat_map(|candidate| candidate.roots.iter().map(String::as_str))
         .collect();
     forward_closure(
         &GraphView {

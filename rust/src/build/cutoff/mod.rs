@@ -101,7 +101,7 @@ pub(super) fn assess(
         return None;
     }
     let tainted = context.tainted();
-    let changed_set: BTreeSet<String> = changed.iter().map(|asset| (*asset).to_owned()).collect();
+    let changed_set: BTreeSet<&str> = changed.iter().copied().collect();
     let recorded = GraphView {
         base: &state.resolver_dep_graph,
         overrides: None,
@@ -214,20 +214,20 @@ pub(super) fn assess(
     // a current fingerprint and refreshed edges for the comparison.
     // The closures share the dependency tree, so walk their union
     // once instead of once per candidate.
-    let all_roots: Vec<String> = candidates
+    let all_roots: Vec<&str> = candidates
         .iter()
-        .flat_map(|candidate| candidate.roots.iter().cloned())
+        .flat_map(|candidate| candidate.roots.iter().map(String::as_str))
         .collect();
     let closure = forward_closure(&recorded, &all_roots);
-    for asset in closure.intersection(&changed_set) {
-        if generated.contains(asset) {
+    for &asset in &changed_set {
+        if !closure.contains(asset) || generated.contains(asset) {
             continue;
         }
         let Some(current) = current_snapshot.get(asset) else {
             continue;
         };
         if current.exists {
-            query.insert(asset.clone(), current.digest.clone());
+            query.insert(asset.to_owned(), current.digest.clone());
         }
     }
     if query.is_empty() {
@@ -241,7 +241,7 @@ pub(super) fn assess(
             // classifies them all.
             let changed_generated: BTreeSet<&str> = changed_set
                 .iter()
-                .map(String::as_str)
+                .copied()
                 .filter(|asset| generated.contains(*asset))
                 .collect();
             let [generated_reached] =
@@ -458,10 +458,10 @@ pub(super) fn evaluate(
     // Folds are per-unit values: compute them once per view over the
     // union of all candidates' roots instead of re-walking the
     // shared dependency tree (and re-hashing it) for every action.
-    let all_roots: Vec<String> = assessment
+    let all_roots: Vec<&str> = assessment
         .candidates
         .iter()
-        .flat_map(|candidate| candidate.roots.iter().cloned())
+        .flat_map(|candidate| candidate.roots.iter().map(String::as_str))
         .collect();
     let new_closure = forward_closure(&new_graph, &all_roots);
     let old_folds = fold_map(
