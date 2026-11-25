@@ -220,74 +220,33 @@ pub(crate) fn run_with_config_session(
         ));
     }
     let mut filters = settings.build_filters.clone();
-    let mut retained_output_guard = false;
-    let mut retained_outputs = std::collections::BTreeSet::new();
     if !has_shared_parts
         && (settings.only_check || settings.keep_modified_outputs || state.retained_output_state)
         && filters.is_empty()
     {
         filters.push(crate::build_filter::BuildFilter::parse("asset:**/**")?);
     }
-    if settings.keeps_modified_outputs() && state.is_compatible(&config_digest) {
-        // Stock retains existing output bytes with their previous digest.
-        // Missing outputs are NOT retained and must trigger their producer.
-        for action in state.actions.values() {
-            for output in &action.outputs {
-                if let Some(current) = current_snapshot.get(output)
-                    && current.exists
-                    && let Some(previous) = state.assets.get(output)
-                {
-                    if current.digest != previous.digest {
-                        retained_output_guard = true;
-                        retained_outputs.insert(output.clone());
-                    }
-                    current_snapshot.insert(output.clone(), previous.clone());
-                }
-            }
-        }
-    }
-    let mut planning_snapshot = None;
-    if !filters.is_empty() {
-        if session_start || !state.is_compatible(&config_digest) {
-            state.watch_generated_sources.clear();
+    let retained_outputs =
+        if settings.keeps_modified_outputs() && state.is_compatible(&config_digest) {
+            apply_retained_output_snapshots(&state, &mut current_snapshot)
         } else {
-            let mut previous_sources = state.assets.clone();
-            for asset in &state.watch_generated_sources {
-                previous_sources.remove(asset);
-            }
-            let previous_declared = planning::create(
-                &workspace,
-                &state,
-                &build_config,
-                &previous_sources,
-                &options.api_cutoff,
-            )?
-            .expected_outputs();
-            state.watch_generated_sources.retain(|asset| {
-                let path = workspace
-                    .path_for_asset(asset)
-                    .ok()
-                    .map(|path| crate::watch::normalized_watch_path(&path));
-                if previous_declared.contains(asset) {
-                    state.assets.get(asset) == current_snapshot.get(asset)
-                        && !path
-                            .as_ref()
-                            .is_some_and(|path| changed_paths.paths.contains(path))
-                } else {
-                    // Stock ignores modifications/removals of unknown assets;
-                    // only an ADD can introduce a new plain source here.
-                    !path
-                        .as_ref()
-                        .is_some_and(|path| changed_paths.added_paths.contains(path))
-                }
-            });
-            let mut sources = current_snapshot.clone();
-            for asset in &state.watch_generated_sources {
-                sources.remove(asset);
-            }
-            planning_snapshot = Some(sources);
-        }
-    }
+            std::collections::BTreeSet::new()
+        };
+    let mut retained_output_guard = !retained_outputs.is_empty();
+    let planning_snapshot = if !filters.is_empty() {
+        reclassify_watch_generated_sources(
+            &workspace,
+            &mut state,
+            &build_config,
+            &config_digest,
+            &options.api_cutoff,
+            session_start,
+            &current_snapshot,
+            changed_paths,
+        )?
+    } else {
+        None
+    };
     let plan = match reusable_plan.filter(|_| filters.is_empty()) {
         Some(plan) => plan,
         None => planning::create(
@@ -387,21 +346,7 @@ pub(crate) fn run_with_config_session(
         });
     }
     let no_work = !dirty_plan.has_work();
-    // Cache outputs own their package paths too. Verify deliberately leaves
-    // conflicts there, so an ordinary build must stage their removal even
-    // when every action is reusable. Do not delete until all actions succeed.
-    let mut cache_source_conflicts = std::collections::BTreeSet::new();
-    for spec in &plan.specs {
-        if spec.instance.builder.build_to == crate::builder::BuildTo::Cache
-            && !spec.instance.builder.is_optional
-        {
-            for output in &spec.outputs {
-                if workspace.asset_exists_at(output, crate::builder::BuildTo::Source)? {
-                    cache_source_conflicts.insert(output.clone());
-                }
-            }
-        }
-    }
+    let cache_source_conflicts = find_cache_source_conflicts(&workspace, &plan.specs)?;
     if no_work
         && !state.config_digest.is_empty()
         && !state.was_filtered
@@ -525,6 +470,103 @@ pub(crate) fn run_with_config_session(
     }
     print_result_line(no_work, graph_metrics.written_outputs, started);
     Ok(Some(state))
+}
+
+fn apply_retained_output_snapshots(
+    state: &GraphState,
+    current_snapshot: &mut crate::snapshot::Snapshot,
+) -> std::collections::BTreeSet<String> {
+    // Stock retains existing output bytes with their previous digest.
+    // Missing outputs are NOT retained and must trigger their producer.
+    let mut retained_outputs = std::collections::BTreeSet::new();
+    for action in state.actions.values() {
+        for output in &action.outputs {
+            if let Some(current) = current_snapshot.get(output)
+                && current.exists
+                && let Some(previous) = state.assets.get(output)
+            {
+                if current.digest != previous.digest {
+                    retained_outputs.insert(output.clone());
+                }
+                current_snapshot.insert(output.clone(), previous.clone());
+            }
+        }
+    }
+    retained_outputs
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reclassify_watch_generated_sources(
+    workspace: &Workspace,
+    state: &mut GraphState,
+    build_config: &crate::builder::RustBuildConfig,
+    config_digest: &str,
+    api_cutoff: &std::collections::BTreeSet<String>,
+    session_start: bool,
+    current_snapshot: &crate::snapshot::Snapshot,
+    changed_paths: &crate::watch::WatchChanges,
+) -> io::Result<Option<crate::snapshot::Snapshot>> {
+    if session_start || !state.is_compatible(config_digest) {
+        state.watch_generated_sources.clear();
+        return Ok(None);
+    }
+    let mut previous_sources = state.assets.clone();
+    for asset in &state.watch_generated_sources {
+        previous_sources.remove(asset);
+    }
+    let previous_declared = planning::create(
+        workspace,
+        state,
+        build_config,
+        &previous_sources,
+        api_cutoff,
+    )?
+    .expected_outputs();
+    state.watch_generated_sources.retain(|asset| {
+        let path = workspace
+            .path_for_asset(asset)
+            .ok()
+            .map(|path| crate::watch::normalized_watch_path(&path));
+        if previous_declared.contains(asset) {
+            state.assets.get(asset) == current_snapshot.get(asset)
+                && !path
+                    .as_ref()
+                    .is_some_and(|path| changed_paths.paths.contains(path))
+        } else {
+            // Stock ignores modifications/removals of unknown assets;
+            // only an ADD can introduce a new plain source here.
+            !path
+                .as_ref()
+                .is_some_and(|path| changed_paths.added_paths.contains(path))
+        }
+    });
+    let mut sources = current_snapshot.clone();
+    for asset in &state.watch_generated_sources {
+        sources.remove(asset);
+    }
+    Ok(Some(sources))
+}
+
+fn find_cache_source_conflicts(
+    workspace: &Workspace,
+    specs: &[crate::plan::BuildSpec],
+) -> io::Result<std::collections::BTreeSet<String>> {
+    // Cache outputs own their package paths too. Verify deliberately leaves
+    // conflicts there, so an ordinary build must stage their removal even
+    // when every action is reusable. Do not delete until all actions succeed.
+    let mut cache_source_conflicts = std::collections::BTreeSet::new();
+    for spec in specs {
+        if spec.instance.builder.build_to == crate::builder::BuildTo::Cache
+            && !spec.instance.builder.is_optional
+        {
+            for output in &spec.outputs {
+                if workspace.asset_exists_at(output, crate::builder::BuildTo::Source)? {
+                    cache_source_conflicts.insert(output.clone());
+                }
+            }
+        }
+    }
+    Ok(cache_source_conflicts)
 }
 
 /// ADR 0056 stage 4 preflight. When the build opted into API cutoff
