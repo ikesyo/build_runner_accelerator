@@ -1,7 +1,7 @@
 //! Shared-library planning and phase coordination. Contribution lookup and
 //! ownership are indexed once; source edits remain transaction-local.
 use super::transaction::PendingTransaction;
-use crate::builder::ConfiguredBuilder;
+use crate::builder::{BuildTo, ConfiguredBuilder};
 use crate::graph::GraphState;
 use crate::plan::{BuildAction, BuildSpec};
 use crate::workspace::Workspace;
@@ -205,15 +205,13 @@ impl<'a> SharedLibraryCoordinator<'a> {
                     pending.overlay.insert(id.clone(), bytes);
                     pending.deleted_overlay.remove(id);
                     if changed {
-                        pending.resolver.resolver_updated.insert(id.clone());
-                        pending.resolver.resolver_deleted.remove(id);
+                        pending.resolver.mark_updated(BuildTo::Source, id);
                     }
                 }
                 None => {
                     pending.overlay.remove(id);
                     if pending.deleted_overlay.insert(id.clone()) {
-                        pending.resolver.resolver_deleted.insert(id.clone());
-                        pending.resolver.resolver_updated.remove(id);
+                        pending.resolver.mark_deleted(BuildTo::Source, id);
                     }
                 }
             }

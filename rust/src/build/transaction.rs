@@ -1,4 +1,4 @@
-use crate::builder::BuilderDefinition;
+use crate::builder::{BuildTo, BuilderDefinition};
 use crate::graph::{ActionState, GraphState};
 use crate::plan::BuildSpec;
 use std::collections::{BTreeMap, BTreeSet};
@@ -9,10 +9,10 @@ use std::sync::Arc;
 /// Analyzer filesystem instead of re-walking every source.
 #[derive(Default)]
 pub(super) struct ResolverChanges {
-    pub(super) resolver_updated: BTreeSet<String>,
-    pub(super) resolver_deleted: BTreeSet<String>,
-    pub(super) resolver_cache_updated: BTreeSet<String>,
-    pub(super) resolver_cache_deleted: BTreeSet<String>,
+    resolver_updated: BTreeSet<String>,
+    resolver_deleted: BTreeSet<String>,
+    resolver_cache_updated: BTreeSet<String>,
+    resolver_cache_deleted: BTreeSet<String>,
 }
 
 impl ResolverChanges {
@@ -22,6 +22,50 @@ impl ResolverChanges {
             || !self.resolver_deleted.is_empty()
             || !self.resolver_cache_updated.is_empty()
             || !self.resolver_cache_deleted.is_empty()
+    }
+
+    pub(super) fn mark_updated(&mut self, build_to: BuildTo, asset: &str) {
+        let (updated, deleted) = match build_to {
+            BuildTo::Source => (&mut self.resolver_updated, &mut self.resolver_deleted),
+            BuildTo::Cache => (
+                &mut self.resolver_cache_updated,
+                &mut self.resolver_cache_deleted,
+            ),
+        };
+        deleted.remove(asset);
+        if !updated.contains(asset) {
+            updated.insert(asset.to_owned());
+        }
+    }
+
+    pub(super) fn mark_deleted(&mut self, build_to: BuildTo, asset: &str) {
+        let (updated, deleted) = match build_to {
+            BuildTo::Source => (&mut self.resolver_updated, &mut self.resolver_deleted),
+            BuildTo::Cache => (
+                &mut self.resolver_cache_updated,
+                &mut self.resolver_cache_deleted,
+            ),
+        };
+        updated.remove(asset);
+        if !deleted.contains(asset) {
+            deleted.insert(asset.to_owned());
+        }
+    }
+
+    pub(super) fn take_sets(
+        &mut self,
+    ) -> (
+        BTreeSet<String>,
+        BTreeSet<String>,
+        BTreeSet<String>,
+        BTreeSet<String>,
+    ) {
+        (
+            std::mem::take(&mut self.resolver_updated),
+            std::mem::take(&mut self.resolver_deleted),
+            std::mem::take(&mut self.resolver_cache_updated),
+            std::mem::take(&mut self.resolver_cache_deleted),
+        )
     }
 
     /// Every asset whose bytes this reset changes or deletes.
@@ -111,13 +155,8 @@ impl PendingTransaction {
                 self.pending_outputs.remove(asset);
                 self.overlay.remove(asset);
                 self.deleted_overlay.insert(asset.clone());
-                if spec.instance.builder.build_to == crate::builder::BuildTo::Cache {
-                    self.resolver.resolver_cache_updated.remove(asset);
-                    self.resolver.resolver_cache_deleted.insert(asset.clone());
-                } else {
-                    self.resolver.resolver_updated.remove(asset);
-                    self.resolver.resolver_deleted.insert(asset.clone());
-                }
+                self.resolver
+                    .mark_deleted(spec.instance.builder.build_to, asset);
             }
         }
     }
@@ -154,8 +193,7 @@ impl PendingTransaction {
                 updated: bytes.clone(),
             });
         self.overlay.insert(asset.to_owned(), bytes);
-        self.resolver.resolver_updated.insert(asset.to_owned());
-        self.resolver.resolver_deleted.remove(asset);
+        self.resolver.mark_updated(BuildTo::Source, asset);
         Ok(true)
     }
 
@@ -174,13 +212,8 @@ impl PendingTransaction {
                 self.pending_outputs.remove(output);
                 self.overlay.remove(output);
                 self.deleted_overlay.remove(output);
-                if spec.instance.builder.build_to == crate::builder::BuildTo::Cache {
-                    self.resolver.resolver_cache_updated.remove(output);
-                    self.resolver.resolver_cache_deleted.insert(output.clone());
-                } else {
-                    self.resolver.resolver_updated.remove(output);
-                    self.resolver.resolver_deleted.insert(output.clone());
-                }
+                self.resolver
+                    .mark_deleted(spec.instance.builder.build_to, output);
             }
         }
     }

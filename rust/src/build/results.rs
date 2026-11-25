@@ -1,4 +1,4 @@
-use crate::builder::{BuildTo, BuilderKind};
+use crate::builder::BuilderKind;
 use crate::graph::{ActionState, GraphState};
 use crate::plan::BuildSpec;
 use crate::protocol::BuildResult;
@@ -35,16 +35,9 @@ pub(super) fn record_missing_primary_input(
     for output in outputs_to_delete {
         pending.deleted_overlay.insert(output.clone());
         pending.overlay.remove(&output);
-        if spec.instance.builder.build_to == BuildTo::Source {
-            pending.resolver.resolver_deleted.insert(output.clone());
-            pending.resolver.resolver_updated.remove(&output);
-        } else {
-            pending
-                .resolver
-                .resolver_cache_deleted
-                .insert(output.clone());
-            pending.resolver.resolver_cache_updated.remove(&output);
-        }
+        pending
+            .resolver
+            .mark_deleted(spec.instance.builder.build_to, &output);
         if workspace.asset_exists_at(&output, spec.instance.builder.build_to)? {
             pending
                 .pending_deletions
@@ -129,16 +122,7 @@ pub(super) fn record_build_result(
             }
             pending.deleted_overlay.insert(deleted.clone());
             pending.overlay.remove(deleted);
-            if builder.build_to == BuildTo::Source {
-                pending.resolver.resolver_deleted.insert(deleted.clone());
-                pending.resolver.resolver_updated.remove(deleted);
-            } else {
-                pending
-                    .resolver
-                    .resolver_cache_deleted
-                    .insert(deleted.clone());
-                pending.resolver.resolver_cache_updated.remove(deleted);
-            }
+            pending.resolver.mark_deleted(builder.build_to, deleted);
             pending
                 .pending_deletions
                 .push((spec.instance.builder.clone(), deleted.clone()));
@@ -198,22 +182,9 @@ pub(super) fn record_build_result(
             .overlay
             .insert(generated.asset.clone(), Arc::clone(&generated.bytes));
         pending.deleted_overlay.remove(&generated.asset);
-        if builder.build_to == BuildTo::Source {
-            pending
-                .resolver
-                .resolver_updated
-                .insert(generated.asset.clone());
-            pending.resolver.resolver_deleted.remove(&generated.asset);
-        } else {
-            pending
-                .resolver
-                .resolver_cache_updated
-                .insert(generated.asset.clone());
-            pending
-                .resolver
-                .resolver_cache_deleted
-                .remove(&generated.asset);
-        }
+        pending
+            .resolver
+            .mark_updated(builder.build_to, &generated.asset);
         let output =
             PendingOutput::new(spec.instance.builder.clone(), Arc::clone(&generated.bytes));
         output_digests.insert(generated.asset.clone(), output.digest.clone());
@@ -235,22 +206,9 @@ pub(super) fn record_build_result(
         for previous_output in &previous.outputs {
             if !actual_outputs.contains(previous_output.as_str()) {
                 pending.deleted_overlay.insert(previous_output.clone());
-                if builder.build_to == BuildTo::Source {
-                    pending
-                        .resolver
-                        .resolver_deleted
-                        .insert(previous_output.clone());
-                    pending.resolver.resolver_updated.remove(previous_output);
-                } else {
-                    pending
-                        .resolver
-                        .resolver_cache_deleted
-                        .insert(previous_output.clone());
-                    pending
-                        .resolver
-                        .resolver_cache_updated
-                        .remove(previous_output);
-                }
+                pending
+                    .resolver
+                    .mark_deleted(builder.build_to, previous_output);
                 pending
                     .pending_deletions
                     .push((spec.instance.builder.clone(), previous_output.clone()));
@@ -266,16 +224,7 @@ pub(super) fn record_build_result(
                 continue;
             }
             pending.deleted_overlay.insert(expected.clone());
-            if builder.build_to == BuildTo::Source {
-                pending.resolver.resolver_deleted.insert(expected.clone());
-                pending.resolver.resolver_updated.remove(expected);
-            } else {
-                pending
-                    .resolver
-                    .resolver_cache_deleted
-                    .insert(expected.clone());
-                pending.resolver.resolver_cache_updated.remove(expected);
-            }
+            pending.resolver.mark_deleted(builder.build_to, expected);
             if workspace.asset_exists_at(expected, builder.build_to)? {
                 pending
                     .pending_deletions
