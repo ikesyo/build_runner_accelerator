@@ -1,6 +1,5 @@
 use crate::assets::{
     add_current_generated_assets, add_tracked_dependency_assets, add_tracked_glob_assets,
-    config_digest as build_config_digest,
 };
 use crate::builder::RustBuildConfig;
 use crate::graph::GraphState;
@@ -9,13 +8,6 @@ use crate::workspace::Workspace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::time::Instant;
-
-pub(super) fn config_digest(
-    workspace: &Workspace,
-    build_config: &RustBuildConfig,
-) -> io::Result<String> {
-    build_config_digest(workspace, build_config)
-}
 
 pub(super) fn scanned_packages(
     workspace: &Workspace,

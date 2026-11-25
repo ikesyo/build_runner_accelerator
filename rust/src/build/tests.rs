@@ -450,7 +450,7 @@ fn graph_identity_rejects_resolution_changes_before_build_actions() -> io::Resul
     )?;
     let workspace = Workspace::load(temporary.0.clone())?;
     let config = dirty_test_config(&[]);
-    let before = crate::assets::config_digest(&workspace, &config)?;
+    let before = crate::builder::config_digest(&workspace, &config)?;
     let original = fs::read(&path)?;
     fs::create_dir(temporary.0.join("other"))?;
     let replacement = path.with_extension("replacement");
@@ -463,7 +463,7 @@ fn graph_identity_rejects_resolution_changes_before_build_actions() -> io::Resul
     fs::rename(replacement, &path)?;
     for stale in [&workspace, &workspace.clone()] {
         assert!(
-            crate::assets::config_digest(stale, &config)
+            crate::builder::config_digest(stale, &config)
                 .unwrap_err()
                 .to_string()
                 .contains("changed after workspace preparation")
@@ -515,11 +515,11 @@ fn graph_identity_rejects_resolution_changes_before_build_actions() -> io::Resul
         crate::workspace::canonicalize(workspace.package_root("dep")?)?,
         crate::workspace::canonicalize(fresh.package_root("dep")?)?,
     );
-    assert_ne!(before, crate::assets::config_digest(&fresh, &config)?);
+    assert_ne!(before, crate::builder::config_digest(&fresh, &config)?);
     fs::write(&path, &original)?;
-    assert_eq!(before, crate::assets::config_digest(&workspace, &config)?);
+    assert_eq!(before, crate::builder::config_digest(&workspace, &config)?);
     fs::remove_file(path)?;
-    assert!(crate::assets::config_digest(&workspace, &config).is_err());
+    assert!(crate::builder::config_digest(&workspace, &config).is_err());
     Ok(())
 }
 
@@ -833,8 +833,8 @@ fn removing_target_with_shared_builder_invalidates_glob_consumer() -> io::Result
     let consumer = configured_builder("aggregate", "app:consumer", 2, 6);
     let old_config = dirty_test_config(&[first.clone(), second.clone(), consumer.clone()]);
     let new_config = dirty_test_config(&[second.clone(), consumer.clone()]);
-    let old_digest = crate::assets::config_digest(&workspace, &old_config)?;
-    let new_digest = crate::assets::config_digest(&workspace, &new_config)?;
+    let old_digest = crate::builder::config_digest(&workspace, &old_config)?;
+    let new_digest = crate::builder::config_digest(&workspace, &new_config)?;
     assert_ne!(
         old_digest, new_digest,
         "target membership gates graph reuse"

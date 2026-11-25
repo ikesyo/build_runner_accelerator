@@ -84,7 +84,7 @@ impl Preflight {
         api_cutoff: &std::collections::BTreeSet<String>,
     ) -> io::Result<&'a Self> {
         if slot.is_none() {
-            let config_digest = snapshot::config_digest(workspace, config)?;
+            let config_digest = crate::builder::config_digest(workspace, config)?;
             let packages = snapshot::scanned_packages(workspace, config);
             let mut filesystem_metrics = FilesystemMetrics::default();
             let current = snapshot::scan_initial(
@@ -180,7 +180,7 @@ pub(crate) fn run_with_config_session(
         load_bytes: graph_load_bytes,
     } = loaded_graph;
     let digest = crate::wall::Span::new("config_digest");
-    let config_digest = snapshot::config_digest(&workspace, &build_config)?;
+    let config_digest = crate::builder::config_digest(&workspace, &build_config)?;
     drop(digest);
     let preflight = preflight.filter(|preflight| preflight.config_digest == config_digest);
     let scanned_packages = preflight.as_ref().map_or_else(
@@ -712,7 +712,7 @@ pub(crate) fn filtered_transition_reason(
             "filtered legacy state lacks per-action stock glob evidence",
         ));
     }
-    let digest = snapshot::config_digest(workspace, config)?;
+    let digest = crate::builder::config_digest(workspace, config)?;
     if output_policy && !state.config_digest.is_empty() && state.config_digest != digest {
         return Ok(Some(
             "output-policy configuration transitions are outside the supported subset",
