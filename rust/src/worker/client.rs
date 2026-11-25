@@ -17,7 +17,6 @@ use crate::worker_kernel::WorkerArtifact;
 use crate::workspace::Workspace;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::env;
 use std::io::{self, BufReader, BufWriter};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -79,30 +78,30 @@ pub struct WorkerClient {
 }
 
 #[derive(Clone, Copy, Default)]
-pub(super) struct WorkerClientMetrics {
-    pub(super) worker_start_us: u64,
-    pub(super) worker_initialize_us: u64,
-    pub(super) worker_reset_us: u64,
-    pub(super) resolver_reset_us: u64,
-    pub(super) build_us: u64,
-    pub(super) asset_rpc_us: u64,
-    pub(super) ipc_frames_sent: u64,
-    pub(super) ipc_frames_received: u64,
-    pub(super) ipc_bytes_sent: u64,
-    pub(super) ipc_bytes_received: u64,
-    pub(super) build_result_frames: u64,
-    pub(super) build_result_bytes: u64,
-    pub(super) build_result_json_bytes: u64,
-    pub(super) asset_requests: u64,
-    pub(super) read_requests: u64,
-    pub(super) read_bytes: u64,
-    pub(super) binary_read_responses: u64,
-    pub(super) path_read_responses: u64,
-    pub(super) can_read_requests: u64,
-    pub(super) find_assets_requests: u64,
-    pub(super) find_assets_results: u64,
-    pub(super) resolve_assets_requests: u64,
-    pub(super) resolve_assets_results: u64,
+pub(crate) struct WorkerClientMetrics {
+    pub(crate) worker_start_us: u64,
+    pub(crate) worker_initialize_us: u64,
+    pub(crate) worker_reset_us: u64,
+    pub(crate) resolver_reset_us: u64,
+    pub(crate) build_us: u64,
+    pub(crate) asset_rpc_us: u64,
+    pub(crate) ipc_frames_sent: u64,
+    pub(crate) ipc_frames_received: u64,
+    pub(crate) ipc_bytes_sent: u64,
+    pub(crate) ipc_bytes_received: u64,
+    pub(crate) build_result_frames: u64,
+    pub(crate) build_result_bytes: u64,
+    pub(crate) build_result_json_bytes: u64,
+    pub(crate) asset_requests: u64,
+    pub(crate) read_requests: u64,
+    pub(crate) read_bytes: u64,
+    pub(crate) binary_read_responses: u64,
+    pub(crate) path_read_responses: u64,
+    pub(crate) can_read_requests: u64,
+    pub(crate) find_assets_requests: u64,
+    pub(crate) find_assets_results: u64,
+    pub(crate) resolve_assets_requests: u64,
+    pub(crate) resolve_assets_results: u64,
 }
 
 impl WorkerClientMetrics {
@@ -483,8 +482,45 @@ impl WorkerClient {
         deleted_overlay: &BTreeSet<String>,
         visibility: &AssetVisibility,
     ) -> io::Result<Vec<BuildResult>> {
-        let result =
-            self.build_batch_inner(workspace, requests, overlay, deleted_overlay, visibility);
+        self.run_batch_rpc(
+            "worker_batch",
+            requests,
+            visibility,
+            deleted_overlay,
+            |client, deleted_overlay, response, active_request, build_id| {
+                client.handle_asset_request(
+                    workspace,
+                    response,
+                    overlay,
+                    deleted_overlay,
+                    visibility,
+                    active_request,
+                    build_id,
+                    None,
+                )
+            },
+        )
+    }
+
+    pub(super) fn run_batch_rpc<D, F>(
+        &mut self,
+        wall_stage: &'static str,
+        requests: &[BuildRequest],
+        visibility: &AssetVisibility,
+        deleted_overlay: D,
+        on_asset_request: F,
+    ) -> io::Result<Vec<BuildResult>>
+    where
+        D: std::ops::Deref<Target = BTreeSet<String>>,
+        F: FnMut(&mut Self, &mut D, &Value, &BuildRequest, u64) -> io::Result<()>,
+    {
+        let result = self.run_batch_rpc_inner(
+            wall_stage,
+            requests,
+            visibility,
+            deleted_overlay,
+            on_asset_request,
+        );
         // A worker can reject a batch before accepting its visibility hint.
         // Forget on every error so a retry cannot reuse an unaccepted list.
         if result.is_err() {
@@ -493,17 +529,21 @@ impl WorkerClient {
         result
     }
 
-    fn build_batch_inner(
+    fn run_batch_rpc_inner<D, F>(
         &mut self,
-        workspace: &Workspace,
+        wall_stage: &'static str,
         requests: &[BuildRequest],
-        overlay: &BTreeMap<String, Arc<[u8]>>,
-        deleted_overlay: &BTreeSet<String>,
         visibility: &AssetVisibility,
-    ) -> io::Result<Vec<BuildResult>> {
+        mut deleted_overlay: D,
+        mut on_asset_request: F,
+    ) -> io::Result<Vec<BuildResult>>
+    where
+        D: std::ops::Deref<Target = BTreeSet<String>>,
+        F: FnMut(&mut Self, &mut D, &Value, &BuildRequest, u64) -> io::Result<()>,
+    {
         let started = Instant::now();
         let id = self.next_id();
-        let _wall = self.wall_span("worker_batch", Some(id));
+        let _wall = self.wall_span(wall_stage, Some(id));
         let metrics_before = self.metrics;
         let encoding = self.wall_span("request_encode_send", Some(id));
         // Every request in this batch has the same phase and kind. Keep the
@@ -511,10 +551,10 @@ impl WorkerClient {
         // blocked-asset list into every request.
         let (blocked_assets, blocked_assets_reuse) =
             self.blocked_assets_cache
-                .prepare(requests, visibility, deleted_overlay)?;
+                .prepare(requests, visibility, &deleted_overlay)?;
         self.send_batch(id, requests, &blocked_assets, blocked_assets_reuse)?;
-
         drop(encoding);
+
         let mut batch_results = BuildBatchResultCollector::new(id, requests.len());
         loop {
             match self.receive()? {
@@ -523,16 +563,13 @@ impl WorkerClient {
                     Some("asset_request") => {
                         let (build_id, active_request) =
                             batch_asset_request_context(&response, requests)?;
-                        self.handle_asset_request(
-                            workspace,
+                        on_asset_request(
+                            self,
+                            &mut deleted_overlay,
                             &response,
-                            overlay,
-                            deleted_overlay,
-                            visibility,
                             active_request,
                             build_id,
-                            None,
-                        )?
+                        )?;
                     }
                     Some("build_batch_result" | "build_batch_chunk") => {
                         return Err(io::Error::other(
@@ -606,34 +643,13 @@ impl WorkerClient {
     }
 
     pub(super) fn send(&mut self, message: &Value) -> io::Result<()> {
-        let mut traced;
-        let message = if matches!(
-            message.get("type").and_then(Value::as_str),
-            Some("build" | "build_batch")
-        ) {
-            if let Some((parent, report_id)) = crate::telemetry::request_context() {
-                traced = message.clone();
-                if let Some(requests) = traced.get_mut("requests").and_then(Value::as_array_mut) {
-                    let mut first = Some((parent, report_id));
-                    for request in requests {
-                        if let Some((parent, report_id)) =
-                            first.take().or_else(crate::telemetry::request_context)
-                        {
-                            request["traceparent"] = Value::String(parent);
-                            request["otel_report_id"] = Value::from(report_id);
-                        }
-                    }
-                } else {
-                    traced["traceparent"] = Value::String(parent);
-                    traced["otel_report_id"] = Value::from(report_id);
-                }
-                &traced
-            } else {
-                message
-            }
-        } else {
-            message
-        };
+        debug_assert!(
+            !matches!(
+                message.get("type").and_then(Value::as_str),
+                Some("build" | "build_batch")
+            ),
+            "build messages must use typed wire serialization"
+        );
         let frame_size = write_frame(&mut self.input, message)?;
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
@@ -642,8 +658,7 @@ impl WorkerClient {
 
     /// Sends a typed build message, serializing it once into the reusable
     /// buffer instead of building an intermediate JSON value tree. Telemetry
-    /// context fields are populated by the wire constructors, so unlike
-    /// [`Self::send`] this path never clones the message.
+    /// context fields are populated by the wire constructors.
     pub(super) fn send_serialized<T: serde::Serialize>(&mut self, message: &T) -> io::Result<()> {
         let frame_size = write_frame_buffered(&mut self.input, message, &mut self.send_buffer)?;
         self.metrics.ipc_frames_sent += 1;
@@ -805,7 +820,7 @@ impl WorkerClient {
     }
 
     pub(super) fn record_json_build_result_size(&mut self, result: &BuildResult) -> io::Result<()> {
-        if metrics_enabled() {
+        if crate::metrics::runtime_metrics_enabled() {
             let _wall = self.wall_span("diagnostic_json_size", None);
             self.metrics.build_result_json_bytes += json_build_result_frame_size(result)?;
         }
@@ -817,7 +832,7 @@ impl WorkerClient {
         id: u64,
         results: &[BuildResult],
     ) -> io::Result<()> {
-        if metrics_enabled() {
+        if crate::metrics::runtime_metrics_enabled() {
             let _wall = self.wall_span("diagnostic_json_size", None);
             self.metrics.build_result_json_bytes +=
                 json_build_batch_result_frame_size(id, results)?;
@@ -837,12 +852,6 @@ impl Drop for WorkerClient {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn metrics_enabled() -> bool {
-    env::var("BUILD_RUNNER_ACCELERATOR_METRICS")
-        .map(|value| value == "1")
-        .unwrap_or(false)
 }
 
 /// Converts a worker error frame into an I/O error while retaining its detail

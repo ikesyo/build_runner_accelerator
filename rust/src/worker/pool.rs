@@ -74,29 +74,7 @@ pub struct PoolMetrics {
     pub worker_initializes: u64,
     pub worker_resets: u64,
     pub resolver_resets: u64,
-    pub worker_start_us: u64,
-    pub worker_initialize_us: u64,
-    pub worker_reset_us: u64,
-    pub resolver_reset_us: u64,
-    pub build_us: u64,
-    pub asset_rpc_us: u64,
-    pub ipc_frames_sent: u64,
-    pub ipc_frames_received: u64,
-    pub ipc_bytes_sent: u64,
-    pub ipc_bytes_received: u64,
-    pub build_result_frames: u64,
-    pub build_result_bytes: u64,
-    pub build_result_json_bytes: u64,
-    pub asset_requests: u64,
-    pub read_requests: u64,
-    pub read_bytes: u64,
-    pub binary_read_responses: u64,
-    pub path_read_responses: u64,
-    pub can_read_requests: u64,
-    pub find_assets_requests: u64,
-    pub find_assets_results: u64,
-    pub resolve_assets_requests: u64,
-    pub resolve_assets_results: u64,
+    pub(crate) client: WorkerClientMetrics,
 }
 
 impl WorkerPool {
@@ -544,9 +522,9 @@ impl WorkerPool {
     }
 
     pub fn metrics(&self) -> PoolMetrics {
-        let mut worker_metrics = self.retired_metrics;
+        let mut client = self.retired_metrics;
         for worker in &self.workers {
-            worker_metrics.add(worker.metrics());
+            client.add(worker.metrics());
         }
         PoolMetrics {
             active_workers: self.workers.len(),
@@ -554,29 +532,7 @@ impl WorkerPool {
             worker_initializes: self.worker_initializes,
             worker_resets: self.worker_resets,
             resolver_resets: self.resolver_resets,
-            worker_start_us: worker_metrics.worker_start_us,
-            worker_initialize_us: worker_metrics.worker_initialize_us,
-            worker_reset_us: worker_metrics.worker_reset_us,
-            resolver_reset_us: worker_metrics.resolver_reset_us,
-            build_us: worker_metrics.build_us,
-            asset_rpc_us: worker_metrics.asset_rpc_us,
-            ipc_frames_sent: worker_metrics.ipc_frames_sent,
-            ipc_frames_received: worker_metrics.ipc_frames_received,
-            ipc_bytes_sent: worker_metrics.ipc_bytes_sent,
-            ipc_bytes_received: worker_metrics.ipc_bytes_received,
-            build_result_frames: worker_metrics.build_result_frames,
-            build_result_bytes: worker_metrics.build_result_bytes,
-            build_result_json_bytes: worker_metrics.build_result_json_bytes,
-            asset_requests: worker_metrics.asset_requests,
-            read_requests: worker_metrics.read_requests,
-            read_bytes: worker_metrics.read_bytes,
-            binary_read_responses: worker_metrics.binary_read_responses,
-            path_read_responses: worker_metrics.path_read_responses,
-            can_read_requests: worker_metrics.can_read_requests,
-            find_assets_requests: worker_metrics.find_assets_requests,
-            find_assets_results: worker_metrics.find_assets_results,
-            resolve_assets_requests: worker_metrics.resolve_assets_requests,
-            resolve_assets_results: worker_metrics.resolve_assets_results,
+            client,
         }
     }
 

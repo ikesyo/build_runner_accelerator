@@ -212,8 +212,7 @@ impl AssetIdCodec for AssetInterner<'_> {
 /// One build request in a batch, serialized directly from the borrowed
 /// [`BuildRequest`] fields instead of an intermediate JSON value tree.
 /// Field order matches the JSON shape the worker has always received;
-/// telemetry fields appear only while a telemetry context is active,
-/// exactly as the generic send path used to inject them.
+/// telemetry fields appear only while a telemetry context is active.
 #[derive(serde::Serialize)]
 pub(super) struct BatchRequestWire<'a, I, O> {
     id: u64,
@@ -397,9 +396,9 @@ pub(super) fn intern_overlay_blob(value: &Value, interner: &mut AssetInterner<'_
     Value::Object(map)
 }
 
-/// Per-request telemetry fields, mirroring the generic send path: one
-/// message-level context, consumed by the first request; later requests
-/// draw fresh contexts. All `None` when no session is active.
+/// Per-request telemetry fields: one message-level context, consumed by
+/// the first request; later requests draw fresh contexts. All `None` when
+/// no session is active.
 fn telemetry_contexts_with(
     count: usize,
     mut provider: impl FnMut() -> Option<(String, u64)>,
