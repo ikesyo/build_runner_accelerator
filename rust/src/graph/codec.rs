@@ -24,13 +24,13 @@ const GRAPH_MAX_BYTES: usize = 256 * 1024 * 1024;
 const GRAPH_MAX_COLLECTION_ITEMS: usize = 4_000_000;
 
 impl GraphState {
-    /// Under the workspace writer lock, recover unfinished publication before
-    /// reading or invalidating state. Recovery errors never invalidate ownership.
     /// Loads persisted incremental evidence, or starts with an empty graph if
     /// the file is absent or invalid. Invalid bytes are diagnosed and left in
     /// place until a later save; unrelated filesystem errors propagate.
-    pub fn load(path: &Path) -> io::Result<Self> {
-        crate::build::recovery::recover(path)?;
+    ///
+    /// Caller must have run `build::recovery::recover(path)` under the
+    /// workspace lock first.
+    pub(crate) fn load_without_recovery(path: &Path) -> io::Result<Self> {
         match Self::load_checked(path) {
             Err(error) if error.kind() == io::ErrorKind::InvalidData => {
                 eprintln!(

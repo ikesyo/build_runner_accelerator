@@ -75,7 +75,7 @@ pub(crate) fn prepare(info: &WorkspaceDiscovery) -> io::Result<()> {
         }
     }
     if !has_marker {
-        crate::assets::write_atomic(&marker, &expected)?;
+        crate::atomic_file::write_atomic(&marker, &expected)?;
     }
     Ok(())
 }

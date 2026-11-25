@@ -450,7 +450,7 @@ fn graph_identity_rejects_resolution_changes_before_build_actions() -> io::Resul
     )?;
     let workspace = Workspace::load(temporary.0.clone())?;
     let config = dirty_test_config(&[]);
-    let before = crate::assets::config_digest(&workspace, &config)?;
+    let before = crate::builder::config_digest(&workspace, &config)?;
     let original = fs::read(&path)?;
     fs::create_dir(temporary.0.join("other"))?;
     let replacement = path.with_extension("replacement");
@@ -463,7 +463,7 @@ fn graph_identity_rejects_resolution_changes_before_build_actions() -> io::Resul
     fs::rename(replacement, &path)?;
     for stale in [&workspace, &workspace.clone()] {
         assert!(
-            crate::assets::config_digest(stale, &config)
+            crate::builder::config_digest(stale, &config)
                 .unwrap_err()
                 .to_string()
                 .contains("changed after workspace preparation")
@@ -515,11 +515,11 @@ fn graph_identity_rejects_resolution_changes_before_build_actions() -> io::Resul
         crate::workspace::canonicalize(workspace.package_root("dep")?)?,
         crate::workspace::canonicalize(fresh.package_root("dep")?)?,
     );
-    assert_ne!(before, crate::assets::config_digest(&fresh, &config)?);
+    assert_ne!(before, crate::builder::config_digest(&fresh, &config)?);
     fs::write(&path, &original)?;
-    assert_eq!(before, crate::assets::config_digest(&workspace, &config)?);
+    assert_eq!(before, crate::builder::config_digest(&workspace, &config)?);
     fs::remove_file(path)?;
-    assert!(crate::assets::config_digest(&workspace, &config).is_err());
+    assert!(crate::builder::config_digest(&workspace, &config).is_err());
     Ok(())
 }
 
@@ -616,7 +616,7 @@ fn commit_reused_dynamic_output(previous_bytes: &[u8]) -> io::Result<()> {
     assert!(!state.assets.contains_key(&obsolete_output));
     assert!(!state.actions.contains_key(&old_spec.action_key()));
     assert_eq!(state.actions.get(&new_spec.action_key()), Some(&new_action));
-    assert_eq!(GraphState::load(&state_path)?, state);
+    assert_eq!(super::recovery::recover_and_load(&state_path)?, state);
     Ok(())
 }
 
@@ -694,7 +694,7 @@ fn equal_output_commit_updates_dependencies_without_backups() -> io::Result<()> 
     result?;
     assert!(!state_path.with_extension("commit-undo").exists());
     assert_eq!(fs::read(temporary.0.join("lib/input.out"))?, b"same");
-    let saved = GraphState::load(&state_path)?;
+    let saved = super::recovery::recover_and_load(&state_path)?;
     assert_eq!(saved.actions[&spec.action_key()], expected);
     assert_eq!(
         saved.actions[&spec.action_key()].reads,
@@ -833,8 +833,8 @@ fn removing_target_with_shared_builder_invalidates_glob_consumer() -> io::Result
     let consumer = configured_builder("aggregate", "app:consumer", 2, 6);
     let old_config = dirty_test_config(&[first.clone(), second.clone(), consumer.clone()]);
     let new_config = dirty_test_config(&[second.clone(), consumer.clone()]);
-    let old_digest = crate::assets::config_digest(&workspace, &old_config)?;
-    let new_digest = crate::assets::config_digest(&workspace, &new_config)?;
+    let old_digest = crate::builder::config_digest(&workspace, &old_config)?;
+    let new_digest = crate::builder::config_digest(&workspace, &new_config)?;
     assert_ne!(
         old_digest, new_digest,
         "target membership gates graph reuse"
@@ -2682,7 +2682,7 @@ fn recovery_commit_fixture(root: &std::path::Path) -> io::Result<()> {
         trigger_digest: None,
     };
     let path = super::graph_path(&workspace);
-    let mut state = GraphState::load(&path)?;
+    let mut state = super::recovery::recover_and_load(&path)?;
     let deleted = state
         .actions
         .iter()
@@ -2807,7 +2807,7 @@ fn assert_recovered_fixture(root: &std::path::Path) -> io::Result<()> {
         fs::read(root.join(".dart_tool/build_runner_accelerator/cache/app/lib/recreated.cache"))?,
         b"same"
     );
-    let restored = GraphState::load(&graph)?;
+    let restored = super::recovery::recover_and_load(&graph)?;
     assert!(restored.config_digest.is_empty());
     assert!(restored.retained_output_state);
     assert_eq!(
@@ -2926,7 +2926,9 @@ fn recovery_refuses_external_edits_without_deleting_handwritten_files() -> io::R
     let graph = temporary
         .0
         .join(".dart_tool/build_runner_accelerator/graph-v3.bin");
-    let error = GraphState::load(&graph).unwrap_err().to_string();
+    let error = super::recovery::recover_and_load(&graph)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("move externally edited files aside"));
     assert!(super::recovery::pending(&graph));
     assert_eq!(
@@ -3207,7 +3209,7 @@ fn filtered_retention_preserves_bytes_without_recording_implicit_history() -> io
         );
         assert_eq!(state.assets[&output].digest, digest);
         assert_eq!(state.retained_output_state, explicit_keep || prior_history);
-        assert_eq!(GraphState::load(&path)?, state);
+        assert_eq!(super::recovery::recover_and_load(&path)?, state);
     }
     Ok(())
 }

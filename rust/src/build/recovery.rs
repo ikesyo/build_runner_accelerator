@@ -1,7 +1,8 @@
 //! Undo journal for the publication boundary. The workspace writer lock must
 //! cover preparation, publication, and recovery. No fsync/power-loss promise.
-use crate::assets::write_atomic;
+use crate::atomic_file::write_atomic;
 use crate::digest::digest_bytes;
+use crate::graph::GraphState;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -371,6 +372,13 @@ pub(crate) fn recover(graph: &Path) -> io::Result<bool> {
     result.map(|()| true).map_err(|error| guidance(&dir, error))
 }
 
+/// Under the workspace writer lock, recovers unfinished publication before
+/// reading or invalidating state. Recovery errors never invalidate ownership.
+pub(crate) fn recover_and_load(graph: &Path) -> io::Result<GraphState> {
+    recover(graph)?;
+    GraphState::load_without_recovery(graph)
+}
+
 fn guidance(dir: &Path, error: io::Error) -> io::Error {
     io::Error::other(format!(
         "cannot recover interrupted commit: {error}. Undo state preserved at {}. Stop build/watch and stock processes; back up this directory and affected files. Fix I/O permissions/space, or move externally edited files aside, then retry the same native command. For damaged evidence, restore intact backups or reconcile the listed files; see docs/compatibility-cleanup.md#interrupted-publication. Do not clear the graph or undo state before recovery.",
@@ -461,7 +469,7 @@ mod tests {
         assert_eq!(fs::read(fixture.output()).unwrap(), b"manual edit");
         fs::write(fixture.output(), b"new").unwrap();
 
-        let current = crate::graph::GraphState::load(&fixture.graph()).unwrap();
+        let current = recover_and_load(&fixture.graph()).unwrap();
         assert_eq!(fs::read(fixture.output()).unwrap(), b"old");
         assert_eq!(fs::read(fixture.graph()).unwrap(), original_graph);
         assert!(!dir.exists());
@@ -596,10 +604,10 @@ mod tests {
         fixture.prepare();
         fs::write(fixture.output(), b"new").unwrap();
         fs::write(directory(&fixture.graph()).join("0"), b"damaged").unwrap();
-        assert!(crate::graph::GraphState::load(&fixture.graph()).is_err());
+        assert!(recover_and_load(&fixture.graph()).is_err());
         assert_eq!(fs::read(fixture.output()).unwrap(), b"new");
         fs::write(directory(&fixture.graph()).join("journal.json"), b"{").unwrap();
-        assert!(crate::graph::GraphState::load(&fixture.graph()).is_err());
+        assert!(recover_and_load(&fixture.graph()).is_err());
         assert!(pending(&fixture.graph()));
         assert_eq!(fs::read(fixture.graph()).unwrap(), b"old graph");
     }
@@ -721,7 +729,7 @@ mod tests {
             directory(&fixture.graph()).join("journal.json"),
         )
         .unwrap();
-        assert!(crate::graph::GraphState::load(&fixture.graph()).is_err());
+        assert!(recover_and_load(&fixture.graph()).is_err());
         assert!(
             fs::symlink_metadata(directory(&fixture.graph()).join("journal.json"))
                 .unwrap()
@@ -748,7 +756,7 @@ mod tests {
         fixture.prepare();
         fs::write(fixture.output(), b"new").unwrap();
 
-        assert!(crate::graph::GraphState::load(&fixture.graph()).is_err());
+        assert!(recover_and_load(&fixture.graph()).is_err());
         assert_eq!(fs::read(fixture.output()).unwrap(), b"new");
         assert_eq!(fs::read(fixture.graph()).unwrap(), bytes);
         assert!(pending(&fixture.graph()));
@@ -761,7 +769,7 @@ mod tests {
         fs::write(fixture.graph(), b"old corrupt graph").unwrap();
         fixture.prepare();
         fs::write(fixture.output(), b"new").unwrap();
-        assert!(crate::graph::GraphState::load(&fixture.graph()).is_err());
+        assert!(recover_and_load(&fixture.graph()).is_err());
         assert!(pending(&fixture.graph()));
         assert_eq!(fs::read(fixture.output()).unwrap(), b"new");
     }
