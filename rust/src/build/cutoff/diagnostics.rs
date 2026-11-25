@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 /// Per-builder counters behind the cutoff metrics output
 /// (`BUILD_RUNNER_ACCELERATOR_METRICS=1`). They explain why an
-/// opt-in did or did not pay off: how [`assess`] filtered the
-/// opted-in actions, and how [`evaluate`] decided each candidate.
+/// opt-in did or did not pay off: how [`super::assess`] filtered the
+/// opted-in actions, and how [`super::evaluate`] decided each candidate.
 /// Counting never changes a decision.
 #[derive(Debug, Default)]
 pub(in crate::build) struct CutoffDiagnostics {

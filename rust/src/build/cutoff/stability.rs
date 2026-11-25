@@ -392,7 +392,7 @@ fn producer_cycle_members(
 
 /// Whether one unit's recorded fingerprint is bound to the
 /// previous snapshot's bytes for that unit (see
-/// [`bound_fingerprints`]).
+/// [`super::fold::bound_fingerprints`]).
 pub(super) fn fingerprint_bound(state: &GraphState, asset: &str) -> bool {
     state.asset_fingerprints.get(asset).is_some_and(|record| {
         state.assets.get(asset).is_some_and(|previous| {
