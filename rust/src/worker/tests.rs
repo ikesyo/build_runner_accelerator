@@ -1,18 +1,18 @@
 use super::asset_rpc::{
     batch_asset_request_context, missing_asset_response, validate_asset_request_context,
 };
-use super::client::{
-    AssetInterner, BatchWire, InternedBatchWire, batch_request_wires, batch_request_wires_with,
-    batch_shared_fields, batch_shared_request_wires, build_wire, compute_asset_digest_delta,
-    has_capability, intern_asset_list, intern_overlay_blob, interned_batch_request_wires_with,
-    interned_batch_shared_request_wires, is_worker_script, require_overlay_blob_capability,
-    rollback_asset_dictionary,
-};
+use super::client::{has_capability, is_worker_script, require_overlay_blob_capability};
 use super::pool::{
     homogeneous_resolver_usage_key, remember_resolver_usage, target_worker_count,
     validate_memory_overlay,
 };
 use super::request::{BuildRequest, batch_blocked_assets};
+use super::wire::{
+    AssetInterner, BatchWire, BlockedAssetsCache, PlainAssetIds, batch_request_wires,
+    batch_request_wires_with, batch_shared_fields, batch_shared_request_wires, build_wire,
+    compute_asset_digest_delta, intern_asset_list, intern_overlay_blob, rollback_asset_dictionary,
+    write_batch_frame,
+};
 use crate::visibility::AssetVisibility;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -113,7 +113,7 @@ mod batch_transport {
             "unused",
             &WorkerArtifact::Aot(executable),
         )?;
-        worker.blocked_assets_cache = super::super::client::BlockedAssetsCache::new(true);
+        worker.blocked_assets_cache = super::super::wire::BlockedAssetsCache::new(true);
         worker
             .blocked_assets_cache
             .prepare_list(vec!["example|old.dart".to_owned()]);
@@ -307,12 +307,13 @@ fn typed_build_wires_match_the_json_message_shape() {
     let requests = vec![normal, post];
     let blocked = vec!["example|hidden.dart".to_owned()];
 
-    let wires = batch_request_wires(&requests);
+    let wires = batch_request_wires(&requests, &mut PlainAssetIds);
     let wire = BatchWire {
         v: 1,
         message_type: "build_batch",
         id: 9,
-        blocked_assets: &blocked,
+        asset_dict_add: None,
+        blocked_assets: blocked.as_slice(),
         blocked_assets_reuse: false,
         shared: None,
         asset_digests: None,
@@ -382,7 +383,7 @@ fn batch_wires_carry_telemetry_contexts_in_order() {
     ]
     .into_iter();
     let mut calls = 0usize;
-    let wires = batch_request_wires_with(&requests, || {
+    let wires = batch_request_wires_with(&requests, &mut PlainAssetIds, || {
         calls += 1;
         scripted.next().unwrap_or(None)
     });
@@ -403,7 +404,7 @@ fn batch_wires_carry_telemetry_contexts_in_order() {
     // Without a session the provider is probed exactly once and no
     // telemetry fields are emitted.
     let mut calls = 0usize;
-    let wires = batch_request_wires_with(&requests, || {
+    let wires = batch_request_wires_with(&requests, &mut PlainAssetIds, || {
         calls += 1;
         None
     });
@@ -428,7 +429,7 @@ fn api_cutoff_rides_requests_only_when_opted_in() {
     let value = serde_json::to_value(&wire).unwrap();
     assert_eq!(value["api_cutoff"], serde_json::json!(true));
 
-    let wires = batch_request_wires(std::slice::from_ref(&opted));
+    let wires = batch_request_wires(std::slice::from_ref(&opted), &mut PlainAssetIds);
     let value = serde_json::to_value(&wires[0]).unwrap();
     assert_eq!(value["api_cutoff"], serde_json::json!(true));
 
@@ -499,12 +500,13 @@ fn shared_batch_merges_back_to_the_full_batch_requests() {
     let requests = vec![build_request(2, false), build_request(2, false)];
     let blocked = vec!["example|hidden.dart".to_owned()];
     let shared = batch_shared_fields(&requests).expect("uniform batch lifts");
-    let wires = batch_shared_request_wires(&requests);
+    let wires = batch_shared_request_wires(&requests, &mut PlainAssetIds);
     let value = serde_json::to_value(&BatchWire {
         v: 1,
         message_type: "build_batch",
         id: 9,
-        blocked_assets: &blocked,
+        asset_dict_add: None,
+        blocked_assets: blocked.as_slice(),
         blocked_assets_reuse: false,
         shared: Some(shared),
         asset_digests: None,
@@ -526,12 +528,13 @@ fn shared_batch_merges_back_to_the_full_batch_requests() {
         })
         .collect();
 
-    let full_wires = batch_request_wires(&requests);
+    let full_wires = batch_request_wires(&requests, &mut PlainAssetIds);
     let full = serde_json::to_value(&BatchWire {
         v: 1,
         message_type: "build_batch",
         id: 9,
-        blocked_assets: &blocked,
+        asset_dict_add: None,
+        blocked_assets: blocked.as_slice(),
         blocked_assets_reuse: false,
         shared: None,
         asset_digests: None,
@@ -652,7 +655,6 @@ fn memory_transport_rejects_missing_source_and_cache_updates() {
 
 #[test]
 fn blocked_assets_reuse_tracks_exact_lists_per_connection() {
-    use super::client::BlockedAssetsCache;
     let assets = vec!["example|lib/hidden.dart".to_owned()];
     let mut cache = BlockedAssetsCache::default();
     // A worker without the capability always receives the full list.
@@ -704,12 +706,12 @@ fn interned_batch_wire_replaces_ids_with_dictionary_indexes() {
     let mut index = std::collections::HashMap::new();
     let mut interner = AssetInterner::new(&mut dictionary, &mut index);
     let blocked = interner.intern_list(&["example|lib/hidden.dart".to_owned()]);
-    let wires = interned_batch_request_wires_with(&requests, &mut interner, || None);
-    let wire = InternedBatchWire {
+    let wires = batch_request_wires_with(&requests, &mut interner, || None);
+    let wire = BatchWire {
         v: 1,
         message_type: "build_batch",
         id: 9,
-        asset_dict_add: interner.additions,
+        asset_dict_add: Some(interner.additions),
         blocked_assets: blocked,
         blocked_assets_reuse: false,
         shared: None,
@@ -735,7 +737,7 @@ fn interned_batch_wire_replaces_ids_with_dictionary_indexes() {
     // A later message over the same dictionary adds nothing and reuses
     // the established indexes.
     let mut interner = AssetInterner::new(&mut dictionary, &mut index);
-    let wires = interned_batch_request_wires_with(&requests, &mut interner, || None);
+    let wires = batch_request_wires_with(&requests, &mut interner, || None);
     assert!(interner.additions.is_empty());
     let value = serde_json::to_value(&wires[0]).unwrap();
     assert_eq!(value["input"], json!(1));
@@ -786,7 +788,7 @@ fn interned_batch_wire_carries_asset_digests_by_index() {
     let mut dictionary = Vec::new();
     let mut index = std::collections::HashMap::new();
     let mut interner = AssetInterner::new(&mut dictionary, &mut index);
-    let wires = interned_batch_request_wires_with(&requests, &mut interner, || None);
+    let wires = batch_request_wires_with(&requests, &mut interner, || None);
     let digests: std::collections::BTreeMap<String, Option<String>> = [
         (
             interner.intern("example|lib/input.txt").to_string(),
@@ -796,12 +798,12 @@ fn interned_batch_wire_carries_asset_digests_by_index() {
     ]
     .into_iter()
     .collect();
-    let wire = InternedBatchWire {
+    let wire = BatchWire {
         v: 1,
         message_type: "build_batch",
         id: 11,
-        asset_dict_add: interner.additions,
-        blocked_assets: Vec::new(),
+        asset_dict_add: Some(interner.additions),
+        blocked_assets: Vec::<u32>::new(),
         blocked_assets_reuse: false,
         shared: None,
         asset_digests: Some(digests),
@@ -818,13 +820,13 @@ fn interned_shared_batch_wire_keeps_indexes_outside_shared_fields() {
     let mut dictionary = Vec::new();
     let mut index = std::collections::HashMap::new();
     let mut interner = AssetInterner::new(&mut dictionary, &mut index);
-    let wires = interned_batch_shared_request_wires(&requests, &mut interner);
-    let wire = InternedBatchWire {
+    let wires = batch_shared_request_wires(&requests, &mut interner);
+    let wire = BatchWire {
         v: 1,
         message_type: "build_batch",
         id: 10,
-        asset_dict_add: interner.additions,
-        blocked_assets: Vec::new(),
+        asset_dict_add: Some(interner.additions),
+        blocked_assets: Vec::<u32>::new(),
         blocked_assets_reuse: true,
         shared: Some(shared),
         asset_digests: None,
@@ -874,5 +876,439 @@ fn interned_reset_values_rewrite_lists_and_overlay_index() {
     assert_eq!(
         intern_overlay_blob(&json!({"path": "blob.bin", "length": 0}), &mut interner),
         json!({"path": "blob.bin", "length": 0})
+    );
+}
+
+#[test]
+fn interned_batch_wire_preserves_exact_key_order_and_empty_dict_add() {
+    if crate::telemetry::request_context().is_some() {
+        return;
+    }
+    let mut request = build_request(2, false);
+    request.outputs = vec!["example|lib/out.txt".to_owned()];
+    let requests = vec![request];
+    let blocked = vec!["example|lib/hidden.dart".to_owned()];
+
+    let mut dictionary = Vec::new();
+    let mut index = std::collections::HashMap::new();
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    let interned_blocked = interner.intern_list(&blocked);
+    let wires = batch_request_wires(&requests, &mut interner);
+    let wire = BatchWire {
+        v: 1,
+        message_type: "build_batch",
+        id: 9,
+        asset_dict_add: Some(interner.additions),
+        blocked_assets: interned_blocked,
+        blocked_assets_reuse: false,
+        shared: None,
+        asset_digests: None,
+        requests: &wires,
+    };
+    let expected = json!({
+        "v": 1,
+        "type": "build_batch",
+        "id": 9,
+        "asset_dict_add": [
+            "example|lib/hidden.dart",
+            "example|lib/input.txt",
+            "example|lib/out.txt",
+        ],
+        "blocked_assets": [0],
+        "blocked_assets_reuse": false,
+        "requests": [{
+            "id": 0,
+            "builder": "example:builder",
+            "input": 1,
+            "kind": "normal",
+            "allowed_outputs": [2],
+            "options": {},
+            "phase": 2,
+            "part_phase_index": null,
+            "instance_key": "example",
+            "is_root": true,
+            "triggers": [],
+        }],
+    });
+    assert_eq!(
+        serde_json::to_string(&wire).unwrap(),
+        serde_json::to_string(&expected).unwrap(),
+        "interned envelope must place asset_dict_add right after id",
+    );
+
+    // An interned envelope with no new dictionary entries must still emit
+    // `"asset_dict_add":[]` so the worker recognizes interned mode.
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    let interned_blocked = interner.intern_list(&blocked);
+    let wires = batch_request_wires(&requests, &mut interner);
+    assert!(interner.additions.is_empty());
+    let wire_empty_add = BatchWire {
+        v: 1,
+        message_type: "build_batch",
+        id: 10,
+        asset_dict_add: Some(interner.additions),
+        blocked_assets: interned_blocked,
+        blocked_assets_reuse: true,
+        shared: None,
+        asset_digests: None,
+        requests: &wires,
+    };
+    let expected_empty_add = json!({
+        "v": 1,
+        "type": "build_batch",
+        "id": 10,
+        "asset_dict_add": [],
+        "blocked_assets": [0],
+        "blocked_assets_reuse": true,
+        "requests": [{
+            "id": 0,
+            "builder": "example:builder",
+            "input": 1,
+            "kind": "normal",
+            "allowed_outputs": [2],
+            "options": {},
+            "phase": 2,
+            "part_phase_index": null,
+            "instance_key": "example",
+            "is_root": true,
+            "triggers": [],
+        }],
+    });
+    assert_eq!(
+        serde_json::to_string(&wire_empty_add).unwrap(),
+        serde_json::to_string(&expected_empty_add).unwrap(),
+    );
+
+    // Plain mode omits `asset_dict_add` completely.
+    let plain_wires = batch_request_wires(&requests, &mut PlainAssetIds);
+    let plain_wire = BatchWire {
+        v: 1,
+        message_type: "build_batch",
+        id: 11,
+        asset_dict_add: None,
+        blocked_assets: blocked.as_slice(),
+        blocked_assets_reuse: false,
+        shared: None,
+        asset_digests: None,
+        requests: &plain_wires,
+    };
+    assert!(
+        !serde_json::to_string(&plain_wire)
+            .unwrap()
+            .contains("\"asset_dict_add\"")
+    );
+}
+
+#[test]
+fn shared_batch_request_omits_part_phase_index_so_merge_preserves_shared_value() {
+    if crate::telemetry::request_context().is_some() {
+        return;
+    }
+    let mut first = build_request(2, false);
+    first.part_phase_index = Some(1);
+    let mut second = build_request(2, false);
+    second.part_phase_index = Some(1);
+    second.input = "example|lib/other.txt".to_owned();
+    let requests = vec![first, second];
+
+    let shared = batch_shared_fields(&requests).expect("uniform batch lifts");
+    let wires = batch_shared_request_wires(&requests, &mut PlainAssetIds);
+    let value = serde_json::to_value(&BatchWire {
+        v: 1,
+        message_type: "build_batch",
+        id: 4,
+        asset_dict_add: None,
+        blocked_assets: &[] as &[String],
+        blocked_assets_reuse: false,
+        shared: Some(shared),
+        asset_digests: None,
+        requests: &wires,
+    })
+    .unwrap();
+
+    assert_eq!(value["shared"]["part_phase_index"], json!(1));
+    for child in value["requests"].as_array().unwrap() {
+        assert!(
+            child.get("part_phase_index").is_none(),
+            "child must omit part_phase_index so worker merge does not clobber shared.part_phase_index"
+        );
+    }
+
+    let shared_map = value["shared"].as_object().unwrap().clone();
+    for child in value["requests"].as_array().unwrap() {
+        let mut merged = shared_map.clone();
+        merged.extend(child.as_object().unwrap().clone());
+        assert_eq!(merged["part_phase_index"], json!(1));
+    }
+}
+
+#[test]
+fn write_batch_frame_matches_all_four_wire_modes_byte_for_byte() {
+    if crate::telemetry::request_context().is_some() {
+        return;
+    }
+    let mut first = build_request(2, false);
+    first.part_phase_index = Some(1);
+    first.outputs = vec!["example|lib/first.out".to_owned()];
+    let mut second = build_request(2, false);
+    second.part_phase_index = Some(1);
+    second.input = "example|lib/second.txt".to_owned();
+    second.outputs = vec!["example|lib/second.out".to_owned()];
+    let requests = vec![first, second];
+    let blocked = vec!["example|lib/hidden.dart".to_owned()];
+    let digest_delta = vec![
+        ("example|lib/input.txt".to_owned(), Some("aaa".to_owned())),
+        ("example|lib/gone.txt".to_owned(), None),
+    ];
+
+    let decode_payload = |framed: &[u8]| -> String {
+        let len = u32::from_be_bytes(framed[..4].try_into().unwrap()) as usize;
+        assert_eq!(framed.len(), 4 + len);
+        String::from_utf8(framed[4..].to_vec()).unwrap()
+    };
+
+    let mut buffer = Vec::new();
+
+    // 1. Plain + full
+    let mut framed = Vec::new();
+    let written = write_batch_frame(
+        &mut framed,
+        &mut buffer,
+        1,
+        &requests,
+        &blocked,
+        false,
+        &digest_delta,
+        None,
+        &mut PlainAssetIds,
+    )
+    .unwrap();
+    assert_eq!(written, framed.len());
+    let expected_plain_full = json!({
+        "v": 1,
+        "type": "build_batch",
+        "id": 1,
+        "blocked_assets": ["example|lib/hidden.dart"],
+        "blocked_assets_reuse": false,
+        "asset_digests": {
+            "example|lib/gone.txt": null,
+            "example|lib/input.txt": "aaa",
+        },
+        "requests": [
+            {
+                "id": 0,
+                "builder": "example:builder",
+                "input": "example|lib/input.txt",
+                "kind": "normal",
+                "allowed_outputs": ["example|lib/first.out"],
+                "options": {},
+                "phase": 2,
+                "part_phase_index": 1,
+                "instance_key": "example",
+                "is_root": true,
+                "triggers": [],
+            },
+            {
+                "id": 1,
+                "builder": "example:builder",
+                "input": "example|lib/second.txt",
+                "kind": "normal",
+                "allowed_outputs": ["example|lib/second.out"],
+                "options": {},
+                "phase": 2,
+                "part_phase_index": 1,
+                "instance_key": "example",
+                "is_root": true,
+                "triggers": [],
+            },
+        ],
+    });
+    assert_eq!(
+        decode_payload(&framed),
+        serde_json::to_string(&expected_plain_full).unwrap(),
+    );
+
+    // 2. Plain + shared
+    let mut framed = Vec::new();
+    let shared = batch_shared_fields(&requests);
+    let written = write_batch_frame(
+        &mut framed,
+        &mut buffer,
+        2,
+        &requests,
+        &blocked,
+        true,
+        &digest_delta,
+        shared,
+        &mut PlainAssetIds,
+    )
+    .unwrap();
+    assert_eq!(written, framed.len());
+    let expected_plain_shared = json!({
+        "v": 1,
+        "type": "build_batch",
+        "id": 2,
+        "blocked_assets": ["example|lib/hidden.dart"],
+        "blocked_assets_reuse": true,
+        "shared": {
+            "builder": "example:builder",
+            "phase": 2,
+            "kind": "normal",
+            "part_phase_index": 1,
+            "instance_key": "example",
+            "is_root": true,
+        },
+        "asset_digests": {
+            "example|lib/gone.txt": null,
+            "example|lib/input.txt": "aaa",
+        },
+        "requests": [
+            {
+                "id": 0,
+                "input": "example|lib/input.txt",
+                "allowed_outputs": ["example|lib/first.out"],
+                "options": {},
+                "triggers": [],
+            },
+            {
+                "id": 1,
+                "input": "example|lib/second.txt",
+                "allowed_outputs": ["example|lib/second.out"],
+                "options": {},
+                "triggers": [],
+            },
+        ],
+    });
+    assert_eq!(
+        decode_payload(&framed),
+        serde_json::to_string(&expected_plain_shared).unwrap(),
+    );
+
+    // 3. Interned + full (order: blocked -> digest_delta -> requests)
+    let mut dictionary = Vec::new();
+    let mut index = std::collections::HashMap::new();
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    let mut framed = Vec::new();
+    let written = write_batch_frame(
+        &mut framed,
+        &mut buffer,
+        3,
+        &requests,
+        &blocked,
+        false,
+        &digest_delta,
+        None,
+        &mut interner,
+    )
+    .unwrap();
+    assert_eq!(written, framed.len());
+    let expected_interned_full = json!({
+        "v": 1,
+        "type": "build_batch",
+        "id": 3,
+        "asset_dict_add": [
+            "example|lib/hidden.dart",
+            "example|lib/input.txt",
+            "example|lib/gone.txt",
+            "example|lib/first.out",
+            "example|lib/second.txt",
+            "example|lib/second.out",
+        ],
+        "blocked_assets": [0],
+        "blocked_assets_reuse": false,
+        "asset_digests": {
+            "1": "aaa",
+            "2": null,
+        },
+        "requests": [
+            {
+                "id": 0,
+                "builder": "example:builder",
+                "input": 1,
+                "kind": "normal",
+                "allowed_outputs": [3],
+                "options": {},
+                "phase": 2,
+                "part_phase_index": 1,
+                "instance_key": "example",
+                "is_root": true,
+                "triggers": [],
+            },
+            {
+                "id": 1,
+                "builder": "example:builder",
+                "input": 4,
+                "kind": "normal",
+                "allowed_outputs": [5],
+                "options": {},
+                "phase": 2,
+                "part_phase_index": 1,
+                "instance_key": "example",
+                "is_root": true,
+                "triggers": [],
+            },
+        ],
+    });
+    assert_eq!(
+        decode_payload(&framed),
+        serde_json::to_string(&expected_interned_full).unwrap(),
+    );
+
+    // 4. Interned + shared (reusing dictionary -> empty asset_dict_add)
+    let mut interner = AssetInterner::new(&mut dictionary, &mut index);
+    let mut framed = Vec::new();
+    let shared = batch_shared_fields(&requests);
+    let written = write_batch_frame(
+        &mut framed,
+        &mut buffer,
+        4,
+        &requests,
+        &blocked,
+        true,
+        &digest_delta,
+        shared,
+        &mut interner,
+    )
+    .unwrap();
+    assert_eq!(written, framed.len());
+    let expected_interned_shared = json!({
+        "v": 1,
+        "type": "build_batch",
+        "id": 4,
+        "asset_dict_add": [],
+        "blocked_assets": [0],
+        "blocked_assets_reuse": true,
+        "shared": {
+            "builder": "example:builder",
+            "phase": 2,
+            "kind": "normal",
+            "part_phase_index": 1,
+            "instance_key": "example",
+            "is_root": true,
+        },
+        "asset_digests": {
+            "1": "aaa",
+            "2": null,
+        },
+        "requests": [
+            {
+                "id": 0,
+                "input": 1,
+                "allowed_outputs": [3],
+                "options": {},
+                "triggers": [],
+            },
+            {
+                "id": 1,
+                "input": 4,
+                "allowed_outputs": [5],
+                "options": {},
+                "triggers": [],
+            },
+        ],
+    });
+    assert_eq!(
+        decode_payload(&framed),
+        serde_json::to_string(&expected_interned_shared).unwrap(),
     );
 }

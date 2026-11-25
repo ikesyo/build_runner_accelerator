@@ -785,7 +785,7 @@ impl WorkerClient {
         };
         let blocked_assets =
             visibility.blocked_assets(request.phase, build_request_kind(request), deleted);
-        self.send_serialized(&super::client::build_wire(id, request, &blocked_assets))?;
+        self.send_serialized(&super::wire::build_wire(id, request, &blocked_assets))?;
 
         loop {
             match self.receive()? {
