@@ -18,18 +18,19 @@ pub(super) fn bound_fingerprints(state: &GraphState) -> BTreeMap<String, String>
 }
 
 /// For each target set, the subset of `roots` that can reach any of
-/// its targets over the dep graph. The forward closure and the
-/// reverse map are built once and shared by every set; each set
-/// then walks the reverse graph from its own targets within the
-/// region reachable from `roots`.
+/// its targets over the dep graph. `reachable` is the forward closure
+/// of `roots` over `graph`, supplied by the caller and shared across
+/// calls; the reverse map is built once and shared by every target
+/// set, which then walks the reverse graph from its own targets
+/// within `reachable`.
 pub(super) fn reverse_reachable_sets<const N: usize>(
     graph: &GraphView<'_>,
     roots: &[String],
+    reachable: &BTreeSet<String>,
     target_sets: [&BTreeSet<&str>; N],
 ) -> [BTreeSet<String>; N] {
-    let reachable = forward_closure(graph, roots);
     let mut reverse: HashMap<&str, Vec<&str>> = HashMap::new();
-    for asset in &reachable {
+    for asset in reachable {
         for dep in graph.deps(asset) {
             if reachable.contains(dep.as_str()) {
                 reverse
@@ -123,7 +124,8 @@ pub(super) fn fold_all(
     fingerprints: &FingerprintView<'_>,
     seed: &str,
 ) -> Option<BTreeMap<String, String>> {
-    let folds = fold_map(roots, graph, fingerprints, seed);
+    let reachable = forward_closure(graph, roots);
+    let folds = fold_map(&reachable, graph, fingerprints, seed);
     let mut result = BTreeMap::new();
     for root in roots {
         result.insert(root.clone(), folds.get(root.as_str())?.clone());
@@ -131,30 +133,20 @@ pub(super) fn fold_all(
     Some(result)
 }
 
-/// Computes the effective-signature fold of every unit reachable
-/// from `roots` whose fold is determined. A unit's fold needs its
-/// own fingerprint and the folds of all its dependencies, so a unit
-/// with no fingerprint, and everything depending on it, is absent
-/// from the result. Folds are per-unit values, so one computation
-/// serves every candidate that shares the dependency tree.
+/// Computes the effective-signature fold of every unit in `reachable`
+/// (the forward closure of the candidates' roots over `graph`,
+/// supplied by the caller) whose fold is determined. A unit's fold
+/// needs its own fingerprint and the folds of all its dependencies,
+/// so a unit with no fingerprint, and everything depending on it, is
+/// absent from the result. Folds are per-unit values, so one
+/// computation serves every candidate that shares the dependency
+/// tree.
 pub(super) fn fold_map(
-    roots: &[String],
+    reachable: &BTreeSet<String>,
     graph: &GraphView<'_>,
     fingerprints: &FingerprintView<'_>,
     seed: &str,
 ) -> BTreeMap<String, String> {
-    let reachable = {
-        let mut seen: BTreeSet<String> = roots.iter().cloned().collect();
-        let mut stack: Vec<String> = roots.to_vec();
-        while let Some(asset) = stack.pop() {
-            for dep in graph.deps(&asset) {
-                if seen.insert(dep.clone()) {
-                    stack.push(dep.clone());
-                }
-            }
-        }
-        seen
-    };
     // Iterative Tarjan: SCCs are emitted in reverse topological order
     // (dependencies first), which is the order folds are computed in.
     let mut index_of: HashMap<&str, usize> = HashMap::new();
@@ -163,7 +155,7 @@ pub(super) fn fold_map(
     let mut tarjan_stack: Vec<&str> = Vec::new();
     let mut next_index = 0usize;
     let mut sccs: Vec<Vec<&str>> = Vec::new();
-    for root in &reachable {
+    for root in reachable {
         if index_of.contains_key(root.as_str()) {
             continue;
         }
