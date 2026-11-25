@@ -2,6 +2,18 @@ use super::{ActionState, GraphState};
 use crate::snapshot::{Snapshot, glob_asset_key};
 use std::collections::BTreeMap;
 
+pub(crate) fn reverse_resolver_deps(
+    dep_graph: &BTreeMap<String, Vec<String>>,
+) -> BTreeMap<&str, Vec<&str>> {
+    let mut parents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (node, deps) in dep_graph {
+        for dep in deps {
+            parents.entry(dep.as_str()).or_default().push(node.as_str());
+        }
+    }
+    parents
+}
+
 impl GraphState {
     /// Precomputed change information shared by every per-action dirty
     /// check: the assets whose snapshot entry differs between the previous
@@ -45,14 +57,10 @@ impl GraphState {
             return DirtyContext {
                 changed,
                 tainted: std::collections::HashSet::new(),
+                parents: None,
             };
         }
-        let mut parents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-        for (node, deps) in &self.resolver_dep_graph {
-            for dep in deps {
-                parents.entry(dep.as_str()).or_default().push(node.as_str());
-            }
-        }
+        let parents = reverse_resolver_deps(&self.resolver_dep_graph);
         let mut tainted = std::collections::HashSet::new();
         let mut stack: Vec<&str> = changed.iter().copied().collect();
         while let Some(asset) = stack.pop() {
@@ -63,7 +71,11 @@ impl GraphState {
                 stack.extend(dependents.iter().copied());
             }
         }
-        DirtyContext { changed, tainted }
+        DirtyContext {
+            changed,
+            tainted,
+            parents: Some(parents),
+        }
     }
 
     #[cfg(test)]
@@ -137,9 +149,10 @@ impl GraphState {
 pub struct DirtyContext<'a> {
     pub(super) changed: std::collections::HashSet<&'a str>,
     pub(super) tainted: std::collections::HashSet<&'a str>,
+    pub(super) parents: Option<BTreeMap<&'a str, Vec<&'a str>>>,
 }
 
-impl DirtyContext<'_> {
+impl<'a> DirtyContext<'a> {
     /// Assets whose snapshot entry differs (see [`GraphState::dirty_context`]).
     pub fn changed(&self) -> &std::collections::HashSet<&str> {
         &self.changed
@@ -148,5 +161,11 @@ impl DirtyContext<'_> {
     /// Assets whose resolver dependency closure contains a changed asset.
     pub fn tainted(&self) -> &std::collections::HashSet<&str> {
         &self.tainted
+    }
+
+    /// Reverse resolver dependency map built during taint propagation, or
+    /// `None` when the empty-change fast path skipped constructing it.
+    pub fn reverse_deps(&self) -> Option<&BTreeMap<&'a str, Vec<&'a str>>> {
+        self.parents.as_ref()
     }
 }

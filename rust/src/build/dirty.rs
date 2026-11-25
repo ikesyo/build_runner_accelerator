@@ -164,7 +164,16 @@ pub(super) fn analyze(
             removed_outputs.push((action.input.clone(), producer.phase, BuilderKind::Normal));
         }
     }
-    expand_dirty_dependents_with_removed(&mut dirty_roots, specs, state, &removed_outputs, cutoff);
+    expand_with_source_changes(
+        &mut dirty_roots,
+        specs,
+        state,
+        &removed_outputs,
+        &BTreeSet::new(),
+        None,
+        cutoff,
+        dirty_context.reverse_deps(),
+    );
     let mut dirty_keys = dirty
         .iter()
         .map(|spec| spec.action_key())
@@ -415,6 +424,7 @@ pub(super) fn expand_dirty_dependents(
     expand_dirty_dependents_with_removed(dirty, specs, state, &[], None);
 }
 
+#[cfg(test)]
 pub(super) fn expand_dirty_dependents_with_removed(
     dirty: &mut Vec<crate::plan::BuildSpec>,
     specs: &[crate::plan::BuildSpec],
@@ -430,6 +440,7 @@ pub(super) fn expand_dirty_dependents_with_removed(
         &BTreeSet::new(),
         None,
         cutoff,
+        None,
     );
 }
 
@@ -456,6 +467,7 @@ pub(super) fn replay_after_source_edits(
         &[],
         changed,
         Some(staged),
+        None,
         None,
     );
     let lazy_force_keys = affected
@@ -503,6 +515,7 @@ impl AssetImpact {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn expand_with_source_changes(
     dirty: &mut Vec<BuildSpec>,
     specs: &[BuildSpec],
@@ -511,7 +524,11 @@ fn expand_with_source_changes(
     changed_sources: &BTreeSet<String>,
     staged: Option<&BTreeMap<String, ActionState>>,
     cutoff: Option<&CutoffEvidence>,
+    reverse_deps: Option<&BTreeMap<&str, Vec<&str>>>,
 ) {
+    if dirty.is_empty() && removed_outputs.is_empty() && changed_sources.is_empty() {
+        return;
+    }
     let specs_by_key = specs
         .iter()
         .map(|spec| (spec.action_key(), spec))
@@ -567,15 +584,14 @@ fn expand_with_source_changes(
                 .push(action_key);
         }
     }
-    let mut parents_by_asset = BTreeMap::<&str, Vec<&str>>::new();
-    for (asset, deps) in &state.resolver_dep_graph {
-        for dep in deps {
-            parents_by_asset
-                .entry(dep.as_str())
-                .or_default()
-                .push(asset.as_str());
+    let owned_parents;
+    let parents_by_asset = match reverse_deps {
+        Some(parents) => parents,
+        None => {
+            owned_parents = crate::graph::reverse_resolver_deps(&state.resolver_dep_graph);
+            &owned_parents
         }
-    }
+    };
 
     let required = if dirty.iter().any(|spec| {
         actions

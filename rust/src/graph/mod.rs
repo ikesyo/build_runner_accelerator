@@ -3,6 +3,7 @@ mod dirty_context;
 mod fingerprints;
 
 pub use dirty_context::DirtyContext;
+pub(crate) use dirty_context::reverse_resolver_deps;
 use fingerprints::FingerprintTracker;
 
 use crate::protocol::GlobRead;
