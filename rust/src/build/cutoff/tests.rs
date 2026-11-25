@@ -118,6 +118,20 @@ fn state_with(edges: &[(&str, &[&str])], fps: &[(&str, &str)], action: ActionSta
     }
 }
 
+fn recorded_closure(state: &GraphState, candidates: &[Candidate]) -> BTreeSet<String> {
+    let roots: Vec<&str> = candidates
+        .iter()
+        .flat_map(|candidate| candidate.roots.iter().map(String::as_str))
+        .collect();
+    forward_closure(
+        &GraphView {
+            base: &state.resolver_dep_graph,
+            overrides: None,
+        },
+        &roots,
+    )
+}
+
 #[test]
 fn evaluate_marks_only_proven_clean_actions() {
     let action = ActionState {
@@ -134,14 +148,16 @@ fn evaluate_marks_only_proven_clean_actions() {
         ],
         action,
     );
+    let candidates = vec![Candidate {
+        key: "app|target:app:consumer".into(),
+        builder: "app:consumer".into(),
+        roots: vec!["app|lib/main.dart".into()],
+    }];
     let assessment = Assessment {
         query: vec![("app|lib/dep.dart".into(), "d2".into())],
         first_package: "app".into(),
-        candidates: vec![Candidate {
-            key: "app|target:app:consumer".into(),
-            builder: "app:consumer".into(),
-            roots: vec!["app|lib/main.dart".into()],
-        }],
+        recorded_closure: recorded_closure(&state, &candidates),
+        candidates,
         deleted: BTreeSet::new(),
         appeared: BTreeSet::new(),
         unstable_generated: BTreeSet::new(),
@@ -195,14 +211,16 @@ fn evaluate_marks_only_proven_clean_actions() {
     // A unit that appeared since the previous snapshot is an
     // existence change: matching fingerprints cannot prove the
     // recorded output was not produced while it was missing.
+    let appeared_candidates = vec![Candidate {
+        key: "app|target:app:consumer".into(),
+        builder: "app:consumer".into(),
+        roots: vec!["app|lib/main.dart".into()],
+    }];
     let appeared_assessment = Assessment {
         query: assessment.query.clone(),
         first_package: assessment.first_package.clone(),
-        candidates: vec![Candidate {
-            key: "app|target:app:consumer".into(),
-            builder: "app:consumer".into(),
-            roots: vec!["app|lib/main.dart".into()],
-        }],
+        recorded_closure: recorded_closure(&state, &appeared_candidates),
+        candidates: appeared_candidates,
         deleted: BTreeSet::new(),
         appeared: BTreeSet::from(["app|lib/dep.dart".to_string()]),
         unstable_generated: BTreeSet::new(),
@@ -253,14 +271,16 @@ fn evaluate_diagnostics_attribute_outcomes() {
         ],
         action,
     );
+    let candidates = vec![Candidate {
+        key: "app|target:app:consumer".into(),
+        builder: "app:consumer".into(),
+        roots: vec!["app|lib/main.dart".into()],
+    }];
     let assessment = Assessment {
         query: vec![("app|lib/dep.dart".into(), "d2".into())],
         first_package: "app".into(),
-        candidates: vec![Candidate {
-            key: "app|target:app:consumer".into(),
-            builder: "app:consumer".into(),
-            roots: vec!["app|lib/main.dart".into()],
-        }],
+        recorded_closure: recorded_closure(&state, &candidates),
+        candidates,
         deleted: BTreeSet::new(),
         appeared: BTreeSet::new(),
         unstable_generated: BTreeSet::new(),
@@ -286,14 +306,16 @@ fn evaluate_diagnostics_attribute_outcomes() {
         enabled: true,
         ..Default::default()
     };
+    let blocked_candidates = vec![Candidate {
+        key: "app|target:app:consumer".into(),
+        builder: "app:consumer".into(),
+        roots: vec!["app|lib/main.dart".into()],
+    }];
     let blocked_assessment = Assessment {
         query: assessment.query.clone(),
         first_package: assessment.first_package.clone(),
-        candidates: vec![Candidate {
-            key: "app|target:app:consumer".into(),
-            builder: "app:consumer".into(),
-            roots: vec!["app|lib/main.dart".into()],
-        }],
+        recorded_closure: recorded_closure(&state, &blocked_candidates),
+        candidates: blocked_candidates,
         deleted: BTreeSet::new(),
         appeared: BTreeSet::new(),
         unstable_generated: BTreeSet::from(["app|lib/dep.dart".to_string()]),
@@ -336,14 +358,16 @@ fn evaluate_rejects_fingerprints_not_bound_to_the_snapshot() {
         .get_mut("app|lib/dep.dart")
         .expect("recorded fingerprint")
         .digest = "digest-of-newer-content".into();
+    let candidates = vec![Candidate {
+        key: "app|target:app:consumer".into(),
+        builder: "app:consumer".into(),
+        roots: vec!["app|lib/main.dart".into()],
+    }];
     let assessment = Assessment {
         query: vec![("app|lib/dep.dart".into(), "d2".into())],
         first_package: "app".into(),
-        candidates: vec![Candidate {
-            key: "app|target:app:consumer".into(),
-            builder: "app:consumer".into(),
-            roots: vec!["app|lib/main.dart".into()],
-        }],
+        recorded_closure: recorded_closure(&state, &candidates),
+        candidates,
         deleted: BTreeSet::new(),
         appeared: BTreeSet::new(),
         unstable_generated: BTreeSet::new(),

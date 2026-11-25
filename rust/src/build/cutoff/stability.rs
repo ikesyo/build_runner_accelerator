@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// generated asset did before producer-stability inheritance.
 /// The build-wide evidence the producer-stability proof reads.
 pub(super) struct StabilityInputs<'a> {
-    pub(super) changed: &'a BTreeSet<String>,
+    pub(super) changed: &'a BTreeSet<&'a str>,
     pub(super) tainted: &'a std::collections::HashSet<&'a str>,
     pub(super) generated: &'a BTreeSet<String>,
     pub(super) current_snapshot: &'a Snapshot,
@@ -128,7 +128,7 @@ pub(super) fn unstable_generated_assets(
     // Seeds.
     let mut unstable_assets: BTreeSet<String> = BTreeSet::new();
     for asset in &subgraph_assets {
-        let seeded = changed.contains(asset)
+        let seeded = changed.contains(asset.as_str())
             || match producers.get(asset.as_str()) {
                 None => true,
                 Some(spec) => crate::build::shared_parts::owns_part(spec, asset),
@@ -228,9 +228,9 @@ fn producer_seed_dirty(
         }
         if changed.iter().any(|asset| {
             asset_matches_glob(asset, &glob.package, &glob.pattern)
-                && (!inputs.generated.contains(asset)
+                && (!inputs.generated.contains(*asset)
                     || phases
-                        .get(asset.as_str())
+                        .get(*asset)
                         .is_none_or(|phase| *phase < spec.instance.phase))
         }) {
             return true;
@@ -279,7 +279,7 @@ fn producer_consumed_assets(
     // the walk instead of repeating it.
     for root in &roots {
         if !closure_cache.contains_key(root) {
-            let members: BTreeSet<String> = forward_closure(recorded, std::slice::from_ref(root))
+            let members: BTreeSet<String> = forward_closure(recorded, &[root.as_str()])
                 .into_iter()
                 .filter(|asset| universe.contains(asset))
                 .collect();

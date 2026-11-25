@@ -65,6 +65,10 @@ pub(super) struct Assessment {
     /// [`unstable_generated_assets`]). Stable generated assets fold
     /// with their recorded fingerprint like source units.
     unstable_generated: BTreeSet<String>,
+    /// Forward closure of the candidates' roots over the recorded
+    /// graph, computed once by [`assess`] and reused by [`evaluate`]
+    /// for the old view.
+    recorded_closure: BTreeSet<String>,
 }
 
 struct Candidate {
@@ -97,7 +101,7 @@ pub(super) fn assess(
         return None;
     }
     let tainted = context.tainted();
-    let changed_set: BTreeSet<String> = changed.iter().map(|asset| (*asset).to_owned()).collect();
+    let changed_set: BTreeSet<&str> = changed.iter().copied().collect();
     let recorded = GraphView {
         base: &state.resolver_dep_graph,
         overrides: None,
@@ -210,20 +214,20 @@ pub(super) fn assess(
     // a current fingerprint and refreshed edges for the comparison.
     // The closures share the dependency tree, so walk their union
     // once instead of once per candidate.
-    let all_roots: Vec<String> = candidates
+    let all_roots: Vec<&str> = candidates
         .iter()
-        .flat_map(|candidate| candidate.roots.iter().cloned())
+        .flat_map(|candidate| candidate.roots.iter().map(String::as_str))
         .collect();
     let closure = forward_closure(&recorded, &all_roots);
-    for asset in closure.intersection(&changed_set) {
-        if generated.contains(asset) {
+    for &asset in &changed_set {
+        if !closure.contains(asset) || generated.contains(asset) {
             continue;
         }
         let Some(current) = current_snapshot.get(asset) else {
             continue;
         };
         if current.exists {
-            query.insert(asset.clone(), current.digest.clone());
+            query.insert(asset.to_owned(), current.digest.clone());
         }
     }
     if query.is_empty() {
@@ -237,11 +241,11 @@ pub(super) fn assess(
             // classifies them all.
             let changed_generated: BTreeSet<&str> = changed_set
                 .iter()
-                .map(String::as_str)
+                .copied()
                 .filter(|asset| generated.contains(*asset))
                 .collect();
             let [generated_reached] =
-                reverse_reachable_sets(&recorded, &all_roots, [&changed_generated]);
+                reverse_reachable_sets(&recorded, &all_roots, &closure, [&changed_generated]);
             for candidate in &candidates {
                 let counts = diagnostics
                     .assess
@@ -325,8 +329,12 @@ pub(super) fn assess(
     if any_blocker_in_closure && diagnostics.enabled {
         let generated_targets: BTreeSet<&str> =
             unstable_generated.iter().map(String::as_str).collect();
-        let [generated_reached, lifecycle_reached] =
-            reverse_reachable_sets(&recorded, &all_roots, [&generated_targets, &lifecycle]);
+        let [generated_reached, lifecycle_reached] = reverse_reachable_sets(
+            &recorded,
+            &all_roots,
+            &closure,
+            [&generated_targets, &lifecycle],
+        );
         let reaches = |candidate: &Candidate, set: &BTreeSet<String>| {
             candidate
                 .roots
@@ -356,7 +364,8 @@ pub(super) fn assess(
             .map(String::as_str)
             .chain(lifecycle.iter().copied())
             .collect();
-        let [blocked_reached] = reverse_reachable_sets(&recorded, &all_roots, [&blocked_targets]);
+        let [blocked_reached] =
+            reverse_reachable_sets(&recorded, &all_roots, &closure, [&blocked_targets]);
         if candidates.iter().all(|candidate| {
             candidate
                 .roots
@@ -374,6 +383,7 @@ pub(super) fn assess(
         deleted,
         appeared,
         unstable_generated,
+        recorded_closure: closure,
     })
 }
 
@@ -448,13 +458,19 @@ pub(super) fn evaluate(
     // Folds are per-unit values: compute them once per view over the
     // union of all candidates' roots instead of re-walking the
     // shared dependency tree (and re-hashing it) for every action.
-    let all_roots: Vec<String> = assessment
+    let all_roots: Vec<&str> = assessment
         .candidates
         .iter()
-        .flat_map(|candidate| candidate.roots.iter().cloned())
+        .flat_map(|candidate| candidate.roots.iter().map(String::as_str))
         .collect();
-    let old_folds = fold_map(&all_roots, &old_graph, &old_fingerprints, seed);
-    let new_folds = fold_map(&all_roots, &new_graph, &new_fingerprints, seed);
+    let new_closure = forward_closure(&new_graph, &all_roots);
+    let old_folds = fold_map(
+        &assessment.recorded_closure,
+        &old_graph,
+        &old_fingerprints,
+        seed,
+    );
+    let new_folds = fold_map(&new_closure, &new_graph, &new_fingerprints, seed);
     // The remaining checks ask whether a candidate's closure reaches
     // a disqualifying asset: a generated, deleted or restored unit
     // (blocked), or a queried unit the worker could not answer with
@@ -499,11 +515,13 @@ pub(super) fn evaluate(
         let [generated_old, lifecycle_old, unanswered_old] = reverse_reachable_sets(
             &old_graph,
             &all_roots,
+            &assessment.recorded_closure,
             [&generated_targets, &lifecycle_targets, &unanswered_targets],
         );
         let [generated_new, lifecycle_new, unanswered_new] = reverse_reachable_sets(
             &new_graph,
             &all_roots,
+            &new_closure,
             [&generated_targets, &lifecycle_targets, &unanswered_targets],
         );
         (
@@ -523,11 +541,13 @@ pub(super) fn evaluate(
         let [blocked_old, unanswered_old] = reverse_reachable_sets(
             &old_graph,
             &all_roots,
+            &assessment.recorded_closure,
             [&blocked_targets, &unanswered_targets],
         );
         let [blocked_new, unanswered_new] = reverse_reachable_sets(
             &new_graph,
             &all_roots,
+            &new_closure,
             [&blocked_targets, &unanswered_targets],
         );
         (
