@@ -24,6 +24,7 @@ fn dirty_context_handles_unchanged_cycles_and_snapshot_changes() {
     let context = state.dirty_context(&current);
     assert!(context.changed.is_empty());
     assert!(context.tainted.is_empty());
+    assert!(context.reverse_deps().is_none());
     for case in ["digest", "exists", "removed", "added"] {
         let mut current = state.assets.clone();
         let changed = match case {
@@ -53,6 +54,11 @@ fn dirty_context_handles_unchanged_cycles_and_snapshot_changes() {
         assert_eq!(
             context.tainted,
             std::collections::HashSet::from([changed, "a", "b"]),
+            "{case}"
+        );
+        assert_eq!(
+            context.reverse_deps(),
+            Some(&super::reverse_resolver_deps(&state.resolver_dep_graph)),
             "{case}"
         );
     }

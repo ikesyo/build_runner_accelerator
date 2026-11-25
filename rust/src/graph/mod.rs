@@ -3,6 +3,7 @@ mod dirty_context;
 mod fingerprints;
 
 pub use dirty_context::DirtyContext;
+pub(crate) use dirty_context::reverse_resolver_deps;
 use fingerprints::FingerprintTracker;
 
 use crate::protocol::GlobRead;
@@ -130,6 +131,21 @@ impl GraphState {
     /// A false result means prior action/output evidence cannot authorize reuse.
     pub fn is_compatible(&self, config_digest: &str) -> bool {
         self.schema_version == GRAPH_SCHEMA_VERSION && self.config_digest == config_digest
+    }
+
+    /// Assets recorded as generated outputs in `output_locations` or `actions`.
+    /// Intentionally excludes `watch_generated_sources`, which callers that
+    /// also track watch-session reclassifications append themselves.
+    pub(crate) fn recorded_generated_assets(&self) -> BTreeSet<String> {
+        self.output_locations
+            .keys()
+            .cloned()
+            .chain(
+                self.actions
+                    .values()
+                    .flat_map(|action| action.outputs.iter().cloned()),
+            )
+            .collect()
     }
 }
 

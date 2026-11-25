@@ -1,12 +1,12 @@
 //! Build filters select roots, not the graph or the set of allowed outputs.
 use super::{
-    commit, planning::PlannedActions, results::record_build_result, transaction::PendingTransaction,
+    commit, execution::PoolHandle, planning::PlannedActions, results::record_build_result,
+    transaction::PendingTransaction,
 };
 use crate::{
     build_filter::BuildFilter,
     builder::RustBuildConfig,
     cli::Options,
-    frontend::worker_executable,
     graph::GraphState,
     metrics::{print_pool_metrics, runtime_metrics_enabled},
     plan::BuildSpec,
@@ -49,19 +49,13 @@ pub(super) fn run(
     started: Instant,
 ) -> io::Result<()> {
     let settings = &options.settings;
-    let mut pool = pool;
+    let declared = plan.expected_outputs();
     // Preserve only source-state evidence from the start of a filtered build.
     // Old and current outputs are refreshed from the committed filesystem,
     // including outputs removed by this transition.
-    let mut generated_assets: BTreeSet<String> = state.output_locations.keys().cloned().collect();
+    let mut generated_assets = state.recorded_generated_assets();
     generated_assets.extend(state.watch_generated_sources.iter().cloned());
-    generated_assets.extend(
-        state
-            .actions
-            .values()
-            .flat_map(|action| action.outputs.iter().cloned()),
-    );
-    generated_assets.extend(plan.expected_outputs());
+    generated_assets.extend(declared.iter().cloned());
     let previous_declared = if !session_start && state.is_compatible(config_digest) {
         // An unchanged file can become a generated-output conflict when an
         // added input restores its producer chain (stock misclassifiedSources).
@@ -158,7 +152,6 @@ pub(super) fn run(
         state.is_compatible(config_digest),
     );
     lazy.keep_modified_outputs = settings.keeps_modified_outputs();
-    let mut owned_pool = None;
     let dirty_roots = lazy.probe_filtered_roots(
         workspace,
         &roots,
@@ -169,20 +162,7 @@ pub(super) fn run(
     )?;
     let mut pool_metrics = PoolMetrics::default();
     if !dirty_roots.is_empty() {
-        if pool.is_none() {
-            let worker = worker_executable(options, config)?;
-            owned_pool = Some(WorkerPool::start(
-                workspace,
-                options.dart_binary.as_deref().unwrap_or("dart"),
-                &worker,
-                options.jobs,
-                options.worker.is_none(),
-            )?);
-        }
-        let active = pool
-            .as_deref_mut()
-            .or(owned_pool.as_mut())
-            .expect("pool is available");
+        let mut active = PoolHandle::start_or_reuse(pool, options, workspace, config)?;
         // Resolver metadata from a failed earlier filtered cycle must not be
         // committed by a later successful build. Drain it before any operation
         // on the resident pool can fail.
@@ -190,14 +170,7 @@ pub(super) fn run(
         drop(active.take_api_fingerprints());
         active.prepare_for_filtered_roots(workspace, dirty_roots.len())?;
         active.set_retained_output_guard(retained_output_guard);
-        let declared_outputs: std::collections::BTreeSet<String> = specs
-            .values()
-            .flat_map(|spec| spec.outputs.iter().cloned())
-            .collect();
-        active.set_asset_digests(crate::snapshot::asset_digests(
-            current_snapshot,
-            &declared_outputs,
-        ));
+        active.set_asset_digests(crate::snapshot::asset_digests(current_snapshot, &declared));
         active.initialize(
             workspace,
             &workspace.root_package,
@@ -260,7 +233,6 @@ pub(super) fn run(
         )
         .collect();
     let compatible = state.is_compatible(config_digest);
-    let declared = plan.expected_outputs();
     for action in state.actions.values() {
         for output in &action.outputs {
             let previous_location = state
@@ -384,7 +356,7 @@ pub(super) fn run(
             build_config: config,
             config_digest: config_digest.to_owned(),
             scanned_packages,
-            expected_outputs: plan.expected_outputs(),
+            expected_outputs: declared,
             source_snapshot_evidence: None,
             filtered_snapshot_evidence: Some((
                 current_snapshot,

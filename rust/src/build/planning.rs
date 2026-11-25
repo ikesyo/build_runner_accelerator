@@ -30,6 +30,14 @@ impl PlannedActions {
             .flat_map(|spec| spec.outputs.iter().cloned())
             .collect()
     }
+
+    pub(super) fn has_optional_normal_outputs(&self) -> bool {
+        self.specs.iter().any(|spec| {
+            spec.instance.builder.is_optional
+                && spec.instance.builder.kind == BuilderKind::Normal
+                && !spec.outputs.is_empty()
+        })
+    }
 }
 
 pub(super) fn create(

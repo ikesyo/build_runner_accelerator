@@ -7,6 +7,7 @@ use crate::worker::{BuildRequest, LazyBuildState, PoolMetrics, WorkerPool};
 use crate::workspace::Workspace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
+use std::ops::{Deref, DerefMut};
 
 use super::dirty::DirtyPlan;
 use super::part_directive::{
@@ -15,6 +16,106 @@ use super::part_directive::{
 use super::planning::PlannedActions;
 use super::results::{record_build_result, record_missing_primary_input};
 use super::transaction::PendingTransaction;
+
+/// Either a caller-supplied resident pool or a pool started for the current
+/// operation. Dereferences to [`WorkerPool`] so callers use both uniformly.
+pub(super) enum PoolHandle<'a> {
+    Borrowed(&'a mut WorkerPool),
+    Owned(Box<WorkerPool>),
+}
+
+impl Deref for PoolHandle<'_> {
+    type Target = WorkerPool;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(pool) => pool,
+            Self::Owned(pool) => pool,
+        }
+    }
+}
+
+impl DerefMut for PoolHandle<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Borrowed(pool) => pool,
+            Self::Owned(pool) => pool,
+        }
+    }
+}
+
+impl<'a> PoolHandle<'a> {
+    pub(super) fn start_or_reuse(
+        pool: Option<&'a mut WorkerPool>,
+        options: &Options,
+        workspace: &Workspace,
+        build_config: &RustBuildConfig,
+    ) -> io::Result<Self> {
+        match pool {
+            Some(existing) => Ok(Self::Borrowed(existing)),
+            None => {
+                let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
+                let worker_command = worker_executable(options, build_config)?;
+                Ok(Self::Owned(Box::new(WorkerPool::start(
+                    workspace,
+                    dart_binary,
+                    &worker_command,
+                    options.jobs,
+                    options.worker.is_none(),
+                )?)))
+            }
+        }
+    }
+
+    pub(super) fn into_owned(self) -> Option<WorkerPool> {
+        match self {
+            Self::Borrowed(_) => None,
+            Self::Owned(pool) => Some(*pool),
+        }
+    }
+}
+
+pub(super) struct PoolInit<'a> {
+    pub(super) workspace: &'a Workspace,
+    pub(super) package: &'a str,
+    pub(super) config_digest: &'a str,
+    pub(super) phase_count: usize,
+    pub(super) requires_optional_builder: bool,
+    pub(super) api_cutoff: &'a BTreeSet<String>,
+    pub(super) retained_output_guard: bool,
+    pub(super) native_overlay: bool,
+    pub(super) asset_digests: BTreeMap<String, String>,
+    pub(super) reuse_preflight: bool,
+}
+
+pub(super) fn configure_and_initialize_pool(
+    pool: &mut WorkerPool,
+    init: PoolInit<'_>,
+) -> io::Result<()> {
+    pool.set_retained_output_guard(init.retained_output_guard);
+    pool.set_native_overlay(init.native_overlay);
+    pool.set_asset_digests(init.asset_digests);
+    if init.reuse_preflight
+        && pool.take_preflight_initialization(
+            init.workspace,
+            init.package,
+            init.config_digest,
+            init.phase_count,
+            init.requires_optional_builder,
+            init.api_cutoff,
+        )
+    {
+        return Ok(());
+    }
+    pool.initialize(
+        init.workspace,
+        init.package,
+        init.config_digest,
+        init.phase_count,
+        init.requires_optional_builder,
+        init.api_cutoff,
+    )
+}
 
 pub(super) struct ExecutionInputs<'a> {
     pub(super) options: &'a Options,
@@ -73,7 +174,6 @@ pub(super) fn run(
         .map(|spec| spec.action_key())
         .collect::<BTreeSet<_>>();
     eprintln!("Rust frontend: {} build action(s)", dirty.len());
-    let mut worker_pool = pool;
     let mut pool_metrics = None;
     let mut part_filtered_actions: usize = 0;
     let setup = crate::wall::Span::new("transaction_setup");
@@ -90,31 +190,12 @@ pub(super) fn run(
     drop(setup);
     if !dirty.is_empty() {
         let prepare = crate::wall::Span::new("worker_prepare");
-        let dart_binary = options.dart_binary.as_deref().unwrap_or("dart");
-        let worker_command = worker_executable(options, build_config)?;
         let phase_count = build_config.phase_count();
-        let mut owned_pool = if worker_pool.is_none() {
-            Some(WorkerPool::start(
-                workspace,
-                dart_binary,
-                &worker_command,
-                options.jobs,
-                options.worker.is_none(),
-            )?)
-        } else {
-            None
-        };
-        if worker_pool.is_none() {
-            worker_pool = owned_pool.as_mut();
-        }
-        let active_pool = worker_pool.expect("worker pool was just initialized");
+        let mut active_pool = PoolHandle::start_or_reuse(pool, options, workspace, build_config)?;
         // Drop fingerprints a failed earlier call left on a resident
         // pool; they belong to a transaction that never committed. The
         // filtered path does the same before its first pool operation.
         drop(active_pool.take_api_fingerprints());
-        active_pool.set_retained_output_guard(retained_output_guard);
-        active_pool.set_native_overlay(has_shared_parts);
-        active_pool.set_asset_digests(asset_digests);
         let first_package = dirty
             .first()
             .map(|spec| spec.instance.package.clone())
@@ -123,23 +204,21 @@ pub(super) fn run(
         // exact signature (ADR 0056 stage 4) leaves the workers in
         // the just-initialized state execution needs; initializing
         // again would only reset them a second time.
-        if !active_pool.take_preflight_initialization(
-            workspace,
-            &first_package,
-            config_digest,
-            phase_count,
-            optional_builder_capability_required,
-            &options.api_cutoff,
-        ) {
-            active_pool.initialize(
+        configure_and_initialize_pool(
+            &mut active_pool,
+            PoolInit {
                 workspace,
-                &first_package,
+                package: &first_package,
                 config_digest,
                 phase_count,
-                optional_builder_capability_required,
-                &options.api_cutoff,
-            )?;
-        }
+                requires_optional_builder: optional_builder_capability_required,
+                api_cutoff: &options.api_cutoff,
+                retained_output_guard,
+                native_overlay: has_shared_parts,
+                asset_digests,
+                reuse_preflight: true,
+            },
+        )?;
 
         drop(prepare);
 
@@ -203,36 +282,20 @@ pub(super) fn run(
                             // Primary demand executes before the consumer request.
                             // Refresh the worker first, just as nested demand after
                             // the ordinary phase reset observes earlier outputs.
-                            if configured_builder.package != initialized_package {
-                                active_pool.initialize(
-                                    workspace,
-                                    &configured_builder.package,
-                                    config_digest,
-                                    phase_count,
-                                    optional_builder_capability_required,
-                                    &options.api_cutoff,
-                                )?;
-                                initialized_package = configured_builder.package.clone();
-                                transaction.resolver.clear();
-                                resolver_needs_reset = false;
-                            } else if resolver_needs_reset || transaction.resolver.has_changes() {
-                                let reset_changed = transaction.resolver.changed_assets();
-                                active_pool.reset_resolver(
-                                    &workspace.root,
-                                    &transaction.overlay,
-                                    std::mem::take(&mut transaction.resolver.resolver_updated),
-                                    std::mem::take(&mut transaction.resolver.resolver_deleted),
-                                    std::mem::take(
-                                        &mut transaction.resolver.resolver_cache_updated,
-                                    ),
-                                    std::mem::take(
-                                        &mut transaction.resolver.resolver_cache_deleted,
-                                    ),
-                                    true,
-                                )?;
-                                state.drop_api_fingerprints(&reset_changed);
-                                resolver_needs_reset = false;
-                            }
+                            ensure_pool_ready_for_package(
+                                &mut active_pool,
+                                workspace,
+                                &configured_builder.package,
+                                &mut initialized_package,
+                                config_digest,
+                                phase_count,
+                                optional_builder_capability_required,
+                                &options.api_cutoff,
+                                &mut transaction,
+                                state,
+                                &mut resolver_needs_reset,
+                                true,
+                            )?;
                             active_pool.materialize_optional_primary(
                                 workspace,
                                 &spec,
@@ -333,32 +396,20 @@ pub(super) fn run(
                 }
                 let reset = crate::wall::Span::new("phase_reset")
                     .phase(configured_builder.phase, &builder.id);
-                if configured_builder.package != initialized_package {
-                    active_pool.initialize(
-                        workspace,
-                        &configured_builder.package,
-                        config_digest,
-                        phase_count,
-                        optional_builder_capability_required,
-                        &options.api_cutoff,
-                    )?;
-                    initialized_package = configured_builder.package.clone();
-                    resolver_needs_reset = false;
-                    transaction.resolver.clear();
-                } else if resolver_needs_reset {
-                    let reset_changed = transaction.resolver.changed_assets();
-                    active_pool.reset_resolver(
-                        &workspace.root,
-                        &transaction.overlay,
-                        std::mem::take(&mut transaction.resolver.resolver_updated),
-                        std::mem::take(&mut transaction.resolver.resolver_deleted),
-                        std::mem::take(&mut transaction.resolver.resolver_cache_updated),
-                        std::mem::take(&mut transaction.resolver.resolver_cache_deleted),
-                        true,
-                    )?;
-                    state.drop_api_fingerprints(&reset_changed);
-                    resolver_needs_reset = false;
-                }
+                ensure_pool_ready_for_package(
+                    &mut active_pool,
+                    workspace,
+                    &configured_builder.package,
+                    &mut initialized_package,
+                    config_digest,
+                    phase_count,
+                    optional_builder_capability_required,
+                    &options.api_cutoff,
+                    &mut transaction,
+                    state,
+                    &mut resolver_needs_reset,
+                    false,
+                )?;
                 drop(reset);
                 let dispatch = crate::wall::Span::new("phase_dispatch")
                     .phase(configured_builder.phase, &builder.id);
@@ -469,6 +520,52 @@ pub(super) fn run(
         pool_metrics,
         part_filtered_actions,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ensure_pool_ready_for_package(
+    active_pool: &mut WorkerPool,
+    workspace: &Workspace,
+    package: &str,
+    initialized_package: &mut String,
+    config_digest: &str,
+    phase_count: usize,
+    optional_builder_capability_required: bool,
+    api_cutoff: &BTreeSet<String>,
+    transaction: &mut PendingTransaction,
+    state: &mut GraphState,
+    resolver_needs_reset: &mut bool,
+    check_pending_changes: bool,
+) -> io::Result<()> {
+    if package != initialized_package.as_str() {
+        active_pool.initialize(
+            workspace,
+            package,
+            config_digest,
+            phase_count,
+            optional_builder_capability_required,
+            api_cutoff,
+        )?;
+        *initialized_package = package.to_owned();
+        transaction.resolver.clear();
+        *resolver_needs_reset = false;
+    } else if *resolver_needs_reset || (check_pending_changes && transaction.resolver.has_changes())
+    {
+        let reset_changed = transaction.resolver.changed_assets();
+        let (updated, deleted, cache_updated, cache_deleted) = transaction.resolver.take_sets();
+        active_pool.reset_resolver(
+            &workspace.root,
+            &transaction.overlay,
+            updated,
+            deleted,
+            cache_updated,
+            cache_deleted,
+            true,
+        )?;
+        state.drop_api_fingerprints(&reset_changed);
+        *resolver_needs_reset = false;
+    }
+    Ok(())
 }
 
 /// Invalidated optional results without normal demand cannot feed cleanup or
