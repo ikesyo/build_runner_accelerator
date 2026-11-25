@@ -15,6 +15,10 @@
 //! asset in the closure, or a generated asset whose producer cannot
 //! be proven stable) leaves the action content-keyed.
 
+mod diagnostics;
+
+pub(super) use diagnostics::{AssessCounts, CutoffDiagnostics, EvaluateCounts};
+
 use crate::digest::bare_digest;
 use crate::graph::{DirtyContext, GraphState};
 use crate::plan::BuildSpec;
@@ -62,111 +66,6 @@ struct Candidate {
     /// Resolver observation roots: entrypoints plus direct resolver
     /// reads. The action's effective signature is the fold of these.
     roots: Vec<String>,
-}
-
-/// Per-builder counters behind the cutoff metrics output
-/// (`BUILD_RUNNER_ACCELERATOR_METRICS=1`). They explain why an
-/// opt-in did or did not pay off: how [`assess`] filtered the
-/// opted-in actions, and how [`evaluate`] decided each candidate.
-/// Counting never changes a decision.
-#[derive(Debug, Default)]
-pub(super) struct CutoffDiagnostics {
-    /// Counting costs a map entry per opted-in action, so it only
-    /// runs when the metrics output is on; `prepare_cutoff` sets
-    /// this from the same flag that gates printing.
-    pub(super) enabled: bool,
-    pub(super) assess: BTreeMap<String, AssessCounts>,
-    pub(super) evaluate: BTreeMap<String, EvaluateCounts>,
-    pub(super) changed_units: usize,
-    pub(super) generated_assets: usize,
-    pub(super) query_units: usize,
-    /// Set when assess proved every candidate blocked from the
-    /// recorded graph alone, so `prepare_cutoff` prints the
-    /// evaluate counters even though no preflight ran.
-    pub(super) preflight_skipped: bool,
-}
-
-#[derive(Debug, Default)]
-pub(super) struct AssessCounts {
-    pub(super) candidates: usize,
-    pub(super) no_recorded_action: usize,
-    pub(super) ast_or_content_read: usize,
-    pub(super) own_input_or_direct_read_changed: usize,
-    pub(super) no_resolver_observation: usize,
-    pub(super) not_reached_by_change: usize,
-    pub(super) no_roots: usize,
-    /// Candidates dropped before evaluation because no unit in
-    /// their changed closures could be queried: a generated unit
-    /// changed, or the changed units are absent from the current
-    /// snapshot. Split by which of the two applies.
-    pub(super) no_query_generated_asset: usize,
-    pub(super) no_query_deleted_or_appeared: usize,
-}
-
-#[derive(Debug, Default)]
-pub(super) struct EvaluateCounts {
-    /// The signature proof passed. Dirty planning can still run
-    /// the action for reasons outside the resolver observations
-    /// (a changed glob, a missing output), so this counts proven
-    /// unchanged signatures, not final skips.
-    pub(super) signature_unchanged: usize,
-    pub(super) generated_asset: usize,
-    pub(super) deleted_or_appeared: usize,
-    pub(super) unanswered_unit: usize,
-    pub(super) missing_evidence: usize,
-    pub(super) signature_changed: usize,
-}
-
-impl CutoffDiagnostics {
-    /// The assessment counters print before the fallible worker
-    /// preflight starts, so a failed query still leaves them in
-    /// the output; the evaluation counters print after evaluation.
-    pub(super) fn print_assess(&self) {
-        // The evaluate lines that follow a skipped preflight are
-        // recorded-graph attributions, not evaluation outcomes (a
-        // candidate blocked by a deleted unit on the recorded
-        // graph might have reached a generated unit through a
-        // refreshed edge), so the header marks them as such.
-        if self.preflight_skipped {
-            eprintln!(
-                "Rust cutoff metrics: changed_units={} generated_assets={} query_units={} preflight_skipped=1",
-                self.changed_units, self.generated_assets, self.query_units,
-            );
-        } else {
-            eprintln!(
-                "Rust cutoff metrics: changed_units={} generated_assets={} query_units={}",
-                self.changed_units, self.generated_assets, self.query_units,
-            );
-        }
-        for (builder, counts) in &self.assess {
-            eprintln!(
-                "Rust cutoff metrics: stage=assess builder={builder} candidates={} no_recorded_action={} ast_or_content_read={} own_input_or_direct_read_changed={} no_resolver_observation={} not_reached_by_change={} no_roots={} no_query_generated_asset={} no_query_deleted_or_appeared={}",
-                counts.candidates,
-                counts.no_recorded_action,
-                counts.ast_or_content_read,
-                counts.own_input_or_direct_read_changed,
-                counts.no_resolver_observation,
-                counts.not_reached_by_change,
-                counts.no_roots,
-                counts.no_query_generated_asset,
-                counts.no_query_deleted_or_appeared,
-            );
-        }
-    }
-
-    pub(super) fn print_evaluate(&self) {
-        for (builder, counts) in &self.evaluate {
-            eprintln!(
-                "Rust cutoff metrics: stage=evaluate builder={builder} signature_unchanged={} generated_asset={} deleted_or_appeared={} unanswered_unit={} missing_evidence={} signature_changed={}",
-                counts.signature_unchanged,
-                counts.generated_asset,
-                counts.deleted_or_appeared,
-                counts.unanswered_unit,
-                counts.missing_evidence,
-                counts.signature_changed,
-            );
-        }
-    }
 }
 
 /// Finds the opted-in actions a preflight could waive. Returns `None`
