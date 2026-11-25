@@ -986,7 +986,6 @@ impl<'a> Decoder<'a> {
 }
 
 #[cfg(test)]
-#[path = "graph_bench.rs"]
 mod bench;
 
 #[cfg(test)]
