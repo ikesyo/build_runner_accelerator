@@ -173,7 +173,32 @@ mod batch_transport {
                 (vec![], true)
             );
         } else {
-            assert!(result.is_err());
+            let error = result.unwrap_err();
+            let message = error.to_string();
+            match reply {
+                BatchReply::Rejected => {
+                    assert_eq!(error.kind(), io::ErrorKind::Other);
+                    assert!(
+                        message.contains("worker error: invalid build_batch child instance_key"),
+                        "unexpected rejection error: {message}"
+                    );
+                }
+                BatchReply::DuplicateResult => {
+                    assert_eq!(error.kind(), io::ErrorKind::Other);
+                    assert!(
+                        message.contains("worker batch result id mismatch"),
+                        "unexpected duplicate result error: {message}"
+                    );
+                }
+                BatchReply::Interrupted => {
+                    assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+                    assert!(
+                        message.contains("Dart worker exited"),
+                        "unexpected interrupted error: {message}"
+                    );
+                }
+                BatchReply::Complete => unreachable!("handled above"),
+            }
             // A retry must send a full list, including after rejection, malformed
             // results, or interruption. Successful calls above still reuse it.
             assert_eq!(
