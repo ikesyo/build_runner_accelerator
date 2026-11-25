@@ -1,7 +1,9 @@
 mod codec;
 mod dirty_context;
+mod fingerprints;
 
 pub use dirty_context::DirtyContext;
+use fingerprints::FingerprintTracker;
 
 use crate::protocol::GlobRead;
 use crate::snapshot::Snapshot;
@@ -53,17 +55,9 @@ pub struct GraphState {
     /// produced it. Absence means no evidence: later stages treat
     /// such units as content-keyed.
     pub asset_fingerprints: BTreeMap<String, crate::protocol::ApiFingerprintRecord>,
-    /// Assets whose fingerprint the current build reported, used by
-    /// [`GraphState::update_assets`] to tell fresh evidence apart from
-    /// records the previous build left. Runtime-only: never saved.
-    pub api_fingerprint_reports: BTreeSet<String>,
-    /// Assets whose fingerprint reports conflicted within the current
-    /// build (learned from different bytes after a mid-build edit).
-    /// Their evidence stays dropped until the next build boundary:
-    /// no later report in the same build can resurrect it, because
-    /// outputs may have been generated against either observation.
-    /// Runtime-only: never saved.
-    pub api_fingerprint_conflicts: BTreeSet<String>,
+    /// Runtime-only per-build API fingerprint report and conflict tracking;
+    /// never saved.
+    pub(crate) fingerprint_tracker: FingerprintTracker,
     /// Actual output location at the successful commit (true means cache).
     pub output_locations: BTreeMap<String, bool>,
     /// Stock InputTracker input order, distinct from broader observed reads.
@@ -112,65 +106,6 @@ impl GraphState {
         processed != degrees.len()
     }
 
-    /// Merges API fingerprints reported by the workers (ADR 0056). A
-    /// reported record replaces the recorded one; a reported
-    /// unavailable marker removes the entry, so evidence recorded for
-    /// an earlier content of the asset is never kept.
-    /// Drops the recorded fingerprints of [assets], whose bytes a
-    /// resolver reset is changing. Called by the frontend before
-    /// post-reset actions dispatch, so a removal can never merge
-    /// after a fingerprint relearned from the new bytes.
-    pub fn drop_api_fingerprints(&mut self, assets: &BTreeSet<String>) {
-        for asset in assets {
-            self.asset_fingerprints.remove(asset);
-        }
-    }
-
-    pub fn merge_api_fingerprints(
-        &mut self,
-        reported: BTreeMap<String, Option<crate::protocol::ApiFingerprintRecord>>,
-    ) {
-        for (asset, record) in reported {
-            if self.api_fingerprint_conflicts.contains(&asset) {
-                self.asset_fingerprints.remove(&asset);
-                continue;
-            }
-            match record {
-                Some(record) => {
-                    // A second, different report for the same asset in
-                    // one build means the build observed two versions
-                    // of its bytes (a mid-build edit): outputs may
-                    // have been generated against either fingerprint,
-                    // so the evidence is dropped for the rest of the
-                    // build rather than letting the later report win.
-                    if self.api_fingerprint_reports.contains(&asset)
-                        && self.asset_fingerprints.get(&asset) != Some(&record)
-                    {
-                        self.asset_fingerprints.remove(&asset);
-                        self.api_fingerprint_conflicts.insert(asset);
-                        continue;
-                    }
-                    self.api_fingerprint_reports.insert(asset.clone());
-                    self.asset_fingerprints.insert(asset, record);
-                }
-                None => {
-                    // An unavailable report after a recorded one in
-                    // the same build is a disagreement too: the two
-                    // observations cannot both describe the bytes the
-                    // build's outputs were generated against, so the
-                    // evidence stays dropped for the rest of the
-                    // build instead of being resurrected by a later
-                    // agreeing report.
-                    if self.api_fingerprint_reports.contains(&asset) {
-                        self.api_fingerprint_conflicts.insert(asset.clone());
-                    }
-                    self.asset_fingerprints.remove(&asset);
-                    self.api_fingerprint_reports.insert(asset);
-                }
-            }
-        }
-    }
-
     /// Updates compatibility metadata and the filesystem snapshot together.
     /// Returns true exactly when the persisted graph now needs a save.
     pub fn update_metadata_if_changed(&mut self, config_digest: &str, snapshot: Snapshot) -> bool {
@@ -186,47 +121,9 @@ impl GraphState {
     }
 
     pub fn update_assets(&mut self, snapshot: Snapshot) {
-        // A recorded fingerprint describes the bytes it was learned
-        // from. An asset whose snapshot entry changed or vanished
-        // since the previous build drops its fingerprint here, at
-        // the build boundary, so a build that never relearns it (for
-        // example because only opted-out actions resolved it) cannot
-        // leave evidence for superseded bytes behind. Fingerprints
-        // reported during this build are fresh evidence and survive
-        // even when their asset changed.
-        if !self.asset_fingerprints.is_empty() {
-            let reported = &self.api_fingerprint_reports;
-            self.asset_fingerprints.retain(|asset, _| {
-                (reported.contains(asset) && snapshot.get(asset).is_some_and(|entry| entry.exists))
-                    || match (self.assets.get(asset), snapshot.get(asset)) {
-                        (Some(old), Some(new)) => {
-                            old.exists == new.exists && old.digest == new.digest
-                        }
-                        _ => false,
-                    }
-            });
-        }
-        self.api_fingerprint_reports.clear();
-        self.api_fingerprint_conflicts.clear();
+        self.fingerprint_tracker
+            .end_build(&mut self.asset_fingerprints, &self.assets, &snapshot);
         self.assets = snapshot;
-    }
-
-    /// Drops the fingerprints reported this build for assets whose
-    /// bytes the build's transaction changed after a walk could have
-    /// fingerprinted them (an output written or deleted later in the
-    /// build, a source edit published at commit). A report cannot say
-    /// which in-build version of the bytes it describes, and the
-    /// previous-vs-final comparison in [`GraphState::update_assets`]
-    /// cannot detect every stale value (a transaction that restores
-    /// the previous bytes leaves the two snapshots equal), so the
-    /// values are removed outright rather than only losing their
-    /// fresh-evidence exemption.
-    pub fn supersede_api_fingerprint_reports(&mut self, assets: &BTreeSet<String>) {
-        for asset in assets {
-            self.api_fingerprint_reports.remove(asset);
-            self.api_fingerprint_conflicts.remove(asset);
-            self.asset_fingerprints.remove(asset);
-        }
     }
 
     /// Whether this graph's schema and builder configuration match the plan.

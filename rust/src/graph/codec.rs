@@ -1,7 +1,7 @@
-use super::{ActionState, GRAPH_SCHEMA_VERSION, GraphState};
+use super::{ActionState, FingerprintTracker, GRAPH_SCHEMA_VERSION, GraphState};
 use crate::protocol::GlobRead;
 use crate::snapshot::{AssetSnapshot, Snapshot};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -597,8 +597,7 @@ impl<'a> Decoder<'a> {
             stock_input_order,
             stock_glob_members,
             watch_generated_sources,
-            api_fingerprint_reports: BTreeSet::new(),
-            api_fingerprint_conflicts: BTreeSet::new(),
+            fingerprint_tracker: FingerprintTracker::default(),
         })
     }
 

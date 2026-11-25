@@ -164,8 +164,7 @@ fn state_with_glob(glob: &GlobRead, digest: &str) -> GraphState {
         schema_version: super::GRAPH_SCHEMA_VERSION,
         config_digest: String::new(),
         was_filtered: false,
-        api_fingerprint_reports: BTreeSet::new(),
-        api_fingerprint_conflicts: BTreeSet::new(),
+        fingerprint_tracker: Default::default(),
         assets,
         actions: BTreeMap::new(),
         resolver_dep_graph: BTreeMap::new(),
@@ -355,8 +354,7 @@ fn binary_graph_round_trip_preserves_state() {
         schema_version: super::GRAPH_SCHEMA_VERSION,
         config_digest: "config".to_owned(),
         was_filtered: true,
-        api_fingerprint_reports: BTreeSet::new(),
-        api_fingerprint_conflicts: BTreeSet::new(),
+        fingerprint_tracker: Default::default(),
         retained_output_state: true,
         watch_generated_sources: BTreeSet::from(["app|lib/omitted.mid".to_owned()]),
         stock_glob_members: BTreeMap::from([(
@@ -533,7 +531,7 @@ fn merge_api_fingerprints_drops_conflicting_reports_for_the_build() {
             size: 1,
         },
     )]));
-    assert!(state.api_fingerprint_conflicts.is_empty());
+    assert!(!state.fingerprint_tracker.has_conflicts());
     state.merge_api_fingerprints(BTreeMap::from([(
         "app|lib/a.dart".to_owned(),
         Some(record("d-1", "f-1")),
