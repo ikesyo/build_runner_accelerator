@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use super::recovery::Change;
 use super::snapshot;
-use super::transaction::PendingTransaction;
+use super::transaction::{PendingTransaction, SourceEdit};
 
 pub(super) struct GraphSaveMetrics {
     pub(super) graph_save_us: u128,
@@ -133,91 +133,16 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         transaction,
     } = inputs;
 
-    // Assets whose bytes this transaction writes, deletes, or
-    // source-edits. A fingerprint learned during the build describes
-    // the bytes the walk read, which a later change may postdate;
-    // the graph update below drops those assets' reported
-    // fingerprints with this set.
-    let mut transaction_changed: BTreeSet<String> =
-        transaction.pending_outputs.keys().cloned().collect();
-    for (_, asset) in &transaction.pending_deletions {
-        transaction_changed.insert(asset.clone());
-    }
-    for (_, asset) in &transaction.pending_location_deletions {
-        transaction_changed.insert(asset.clone());
-    }
-    for (_, action) in &transaction.deleted_actions {
-        transaction_changed.extend(action.outputs.iter().cloned());
-    }
-    for asset in transaction.source_edits.keys() {
-        transaction_changed.insert(asset.clone());
-    }
+    let transaction_changed = collect_transaction_changed(&transaction);
 
     let undo = crate::wall::Span::new("commit_undo_prepare");
-    let mut changes = BTreeMap::new();
-    if transaction.clean_artifact_tree {
-        collect_cache_deletions(
-            &workspace
-                .root
-                .join(".dart_tool/build_runner_accelerator/cache"),
-            &mut changes,
-        )?;
-    }
-    for (location, asset) in &transaction.pending_location_deletions {
-        let path = match location {
-            crate::builder::BuildTo::Source => workspace.path_for_asset(asset)?,
-            crate::builder::BuildTo::Cache => workspace.cache_path_for_asset(asset)?,
-        };
-        changes.insert(path, Change::Delete);
-    }
-    for (builder, asset) in &transaction.pending_deletions {
-        changes.insert(output_path(workspace, builder, asset)?, Change::Delete);
-    }
-    for (_, action) in &transaction.deleted_actions {
-        let builder = build_config
-            .definition(&action.builder)
-            .ok_or_else(|| io::Error::other("previous builder unavailable"))?;
-        for asset in &action.outputs {
-            if !expected_outputs.contains(asset) {
-                changes.insert(output_path(workspace, builder, asset)?, Change::Delete);
-            }
-        }
-    }
-    for (asset, output) in &transaction.pending_outputs {
-        let path = output_path(workspace, &output.builder, asset)?;
-        let remove_first = changes.contains_key(&path);
-        changes.insert(
-            path,
-            Change::Write {
-                bytes: &output.bytes,
-                digest: output.digest.clone(),
-                remove_first,
-            },
-        );
-    }
-    for (asset, edit) in &transaction.source_edits {
-        let (original, bytes) = (&edit.original, &edit.updated);
-        let path = workspace.path_for_asset(asset)?;
-        if fs::read(&path)?.as_slice() != original.as_ref() {
-            return Err(io::Error::other(
-                "shared-part source changed before publication; retry",
-            ));
-        }
-        let remove_first = changes.contains_key(&path);
-        changes.insert(
-            path,
-            Change::Write {
-                bytes,
-                digest: crate::digest::digest_bytes(bytes),
-                remove_first,
-            },
-        );
-    }
-    let mutations = if changes.is_empty() {
-        BTreeSet::new()
-    } else {
-        super::recovery::prepare(state_path, changes)?
-    };
+    let mutations = prepare_journal(
+        workspace,
+        state_path,
+        build_config,
+        &expected_outputs,
+        &transaction,
+    )?;
     let journaled = !mutations.is_empty();
     drop(undo);
 
@@ -296,14 +221,168 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
             boundary("after_output")?;
         }
     }
-    for (key, inputs) in transaction.pending_stock_inputs {
+    update_graph_metadata(
+        state,
+        build_config,
+        transaction.pending_stock_inputs,
+        transaction.pending_stock_globs,
+    );
+    drop(outputs);
+    let metadata = crate::wall::Span::new("commit_metadata");
+    workspace.clear_asset_caches()?;
+    // Retain demand reuse even after ordinary builds repair upstream bytes.
+    // Only explicit demand policy creates sticky history. Both ordinary and
+    // filtered builds re-select implicit legacy retention from the resolved
+    // runner on every invocation, including after a version upgrade.
+    state.retained_output_state |= explicit_keep_modified_outputs;
+    state.schema_version = GRAPH_SCHEMA_VERSION;
+    state.config_digest = config_digest;
+    drop(metadata);
+    let scan = crate::wall::Span::new("post_snapshot");
+    let (mut post_snapshot, post_scan_us, post_assets_us) =
+        snapshot::scan_committed(workspace, state, build_config, scanned_packages)?;
+    reconcile_post_snapshot(
+        &mut post_snapshot,
+        state,
+        &transaction.source_edits,
+        source_snapshot_evidence,
+        filtered_snapshot_evidence,
+        keep_modified_outputs,
+        &written_outputs,
+    );
+    drop(scan);
+    state.supersede_api_fingerprint_reports(&transaction_changed);
+    let update = crate::wall::Span::new("graph_update_assets");
+    state.update_assets(post_snapshot);
+    drop(update);
+    let graph_save_started = Instant::now();
+    let save = crate::wall::Span::new("graph_save");
+    boundary("before_graph")?;
+    state.save(state_path)?;
+    boundary("after_graph")?;
+    if journaled {
+        super::recovery::finish(state_path)?;
+    }
+    drop(save);
+    Ok(GraphSaveMetrics {
+        graph_save_us: graph_save_started.elapsed().as_micros(),
+        graph_save_bytes: graph_file_size(state_path),
+        graph_save_skipped: false,
+        post_scan_us,
+        post_assets_us,
+        written_outputs: published_outputs,
+    })
+}
+
+/// Assets whose bytes this transaction writes, deletes, or source-edits. A
+/// fingerprint learned during the build describes the bytes the walk read,
+/// which a later change may postdate; the graph update drops those assets'
+/// reported fingerprints with this set.
+fn collect_transaction_changed(transaction: &PendingTransaction) -> BTreeSet<String> {
+    let mut transaction_changed: BTreeSet<String> =
+        transaction.pending_outputs.keys().cloned().collect();
+    for (_, asset) in &transaction.pending_deletions {
+        transaction_changed.insert(asset.clone());
+    }
+    for (_, asset) in &transaction.pending_location_deletions {
+        transaction_changed.insert(asset.clone());
+    }
+    for (_, action) in &transaction.deleted_actions {
+        transaction_changed.extend(action.outputs.iter().cloned());
+    }
+    for asset in transaction.source_edits.keys() {
+        transaction_changed.insert(asset.clone());
+    }
+    transaction_changed
+}
+
+fn prepare_journal(
+    workspace: &Workspace,
+    state_path: &Path,
+    build_config: &RustBuildConfig,
+    expected_outputs: &BTreeSet<String>,
+    transaction: &PendingTransaction,
+) -> io::Result<BTreeSet<std::path::PathBuf>> {
+    let mut changes = BTreeMap::new();
+    if transaction.clean_artifact_tree {
+        collect_cache_deletions(
+            &workspace
+                .root
+                .join(".dart_tool/build_runner_accelerator/cache"),
+            &mut changes,
+        )?;
+    }
+    for (location, asset) in &transaction.pending_location_deletions {
+        let path = match location {
+            crate::builder::BuildTo::Source => workspace.path_for_asset(asset)?,
+            crate::builder::BuildTo::Cache => workspace.cache_path_for_asset(asset)?,
+        };
+        changes.insert(path, Change::Delete);
+    }
+    for (builder, asset) in &transaction.pending_deletions {
+        changes.insert(output_path(workspace, builder, asset)?, Change::Delete);
+    }
+    for (_, action) in &transaction.deleted_actions {
+        let builder = build_config
+            .definition(&action.builder)
+            .ok_or_else(|| io::Error::other("previous builder unavailable"))?;
+        for asset in &action.outputs {
+            if !expected_outputs.contains(asset) {
+                changes.insert(output_path(workspace, builder, asset)?, Change::Delete);
+            }
+        }
+    }
+    for (asset, output) in &transaction.pending_outputs {
+        let path = output_path(workspace, &output.builder, asset)?;
+        let remove_first = changes.contains_key(&path);
+        changes.insert(
+            path,
+            Change::Write {
+                bytes: &output.bytes,
+                digest: output.digest.clone(),
+                remove_first,
+            },
+        );
+    }
+    for (asset, edit) in &transaction.source_edits {
+        let (original, bytes) = (&edit.original, &edit.updated);
+        let path = workspace.path_for_asset(asset)?;
+        if fs::read(&path)?.as_slice() != original.as_ref() {
+            return Err(io::Error::other(
+                "shared-part source changed before publication; retry",
+            ));
+        }
+        let remove_first = changes.contains_key(&path);
+        changes.insert(
+            path,
+            Change::Write {
+                bytes,
+                digest: crate::digest::digest_bytes(bytes),
+                remove_first,
+            },
+        );
+    }
+    if changes.is_empty() {
+        Ok(BTreeSet::new())
+    } else {
+        super::recovery::prepare(state_path, changes)
+    }
+}
+
+fn update_graph_metadata(
+    state: &mut GraphState,
+    build_config: &RustBuildConfig,
+    pending_stock_inputs: BTreeMap<String, Option<Vec<String>>>,
+    pending_stock_globs: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+) {
+    for (key, inputs) in pending_stock_inputs {
         if let Some(inputs) = inputs {
             state.stock_input_order.insert(key, inputs);
         } else {
             state.stock_input_order.remove(&key);
         }
     }
-    for (key, globs) in transaction.pending_stock_globs {
+    for (key, globs) in pending_stock_globs {
         state.stock_glob_members.insert(key, globs);
     }
     state
@@ -329,20 +408,21 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
             }
         }
     }
-    drop(outputs);
-    let metadata = crate::wall::Span::new("commit_metadata");
-    workspace.clear_asset_caches()?;
-    // Retain demand reuse even after ordinary builds repair upstream bytes.
-    // Only explicit demand policy creates sticky history. Both ordinary and
-    // filtered builds re-select implicit legacy retention from the resolved
-    // runner on every invocation, including after a version upgrade.
-    state.retained_output_state |= explicit_keep_modified_outputs;
-    state.schema_version = GRAPH_SCHEMA_VERSION;
-    state.config_digest = config_digest;
-    drop(metadata);
-    let scan = crate::wall::Span::new("post_snapshot");
-    let (mut post_snapshot, post_scan_us, post_assets_us) =
-        snapshot::scan_committed(workspace, state, build_config, scanned_packages)?;
+}
+
+fn reconcile_post_snapshot(
+    post_snapshot: &mut crate::snapshot::Snapshot,
+    state: &GraphState,
+    source_edits: &BTreeMap<String, SourceEdit>,
+    source_snapshot_evidence: Option<(&crate::snapshot::Snapshot, &BTreeSet<String>)>,
+    filtered_snapshot_evidence: Option<(
+        &crate::snapshot::Snapshot,
+        &BTreeSet<String>,
+        &crate::snapshot::Snapshot,
+    )>,
+    keep_modified_outputs: bool,
+    written_outputs: &BTreeSet<String>,
+) {
     if let Some((initial_snapshot, generated_assets)) = source_snapshot_evidence {
         // A watcher event can arrive after an action reads a source but before
         // this post-build scan. Keep build-start digests for existing source
@@ -351,7 +431,7 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
         // ordinary workers can consume first-seen external assets or generated
         // outputs during this transaction.
         for (asset, initial) in initial_snapshot {
-            if transaction.source_edits.contains_key(asset) {
+            if source_edits.contains_key(asset) {
                 continue;
             }
             if !generated_assets.contains(asset) && !asset.starts_with("__glob__|") {
@@ -404,28 +484,6 @@ fn commit_inner(state: &mut GraphState, inputs: CommitInputs<'_>) -> io::Result<
             }
         }
     }
-    drop(scan);
-    state.supersede_api_fingerprint_reports(&transaction_changed);
-    let update = crate::wall::Span::new("graph_update_assets");
-    state.update_assets(post_snapshot);
-    drop(update);
-    let graph_save_started = Instant::now();
-    let save = crate::wall::Span::new("graph_save");
-    boundary("before_graph")?;
-    state.save(state_path)?;
-    boundary("after_graph")?;
-    if journaled {
-        super::recovery::finish(state_path)?;
-    }
-    drop(save);
-    Ok(GraphSaveMetrics {
-        graph_save_us: graph_save_started.elapsed().as_micros(),
-        graph_save_bytes: graph_file_size(state_path),
-        graph_save_skipped: false,
-        post_scan_us,
-        post_assets_us,
-        written_outputs: published_outputs,
-    })
 }
 
 /// Compare the final transaction's package-path mutations. Artifact-tree
