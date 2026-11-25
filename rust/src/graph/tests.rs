@@ -433,7 +433,10 @@ fn binary_graph_round_trip_preserves_state() {
     let bytes = std::fs::read(&path).expect("read graph");
     assert_eq!(&bytes[..GRAPH_MAGIC.len()], GRAPH_MAGIC);
     assert_eq!(bytes[GRAPH_MAGIC.len()], GRAPH_FORMAT_VERSION);
-    assert_eq!(GraphState::load(&path).expect("load graph"), state);
+    assert_eq!(
+        GraphState::load_without_recovery(&path).expect("load graph"),
+        state
+    );
 
     std::fs::remove_file(path).expect("remove graph");
 }
@@ -692,7 +695,7 @@ fn old_binary_format_and_schema_are_discarded_without_removing_files() {
         bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
         bytes.extend_from_slice(&payload);
         std::fs::write(&path, &bytes).unwrap();
-        let state = GraphState::load(&path).unwrap();
+        let state = GraphState::load_without_recovery(&path).unwrap();
         assert!(state.actions.is_empty());
         assert!(state.config_digest.is_empty());
         assert_eq!(state.schema_version, super::GRAPH_SCHEMA_VERSION);
@@ -701,7 +704,7 @@ fn old_binary_format_and_schema_are_discarded_without_removing_files() {
         assert_eq!(std::fs::read(&output).unwrap(), b"existing output");
     }
     assert!(
-        GraphState::load(&root).is_err(),
+        GraphState::load_without_recovery(&root).is_err(),
         "filesystem IO errors stay explicit"
     );
     std::fs::remove_dir_all(root).unwrap();
@@ -722,7 +725,7 @@ fn graph_requires_binary_header() {
 
     let error = GraphState::load_checked(&path).expect_err("invalid graph should fail");
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
-    let recovered = GraphState::load(&path).expect("regenerate invalid graph");
+    let recovered = GraphState::load_without_recovery(&path).expect("regenerate invalid graph");
     assert!(recovered.actions.is_empty());
     assert!(path.exists());
 

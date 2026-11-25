@@ -270,7 +270,7 @@ pub(crate) fn run(options: &Options) -> io::Result<()> {
 /// waiting for source events. Keep their cost visible before changing ownership.
 fn load_watch_graph(path: &Path, purpose: &str) -> io::Result<GraphState> {
     let started = crate::metrics::runtime_metrics_enabled().then(Instant::now);
-    let result = GraphState::load(path);
+    let result = crate::build::recovery::recover_and_load(path);
     if let Some(started) = started {
         eprintln!(
             "Rust watch graph metrics: purpose={} load_us={} load_bytes={} success={}",

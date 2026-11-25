@@ -616,7 +616,7 @@ fn commit_reused_dynamic_output(previous_bytes: &[u8]) -> io::Result<()> {
     assert!(!state.assets.contains_key(&obsolete_output));
     assert!(!state.actions.contains_key(&old_spec.action_key()));
     assert_eq!(state.actions.get(&new_spec.action_key()), Some(&new_action));
-    assert_eq!(GraphState::load(&state_path)?, state);
+    assert_eq!(super::recovery::recover_and_load(&state_path)?, state);
     Ok(())
 }
 
@@ -694,7 +694,7 @@ fn equal_output_commit_updates_dependencies_without_backups() -> io::Result<()> 
     result?;
     assert!(!state_path.with_extension("commit-undo").exists());
     assert_eq!(fs::read(temporary.0.join("lib/input.out"))?, b"same");
-    let saved = GraphState::load(&state_path)?;
+    let saved = super::recovery::recover_and_load(&state_path)?;
     assert_eq!(saved.actions[&spec.action_key()], expected);
     assert_eq!(
         saved.actions[&spec.action_key()].reads,
@@ -2682,7 +2682,7 @@ fn recovery_commit_fixture(root: &std::path::Path) -> io::Result<()> {
         trigger_digest: None,
     };
     let path = super::graph_path(&workspace);
-    let mut state = GraphState::load(&path)?;
+    let mut state = super::recovery::recover_and_load(&path)?;
     let deleted = state
         .actions
         .iter()
@@ -2807,7 +2807,7 @@ fn assert_recovered_fixture(root: &std::path::Path) -> io::Result<()> {
         fs::read(root.join(".dart_tool/build_runner_accelerator/cache/app/lib/recreated.cache"))?,
         b"same"
     );
-    let restored = GraphState::load(&graph)?;
+    let restored = super::recovery::recover_and_load(&graph)?;
     assert!(restored.config_digest.is_empty());
     assert!(restored.retained_output_state);
     assert_eq!(
@@ -2926,7 +2926,9 @@ fn recovery_refuses_external_edits_without_deleting_handwritten_files() -> io::R
     let graph = temporary
         .0
         .join(".dart_tool/build_runner_accelerator/graph-v3.bin");
-    let error = GraphState::load(&graph).unwrap_err().to_string();
+    let error = super::recovery::recover_and_load(&graph)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("move externally edited files aside"));
     assert!(super::recovery::pending(&graph));
     assert_eq!(
@@ -3207,7 +3209,7 @@ fn filtered_retention_preserves_bytes_without_recording_implicit_history() -> io
         );
         assert_eq!(state.assets[&output].digest, digest);
         assert_eq!(state.retained_output_state, explicit_keep || prior_history);
-        assert_eq!(GraphState::load(&path)?, state);
+        assert_eq!(super::recovery::recover_and_load(&path)?, state);
     }
     Ok(())
 }

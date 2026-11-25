@@ -56,7 +56,7 @@ impl LoadedGraph {
         let _load = crate::wall::Span::new("graph_load");
         let started = Instant::now();
         let path = graph_path(workspace);
-        let state = GraphState::load(&path)?;
+        let state = recovery::recover_and_load(&path)?;
         Ok(Self {
             state,
             load_us: started.elapsed().as_micros(),
