@@ -59,8 +59,6 @@ typedef SharedPartStepFactory =
       Resolvers,
       ResourceManager,
     );
-SharedPartEncoder? _sharedPartEncoder;
-SharedPartStepFactory? _sharedPartStepFactory;
 
 /// Serves framed builder IPC, or the manifest/probe mode selected by arguments.
 Future<void> runWorker({
@@ -71,8 +69,6 @@ Future<void> runWorker({
   Map<String, PostProcessBuilderFactory> postProcessCatalog =
       const <String, PostProcessBuilderFactory>{},
 }) async {
-  _sharedPartEncoder = sharedPartEncoder;
-  _sharedPartStepFactory = sharedPartStepFactory;
   if ((arguments.length >= 3 && arguments.length <= 5) &&
       arguments.first == '--manifest-triggers') {
     await writeManifestTriggers(
@@ -120,7 +116,12 @@ Future<void> runWorker({
   final resolverProfile = ResolverInitializationProfile(
     enabled: _metricsEnabled,
   )..packageConfigLoadUs = packageConfigTimer?.elapsedMicroseconds ?? 0;
-  final runtime = _WorkerRuntime(packageConfig, resolverProfile);
+  final runtime = _WorkerRuntime(
+    packageConfig,
+    resolverProfile,
+    sharedPartEncoder: sharedPartEncoder,
+    sharedPartStepFactory: sharedPartStepFactory,
+  );
   final reader = FrameReader(stdin);
   final writer = FrameWriter(stdout);
   try {
@@ -130,8 +131,8 @@ Future<void> runWorker({
       try {
         final message = WorkerMessage.decode(
           rawMessage,
-          previousBatchBlockedAssets: runtime.batchBlockedAssets,
-          assetDictionary: runtime.assetDictionary,
+          previousBatchBlockedAssets: runtime.transport.batchBlockedAssets,
+          assetDictionary: runtime.transport.assetDictionary,
         );
         switch (message) {
           case WorkerInitializeMessage initialize:
@@ -141,10 +142,7 @@ Future<void> runWorker({
                 'initialize root does not match worker workspace',
               );
             }
-            runtime.batchBlockedAssets = null;
-            runtime.batchBlockedAssetIds = null;
-            runtime.assetDictionary.clear();
-            runtime.assetDigests.clear();
+            runtime.transport.resetOnInitialize();
             runtime.retainedOutputGuard = initialize.retainedOutputGuard;
             await runtime.startBuild(
               initialize.package,
@@ -171,9 +169,7 @@ Future<void> runWorker({
                 'reset-overlay-blob-v1',
                 'build-runner-current-v1',
                 'retained-output-guard-v1',
-                if (_sharedPartEncoder != null &&
-                    _sharedPartStepFactory != null)
-                  'shared-library-parts-v1',
+                if (runtime.supportsSharedParts) 'shared-library-parts-v1',
               ],
             });
           case WorkerResetMessage reset:
@@ -262,14 +258,9 @@ Future<void> runWorker({
               postProcessCatalog,
             );
           case WorkerBuildBatchMessage buildBatch:
-            for (final entry in buildBatch.assetDigestUpdates.entries) {
-              final digest = entry.value;
-              if (digest == null) {
-                runtime.assetDigests.remove(entry.key);
-              } else {
-                runtime.assetDigests[entry.key] = digest;
-              }
-            }
+            runtime.transport.applyAssetDigestUpdates(
+              buildBatch.assetDigestUpdates,
+            );
             await _handleBuildBatch(
               buildBatch,
               reader,
@@ -301,10 +292,7 @@ Future<void> runWorker({
   }
 }
 
-class _WorkerRuntime {
-  _WorkerRuntime(this.packageConfig, this.resolverProfile)
-    : resolver = createResolver(packageConfig, resolverProfile);
-
+class WorkerTransportState {
   // Last accepted batch visibility hint, scoped to this worker context.
   // Resolver/build resets and nested single builds leave transport state intact.
   List<String>? batchBlockedAssets;
@@ -321,8 +309,53 @@ class _WorkerRuntime {
   // holders of this map (the builder filesystem) see updates directly.
   final Map<String, String> assetDigests = <String, String>{};
 
+  void resetOnInitialize() {
+    batchBlockedAssets = null;
+    batchBlockedAssetIds = null;
+    assetDictionary.clear();
+    assetDigests.clear();
+  }
+
+  void applyAssetDigestUpdates(Map<String, String?> updates) {
+    for (final entry in updates.entries) {
+      final digest = entry.value;
+      if (digest == null) {
+        assetDigests.remove(entry.key);
+      } else {
+        assetDigests[entry.key] = digest;
+      }
+    }
+  }
+
+  Set<AssetId> resolveBatchBlockedAssets(List<String> blockedAssets) {
+    if (!identical(batchBlockedAssets, blockedAssets)) {
+      final parsed = Set<AssetId>.unmodifiable(
+        blockedAssets.map(AssetId.parse),
+      );
+      batchBlockedAssets = blockedAssets;
+      batchBlockedAssetIds = parsed;
+    }
+    return batchBlockedAssetIds!;
+  }
+}
+
+class _WorkerRuntime {
+  _WorkerRuntime(
+    this.packageConfig,
+    this.resolverProfile, {
+    this.sharedPartEncoder,
+    this.sharedPartStepFactory,
+  }) : resolver = createResolver(packageConfig, resolverProfile);
+
+  final WorkerTransportState transport = WorkerTransportState();
+
   final PackageConfig packageConfig;
   final ResolverInitializationProfile resolverProfile;
+  final SharedPartEncoder? sharedPartEncoder;
+  final SharedPartStepFactory? sharedPartStepFactory;
+
+  bool get supportsSharedParts =>
+      sharedPartEncoder != null && sharedPartStepFactory != null;
   WorkerResolversImpl resolver;
   final ResourceManager resourceManager = ResourceManager();
   final readCache = AssetReadCache();
@@ -822,7 +855,7 @@ class _WorkerRuntime {
       buildState: buildState,
       readerWriter: io,
       inputRestrictions: inputRestrictions,
-      assetDigests: assetDigests,
+      assetDigests: transport.assetDigests,
     );
     await resolver.takeLockAndStartBuild(
       builderFilesystem: buildFilesystem,
@@ -1100,14 +1133,9 @@ Future<void> _handleBuildBatch(
   Map<String, PostProcessBuilderFactory> postProcessCatalog,
 ) async {
   final results = <JsonMap>[];
-  if (!identical(runtime.batchBlockedAssets, message.blockedAssets)) {
-    final parsed = Set<AssetId>.unmodifiable(
-      message.blockedAssets.map(AssetId.parse),
-    );
-    runtime.batchBlockedAssets = message.blockedAssets;
-    runtime.batchBlockedAssetIds = parsed;
-  }
-  final blockedAssets = runtime.batchBlockedAssetIds!;
+  final blockedAssets = runtime.transport.resolveBatchBlockedAssets(
+    message.blockedAssets,
+  );
   runtime.batchResolverEntrypoints.clear();
   for (final request in message.requests) {
     results.add(
@@ -1354,7 +1382,7 @@ Future<JsonMap> _runBuildAction(
             resourceManager: runtime.resourceManager,
           );
         } else {
-          final create = _sharedPartStepFactory;
+          final create = runtime.sharedPartStepFactory;
           if (create == null)
             throw StateError('Shared-part worker factory is missing');
           activeStep = create(
@@ -1373,7 +1401,7 @@ Future<JsonMap> _runBuildAction(
           try {
             await builder!.build(activeStep);
             if (request.partPhaseIndex != null) {
-              final encode = _sharedPartEncoder;
+              final encode = runtime.sharedPartEncoder;
               if (encode == null)
                 throw StateError('Shared-part worker codec is missing');
               sharedPart = await encode(activeStep, builderId);
@@ -1416,7 +1444,7 @@ Future<JsonMap> _runBuildAction(
         // snapshot content (ADR 0054, Snapshot semantics).
         frontendDigestFor: (asset) => runtime.producedOutputs.containsKey(asset)
             ? null
-            : runtime.assetDigests[asset.toString()],
+            : runtime.transport.assetDigests[asset.toString()],
       );
       profile.resolverReadsUs = resolverReadsTimer.elapsedMicroseconds;
     }
