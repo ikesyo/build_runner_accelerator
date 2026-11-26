@@ -8,9 +8,9 @@ use super::wire::{
     rollback_asset_dictionary, write_batch_frame,
 };
 use crate::protocol::{
-    BINARY_BUILD_RESULT_MAGIC, BuildBatchResultCollector, BuildResult, IncomingFrame,
-    decode_build_batch_result_frame, read_message_with_size, write_binary_frame, write_frame,
-    write_frame_buffered,
+    BINARY_BUILD_RESULT_MAGIC, BuildBatchResultCollector, BuildResult, IPC_BUFFER_CAPACITY,
+    IncomingFrame, decode_build_batch_result_frame, read_message_with_size_buffered,
+    write_binary_frame_buffered, write_frame_buffered,
 };
 use crate::visibility::AssetVisibility;
 use crate::worker_kernel::WorkerArtifact;
@@ -61,8 +61,10 @@ pub struct WorkerClient {
     /// replaces it wholesale.
     pub(super) staged_asset_digests: Option<std::sync::Arc<BTreeMap<String, String>>>,
     pub(super) blocked_assets_cache: BlockedAssetsCache,
-    /// Reusable serialization buffer for typed build messages.
+    /// Reusable serialization buffer for outgoing IPC frames.
     pub(super) send_buffer: Vec<u8>,
+    /// Reusable payload buffer for incoming IPC frames.
+    recv_buffer: Vec<u8>,
     child: Child,
     input: BufWriter<ChildStdin>,
     output: BufReader<ChildStdout>,
@@ -175,13 +177,15 @@ impl WorkerClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()?;
-        let input = BufWriter::new(
+        let input = BufWriter::with_capacity(
+            IPC_BUFFER_CAPACITY,
             child
                 .stdin
                 .take()
                 .ok_or_else(|| io::Error::other("worker stdin unavailable"))?,
         );
-        let output = BufReader::new(
+        let output = BufReader::with_capacity(
+            IPC_BUFFER_CAPACITY,
             child
                 .stdout
                 .take()
@@ -209,6 +213,7 @@ impl WorkerClient {
             staged_asset_digests: None,
             blocked_assets_cache: BlockedAssetsCache::default(),
             send_buffer: Vec::new(),
+            recv_buffer: Vec::new(),
         })
     }
 
@@ -650,7 +655,7 @@ impl WorkerClient {
             ),
             "build messages must use typed wire serialization"
         );
-        let frame_size = write_frame(&mut self.input, message)?;
+        let frame_size = write_frame_buffered(&mut self.input, message, &mut self.send_buffer)?;
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
         Ok(())
@@ -765,7 +770,8 @@ impl WorkerClient {
     }
 
     pub(super) fn send_binary(&mut self, metadata: &Value, bytes: &[u8]) -> io::Result<()> {
-        let frame_size = write_binary_frame(&mut self.input, metadata, bytes)?;
+        let frame_size =
+            write_binary_frame_buffered(&mut self.input, metadata, bytes, &mut self.send_buffer)?;
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
         Ok(())
@@ -777,9 +783,10 @@ impl WorkerClient {
         let _receive = self.wall_span("receive_frame", None);
         loop {
             let (message, frame_size) =
-                read_message_with_size(&mut self.output)?.ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::UnexpectedEof, "Dart worker exited")
-                })?;
+                read_message_with_size_buffered(&mut self.output, &mut self.recv_buffer)?
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::UnexpectedEof, "Dart worker exited")
+                    })?;
             let metadata = match &message {
                 IncomingFrame::Json(value) => value,
                 IncomingFrame::Binary(frame) => &frame.metadata,
