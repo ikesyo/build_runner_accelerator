@@ -150,8 +150,8 @@ pub(super) fn run(
         state.clone(),
         demand_snapshot,
         state.is_compatible(config_digest),
+        settings.keeps_modified_outputs(),
     );
-    lazy.keep_modified_outputs = settings.keeps_modified_outputs();
     let dirty_roots = lazy.probe_filtered_roots(
         workspace,
         &roots,

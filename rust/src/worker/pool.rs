@@ -1,5 +1,5 @@
 use super::client::{WorkerClient, WorkerClientMetrics};
-use super::lazy::{FilteredDemandCoordinator, LazyBuildState};
+use super::demand::{FilteredDemandCoordinator, LazyBuildState};
 use super::request::BuildRequest;
 use super::wire::ApiUnitEvidence;
 use crate::plan::BuildSpec;
