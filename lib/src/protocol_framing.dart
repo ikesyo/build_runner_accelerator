@@ -174,18 +174,41 @@ class FrameWriter {
     }
   }
 
+  static final _jsonEncoder = JsonUtf8Encoder();
+  static const _maxCoalescedPayloadLength = 8 * 1024;
   final IOSink _output;
   final int _maxBuildResultFrameLength;
   Future<void> _pending = Future<void>.value();
 
+  static Uint8List _encodeJson(JsonMap message) {
+    final encoded = _jsonEncoder.convert(message);
+    return encoded is Uint8List ? encoded : Uint8List.fromList(encoded);
+  }
+
+  static void _writeUint32(Uint8List buffer, int offset, int value) {
+    buffer[offset] = (value >> 24) & 0xff;
+    buffer[offset + 1] = (value >> 16) & 0xff;
+    buffer[offset + 2] = (value >> 8) & 0xff;
+    buffer[offset + 3] = value & 0xff;
+  }
+
   /// Enqueues a JSON frame without interleaving it with another send's flush.
   Future<void> send(JsonMap message) async {
-    final payload = utf8.encode(jsonEncode(message));
-    if (payload.length > _maxFrameLength) {
+    final payload = _encodeJson(message);
+    final payloadLength = payload.length;
+    if (payloadLength > _maxFrameLength) {
       throw StateError('IPC frame exceeds the 256 MiB safety limit');
     }
-    final header = ByteData(4)..setUint32(0, payload.length, Endian.big);
-    await _sendChunks([header.buffer.asUint8List(), payload]);
+    if (payloadLength <= _maxCoalescedPayloadLength) {
+      final frame = Uint8List(4 + payloadLength);
+      _writeUint32(frame, 0, payloadLength);
+      frame.setRange(4, frame.length, payload);
+      await _sendChunk(frame);
+      return;
+    }
+    final header = Uint8List(4);
+    _writeUint32(header, 0, payloadLength);
+    await _sendChunks([header, payload]);
   }
 
   Future<void> sendBuildResult(JsonMap message) async {
@@ -340,9 +363,7 @@ class FrameWriter {
     JsonMap metadata,
     List<Uint8List> rawChunks,
   ) async {
-    final metadataPayload = Uint8List.fromList(
-      utf8.encode(jsonEncode(metadata)),
-    );
+    final metadataPayload = _encodeJson(metadata);
     var rawLength = 0;
     for (final chunk in rawChunks) {
       rawLength += chunk.length;
@@ -352,16 +373,41 @@ class FrameWriter {
       await _sendSplitBatch(metadata, rawChunks);
       return;
     }
-    final header = ByteData(4)..setUint32(0, payloadLength, Endian.big);
-    final metadataLength = ByteData(4)
-      ..setUint32(0, metadataPayload.length, Endian.big);
-    await _sendChunks([
-      header.buffer.asUint8List(),
-      magic,
-      metadataLength.buffer.asUint8List(),
-      metadataPayload,
-      ...rawChunks,
-    ]);
+    final headerLength = 4 + magic.length + 4;
+    if (metadataPayload.length + rawLength <= _maxCoalescedPayloadLength) {
+      final frame = Uint8List(
+        headerLength + metadataPayload.length + rawLength,
+      );
+      _writeUint32(frame, 0, payloadLength);
+      frame.setRange(4, 4 + magic.length, magic);
+      _writeUint32(frame, 4 + magic.length, metadataPayload.length);
+      var offset = headerLength;
+      frame.setRange(offset, offset + metadataPayload.length, metadataPayload);
+      offset += metadataPayload.length;
+      for (final chunk in rawChunks) {
+        frame.setRange(offset, offset + chunk.length, chunk);
+        offset += chunk.length;
+      }
+      await _sendChunk(frame);
+      return;
+    }
+    final header = Uint8List(headerLength);
+    _writeUint32(header, 0, payloadLength);
+    header.setRange(4, 4 + magic.length, magic);
+    _writeUint32(header, 4 + magic.length, metadataPayload.length);
+    await _sendChunks([header, metadataPayload, ...rawChunks]);
+  }
+
+  /// Keeps a single-chunk frame and its flush exclusive on the shared IOSink.
+  Future<void> _sendChunk(Uint8List chunk) {
+    final sent = _pending.then((_) async {
+      _output.add(chunk);
+      await _output.flush();
+    });
+    // Each caller observes its own failure; the queue must not introduce an
+    // unhandled second error or block later diagnostic/error frames.
+    _pending = sent.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return sent;
   }
 
   /// Keeps a whole frame and its flush exclusive on the shared IOSink.

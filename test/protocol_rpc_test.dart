@@ -297,8 +297,11 @@ void main() {
     () async {
       final requests = StreamController<List<int>>();
       final responses = StreamController<List<int>>();
-      final output = IOSink(requests.sink);
-      final peerOutput = IOSink(responses.sink);
+      // Model OS pipe buffers: IOSink(controller.sink).flush() pauses addStream
+      // when StreamIterator pauses between frames, which can deadlock in-memory
+      // peers when a complete frame arrives in one chunk before the peer reads.
+      final output = IOSink(_PipeSink(requests));
+      final peerOutput = IOSink(_PipeSink(responses));
       final writer = FrameWriter(output);
       final reader = FrameReader(responses.stream);
       final peerReader = FrameReader(requests.stream);
@@ -391,6 +394,138 @@ void main() {
       await Future.wait(closing);
     },
   );
+
+  test(
+    'FrameWriter coalesces small frames and preserves large UTF-8 and binary frames',
+    () async {
+      final sink = _RecordingSink();
+      final writer = FrameWriter(sink);
+
+      final smallJson = {'v': 1, 'type': 'ping', 'text': 'é 🐈 日本語'};
+      await writer.send(smallJson);
+      expect(sink.chunks, hasLength(1));
+
+      final largeJson = {'v': 1, 'type': 'big', 'text': 'あ' * 4000};
+      final beforeLargeJson = sink.chunks.length;
+      await writer.send(largeJson);
+      expect(sink.chunks.length - beforeLargeJson, 2);
+
+      final smallBinary = Uint8List.fromList([0, 127, 255]);
+      final beforeSmallBinary = sink.chunks.length;
+      await writer.sendBuildResult({
+        'v': 1,
+        'type': 'build_result',
+        'id': 1,
+        'outputs': [
+          {'asset': 'app|lib/small.bin', 'bytes': smallBinary},
+        ],
+      });
+      expect(sink.chunks.length - beforeSmallBinary, 1);
+
+      final largeBinary = Uint8List.fromList(
+        List.generate(10 * 1024, (i) => i % 256),
+      );
+      final beforeLargeBinary = sink.chunks.length;
+      await writer.sendBuildResult({
+        'v': 1,
+        'type': 'build_result',
+        'id': 2,
+        'outputs': [
+          {'asset': 'app|lib/large.bin', 'bytes': largeBinary},
+        ],
+      });
+      // 12-byte combined header + metadata payload + raw output chunk.
+      expect(sink.chunks.length - beforeLargeBinary, 3);
+      expect(sink.chunks[beforeLargeBinary], hasLength(12));
+
+      final reader = FrameReader(
+        Stream.fromIterable(sink.chunks.sublist(0, beforeSmallBinary)),
+      );
+      expect(await reader.next(), smallJson);
+      expect(await reader.next(), largeJson);
+      expect(await reader.next(), isNull);
+
+      final binaryBytes = Uint8List.fromList(
+        sink.chunks
+            .sublist(beforeSmallBinary)
+            .expand((chunk) => chunk)
+            .toList(),
+      );
+      var offset = 0;
+      for (final (expectedId, expectedAsset, expectedBytes) in [
+        (1, 'app|lib/small.bin', smallBinary),
+        (2, 'app|lib/large.bin', largeBinary),
+      ]) {
+        final frameLength = ByteData.sublistView(
+          binaryBytes,
+          offset,
+          offset + 4,
+        ).getUint32(0);
+        offset += 4;
+        expect(ascii.decode(binaryBytes.sublist(offset, offset + 4)), 'BRAR');
+        final metadataLength = ByteData.sublistView(
+          binaryBytes,
+          offset + 4,
+          offset + 8,
+        ).getUint32(0);
+        final metadata =
+            jsonDecode(
+                  utf8.decode(
+                    binaryBytes.sublist(
+                      offset + 8,
+                      offset + 8 + metadataLength,
+                    ),
+                  ),
+                )
+                as Map<String, dynamic>;
+        expect(metadata['id'], expectedId);
+        expect(metadata['outputs'], [
+          {'asset': expectedAsset, 'length': expectedBytes.length},
+        ]);
+        expect(
+          binaryBytes.sublist(
+            offset + 8 + metadataLength,
+            offset + frameLength,
+          ),
+          expectedBytes,
+        );
+        offset += frameLength;
+      }
+      expect(offset, binaryBytes.length);
+    },
+  );
+}
+
+class _PipeSink implements StreamConsumer<List<int>> {
+  _PipeSink(this._controller);
+
+  final StreamController<List<int>> _controller;
+
+  @override
+  Future<void> addStream(Stream<List<int>> stream) async {
+    await for (final chunk in stream) {
+      _controller.add(chunk);
+    }
+  }
+
+  @override
+  Future<void> close() => _controller.close();
+}
+
+class _RecordingSink implements IOSink {
+  final chunks = <Uint8List>[];
+
+  @override
+  void add(List<int> data) {
+    chunks.add(Uint8List.fromList(data));
+  }
+
+  @override
+  Future<void> flush() async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnsupportedError('$invocation');
 }
 
 List<int> _frame(List<int> payload) {

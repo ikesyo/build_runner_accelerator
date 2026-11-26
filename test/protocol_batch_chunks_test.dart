@@ -234,27 +234,45 @@ void main() {
 }
 
 // Count the real production-boundary case without allocating 400 MiB of test
-// buffers or copying output bytes. FrameWriter writes each framed chunk intact.
+// buffers or copying output bytes. Parses frame headers across any chunking.
 class CountingSink implements IOSink {
   final lengths = <int>[];
-  int remaining = 0;
-  int part = 0;
+  final _header = Uint8List(12);
+  int _headerFilled = 0;
+  int _metadataRemaining = 0;
+  int _rawRemaining = 0;
   int rawBytes = 0;
 
   @override
   void add(List<int> bytes) {
-    if (remaining == 0) {
-      final length = ByteData.sublistView(
-        Uint8List.fromList(bytes),
-      ).getUint32(0);
-      lengths.add(length);
-      remaining = length;
-      part = 0;
-    } else {
-      if (part >= 3) rawBytes += bytes.length;
-      remaining -= bytes.length;
-      expect(remaining, greaterThanOrEqualTo(0));
-      part++;
+    var offset = 0;
+    while (offset < bytes.length) {
+      if (_metadataRemaining == 0 && _rawRemaining == 0) {
+        final take = (12 - _headerFilled).clamp(0, bytes.length - offset);
+        _header.setRange(_headerFilled, _headerFilled + take, bytes, offset);
+        _headerFilled += take;
+        offset += take;
+        if (_headerFilled == 12) {
+          final headerData = ByteData.sublistView(_header);
+          final length = headerData.getUint32(0);
+          final metadataLength = headerData.getUint32(8);
+          expect(ascii.decode(_header.sublist(4, 8)), 'BRAR');
+          lengths.add(length);
+          _metadataRemaining = metadataLength;
+          _rawRemaining = length - 8 - metadataLength;
+          expect(_rawRemaining, greaterThanOrEqualTo(0));
+          _headerFilled = 0;
+        }
+      } else if (_metadataRemaining > 0) {
+        final skip = _metadataRemaining.clamp(0, bytes.length - offset);
+        _metadataRemaining -= skip;
+        offset += skip;
+      } else {
+        final take = _rawRemaining.clamp(0, bytes.length - offset);
+        rawBytes += take;
+        _rawRemaining -= take;
+        offset += take;
+      }
     }
   }
 

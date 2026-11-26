@@ -7,6 +7,7 @@ use std::sync::Arc;
 pub const BINARY_ASSET_RESPONSE_MAGIC: &[u8; 4] = b"BRAB";
 pub const BINARY_BUILD_RESULT_MAGIC: &[u8; 4] = b"BRAR";
 pub const MAX_FRAME_LENGTH: usize = 256 * 1024 * 1024;
+pub const IPC_BUFFER_CAPACITY: usize = 64 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildOutput {
@@ -154,42 +155,120 @@ pub enum IncomingFrame {
     Binary(BinaryFrame),
 }
 
+fn reset_retained_buffer(buffer: &mut Vec<u8>) {
+    if buffer.capacity() > IPC_BUFFER_CAPACITY {
+        *buffer = Vec::new();
+    } else {
+        buffer.clear();
+    }
+}
+
+#[cfg(test)]
 pub fn write_frame<W: Write, T: Serialize>(writer: &mut W, message: &T) -> io::Result<usize> {
-    let payload = serde_json::to_vec(message).map_err(io::Error::other)?;
-    write_payload(writer, &payload)
+    let mut buffer = Vec::new();
+    write_frame_buffered(writer, message, &mut buffer)
 }
 
 /// Serializes into a caller-owned buffer kept across calls, so repeated
-/// frames do not allocate a fresh payload vector each time.
+/// frames do not allocate a fresh payload vector each time and the 4-byte
+/// length header is written together with the payload in one write.
 pub fn write_frame_buffered<W: Write, T: Serialize>(
     writer: &mut W,
     message: &T,
     buffer: &mut Vec<u8>,
 ) -> io::Result<usize> {
-    buffer.clear();
-    serde_json::to_writer(&mut *buffer, message).map_err(io::Error::other)?;
-    write_payload(writer, buffer)
+    let result = write_frame_into_buffer(writer, message, buffer);
+    reset_retained_buffer(buffer);
+    result
 }
 
+fn write_frame_into_buffer<W: Write, T: Serialize>(
+    writer: &mut W,
+    message: &T,
+    buffer: &mut Vec<u8>,
+) -> io::Result<usize> {
+    buffer.clear();
+    buffer.resize(4, 0);
+    serde_json::to_writer(&mut *buffer, message).map_err(io::Error::other)?;
+    let payload_len = buffer.len() - 4;
+    if payload_len > MAX_FRAME_LENGTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "IPC frame exceeds the 256 MiB safety limit",
+        ));
+    }
+    let length = u32::try_from(payload_len)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "IPC frame is too large"))?;
+    buffer[..4].copy_from_slice(&length.to_be_bytes());
+    writer.write_all(buffer)?;
+    writer.flush()?;
+    Ok(buffer.len())
+}
+
+#[cfg(test)]
 pub fn write_binary_frame<W: Write, T: Serialize>(
     writer: &mut W,
     metadata: &T,
     bytes: &[u8],
 ) -> io::Result<usize> {
-    write_binary_frame_with_magic(writer, BINARY_ASSET_RESPONSE_MAGIC, metadata, bytes)
+    let mut buffer = Vec::new();
+    write_binary_frame_buffered(writer, metadata, bytes, &mut buffer)
 }
 
+pub fn write_binary_frame_buffered<W: Write, T: Serialize>(
+    writer: &mut W,
+    metadata: &T,
+    bytes: &[u8],
+    buffer: &mut Vec<u8>,
+) -> io::Result<usize> {
+    write_binary_frame_with_magic_buffered(
+        writer,
+        BINARY_ASSET_RESPONSE_MAGIC,
+        metadata,
+        bytes,
+        buffer,
+    )
+}
+
+#[cfg(test)]
 pub fn write_binary_frame_with_magic<W: Write, T: Serialize>(
     writer: &mut W,
     magic: &[u8; 4],
     metadata: &T,
     bytes: &[u8],
 ) -> io::Result<usize> {
-    let metadata = serde_json::to_vec(metadata).map_err(io::Error::other)?;
+    let mut buffer = Vec::new();
+    write_binary_frame_with_magic_buffered(writer, magic, metadata, bytes, &mut buffer)
+}
+
+pub fn write_binary_frame_with_magic_buffered<W: Write, T: Serialize>(
+    writer: &mut W,
+    magic: &[u8; 4],
+    metadata: &T,
+    bytes: &[u8],
+    buffer: &mut Vec<u8>,
+) -> io::Result<usize> {
+    let result = write_binary_frame_into_buffer(writer, magic, metadata, bytes, buffer);
+    reset_retained_buffer(buffer);
+    result
+}
+
+fn write_binary_frame_into_buffer<W: Write, T: Serialize>(
+    writer: &mut W,
+    magic: &[u8; 4],
+    metadata: &T,
+    bytes: &[u8],
+    buffer: &mut Vec<u8>,
+) -> io::Result<usize> {
+    const HEADER_LEN: usize = 12;
+    buffer.clear();
+    buffer.resize(HEADER_LEN, 0);
+    serde_json::to_writer(&mut *buffer, metadata).map_err(io::Error::other)?;
+    let metadata_len = buffer.len() - HEADER_LEN;
     let payload_length = magic
         .len()
         .checked_add(4)
-        .and_then(|length| length.checked_add(metadata.len()))
+        .and_then(|length| length.checked_add(metadata_len))
         .and_then(|length| length.checked_add(bytes.len()))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "IPC frame is too large"))?;
     if payload_length > MAX_FRAME_LENGTH {
@@ -198,36 +277,38 @@ pub fn write_binary_frame_with_magic<W: Write, T: Serialize>(
             "IPC frame exceeds the 256 MiB safety limit",
         ));
     }
-    let metadata_length = u32::try_from(metadata.len())
+    let metadata_length = u32::try_from(metadata_len)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "IPC metadata is too large"))?;
     let length = u32::try_from(payload_length)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "IPC frame is too large"))?;
-    writer.write_all(&length.to_be_bytes())?;
-    writer.write_all(magic)?;
-    writer.write_all(&metadata_length.to_be_bytes())?;
-    writer.write_all(&metadata)?;
-    writer.write_all(bytes)?;
+    buffer[..4].copy_from_slice(&length.to_be_bytes());
+    buffer[4..8].copy_from_slice(magic);
+    buffer[8..12].copy_from_slice(&metadata_length.to_be_bytes());
+    if buffer.len().saturating_add(bytes.len()) <= IPC_BUFFER_CAPACITY {
+        buffer.extend_from_slice(bytes);
+        writer.write_all(buffer)?;
+    } else {
+        writer.write_all(buffer)?;
+        writer.write_all(bytes)?;
+    }
     writer.flush()?;
     Ok(payload_length + 4)
 }
 
-fn write_payload<W: Write>(writer: &mut W, payload: &[u8]) -> io::Result<usize> {
-    if payload.len() > MAX_FRAME_LENGTH {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "IPC frame exceeds the 256 MiB safety limit",
-        ));
-    }
-    let length = u32::try_from(payload.len())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "IPC frame is too large"))?;
-    writer.write_all(&length.to_be_bytes())?;
-    writer.write_all(payload)?;
-    writer.flush()?;
-    Ok(payload.len() + 4)
-}
-
+#[cfg(test)]
 pub fn read_message_with_size<R: Read>(
     reader: &mut R,
+) -> io::Result<Option<(IncomingFrame, usize)>> {
+    let mut buffer = Vec::new();
+    read_message_with_size_buffered(reader, &mut buffer)
+}
+
+/// Reads one frame into a reusable receive buffer. JSON frames decode in place
+/// and keep buffer capacity up to `IPC_BUFFER_CAPACITY`; binary frames move
+/// ownership of the payload vector without copying.
+pub fn read_message_with_size_buffered<R: Read>(
+    reader: &mut R,
+    buffer: &mut Vec<u8>,
 ) -> io::Result<Option<(IncomingFrame, usize)>> {
     let mut header = [0_u8; 4];
     match reader.read_exact(&mut header) {
@@ -244,12 +325,15 @@ pub fn read_message_with_size<R: Read>(
         ));
     }
 
-    let mut payload = vec![0_u8; length];
-    reader.read_exact(&mut payload)?;
-    Ok(Some((decode_payload(payload)?, length + 4)))
+    buffer.resize(length, 0);
+    let result = reader
+        .read_exact(buffer)
+        .and_then(|()| decode_payload_buffered(buffer));
+    reset_retained_buffer(buffer);
+    Ok(Some((result?, length + 4)))
 }
 
-fn decode_payload(payload: Vec<u8>) -> io::Result<IncomingFrame> {
+fn decode_payload_buffered(payload: &mut Vec<u8>) -> io::Result<IncomingFrame> {
     if payload.starts_with(BINARY_ASSET_RESPONSE_MAGIC)
         || payload.starts_with(BINARY_BUILD_RESULT_MAGIC)
     {
@@ -277,12 +361,12 @@ fn decode_payload(payload: Vec<u8>) -> io::Result<IncomingFrame> {
         return Ok(IncomingFrame::Binary(BinaryFrame {
             magic,
             metadata,
-            payload,
+            payload: std::mem::take(payload),
             bytes_start,
         }));
     }
 
-    serde_json::from_slice(&payload)
+    serde_json::from_slice(payload)
         .map(IncomingFrame::Json)
         .map_err(io::Error::other)
 }
@@ -1018,5 +1102,129 @@ mod tests {
                 ))
                 .is_err()
         );
+    }
+
+    struct RecordingWriter {
+        writes: Vec<Vec<u8>>,
+    }
+
+    impl RecordingWriter {
+        fn new() -> Self {
+            Self { writes: Vec::new() }
+        }
+
+        fn joined(&self) -> Vec<u8> {
+            self.writes.concat()
+        }
+    }
+
+    impl std::io::Write for RecordingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.writes.push(buf.to_vec());
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn buffered_json_write_coalesces_header_and_bounds_retained_capacity() {
+        let mut writer = RecordingWriter::new();
+        let mut buffer = Vec::new();
+
+        // 10 KiB frame (> default 8 KiB BufWriter) must still emit in a single write.
+        let medium = json!({"v": 1, "type": "medium", "data": "x".repeat(10 * 1024)});
+        super::write_frame_buffered(&mut writer, &medium, &mut buffer).expect("write medium");
+        assert_eq!(writer.writes.len(), 1);
+        assert!(buffer.is_empty());
+        assert!(buffer.capacity() >= 10 * 1024);
+        assert!(buffer.capacity() <= super::IPC_BUFFER_CAPACITY);
+
+        // Oversized frame (> 64 KiB) releases the retained buffer after flushing.
+        let large = json!({"v": 1, "type": "large", "data": "y".repeat(70 * 1024)});
+        super::write_frame_buffered(&mut writer, &large, &mut buffer).expect("write large");
+        assert_eq!(writer.writes.len(), 2);
+        assert_eq!(buffer.capacity(), 0);
+
+        let mut cursor = Cursor::new(writer.joined());
+        let mut recv_buffer = Vec::new();
+        let (IncomingFrame::Json(first), _) =
+            super::read_message_with_size_buffered(&mut cursor, &mut recv_buffer)
+                .expect("read medium")
+                .expect("frame")
+        else {
+            panic!("expected JSON frame");
+        };
+        assert_eq!(first, medium);
+        assert!(recv_buffer.capacity() >= 10 * 1024);
+        assert!(recv_buffer.capacity() <= super::IPC_BUFFER_CAPACITY);
+
+        let (IncomingFrame::Json(second), _) =
+            super::read_message_with_size_buffered(&mut cursor, &mut recv_buffer)
+                .expect("read large")
+                .expect("frame")
+        else {
+            panic!("expected JSON frame");
+        };
+        assert_eq!(second, large);
+        assert_eq!(recv_buffer.capacity(), 0);
+    }
+
+    #[test]
+    fn buffered_binary_write_coalesces_small_frames_and_streams_large_payloads() {
+        let mut writer = RecordingWriter::new();
+        let mut buffer = Vec::new();
+
+        let small_bytes = vec![7_u8; 2 * 1024];
+        let small_meta = json!({
+            "v": 1,
+            "type": "asset_response",
+            "id": 1,
+            "ok": true,
+            "encoding": "raw",
+            "length": small_bytes.len(),
+        });
+        super::write_binary_frame_buffered(&mut writer, &small_meta, &small_bytes, &mut buffer)
+            .expect("write small binary");
+        assert_eq!(writer.writes.len(), 1);
+        assert!(buffer.capacity() <= super::IPC_BUFFER_CAPACITY);
+
+        let large_bytes = vec![9_u8; 70 * 1024];
+        let large_meta = json!({
+            "v": 1,
+            "type": "asset_response",
+            "id": 2,
+            "ok": true,
+            "encoding": "raw",
+            "length": large_bytes.len(),
+        });
+        super::write_binary_frame_buffered(&mut writer, &large_meta, &large_bytes, &mut buffer)
+            .expect("write large binary");
+        // Header+metadata in one write, raw payload in the second write.
+        assert_eq!(writer.writes.len(), 3);
+        assert_eq!(writer.writes[2].len(), large_bytes.len());
+
+        let mut cursor = Cursor::new(writer.joined());
+        let mut recv_buffer = Vec::new();
+        for (expected_meta, expected_bytes) in
+            [(small_meta, small_bytes), (large_meta, large_bytes)]
+        {
+            let (IncomingFrame::Binary(frame), _) =
+                super::read_message_with_size_buffered(&mut cursor, &mut recv_buffer)
+                    .expect("read binary")
+                    .expect("frame")
+            else {
+                panic!("expected binary frame");
+            };
+            assert_eq!(frame.metadata, expected_meta);
+            assert_eq!(
+                &frame.payload[frame.bytes_start..],
+                expected_bytes.as_slice()
+            );
+            // Ownership moved into BinaryFrame.
+            assert_eq!(recv_buffer.capacity(), 0);
+        }
     }
 }
