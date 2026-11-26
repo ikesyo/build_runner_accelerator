@@ -183,25 +183,18 @@ class WorkerActionRunner {
       final drained = await runtime.drainPendingDepLoadsForPhase(request.phase);
       final drainReads = drained.reads;
       final drainResolverReads = drained.resolverReads;
-      final deleted = <AssetId>{};
+      final triggerResult = await _evaluateTriggers(
+        isPostProcess: isPostProcess,
+        options: options,
+        triggers: triggers,
+        input: input,
+        builderId: builderId,
+        phase: request.phase,
+      );
+      final triggered = triggerResult.triggered;
+      var deleted = const <AssetId>{};
       BuildStepImpl? step;
       JsonMap? sharedPart;
-      InputTracker? triggerInputTracker;
-      var triggered = true;
-      if (!isPostProcess && options['run_only_if_triggered'] == true) {
-        triggerInputTracker = InputTracker(
-          runtime.io.filesystem,
-          primaryInput: input,
-          builderLabel: builderId,
-        );
-        triggered = await evaluateBuildTriggers(
-          triggers: triggers,
-          primaryInput: input,
-          phase: request.phase,
-          filesystem: runtime.buildFilesystem,
-          inputTracker: triggerInputTracker,
-        );
-      }
       final runBuilderTimer = Stopwatch()..start();
       if (traceStart != null) {
         profile.runBuilderStartUs = profile.elapsedUs;
@@ -210,121 +203,29 @@ class WorkerActionRunner {
         if (!triggered) {
           profile.status = 'not_triggered';
         } else if (isPostProcess) {
-          final factory = postProcessCatalog[builderId];
-          if (factory == null) {
-            throw StateError('Unknown post-process builder: $builderId');
-          }
-          final instanceKey = _instanceKey(request);
-          var postProcessBuilder = runtime.postProcessBuilders[instanceKey];
-          if (postProcessBuilder == null) {
-            final factoryTimer = Stopwatch()..start();
-            postProcessBuilder = factory(
-              BuilderOptions(options, isRoot: isRoot),
-            );
-            profile.factoryUs = factoryTimer.elapsedMicroseconds;
-            runtime.postProcessBuilders[instanceKey] = postProcessBuilder;
-          }
-          final postProcessStep = RemotePostProcessBuildStep(
-            inputId: input,
-            io: runtime.io,
-            deletePrimaryInput: deleted.add,
+          deleted = await _executePostProcessAction(
+            request: request,
+            input: input,
+            builderId: builderId,
+            options: options,
+            isRoot: isRoot,
+            actionLog: actionLog,
+            profile: profile,
           );
-          await BuildLogLogger.scopeLogAsync(() async {
-            try {
-              await postProcessBuilder!.build(postProcessStep);
-            } finally {
-              await postProcessStep.complete();
-            }
-          }, actionLog);
         } else {
-          final trackedResolver = _TrackingResolvers(
-            runtime.resolver,
-            retainedOutputGuard: runtime.retainedOutputGuard,
+          final result = await _executeNormalAction(
+            request: request,
+            input: input,
+            builderId: builderId,
+            options: options,
+            isRoot: isRoot,
+            actionLog: actionLog,
+            profile: profile,
+            traceEnabled: traceStart != null,
           );
-          final resolver =
-              (runtime.resolverProfile.enabled || traceStart != null)
-              ? _ProfilingResolvers(trackedResolver, runtime, profile)
-              : trackedResolver;
-          final factory = builderCatalog[builderId];
-          if (factory == null) {
-            throw StateError('Unknown builder: $builderId');
-          }
-          final instanceKey = _instanceKey(request);
-          var builder = runtime.builders[instanceKey];
-          if (builder == null) {
-            final factoryTimer = Stopwatch()..start();
-            builder = factory(BuilderOptions(options, isRoot: isRoot));
-            profile.factoryUs = factoryTimer.elapsedMicroseconds;
-            runtime.builders[instanceKey] = builder;
-          }
-          final inputTracker = InputTracker(
-            runtime.io.filesystem,
-            primaryInput: input,
-            builderLabel: builderId,
-          );
-          final createStep = runtime.retainedOutputGuard
-              ? _RetainedOutputBuildStep.new
-              : BuildStepImpl.new;
-          if (request.partPhaseIndex != null && runtime.retainedOutputGuard) {
-            throw UnsupportedError(_retainedApiUnsupported);
-          }
-          final expectedOutputs = [
-            for (final output in request.allowedOutputs) AssetId.parse(output),
-          ];
-          final BuildStepImpl activeStep;
-          if (request.partPhaseIndex == null) {
-            activeStep = createStep(
-              inputId: input,
-              expectedOutputs: expectedOutputs,
-              inputTracker: inputTracker,
-              buildFilesystem: runtime.buildFilesystem,
-              phase: request.phase,
-              resolvers: resolver,
-              resourceManager: runtime.resourceManager,
-            );
-          } else {
-            final create = runtime.sharedPartStepFactory;
-            if (create == null) {
-              throw StateError('Shared-part worker factory is missing');
-            }
-            activeStep = create(
-              input,
-              expectedOutputs,
-              inputTracker,
-              runtime.buildFilesystem,
-              request.phase,
-              request.partPhaseIndex!,
-              resolver,
-              runtime.resourceManager,
-            );
-          }
-          step = activeStep;
-          await BuildLogLogger.scopeLogAsync(() async {
-            try {
-              await builder!.build(activeStep);
-              if (request.partPhaseIndex != null) {
-                final encode = runtime.sharedPartEncoder;
-                if (encode == null) {
-                  throw StateError('Shared-part worker codec is missing');
-                }
-                sharedPart = await encode(activeStep, builderId);
-              }
-            } finally {
-              try {
-                await activeStep.complete();
-              } finally {
-                // Latch the unsupported API even if a builder catches its exception
-                // or fails later. Never publish the builder's catch-path output.
-                if ((activeStep is _RetainedOutputBuildStep &&
-                        activeStep.unsupportedDigestUsed) ||
-                    (trackedResolver.retainedOutputGuard &&
-                        trackedResolver.wasUsed)) {
-                  throw UnsupportedError(_retainedApiUnsupported);
-                }
-              }
-            }
-          }, actionLog);
-          resolverUsed = trackedResolver.wasUsed;
+          step = result.step;
+          sharedPart = result.sharedPart;
+          resolverUsed = result.resolverUsed;
         }
         if (actionLog.errors.isNotEmpty) {
           throw StateError(
@@ -353,162 +254,362 @@ class WorkerActionRunner {
         profile.resolverReadsUs = resolverReadsTimer.elapsedMicroseconds;
       }
 
-      final resultAssemblyTimer = Stopwatch()..start();
-      final outputs = <Map<String, dynamic>>[
-        if (isPostProcess)
-          for (final entry in runtime.io.outputs.entries)
-            <String, dynamic>{
-              'asset': entry.key.toString(),
-              'bytes': entry.value,
-            }
-        else if (step != null)
-          for (final entry in step.outputs.entries)
-            <String, dynamic>{
-              'asset': entry.key.toString(),
-              'bytes': entry.value.bytes,
-            },
-      ];
-      if (isPostProcess) {
-        for (final entry in runtime.io.outputs.entries) {
-          runtime.producedOutputs[entry.key] = AssetContent.bytes(entry.value);
-        }
-      } else if (step != null) {
-        runtime.producedOutputs.addAll(step.outputs);
-      }
-      final observedReads = drainReads.isEmpty
-          ? runtime.io.observedReads
-          : runtime.io.observedReads.difference(drainReads);
-      final resolverObservedReads = drainResolverReads.isEmpty
-          ? runtime.io.resolverObservedReads
-          : runtime.io.resolverObservedReads.difference(drainResolverReads);
-      // The step's InputTracker also records the resolver's internal
-      // readability probes: libraryFor preloads its target through the
-      // step, which tracks it as an input even though the builder
-      // never read it. Assets the IO attributed to the resolver
-      // channel alone (and did not also surface as direct reads or
-      // glob results) are resolver observations, so they come out of
-      // the direct set again; an asset read both ways stays direct.
-      final resolverOnlyReads = resolverObservedReads
-          .difference(observedReads)
-          .difference(runtime.io.observedGlobResults);
-      final readsSet = <String>{
-        input.toString(),
-        if (triggerInputTracker != null)
-          ...triggerInputTracker.inputs.map((id) => id.toString()),
-        if (step != null)
-          ...step.inputTracker.inputs.map((id) => id.toString()),
-        ...observedReads.map((id) => id.toString()),
-        ...runtime.io.observedGlobResults.map((id) => id.toString()),
-      }..removeAll(resolverOnlyReads.map((id) => id.toString()));
-      final reads = readsSet.toList()..sort();
-      final resolverReads = <String>{
-        if (triggered && step != null)
-          ...step.inputTracker.resolverEntrypoints.map((id) => id.toString()),
-        // Resolver invalidation keeps the full union: direct reads,
-        // plus the loads recorded separately as resolver machinery
-        // reads (ADR 0056). Only `reads` above is direct-only.
-        if (triggered) ...observedReads.map((id) => id.toString()),
-        if (triggered) ...resolverObservedReads.map((id) => id.toString()),
-      }.toList()..sort();
-      final resolverEntrypoints = <AssetId>{
-        if (triggered && step != null) ...step.inputTracker.resolverEntrypoints,
-      };
-      runtime.batchResolverEntrypoints.addAll(resolverEntrypoints);
-      final globReads = runtime.io.observedGlobs.toList()
-        ..sort((left, right) {
-          final packageOrder = left.package.compareTo(right.package);
-          return packageOrder != 0
-              ? packageOrder
-              : left.pattern.compareTo(right.pattern);
-        });
-      if (runtime.resolverProfile.enabled) {
-        final after = _activityDurations();
-        for (final entry in after.entries) {
-          final delta = entry.value - (activitySnapshot[entry.key] ?? 0);
-          if (delta != 0) profile.activityUs[entry.key] = delta;
-        }
-      }
-      profile.resultAssemblyUs = resultAssemblyTimer.elapsedMicroseconds;
-      profile.outputCount = outputs.length;
-      profile.readCount = reads.length;
-      profile.resolverReadCount = resolverReads.length;
-      profile.globCount = globReads.length;
-      profile.status = triggered ? 'success' : 'not_triggered';
-      return <String, dynamic>{
-        'v': 1,
-        'type': 'build_result',
-        'id': request.id,
-        'status': profile.status,
-        // Exclude batch preparation and IPC from scheduler cost learning.
-        'execution_us': profile.elapsedUs,
-        'outputs': outputs,
-        if (sharedPart != null) 'shared_part': sharedPart,
-        'deleted': <String>[for (final asset in deleted) asset.toString()]
-          ..sort(),
-        'reads': reads,
-        // Preserve stock InputTracker iteration order for filtered reuse. The
-        // broader reads above also include analyzer/prefetch bookkeeping.
-        'stock_inputs': <String>[
-          if (triggerInputTracker != null)
-            ...triggerInputTracker.inputs.map((id) => id.toString()),
-          if (step != null)
-            ...step.inputTracker.inputs.map((id) => id.toString()),
-        ],
-        'stock_globs': <String, List<String>>{
-          for (final entry in runtime.io.observedGlobMembers.entries)
-            '${entry.key.package}|${entry.key.pattern}': [
-              for (final asset in entry.value) asset.toString(),
-            ],
-        },
-        'resolver_reads': resolverReads,
-        'resolver_content_reads': <String>[
-          if (step != null)
-            for (final id in runtime.resolver.contentReadsFor(step))
-              id.toString(),
-        ]..sort(),
-        'resolver_entrypoints': <String>[
-          for (final id in resolverEntrypoints) id.toString(),
-        ],
-        'resolver_used': resolverUsed,
-        'glob_reads': <Map<String, String>>[
-          if (step != null)
-            for (final glob in step.inputTracker.globsEvaluated)
-              <String, String>{'package': glob.package, 'pattern': glob.glob}
-          else
-            for (final glob in globReads)
-              <String, String>{
-                'package': glob.package,
-                'pattern': glob.pattern,
-              },
-        ],
-        'diagnostics': <dynamic>[],
-      };
+      return _assembleActionResult(
+        request: request,
+        input: input,
+        isPostProcess: isPostProcess,
+        triggered: triggered,
+        step: step,
+        sharedPart: sharedPart,
+        deleted: deleted,
+        resolverUsed: resolverUsed,
+        triggerInputTracker: triggerResult.tracker,
+        drainReads: drainReads,
+        drainResolverReads: drainResolverReads,
+        activitySnapshot: activitySnapshot,
+        profile: profile,
+      );
     } finally {
       if (actionStarted) runtime.io.endAction();
       profile.emit();
       if (traceStart != null) {
-        // A fixed-size report, with no asset IDs, options or source text. The
-        // native SDK exports this as a child of the propagated batch context.
-        await writer.send(<String, dynamic>{
-          'v': 1,
-          'type': 'otel_action',
-          'traceparent': request.traceparent,
-          'otel_report_id': request.otelReportId,
-          'start_us': traceStart,
-          'duration_us': profile.elapsedUs,
-          'success':
-              profile.status == 'success' || profile.status == 'not_triggered',
-          'run_builder_us': profile.runBuilderUs,
-          'run_builder_start_us': profile.runBuilderStartUs,
-          'resolver_spans': profile.resolverSpans,
-          'resolver_get_us': profile.resolverGetUs,
-          'resolver_get_calls': profile.resolverGetCalls,
-          'outputs': profile.outputCount,
-          'reads': profile.readCount,
-          'resolver_reads': profile.resolverReadCount,
-        });
+        await _emitOtelAction(request, profile, traceStart);
       }
     }
+  }
+
+  Future<({bool triggered, InputTracker? tracker})> _evaluateTriggers({
+    required bool isPostProcess,
+    required Map<String, dynamic> options,
+    required List<NormalizedBuildTrigger> triggers,
+    required AssetId input,
+    required String builderId,
+    required int phase,
+  }) async {
+    if (isPostProcess || options['run_only_if_triggered'] != true) {
+      return (triggered: true, tracker: null);
+    }
+    final tracker = InputTracker(
+      runtime.io.filesystem,
+      primaryInput: input,
+      builderLabel: builderId,
+    );
+    final triggered = await evaluateBuildTriggers(
+      triggers: triggers,
+      primaryInput: input,
+      phase: phase,
+      filesystem: runtime.buildFilesystem,
+      inputTracker: tracker,
+    );
+    return (triggered: triggered, tracker: tracker);
+  }
+
+  Future<Set<AssetId>> _executePostProcessAction({
+    required WorkerBuildRequest request,
+    required AssetId input,
+    required String builderId,
+    required Map<String, dynamic> options,
+    required bool isRoot,
+    required BuildLogLogger actionLog,
+    required _BuildProfile profile,
+  }) async {
+    final factory = postProcessCatalog[builderId];
+    if (factory == null) {
+      throw StateError('Unknown post-process builder: $builderId');
+    }
+    final instanceKey = _instanceKey(request);
+    var postProcessBuilder = runtime.postProcessBuilders[instanceKey];
+    if (postProcessBuilder == null) {
+      final factoryTimer = Stopwatch()..start();
+      postProcessBuilder = factory(BuilderOptions(options, isRoot: isRoot));
+      profile.factoryUs = factoryTimer.elapsedMicroseconds;
+      runtime.postProcessBuilders[instanceKey] = postProcessBuilder;
+    }
+    final deleted = <AssetId>{};
+    final postProcessStep = RemotePostProcessBuildStep(
+      inputId: input,
+      io: runtime.io,
+      deletePrimaryInput: deleted.add,
+    );
+    await BuildLogLogger.scopeLogAsync(() async {
+      try {
+        await postProcessBuilder!.build(postProcessStep);
+      } finally {
+        await postProcessStep.complete();
+      }
+    }, actionLog);
+    return deleted;
+  }
+
+  Future<({BuildStepImpl step, JsonMap? sharedPart, bool resolverUsed})>
+  _executeNormalAction({
+    required WorkerBuildRequest request,
+    required AssetId input,
+    required String builderId,
+    required Map<String, dynamic> options,
+    required bool isRoot,
+    required BuildLogLogger actionLog,
+    required _BuildProfile profile,
+    required bool traceEnabled,
+  }) async {
+    final trackedResolver = _TrackingResolvers(
+      runtime.resolver,
+      retainedOutputGuard: runtime.retainedOutputGuard,
+    );
+    final resolver = (runtime.resolverProfile.enabled || traceEnabled)
+        ? _ProfilingResolvers(trackedResolver, runtime, profile)
+        : trackedResolver;
+    final factory = builderCatalog[builderId];
+    if (factory == null) {
+      throw StateError('Unknown builder: $builderId');
+    }
+    final instanceKey = _instanceKey(request);
+    var builder = runtime.builders[instanceKey];
+    if (builder == null) {
+      final factoryTimer = Stopwatch()..start();
+      builder = factory(BuilderOptions(options, isRoot: isRoot));
+      profile.factoryUs = factoryTimer.elapsedMicroseconds;
+      runtime.builders[instanceKey] = builder;
+    }
+    final inputTracker = InputTracker(
+      runtime.io.filesystem,
+      primaryInput: input,
+      builderLabel: builderId,
+    );
+    final createStep = runtime.retainedOutputGuard
+        ? _RetainedOutputBuildStep.new
+        : BuildStepImpl.new;
+    if (request.partPhaseIndex != null && runtime.retainedOutputGuard) {
+      throw UnsupportedError(_retainedApiUnsupported);
+    }
+    final expectedOutputs = [
+      for (final output in request.allowedOutputs) AssetId.parse(output),
+    ];
+    final BuildStepImpl activeStep;
+    if (request.partPhaseIndex == null) {
+      activeStep = createStep(
+        inputId: input,
+        expectedOutputs: expectedOutputs,
+        inputTracker: inputTracker,
+        buildFilesystem: runtime.buildFilesystem,
+        phase: request.phase,
+        resolvers: resolver,
+        resourceManager: runtime.resourceManager,
+      );
+    } else {
+      final create = runtime.sharedPartStepFactory;
+      if (create == null) {
+        throw StateError('Shared-part worker factory is missing');
+      }
+      activeStep = create(
+        input,
+        expectedOutputs,
+        inputTracker,
+        runtime.buildFilesystem,
+        request.phase,
+        request.partPhaseIndex!,
+        resolver,
+        runtime.resourceManager,
+      );
+    }
+    JsonMap? sharedPart;
+    await BuildLogLogger.scopeLogAsync(() async {
+      try {
+        await builder!.build(activeStep);
+        if (request.partPhaseIndex != null) {
+          final encode = runtime.sharedPartEncoder;
+          if (encode == null) {
+            throw StateError('Shared-part worker codec is missing');
+          }
+          sharedPart = await encode(activeStep, builderId);
+        }
+      } finally {
+        try {
+          await activeStep.complete();
+        } finally {
+          // Latch the unsupported API even if a builder catches its exception
+          // or fails later. Never publish the builder's catch-path output.
+          if ((activeStep is _RetainedOutputBuildStep &&
+                  activeStep.unsupportedDigestUsed) ||
+              (trackedResolver.retainedOutputGuard &&
+                  trackedResolver.wasUsed)) {
+            throw UnsupportedError(_retainedApiUnsupported);
+          }
+        }
+      }
+    }, actionLog);
+    return (
+      step: activeStep,
+      sharedPart: sharedPart,
+      resolverUsed: trackedResolver.wasUsed,
+    );
+  }
+
+  JsonMap _assembleActionResult({
+    required WorkerBuildRequest request,
+    required AssetId input,
+    required bool isPostProcess,
+    required bool triggered,
+    required BuildStepImpl? step,
+    required JsonMap? sharedPart,
+    required Set<AssetId> deleted,
+    required bool resolverUsed,
+    required InputTracker? triggerInputTracker,
+    required Set<AssetId> drainReads,
+    required Set<AssetId> drainResolverReads,
+    required Map<String, int> activitySnapshot,
+    required _BuildProfile profile,
+  }) {
+    final resultAssemblyTimer = Stopwatch()..start();
+    final outputs = <Map<String, dynamic>>[
+      if (isPostProcess)
+        for (final entry in runtime.io.outputs.entries)
+          <String, dynamic>{'asset': entry.key.toString(), 'bytes': entry.value}
+      else if (step != null)
+        for (final entry in step.outputs.entries)
+          <String, dynamic>{
+            'asset': entry.key.toString(),
+            'bytes': entry.value.bytes,
+          },
+    ];
+    if (isPostProcess) {
+      for (final entry in runtime.io.outputs.entries) {
+        runtime.producedOutputs[entry.key] = AssetContent.bytes(entry.value);
+      }
+    } else if (step != null) {
+      runtime.producedOutputs.addAll(step.outputs);
+    }
+    final observedReads = drainReads.isEmpty
+        ? runtime.io.observedReads
+        : runtime.io.observedReads.difference(drainReads);
+    final resolverObservedReads = drainResolverReads.isEmpty
+        ? runtime.io.resolverObservedReads
+        : runtime.io.resolverObservedReads.difference(drainResolverReads);
+    // The step's InputTracker also records the resolver's internal
+    // readability probes: libraryFor preloads its target through the
+    // step, which tracks it as an input even though the builder
+    // never read it. Assets the IO attributed to the resolver
+    // channel alone (and did not also surface as direct reads or
+    // glob results) are resolver observations, so they come out of
+    // the direct set again; an asset read both ways stays direct.
+    final resolverOnlyReads = resolverObservedReads
+        .difference(observedReads)
+        .difference(runtime.io.observedGlobResults);
+    final readsSet = <String>{
+      input.toString(),
+      if (triggerInputTracker != null)
+        ...triggerInputTracker.inputs.map((id) => id.toString()),
+      if (step != null) ...step.inputTracker.inputs.map((id) => id.toString()),
+      ...observedReads.map((id) => id.toString()),
+      ...runtime.io.observedGlobResults.map((id) => id.toString()),
+    }..removeAll(resolverOnlyReads.map((id) => id.toString()));
+    final reads = readsSet.toList()..sort();
+    final resolverReads = <String>{
+      if (triggered && step != null)
+        ...step.inputTracker.resolverEntrypoints.map((id) => id.toString()),
+      // Resolver invalidation keeps the full union: direct reads,
+      // plus the loads recorded separately as resolver machinery
+      // reads (ADR 0056). Only `reads` above is direct-only.
+      if (triggered) ...observedReads.map((id) => id.toString()),
+      if (triggered) ...resolverObservedReads.map((id) => id.toString()),
+    }.toList()..sort();
+    final resolverEntrypoints = <AssetId>{
+      if (triggered && step != null) ...step.inputTracker.resolverEntrypoints,
+    };
+    runtime.batchResolverEntrypoints.addAll(resolverEntrypoints);
+    final globReads = runtime.io.observedGlobs.toList()
+      ..sort((left, right) {
+        final packageOrder = left.package.compareTo(right.package);
+        return packageOrder != 0
+            ? packageOrder
+            : left.pattern.compareTo(right.pattern);
+      });
+    if (runtime.resolverProfile.enabled) {
+      final after = _activityDurations();
+      for (final entry in after.entries) {
+        final delta = entry.value - (activitySnapshot[entry.key] ?? 0);
+        if (delta != 0) profile.activityUs[entry.key] = delta;
+      }
+    }
+    profile.resultAssemblyUs = resultAssemblyTimer.elapsedMicroseconds;
+    profile.outputCount = outputs.length;
+    profile.readCount = reads.length;
+    profile.resolverReadCount = resolverReads.length;
+    profile.globCount = globReads.length;
+    profile.status = triggered ? 'success' : 'not_triggered';
+    return <String, dynamic>{
+      'v': 1,
+      'type': 'build_result',
+      'id': request.id,
+      'status': profile.status,
+      // Exclude batch preparation and IPC from scheduler cost learning.
+      'execution_us': profile.elapsedUs,
+      'outputs': outputs,
+      if (sharedPart != null) 'shared_part': sharedPart,
+      'deleted': <String>[for (final asset in deleted) asset.toString()]
+        ..sort(),
+      'reads': reads,
+      // Preserve stock InputTracker iteration order for filtered reuse. The
+      // broader reads above also include analyzer/prefetch bookkeeping.
+      'stock_inputs': <String>[
+        if (triggerInputTracker != null)
+          ...triggerInputTracker.inputs.map((id) => id.toString()),
+        if (step != null)
+          ...step.inputTracker.inputs.map((id) => id.toString()),
+      ],
+      'stock_globs': <String, List<String>>{
+        for (final entry in runtime.io.observedGlobMembers.entries)
+          '${entry.key.package}|${entry.key.pattern}': [
+            for (final asset in entry.value) asset.toString(),
+          ],
+      },
+      'resolver_reads': resolverReads,
+      'resolver_content_reads': <String>[
+        if (step != null)
+          for (final id in runtime.resolver.contentReadsFor(step))
+            id.toString(),
+      ]..sort(),
+      'resolver_entrypoints': <String>[
+        for (final id in resolverEntrypoints) id.toString(),
+      ],
+      'resolver_used': resolverUsed,
+      'glob_reads': <Map<String, String>>[
+        if (step != null)
+          for (final glob in step.inputTracker.globsEvaluated)
+            <String, String>{'package': glob.package, 'pattern': glob.glob}
+        else
+          for (final glob in globReads)
+            <String, String>{'package': glob.package, 'pattern': glob.pattern},
+      ],
+      'diagnostics': <dynamic>[],
+    };
+  }
+
+  Future<void> _emitOtelAction(
+    WorkerBuildRequest request,
+    _BuildProfile profile,
+    int traceStart,
+  ) {
+    // A fixed-size report, with no asset IDs, options or source text. The
+    // native SDK exports this as a child of the propagated batch context.
+    return writer.send(<String, dynamic>{
+      'v': 1,
+      'type': 'otel_action',
+      'traceparent': request.traceparent,
+      'otel_report_id': request.otelReportId,
+      'start_us': traceStart,
+      'duration_us': profile.elapsedUs,
+      'success':
+          profile.status == 'success' || profile.status == 'not_triggered',
+      'run_builder_us': profile.runBuilderUs,
+      'run_builder_start_us': profile.runBuilderStartUs,
+      'resolver_spans': profile.resolverSpans,
+      'resolver_get_us': profile.resolverGetUs,
+      'resolver_get_calls': profile.resolverGetCalls,
+      'outputs': profile.outputCount,
+      'reads': profile.readCount,
+      'resolver_reads': profile.resolverReadCount,
+    });
   }
 
   String _instanceKey(WorkerBuildRequest request) => request.instanceKey;
