@@ -1,6 +1,6 @@
 mod asset_rpc;
 mod client;
-mod lazy;
+mod demand;
 mod overlay_blob;
 mod pool;
 mod request;
@@ -13,8 +13,8 @@ mod tests;
 
 pub(crate) use client::WorkerClient;
 #[allow(unused_imports)] // Preserve the existing crate::worker::LazyBuildResult path.
-pub(crate) use lazy::LazyBuildResult;
-pub(crate) use lazy::LazyBuildState;
+pub(crate) use demand::LazyBuildResult;
+pub(crate) use demand::LazyBuildState;
 pub(crate) use pool::{PoolMetrics, WorkerPool, shared_analysis_cache_enabled};
 pub(crate) use request::BuildRequest;
 pub(crate) use scheduling::InputQueue;

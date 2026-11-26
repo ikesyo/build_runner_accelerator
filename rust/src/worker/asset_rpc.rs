@@ -1,5 +1,5 @@
 use super::WorkerClient;
-use super::lazy::{FilteredSourceContent, FilteredSourceObservation, FilteredSourceSpool};
+use super::demand::{FilteredSourceContent, FilteredSourceObservation, FilteredSourceSpool};
 use super::request::{BuildRequest, build_request_kind};
 use crate::builder::{BuildTo, BuilderKind};
 use crate::plan::BuildSpec;
