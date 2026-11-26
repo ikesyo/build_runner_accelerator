@@ -40,6 +40,160 @@ import 'blake3.dart';
 import 'current_build_runtime.dart';
 import 'resolver_metrics.dart';
 
+/// Per-instance ledger of API fingerprints learned during dependency walks
+/// (ADR 0056), owned by a [WorkerAnalysisDriverModel].
+///
+/// Keeping the learned map, content/digest memos, and learning flag on an
+/// instance rather than on static fields ensures that replacing a resolver or
+/// driver model starts with a clean ledger and cannot leak state across
+/// instances.
+class ApiFingerprintLedger {
+  /// Unit fingerprints learned by dep walks on this ledger, keyed by
+  /// asset id string (ADR 0056); a null fingerprint marks a unit whose
+  /// fingerprint is unavailable. Reported to the frontend with the
+  /// build results, delta-encoded against what it already has, like
+  /// the dep graph.
+  final Map<String, LearnedApiFingerprint> learned =
+      <String, LearnedApiFingerprint>{};
+
+  /// The exact content instance each asset's learned fingerprint was
+  /// computed from, and the content digest recorded alongside it.
+  /// Dep walks revisit the same units for every action whose
+  /// resolver closure contains them, so relearning on every visit
+  /// (a full-content hash plus a store lookup) multiplied the walk's
+  /// cost by the action count; these memos reduce repeat visits of
+  /// unchanged content to a map probe. Both are cleared with the
+  /// learned map at each build boundary (see [clear]), so a
+  /// resident worker does not retain the sources of deleted or
+  /// renamed files for its whole lifetime.
+  final Map<String, String> _learnedContents = <String, String>{};
+  final Map<String, String> _learnedDigests = <String, String>{};
+
+  /// Whether dep walks using this ledger record API fingerprints.
+  /// Learning is off unless the action being executed opted in to
+  /// the API cutoff (ADR 0056): the per-unit hash and store lookup
+  /// otherwise tax every build for an opt-in feature, and on large
+  /// closures that cost is the walk's dominant term. Set from the
+  /// build request at each action's start; actions on one worker
+  /// run sequentially, so the flag always matches the action whose
+  /// walk is running.
+  bool learningEnabled = false;
+
+  /// Forgets what this ledger learned about [ids], whose bytes a
+  /// resolver reset updated or deleted: the learning memos and the
+  /// learned value itself are cleared, so the stale fingerprint is
+  /// neither served from the memo nor re-reported with the next
+  /// result. A later walk that loads the unit relearns its
+  /// fingerprint from the new bytes. The frontend drops the
+  /// recorded fingerprints for the same assets before dispatching
+  /// post-reset actions.
+  void invalidate(Iterable<AssetId> ids) {
+    for (final id in ids) {
+      final key = id.toString();
+      _learnedContents.remove(key);
+      _learnedDigests.remove(key);
+      learned.remove(key);
+    }
+  }
+
+  /// Clears [learned] and the learning memos. Called at each build
+  /// start: only the new build's own observations may be reported,
+  /// and the memos must not outlive that boundary.
+  void clear() {
+    learned.clear();
+    _learnedContents.clear();
+    _learnedDigests.clear();
+  }
+
+  /// Records the API fingerprint of the unit [id] with source
+  /// [content] as learned. [parsed] reuses the dep walk's own parse
+  /// when it has one; without it the fingerprint [cache] answers, and
+  /// parses on a miss. A unit whose learned fingerprint is still in
+  /// [learned] for the same content is not relearned: the worker
+  /// clears this ledger at each build start, so a cleared entry is
+  /// relearned (and re-reported) once per build, never once per walk
+  /// visit.
+  void record(
+    AssetId id,
+    String content, {
+    required ApiFingerprintCache cache,
+    ParseStringResult? parsed,
+    String? frontendDigest,
+  }) {
+    final key = id.toString();
+    // The AST-model gate can close mid-process (a misbehaving walk
+    // latches it shut), after which every fingerprint is
+    // unavailable. A memo hit must not serve a value learned before
+    // the gate closed: report the unavailable marker so the
+    // frontend drops the fingerprint it recorded earlier.
+    if (!cache.modelSupported) {
+      if (identical(_learnedContents[key], content) &&
+          learned[key]?.fingerprint == null) {
+        return;
+      }
+      final digest = blake3Hex(utf8.encode(content));
+      _learnedContents[key] = content;
+      _learnedDigests[key] = digest;
+      learned[key] = (digest: digest, fingerprint: null);
+      return;
+    }
+    if (identical(_learnedContents[key], content) && learned.containsKey(key)) {
+      return;
+    }
+    // With a frontend-supplied digest (`asset-digests-v1`, ADR 0054)
+    // the persistent cache answers by digest alone: the digest is
+    // the BLAKE3 of the snapshot bytes the walk just read, so a hit
+    // needs neither the content hash nor a parse. The memos are
+    // cleared at each build boundary, so without this path the first
+    // visit of every build rehashes the full content of every unit
+    // in the closure. A miss falls through to learning from content;
+    // the entry it stores is keyed by that same digest.
+    if (frontendDigest != null) {
+      // The digest memo may only answer for the very bytes it was
+      // learned from: when preflight initialized this worker, an
+      // edit landing before the action's walk can hand the walk
+      // newer content under the same snapshot digest, and accepting
+      // the memo would report the earlier fingerprint as evidence
+      // about bytes it was never computed from.
+      if (_learnedDigests[key] == frontendDigest &&
+          learned.containsKey(key) &&
+          _learnedContents[key] == content) {
+        return;
+      }
+      if (cache.contains(frontendDigest, package: id.package)) {
+        // Bind the cached fingerprint only to bytes that hash to the
+        // frontend digest: a phased read can serve content newer than
+        // the snapshot the digest describes (a mid-build edit), and
+        // reporting the digest for those bytes would let a later
+        // preflight treat the fingerprint as evidence about content
+        // it was never computed from. The verification hash runs once
+        // per asset per build; the memo above covers later visits.
+        if (blake3Hex(utf8.encode(content)) == frontendDigest) {
+          _learnedContents[key] = content;
+          _learnedDigests[key] = frontendDigest;
+          learned[key] = (
+            digest: frontendDigest,
+            fingerprint: cache.lookup(frontendDigest, package: id.package),
+          );
+          return;
+        }
+      }
+    }
+    final digest = blake3Hex(utf8.encode(content));
+    _learnedContents[key] = content;
+    if (_learnedDigests[key] == digest && learned.containsKey(key)) {
+      return;
+    }
+    _learnedDigests[key] = digest;
+    learned[key] = (
+      digest: digest,
+      fingerprint: parsed != null
+          ? cache.fingerprintForParse(digest, parsed, package: id.package)
+          : cache.fingerprintFor(digest, content, package: id.package),
+    );
+  }
+}
+
 /// An [AnalysisDriverModel] whose lock and library-cycle graph are owned by
 /// the worker, so a resolver reset between Rust phases can keep the loaded
 /// dependency graph instead of re-walking every known asset.
@@ -53,6 +207,7 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
   PoolResource? _workerLock;
 
   final LibraryCycleGraphLoader _workerGraphLoader = LibraryCycleGraphLoader();
+  final ApiFingerprintLedger _fingerprintLedger = ApiFingerprintLedger();
 
   @override
   Future<void> takeLockAndStartBuild({
@@ -84,32 +239,33 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
   @override
   PhasedAssetDeps phasedAssetDeps() => _workerGraphLoader.phasedAssetDeps();
 
-  /// Unit fingerprints the dep walk has learned in this process
+  /// Unit fingerprints the dep walk has learned for this driver model
   /// (ADR 0056), keyed by asset id string; a null fingerprint marks
-  /// a unit whose fingerprint is unavailable.
+  /// a unit whose fingerprint is unavailable. Owned by this instance's
+  /// [ApiFingerprintLedger].
   Map<String, LearnedApiFingerprint> learnedApiFingerprints() =>
-      _CachingAssetDepsLoader.learnedApiFingerprints;
+      _fingerprintLedger.learned;
 
-  /// Clears the learned fingerprints and the learning memos at a
-  /// build boundary (see [_CachingAssetDepsLoader.clearLearned]).
-  void clearLearnedApiFingerprints() => _CachingAssetDepsLoader.clearLearned();
+  /// Clears the learned fingerprints and the learning memos on this
+  /// instance's [ApiFingerprintLedger] at a build boundary (see
+  /// [ApiFingerprintLedger.clear]).
+  void clearLearnedApiFingerprints() => _fingerprintLedger.clear();
 
   /// Enables or disables API fingerprint learning for subsequent
-  /// dep walks in this process (see
-  /// [_CachingAssetDepsLoader.fingerprintLearningEnabled]).
+  /// dep walks on this driver model (see
+  /// [ApiFingerprintLedger.learningEnabled]).
   void setFingerprintLearningEnabled(bool enabled) =>
-      _CachingAssetDepsLoader.fingerprintLearningEnabled = enabled;
+      _fingerprintLedger.learningEnabled = enabled;
 
-  /// Whether API fingerprint learning is currently enabled in this
-  /// process (see [setFingerprintLearningEnabled]).
-  bool get fingerprintLearningEnabled =>
-      _CachingAssetDepsLoader.fingerprintLearningEnabled;
+  /// Whether API fingerprint learning is currently enabled on this
+  /// driver model (see [setFingerprintLearningEnabled]).
+  bool get fingerprintLearningEnabled => _fingerprintLedger.learningEnabled;
 
   /// Invalidates all fingerprint state for [ids], whose bytes a
   /// resolver reset updated or deleted (see
-  /// [_CachingAssetDepsLoader.invalidateFingerprints]).
+  /// [ApiFingerprintLedger.invalidate]).
   void invalidatePendingFingerprints(Iterable<AssetId> ids) =>
-      _CachingAssetDepsLoader.invalidateFingerprints(ids);
+      _fingerprintLedger.invalidate(ids);
 
   /// Completes dep loads queued for [phase] or earlier.
   ///
@@ -141,13 +297,14 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
       builderFilesystem,
       phase,
       filesystem,
+      _fingerprintLedger,
     );
-    final wasEnabled = _CachingAssetDepsLoader.fingerprintLearningEnabled;
-    _CachingAssetDepsLoader.fingerprintLearningEnabled = false;
+    final wasEnabled = _fingerprintLedger.learningEnabled;
+    _fingerprintLedger.learningEnabled = false;
     try {
       await _workerGraphLoader.libraryCycleGraphOf(loader, id);
     } finally {
-      _CachingAssetDepsLoader.fingerprintLearningEnabled = wasEnabled;
+      _fingerprintLedger.learningEnabled = wasEnabled;
     }
   }
 
@@ -166,6 +323,7 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
       builderFilesystem,
       phase,
       filesystem,
+      _fingerprintLedger,
     );
     return loader.depsForContent(id, content);
   }
@@ -186,6 +344,7 @@ class WorkerAnalysisDriverModel extends AnalysisDriverModel {
           buildStep.buildFilesystem,
           buildStep.phase,
           filesystem,
+          _fingerprintLedger,
         );
         buildStep.inputTracker.addResolverEntrypoint(entrypoint);
         final walkTimer = resolverActionMetrics.enabled
@@ -248,6 +407,7 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
     BuilderFilesystem filesystem,
     int phase,
     this._contentCache,
+    this._fingerprintLedger,
   ) : _filesystem = filesystem,
       super(filesystem, phase);
 
@@ -260,6 +420,8 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   /// `contentOf`, letting dep lookups skip a second hash over the source.
   final FileContentCache? _contentCache;
 
+  final ApiFingerprintLedger _fingerprintLedger;
+
   // Lazy: the first action pays the directory stat once; disabled via
   // `BUILD_RUNNER_ACCELERATOR_DEP_CACHE=0` stays `null`.
   static final AssetDepsCache? _cache = AssetDepsCache.shared();
@@ -268,152 +430,23 @@ class _CachingAssetDepsLoader extends AssetDepsLoader {
   static final ApiFingerprintCache? _fingerprintCache =
       ApiFingerprintCache.shared();
 
-  /// Unit fingerprints learned by dep walks in this process, keyed by
-  /// asset id string (ADR 0056); a null value marks a unit whose
-  /// fingerprint is unavailable. Reported to the frontend with the
-  /// build results, delta-encoded against what it already has, like
-  /// the dep graph.
-  static final Map<String, LearnedApiFingerprint> learnedApiFingerprints =
-      <String, LearnedApiFingerprint>{};
-
-  /// The exact content instance each asset's learned fingerprint was
-  /// computed from, and the content digest recorded alongside it.
-  /// Dep walks revisit the same units for every action whose
-  /// resolver closure contains them, so relearning on every visit
-  /// (a full-content hash plus a store lookup) multiplied the walk's
-  /// cost by the action count; these memos reduce repeat visits of
-  /// unchanged content to a map probe. Both are cleared with the
-  /// learned map at each build boundary (see [clearLearned]), so a
-  /// resident worker does not retain the sources of deleted or
-  /// renamed files for its whole lifetime.
-  static final Map<String, String> _learnedContents = <String, String>{};
-  static final Map<String, String> _learnedDigests = <String, String>{};
-
-  /// Forgets what this process learned about [ids], whose bytes a
-  /// resolver reset updated or deleted: the learning memos and the
-  /// learned value itself are cleared, so the stale fingerprint is
-  /// neither served from the memo nor re-reported with the next
-  /// result. A later walk that loads the unit relearns its
-  /// fingerprint from the new bytes. The frontend drops the
-  /// recorded fingerprints for the same assets before dispatching
-  /// post-reset actions.
-  static void invalidateFingerprints(Iterable<AssetId> ids) {
-    for (final id in ids) {
-      final key = id.toString();
-      _learnedContents.remove(key);
-      _learnedDigests.remove(key);
-      learnedApiFingerprints.remove(key);
-    }
-  }
-
-  /// Whether dep walks in this process record API fingerprints.
-  /// Learning is off unless the action being executed opted in to
-  /// the API cutoff (ADR 0056): the per-unit hash and store lookup
-  /// otherwise tax every build for an opt-in feature, and on large
-  /// closures that cost is the walk's dominant term. Set from the
-  /// build request at each action's start; actions on one worker
-  /// run sequentially, so the flag always matches the action whose
-  /// walk is running.
-  static bool fingerprintLearningEnabled = false;
-
-  /// Clears [learnedApiFingerprints] and the learning memos. Called
-  /// at each build start: only the new build's own observations may
-  /// be reported, and the memos must not outlive that boundary.
-  static void clearLearned() {
-    learnedApiFingerprints.clear();
-    _learnedContents.clear();
-    _learnedDigests.clear();
-  }
-
   /// Records the API fingerprint of the unit [id] with source
-  /// [content] as learned. [parsed] reuses the dep walk's own parse
-  /// when it has one; without it the fingerprint cache answers, and
-  /// parses on a miss. A unit whose learned fingerprint is still in
-  /// [learnedApiFingerprints] for the same content is not relearned:
-  /// the worker clears that map at each build start, so a cleared
-  /// entry is relearned (and re-reported) once per build, never once
-  /// per walk visit.
+  /// [content] on [_fingerprintLedger] when learning is enabled.
   void _learnApiFingerprint(
     AssetId id,
     String content, {
     ParseStringResult? parsed,
     String? frontendDigest,
   }) {
-    if (!fingerprintLearningEnabled) return;
+    if (!_fingerprintLedger.learningEnabled) return;
     final cache = _fingerprintCache;
     if (cache == null) return;
-    final key = id.toString();
-    // The AST-model gate can close mid-process (a misbehaving walk
-    // latches it shut), after which every fingerprint is
-    // unavailable. A memo hit must not serve a value learned before
-    // the gate closed: report the unavailable marker so the
-    // frontend drops the fingerprint it recorded earlier.
-    if (!cache.modelSupported) {
-      if (identical(_learnedContents[key], content) &&
-          learnedApiFingerprints[key]?.fingerprint == null) {
-        return;
-      }
-      final digest = blake3Hex(utf8.encode(content));
-      _learnedContents[key] = content;
-      _learnedDigests[key] = digest;
-      learnedApiFingerprints[key] = (digest: digest, fingerprint: null);
-      return;
-    }
-    if (identical(_learnedContents[key], content) &&
-        learnedApiFingerprints.containsKey(key)) {
-      return;
-    }
-    // With a frontend-supplied digest (`asset-digests-v1`, ADR 0054)
-    // the persistent cache answers by digest alone: the digest is
-    // the BLAKE3 of the snapshot bytes the walk just read, so a hit
-    // needs neither the content hash nor a parse. The memos are
-    // cleared at each build boundary, so without this path the first
-    // visit of every build rehashes the full content of every unit
-    // in the closure. A miss falls through to learning from content;
-    // the entry it stores is keyed by that same digest.
-    if (frontendDigest != null) {
-      // The digest memo may only answer for the very bytes it was
-      // learned from: when preflight initialized this worker, an
-      // edit landing before the action's walk can hand the walk
-      // newer content under the same snapshot digest, and accepting
-      // the memo would report the earlier fingerprint as evidence
-      // about bytes it was never computed from.
-      if (_learnedDigests[key] == frontendDigest &&
-          learnedApiFingerprints.containsKey(key) &&
-          _learnedContents[key] == content) {
-        return;
-      }
-      if (cache.contains(frontendDigest, package: id.package)) {
-        // Bind the cached fingerprint only to bytes that hash to the
-        // frontend digest: a phased read can serve content newer than
-        // the snapshot the digest describes (a mid-build edit), and
-        // reporting the digest for those bytes would let a later
-        // preflight treat the fingerprint as evidence about content
-        // it was never computed from. The verification hash runs once
-        // per asset per build; the memo above covers later visits.
-        if (blake3Hex(utf8.encode(content)) == frontendDigest) {
-          _learnedContents[key] = content;
-          _learnedDigests[key] = frontendDigest;
-          learnedApiFingerprints[key] = (
-            digest: frontendDigest,
-            fingerprint: cache.lookup(frontendDigest, package: id.package),
-          );
-          return;
-        }
-      }
-    }
-    final digest = blake3Hex(utf8.encode(content));
-    _learnedContents[key] = content;
-    if (_learnedDigests[key] == digest &&
-        learnedApiFingerprints.containsKey(key)) {
-      return;
-    }
-    _learnedDigests[key] = digest;
-    learnedApiFingerprints[key] = (
-      digest: digest,
-      fingerprint: parsed != null
-          ? cache.fingerprintForParse(digest, parsed, package: id.package)
-          : cache.fingerprintFor(digest, content, package: id.package),
+    _fingerprintLedger.record(
+      id,
+      content,
+      cache: cache,
+      parsed: parsed,
+      frontendDigest: frontendDigest,
     );
   }
 

@@ -209,7 +209,7 @@ class WorkerResolversImpl implements Resolvers {
   Set<AssetId> contentReadsFor(BuildStep buildStep) =>
       _stepResolvers.remove(buildStep)?.contentReads ?? const <AssetId>{};
 
-  /// Unit fingerprints the dep walk has learned in this process
+  /// Unit fingerprints the dep walk has learned on this resolver
   /// (ADR 0056), keyed by asset id string; a null fingerprint marks
   /// a unit whose fingerprint is unavailable.
   Map<String, LearnedApiFingerprint> learnedApiFingerprints() =>
@@ -221,13 +221,13 @@ class WorkerResolversImpl implements Resolvers {
       _analysisDriverModel.clearLearnedApiFingerprints();
 
   /// Enables or disables API fingerprint learning for subsequent
-  /// dep walks in this process (see
+  /// dep walks on this resolver (see
   /// [WorkerAnalysisDriverModel.setFingerprintLearningEnabled]).
   void setFingerprintLearningEnabled(bool enabled) =>
       _analysisDriverModel.setFingerprintLearningEnabled(enabled);
 
-  /// Whether API fingerprint learning is currently enabled in this
-  /// process (see [setFingerprintLearningEnabled]).
+  /// Whether API fingerprint learning is currently enabled on this
+  /// resolver (see [setFingerprintLearningEnabled]).
   bool get fingerprintLearningEnabled =>
       _analysisDriverModel.fingerprintLearningEnabled;
 
