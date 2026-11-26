@@ -87,7 +87,9 @@ impl LazyBuildState {
         let mut dirty_roots = Vec::new();
         let mut execution = FilteredExecution::Probe;
         for root in roots {
-            self.filtered_probe_root_dirty = false;
+            self.filtered_mut()
+                .expect("probe_filtered_roots requires filtered LazyBuildState")
+                .probe_root_dirty = false;
             execution.ensure_optional_output(
                 workspace,
                 root,
@@ -99,11 +101,17 @@ impl LazyBuildState {
                 specs,
                 self,
             )?;
-            if self.filtered_probe_root_dirty {
+            if self
+                .filtered_state()
+                .expect("probe_filtered_roots requires filtered LazyBuildState")
+                .probe_root_dirty
+            {
                 dirty_roots.push(root.clone());
             }
         }
-        self.filtered_probe_root_dirty = false;
+        self.filtered_mut()
+            .expect("probe_filtered_roots requires filtered LazyBuildState")
+            .probe_root_dirty = false;
         Ok(dirty_roots)
     }
 }
@@ -131,7 +139,7 @@ impl WorkerClient {
         let _wall = self.wall_span("worker_build_lazy", Some(id));
         let metrics_before = self.metrics;
         let effective_deleted;
-        let deleted = if lazy.filtered_previous.is_some() {
+        let deleted = if lazy.is_filtered() {
             // Pending producers must still reach the demand RPC even if their
             // stale artifact is logically deleted. Keep phase blocking intact.
             effective_deleted = deleted_overlay
@@ -183,7 +191,7 @@ impl WorkerClient {
                         let edges: BTreeMap<String, Vec<String>> =
                             serde_json::from_value(graph.clone()).map_err(io::Error::other)?;
                         self.dep_graph.extend(edges);
-                    } else if lazy.filtered_previous.is_some() {
+                    } else if lazy.is_filtered() {
                         return Err(io::Error::other(
                             "filtered demand requires single-result resolver dependency metadata",
                         ));
@@ -200,12 +208,12 @@ impl WorkerClient {
                         );
                     }
                     let result = decode_build_result_frame(frame)?;
-                    if lazy.filtered_previous.is_some() && result.stock_inputs.is_none() {
+                    if lazy.is_filtered() && result.stock_inputs.is_none() {
                         return Err(io::Error::other(
                             "filtered demand requires ordered stock inputs",
                         ));
                     }
-                    if lazy.filtered_previous.is_some() && result.stock_globs.is_none() {
+                    if lazy.is_filtered() && result.stock_globs.is_none() {
                         return Err(io::Error::other(
                             "filtered demand requires stock glob results",
                         ));
@@ -325,7 +333,7 @@ impl WorkerClient {
                     .cloned()
                     .collect::<Vec<_>>();
                 for asset in candidates {
-                    if lazy.filtered_previous.is_none()
+                    if !lazy.is_filtered()
                         && visibility.is_blocked(&asset, phase, kind, deleted_overlay)
                     {
                         continue;
@@ -350,7 +358,7 @@ impl WorkerClient {
             }
             _ => {}
         }
-        if operation == "find_assets" && lazy.filtered_previous.is_some() {
+        if operation == "find_assets" && lazy.is_filtered() {
             let started = Instant::now();
             let package = request
                 .get("package")
@@ -453,11 +461,11 @@ impl FilteredExecution<'_> {
         lazy: &mut LazyBuildState,
     ) -> io::Result<()> {
         let coordinator = match self {
-            Self::Worker(_) => lazy.filtered_coordinator.clone(),
+            Self::Worker(_) => lazy.coordinator(),
             Self::Probe => None,
         };
         let Some(coordinator) = coordinator else {
-            let pending_producer = lazy.filtered_previous.is_some()
+            let pending_producer = lazy.is_filtered()
                 && lazy_specs
                     .get(asset)
                     .is_some_and(|spec| !lazy.built_keys.contains(&spec.action_key()));
@@ -478,7 +486,7 @@ impl FilteredExecution<'_> {
             };
             let key = spec.action_key();
             if lazy.built_keys.contains(&key)
-                || (lazy.filtered_previous.is_none() && !lazy.force_keys.contains(&key))
+                || (!lazy.is_filtered() && !lazy.force_keys.contains(&key))
             {
                 return Ok(());
             }
@@ -505,7 +513,7 @@ impl FilteredExecution<'_> {
             return result;
         };
 
-        let pending_producer = lazy.filtered_previous.is_some()
+        let pending_producer = lazy.is_filtered()
             && lazy_specs
                 .get(asset)
                 .is_some_and(|spec| !lazy.built_keys.contains(&spec.action_key()));
@@ -528,7 +536,7 @@ impl FilteredExecution<'_> {
         if lazy.built_keys.contains(&key) {
             return Ok(());
         }
-        if lazy.filtered_previous.is_none() && !lazy.force_keys.contains(&key) {
+        if !lazy.is_filtered() && !lazy.force_keys.contains(&key) {
             return Ok(());
         }
         if lazy.building_keys.contains(&key) {
@@ -541,7 +549,12 @@ impl FilteredExecution<'_> {
         }
         lazy.demanded_keys.insert(key.clone());
         let parent = lazy.building_stack.last().map(String::as_str);
-        let claim = match coordinator.claim(&key, parent, lazy.filtered_worker) {
+        let worker = lazy
+            .filtered_state()
+            .and_then(|filtered| filtered.worker.as_ref())
+            .expect("coordinated demand requires filtered worker context")
+            .worker;
+        let claim = match coordinator.claim(&key, parent, worker) {
             Ok(claim) => claim,
             Err(error) => {
                 lazy.record_demand_failure(&error);
@@ -602,7 +615,7 @@ impl FilteredExecution<'_> {
         lazy_specs: &BTreeMap<String, BuildSpec>,
         lazy: &mut LazyBuildState,
     ) -> io::Result<()> {
-        let pending_producer = lazy.filtered_previous.is_some()
+        let pending_producer = lazy.is_filtered()
             && lazy_specs
                 .get(asset)
                 .is_some_and(|spec| !lazy.built_keys.contains(&spec.action_key()));
@@ -628,12 +641,12 @@ impl FilteredExecution<'_> {
         if lazy.built_keys.contains(&key) {
             return Ok(());
         }
-        if lazy.filtered_previous.is_none() && !lazy.force_keys.contains(&key) {
+        if !lazy.is_filtered() && !lazy.force_keys.contains(&key) {
             return Ok(());
         }
         lazy.demanded_keys.insert(key.clone());
 
-        if lazy.filtered_previous.is_some() {
+        if lazy.is_filtered() {
             // Stock computes a generated primary input before checking reuse.
             self.ensure_optional_output(
                 workspace,
@@ -649,10 +662,10 @@ impl FilteredExecution<'_> {
             // A probe cannot know whether a dirty generated primary will
             // exist until its producer executes. Do not classify its parent
             // from stale on-disk bytes or as skipped-missing-input.
-            if lazy_specs
-                .get(&spec.input)
-                .is_some_and(|producer| lazy.filtered_dirty_keys.contains(&producer.action_key()))
-            {
+            if lazy_specs.get(&spec.input).is_some_and(|producer| {
+                lazy.filtered_state()
+                    .is_some_and(|filtered| filtered.dirty_keys.contains(&producer.action_key()))
+            }) {
                 lazy.mark_filtered_dirty(&spec);
                 return Ok(());
             }
@@ -679,33 +692,35 @@ impl FilteredExecution<'_> {
                 lazy.results.push(LazyBuildResult { spec, result });
                 return Ok(());
             }
-            let previous = lazy
-                .filtered_previous
-                .as_ref()
-                .and_then(|state| state.actions.get(&key))
-                .cloned();
-            let mut needs_build = !lazy.filtered_compatible
-                || previous.as_ref().is_none_or(|action| {
-                    matches!(
-                        action.status.as_str(),
-                        "skipped_missing_input" | "undemanded"
-                    )
-                });
-            if let Some(producer) = lazy_specs.get(&spec.input) {
-                let previously_output = lazy
-                    .filtered_previous
-                    .as_ref()
-                    .and_then(|state| state.actions.get(&producer.action_key()))
-                    .is_some_and(|action| action.outputs.contains(&spec.input));
-                let primary_exists = lazy
-                    .filtered_snapshot_delta
-                    .get(&spec.input)
-                    .or_else(|| lazy.filtered_snapshot.get(&spec.input))
-                    .is_some_and(|snapshot| snapshot.exists);
-                if !previously_output && primary_exists {
-                    needs_build = true;
+            let (previous, mut needs_build, keep_modified_outputs) = {
+                let filtered = lazy
+                    .filtered_state()
+                    .expect("filtered reuse check requires filtered LazyBuildState");
+                let previous = filtered.previous.actions.get(&key).cloned();
+                let mut needs_build = !filtered.compatible
+                    || previous.as_ref().is_none_or(|action| {
+                        matches!(
+                            action.status.as_str(),
+                            "skipped_missing_input" | "undemanded"
+                        )
+                    });
+                if let Some(producer) = lazy_specs.get(&spec.input) {
+                    let previously_output = filtered
+                        .previous
+                        .actions
+                        .get(&producer.action_key())
+                        .is_some_and(|action| action.outputs.contains(&spec.input));
+                    let primary_exists = filtered
+                        .snapshot_delta
+                        .get(&spec.input)
+                        .or_else(|| filtered.snapshot.get(&spec.input))
+                        .is_some_and(|snapshot| snapshot.exists);
+                    if !previously_output && primary_exists {
+                        needs_build = true;
+                    }
                 }
-            }
+                (previous, needs_build, filtered.keep_modified_outputs)
+            };
             if let Some(previous) = &previous {
                 for output in &previous.outputs {
                     let current = crate::plan::output_digest(&crate::plan::output_path(
@@ -714,7 +729,7 @@ impl FilteredExecution<'_> {
                         output,
                     )?)?;
                     if current.is_none()
-                        || (!lazy.keep_modified_outputs
+                        || (!keep_modified_outputs
                             && previous.output_digests.get(output) != current.as_ref())
                     {
                         needs_build = true;
@@ -725,9 +740,8 @@ impl FilteredExecution<'_> {
                     // until a change requires running the step. New reads are then
                     // demanded by the actual BuildStep, never by an old closure.
                     let dependencies = lazy
-                        .filtered_previous
-                        .as_ref()
-                        .and_then(|state| state.stock_input_order.get(&key))
+                        .filtered_state()
+                        .and_then(|filtered| filtered.previous.stock_input_order.get(&key))
                         .ok_or_else(|| io::Error::other("ordered stock inputs are unavailable"))?
                         .clone();
                     for dependency in dependencies {
@@ -773,7 +787,9 @@ impl FilteredExecution<'_> {
                             // producer's actual output set is known.
                             if matches!(self, FilteredExecution::Probe)
                                 && lazy_specs.get(&asset).is_some_and(|producer| {
-                                    lazy.filtered_dirty_keys.contains(&producer.action_key())
+                                    lazy.filtered_state().is_some_and(|filtered| {
+                                        filtered.dirty_keys.contains(&producer.action_key())
+                                    })
                                 })
                             {
                                 needs_build = true;
@@ -796,9 +812,8 @@ impl FilteredExecution<'_> {
                         )?;
                         let glob_key = format!("{}|{}", glob.package, glob.pattern);
                         let old = lazy
-                            .filtered_previous
-                            .as_ref()
-                            .and_then(|s| s.stock_glob_members.get(&key))
+                            .filtered_state()
+                            .and_then(|filtered| filtered.previous.stock_glob_members.get(&key))
                             .and_then(|globs| globs.get(&glob_key))
                             .ok_or_else(|| {
                                 io::Error::other("per-action stock glob evidence is unavailable")
@@ -823,11 +838,9 @@ impl FilteredExecution<'_> {
                                     continue;
                                 }
                                 stack.push((dependency.clone(), true));
-                                if let Some(edges) = lazy
-                                    .filtered_previous
-                                    .as_ref()
-                                    .and_then(|s| s.resolver_dep_graph.get(&dependency))
-                                {
+                                if let Some(edges) = lazy.filtered_state().and_then(|filtered| {
+                                    filtered.previous.resolver_dep_graph.get(&dependency)
+                                }) {
                                     stack.extend(
                                         edges.iter().rev().map(|asset| (asset.clone(), false)),
                                     );
@@ -874,7 +887,7 @@ impl FilteredExecution<'_> {
 
         // Ordinary optional chains have the same missing-primary rule as
         // filtered demand: run the producer first, then skip an absent input.
-        if lazy.filtered_previous.is_none() && lazy_specs.contains_key(&spec.input) {
+        if !lazy.is_filtered() && lazy_specs.contains_key(&spec.input) {
             self.ensure_optional_output(
                 workspace,
                 &spec.input,

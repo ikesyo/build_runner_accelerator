@@ -16,6 +16,49 @@ pub struct LazyBuildResult {
     pub result: BuildResult,
 }
 
+#[derive(Clone)]
+pub(super) struct FilteredWorkerContext {
+    pub(super) coordinator: FilteredDemandCoordinator,
+    pub(super) worker: usize,
+}
+
+pub(super) struct FilteredDemandState {
+    pub(super) previous: Arc<crate::graph::GraphState>,
+    pub(super) snapshot: Arc<crate::snapshot::Snapshot>,
+    pub(super) snapshot_delta: BTreeMap<String, crate::snapshot::AssetSnapshot>,
+    unconfirmed_outputs: BTreeSet<String>,
+    pub(super) dirty_keys: BTreeSet<String>,
+    pub(super) probe_root_dirty: bool,
+    pub(super) compatible: bool,
+    pub(super) keep_modified_outputs: bool,
+    pub(super) worker: Option<FilteredWorkerContext>,
+}
+
+impl FilteredDemandState {
+    pub(super) fn coordinator(&self) -> Option<&FilteredDemandCoordinator> {
+        self.worker.as_ref().map(|context| &context.coordinator)
+    }
+
+    pub(super) fn for_worker(&self, worker: usize, coordinator: FilteredDemandCoordinator) -> Self {
+        Self {
+            previous: Arc::clone(&self.previous),
+            snapshot: Arc::clone(&self.snapshot),
+            snapshot_delta: self.snapshot_delta.clone(),
+            // Probe-only dirtiness is resolved again by actual worker reads;
+            // carrying it into execution would invalidate equal rebuilt bytes.
+            unconfirmed_outputs: BTreeSet::new(),
+            dirty_keys: BTreeSet::new(),
+            probe_root_dirty: false,
+            compatible: self.compatible,
+            keep_modified_outputs: self.keep_modified_outputs,
+            worker: Some(FilteredWorkerContext {
+                coordinator,
+                worker,
+            }),
+        }
+    }
+}
+
 /// State shared by optional builds and filtered normal demand in one transaction.
 /// Filtered demand workers share immutable action publications and retain
 /// worker-local RPC stacks and mutable transaction views.
@@ -26,17 +69,8 @@ pub struct LazyBuildState {
     pub(super) building_stack: Vec<String>,
     pub(super) results: Vec<LazyBuildResult>,
     failed_demand: Option<String>,
-    pub(super) filtered_previous: Option<Arc<crate::graph::GraphState>>,
     pub(super) demanded_keys: BTreeSet<String>,
-    pub(super) filtered_snapshot: Arc<crate::snapshot::Snapshot>,
-    pub(super) filtered_snapshot_delta: BTreeMap<String, crate::snapshot::AssetSnapshot>,
-    filtered_unconfirmed_outputs: BTreeSet<String>,
-    pub(super) filtered_dirty_keys: BTreeSet<String>,
-    pub(super) filtered_probe_root_dirty: bool,
-    pub(super) filtered_compatible: bool,
-    pub(crate) keep_modified_outputs: bool,
-    pub(super) filtered_coordinator: Option<FilteredDemandCoordinator>,
-    pub(super) filtered_worker: usize,
+    pub(super) filtered: Option<FilteredDemandState>,
 }
 
 impl LazyBuildState {
@@ -69,17 +103,8 @@ impl LazyBuildState {
             building_stack: Vec::new(),
             results: Vec::new(),
             failed_demand: None,
-            filtered_previous: None,
             demanded_keys: BTreeSet::new(),
-            filtered_snapshot: Arc::new(BTreeMap::new()),
-            filtered_snapshot_delta: BTreeMap::new(),
-            filtered_unconfirmed_outputs: BTreeSet::new(),
-            filtered_dirty_keys: BTreeSet::new(),
-            filtered_probe_root_dirty: false,
-            filtered_compatible: false,
-            keep_modified_outputs: false,
-            filtered_coordinator: None,
-            filtered_worker: 0,
+            filtered: None,
         }
     }
 
@@ -87,26 +112,60 @@ impl LazyBuildState {
         previous: crate::graph::GraphState,
         current: crate::snapshot::Snapshot,
         compatible: bool,
+        keep_modified_outputs: bool,
     ) -> Self {
-        let mut state = Self::new(BTreeSet::new());
-        state.filtered_previous = Some(Arc::new(previous));
-        state.filtered_snapshot = Arc::new(current);
-        state.filtered_compatible = compatible;
-        state
+        Self {
+            force_keys: BTreeSet::new(),
+            built_keys: BTreeSet::new(),
+            building_keys: BTreeSet::new(),
+            building_stack: Vec::new(),
+            results: Vec::new(),
+            failed_demand: None,
+            demanded_keys: BTreeSet::new(),
+            filtered: Some(FilteredDemandState {
+                previous: Arc::new(previous),
+                snapshot: Arc::new(current),
+                snapshot_delta: BTreeMap::new(),
+                unconfirmed_outputs: BTreeSet::new(),
+                dirty_keys: BTreeSet::new(),
+                probe_root_dirty: false,
+                compatible,
+                keep_modified_outputs,
+                worker: None,
+            }),
+        }
+    }
+
+    pub(super) fn is_filtered(&self) -> bool {
+        self.filtered.is_some()
+    }
+
+    pub(super) fn filtered_state(&self) -> Option<&FilteredDemandState> {
+        self.filtered.as_ref()
+    }
+
+    pub(super) fn filtered_mut(&mut self) -> Option<&mut FilteredDemandState> {
+        self.filtered.as_mut()
+    }
+
+    pub(super) fn coordinator(&self) -> Option<FilteredDemandCoordinator> {
+        self.filtered
+            .as_ref()
+            .and_then(|filtered| filtered.coordinator().cloned())
     }
 
     pub(super) fn asset_changed(&self, asset: &str) -> bool {
-        if self.filtered_unconfirmed_outputs.contains(asset) {
+        let Some(filtered) = &self.filtered else {
+            return false;
+        };
+        if filtered.unconfirmed_outputs.contains(asset) {
             return true;
         }
-        let current = self
-            .filtered_snapshot_delta
+        let current = filtered
+            .snapshot_delta
             .get(asset)
-            .or_else(|| self.filtered_snapshot.get(asset));
-        let previous = self
-            .filtered_previous
-            .as_ref()
-            .and_then(|s| s.assets.get(asset));
+            .or_else(|| filtered.snapshot.get(asset));
+        let previous = filtered.previous.assets.get(asset);
         match (previous, current) {
             (Some(previous), Some(current)) => {
                 previous.exists != current.exists || previous.digest != current.digest
@@ -121,15 +180,13 @@ impl LazyBuildState {
         asset: &str,
         lazy_specs: &BTreeMap<String, BuildSpec>,
     ) -> bool {
-        if self.filtered_previous.is_none() || self.filtered_snapshot.contains_key(asset) {
-            return false;
-        }
-        if lazy_specs.contains_key(asset) {
-            return false;
-        }
-        let Some(previous) = &self.filtered_previous else {
+        let Some(filtered) = &self.filtered else {
             return false;
         };
+        if filtered.snapshot.contains_key(asset) || lazy_specs.contains_key(asset) {
+            return false;
+        }
+        let previous = &filtered.previous;
         !previous.output_locations.contains_key(asset)
             && !previous.watch_generated_sources.contains(asset)
             && !previous
@@ -142,8 +199,9 @@ impl LazyBuildState {
         &self,
         asset: &str,
     ) -> Option<FilteredSourceObservation> {
-        self.filtered_coordinator
+        self.filtered
             .as_ref()?
+            .coordinator()?
             .source_observation(asset)
     }
 
@@ -152,12 +210,16 @@ impl LazyBuildState {
         asset: &str,
         observed: FilteredSourceObservation,
     ) -> FilteredSourceObservation {
-        let published = if let Some(coordinator) = &self.filtered_coordinator {
+        let Some(filtered) = &mut self.filtered else {
+            return observed;
+        };
+        let published = if let Some(coordinator) = filtered.coordinator() {
             coordinator.publish_source_observation(asset, observed)
         } else {
             observed
         };
-        self.filtered_snapshot_delta
+        filtered
+            .snapshot_delta
             .insert(asset.to_owned(), published.snapshot.clone());
         published
     }
@@ -165,7 +227,10 @@ impl LazyBuildState {
     pub(crate) fn filtered_snapshot_delta(
         &self,
     ) -> &BTreeMap<String, crate::snapshot::AssetSnapshot> {
-        &self.filtered_snapshot_delta
+        static EMPTY: BTreeMap<String, crate::snapshot::AssetSnapshot> = BTreeMap::new();
+        self.filtered
+            .as_ref()
+            .map_or(&EMPTY, |filtered| &filtered.snapshot_delta)
     }
 
     pub(super) fn update_outputs(
@@ -174,11 +239,11 @@ impl LazyBuildState {
         overlay: &BTreeMap<String, Arc<[u8]>>,
         deleted: &BTreeSet<String>,
     ) {
-        if self.filtered_previous.is_none() {
+        let Some(filtered) = &mut self.filtered else {
             return;
-        }
+        };
         for output in &spec.outputs {
-            self.filtered_unconfirmed_outputs.remove(output);
+            filtered.unconfirmed_outputs.remove(output);
             let entry = if let Some(bytes) = overlay.get(output) {
                 Some(crate::snapshot::AssetSnapshot {
                     exists: true,
@@ -195,7 +260,7 @@ impl LazyBuildState {
                 None
             };
             if let Some(entry) = entry {
-                self.filtered_snapshot_delta.insert(output.clone(), entry);
+                filtered.snapshot_delta.insert(output.clone(), entry);
             }
         }
     }
@@ -205,6 +270,11 @@ impl LazyBuildState {
         worker: usize,
         coordinator: FilteredDemandCoordinator,
     ) -> Self {
+        let filtered = self
+            .filtered
+            .as_ref()
+            .expect("worker_state requires filtered LazyBuildState")
+            .for_worker(worker, coordinator);
         Self {
             force_keys: self.force_keys.clone(),
             // The single-threaded probe already completed every reused action
@@ -215,31 +285,19 @@ impl LazyBuildState {
             building_stack: Vec::new(),
             results: Vec::new(),
             failed_demand: None,
-            filtered_previous: self.filtered_previous.clone(),
             demanded_keys: self.demanded_keys.clone(),
-            filtered_snapshot: self.filtered_snapshot.clone(),
-            filtered_snapshot_delta: self.filtered_snapshot_delta.clone(),
-            // Probe-only dirtiness is resolved again by actual worker reads;
-            // carrying it into execution would invalidate equal rebuilt bytes.
-            filtered_unconfirmed_outputs: BTreeSet::new(),
-            filtered_dirty_keys: BTreeSet::new(),
-            filtered_probe_root_dirty: false,
-            filtered_compatible: self.filtered_compatible,
-            keep_modified_outputs: self.keep_modified_outputs,
-            filtered_coordinator: Some(coordinator),
-            filtered_worker: worker,
+            filtered: Some(filtered),
         }
     }
 
     pub(crate) fn merge_worker_state(&mut self, mut worker: Self) {
         self.built_keys.append(&mut worker.built_keys);
         self.demanded_keys.append(&mut worker.demanded_keys);
-        self.filtered_snapshot_delta
-            .append(&mut worker.filtered_snapshot_delta);
-        self.filtered_unconfirmed_outputs
-            .append(&mut worker.filtered_unconfirmed_outputs);
-        self.filtered_dirty_keys
-            .append(&mut worker.filtered_dirty_keys);
+        if let (Some(dst), Some(src)) = (&mut self.filtered, worker.filtered.as_mut()) {
+            dst.snapshot_delta.append(&mut src.snapshot_delta);
+            dst.unconfirmed_outputs.append(&mut src.unconfirmed_outputs);
+            dst.dirty_keys.append(&mut src.dirty_keys);
+        }
         self.results.append(&mut worker.results);
         if let Some(error) = worker.failed_demand.take() {
             self.failed_demand.get_or_insert(error);
@@ -266,15 +324,21 @@ impl LazyBuildState {
                 (output.clone(), status)
             })
             .collect();
-        let snapshots = spec
-            .outputs
-            .iter()
-            .filter_map(|output| {
-                self.filtered_snapshot_delta
-                    .get(output)
-                    .map(|snapshot| (output.clone(), snapshot.clone()))
+        let snapshots = self
+            .filtered
+            .as_ref()
+            .map(|filtered| {
+                spec.outputs
+                    .iter()
+                    .filter_map(|output| {
+                        filtered
+                            .snapshot_delta
+                            .get(output)
+                            .map(|snapshot| (output.clone(), snapshot.clone()))
+                    })
+                    .collect()
             })
-            .collect();
+            .unwrap_or_default();
         ActionPublication { outputs, snapshots }
     }
 
@@ -290,8 +354,11 @@ impl LazyBuildState {
                 apply_published_output(output, status, overlay, deleted);
             }
         }
-        self.filtered_snapshot_delta
-            .extend(publication.snapshots.clone());
+        if let Some(filtered) = &mut self.filtered {
+            filtered
+                .snapshot_delta
+                .extend(publication.snapshots.clone());
+        }
         let key = spec.action_key();
         self.demanded_keys.insert(key.clone());
         self.built_keys.insert(key);
@@ -314,19 +381,22 @@ impl LazyBuildState {
     }
 
     pub(super) fn record_demand_failure(&mut self, error: &io::Error) {
-        if self.filtered_previous.is_some() {
+        if let Some(filtered) = &self.filtered {
             self.failed_demand.get_or_insert_with(|| error.to_string());
-        }
-        if let Some(coordinator) = &self.filtered_coordinator {
-            coordinator.fail_worker(error.to_string());
+            if let Some(coordinator) = filtered.coordinator() {
+                coordinator.fail_worker(error.to_string());
+            }
         }
     }
 
     pub(super) fn mark_filtered_dirty(&mut self, spec: &BuildSpec) {
-        self.filtered_dirty_keys.insert(spec.action_key());
-        self.filtered_unconfirmed_outputs
-            .extend(spec.outputs.iter().cloned());
-        self.filtered_probe_root_dirty = true;
+        if let Some(filtered) = &mut self.filtered {
+            filtered.dirty_keys.insert(spec.action_key());
+            filtered
+                .unconfirmed_outputs
+                .extend(spec.outputs.iter().cloned());
+            filtered.probe_root_dirty = true;
+        }
     }
 
     pub(crate) fn failed_demand(&self) -> Option<&str> {
@@ -346,7 +416,12 @@ mod tests {
     #[test]
     fn source_observations_are_shared_across_workers_and_committed_consistently() {
         let coordinator = FilteredDemandCoordinator::default();
-        let mut merged = LazyBuildState::new(BTreeSet::new());
+        let mut merged = LazyBuildState::filtered(
+            crate::graph::GraphState::default(),
+            BTreeMap::new(),
+            false,
+            false,
+        );
         let asset = "external|lib/shared.txt";
         let first_bytes: Arc<[u8]> = Arc::from(&b"first version"[..]);
         let first_snapshot = crate::snapshot::AssetSnapshot {
@@ -378,7 +453,7 @@ mod tests {
         }
 
         assert_eq!(
-            merged.filtered_snapshot_delta.get(asset),
+            merged.filtered_snapshot_delta().get(asset),
             Some(&first_snapshot)
         );
     }
