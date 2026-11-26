@@ -482,6 +482,48 @@ fn resolve_demand_target(
     Some((spec.clone(), key))
 }
 
+/// Returns `Ok(true)` if `spec.input` is a declared generated asset whose
+/// producer emitted nothing and `spec` has been recorded as skipped.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Demand skip checks share the same visibility and transaction state"
+)]
+fn skip_missing_primary(
+    workspace: &Workspace,
+    spec: &BuildSpec,
+    key: &str,
+    overlay: &mut BTreeMap<String, Arc<[u8]>>,
+    deleted_overlay: &mut BTreeSet<String>,
+    visibility: &AssetVisibility,
+    lazy_specs: &BTreeMap<String, BuildSpec>,
+    lazy: &mut LazyBuildState,
+) -> io::Result<bool> {
+    if lazy_specs.contains_key(&spec.input)
+        && (deleted_overlay.contains(&spec.input)
+            || (!overlay.contains_key(&spec.input)
+                && !workspace.asset_exists_at(
+                    &spec.input,
+                    visibility
+                        .location(&spec.input)
+                        .unwrap_or(spec.instance.builder.build_to),
+                )?))
+    {
+        let result = crate::build::empty_filtered_result(spec);
+        for output in &spec.outputs {
+            deleted_overlay.insert(output.clone());
+            overlay.remove(output);
+        }
+        lazy.built_keys.insert(key.to_owned());
+        lazy.update_outputs(spec, overlay, deleted_overlay);
+        lazy.results.push(LazyBuildResult {
+            spec: Arc::clone(spec),
+            result,
+        });
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 impl FilteredExecution<'_> {
     #[expect(
         clippy::too_many_arguments,
@@ -638,222 +680,33 @@ impl FilteredExecution<'_> {
             // Stock skips a missing generated primary before examining any
             // old secondary dependency. Such dependencies must leave demand
             // state even if their retained physical outputs still exist.
-            if lazy_specs.contains_key(&spec.input)
-                && (deleted_overlay.contains(&spec.input)
-                    || (!overlay.contains_key(&spec.input)
-                        && !workspace.asset_exists_at(
-                            &spec.input,
-                            visibility
-                                .location(&spec.input)
-                                .unwrap_or(spec.instance.builder.build_to),
-                        )?))
-            {
-                let result = crate::build::empty_filtered_result(&spec);
-                for output in &spec.outputs {
-                    deleted_overlay.insert(output.clone());
-                    overlay.remove(output);
-                }
-                lazy.built_keys.insert(key);
-                lazy.update_outputs(&spec, overlay, deleted_overlay);
-                lazy.results.push(LazyBuildResult { spec, result });
+            if skip_missing_primary(
+                workspace,
+                &spec,
+                &key,
+                overlay,
+                deleted_overlay,
+                visibility,
+                lazy_specs,
+                lazy,
+            )? {
                 return Ok(());
             }
-            let (previous, mut needs_build, keep_modified_outputs) = {
-                let filtered = lazy
-                    .filtered_state()
-                    .expect("filtered reuse check requires filtered LazyBuildState");
-                let previous = filtered.previous.actions.get(&key).cloned();
-                let mut needs_build = !filtered.compatible
-                    || previous.as_ref().is_none_or(|action| {
-                        matches!(
-                            action.status.as_str(),
-                            "skipped_missing_input" | "undemanded"
-                        )
-                    });
-                if let Some(producer) = lazy_specs.get(&spec.input) {
-                    let previously_output = filtered
-                        .previous
-                        .actions
-                        .get(&producer.action_key())
-                        .is_some_and(|action| action.outputs.contains(&spec.input));
-                    let primary_exists = filtered
-                        .snapshot_delta
-                        .get(&spec.input)
-                        .or_else(|| filtered.snapshot.get(&spec.input))
-                        .is_some_and(|snapshot| snapshot.exists);
-                    if !previously_output && primary_exists {
-                        needs_build = true;
-                    }
-                }
-                (previous, needs_build, filtered.keep_modified_outputs)
-            };
-            if let Some(previous) = &previous {
-                for output in &previous.outputs {
-                    let current = crate::plan::output_digest(&crate::plan::output_path(
-                        workspace,
-                        &spec.instance.builder,
-                        output,
-                    )?)?;
-                    if current.is_none()
-                        || (!keep_modified_outputs
-                            && previous.output_digests.get(output) != current.as_ref())
-                    {
-                        needs_build = true;
-                    }
-                }
-                if !needs_build {
-                    // Like stock _computeStepAction, inspect old dependencies only
-                    // until a change requires running the step. New reads are then
-                    // demanded by the actual BuildStep, never by an old closure.
-                    let dependencies = lazy
-                        .filtered_state()
-                        .and_then(|filtered| filtered.previous.stock_input_order.get(&key))
-                        .ok_or_else(|| io::Error::other("ordered stock inputs are unavailable"))?
-                        .clone();
-                    for dependency in dependencies {
-                        self.ensure_optional_output(
-                            workspace,
-                            &dependency,
-                            overlay,
-                            deleted_overlay,
-                            visibility,
-                            spec.instance.phase,
-                            BuilderKind::Normal,
-                            lazy_specs,
-                            lazy,
-                        )?;
-                        if lazy.asset_changed(&dependency) {
-                            needs_build = true;
-                            break;
-                        }
-                    }
-                }
-                if !needs_build {
-                    for glob in &previous.glob_reads {
-                        let candidates: Vec<String> = lazy_specs
-                            .keys()
-                            .filter(|asset| asset_matches_glob(asset, &glob.package, &glob.pattern))
-                            .cloned()
-                            .collect();
-                        for asset in candidates {
-                            self.ensure_optional_output(
-                                workspace,
-                                &asset,
-                                overlay,
-                                deleted_overlay,
-                                visibility,
-                                spec.instance.phase,
-                                BuilderKind::Normal,
-                                lazy_specs,
-                                lazy,
-                            )?;
-                            // A producer reached only to classify glob
-                            // membership may itself need to run. The probe
-                            // cannot seed this consumer as reused until that
-                            // producer's actual output set is known.
-                            if matches!(self, FilteredExecution::Probe)
-                                && lazy_specs.get(&asset).is_some_and(|producer| {
-                                    lazy.filtered_state().is_some_and(|filtered| {
-                                        filtered.dirty_keys.contains(&producer.action_key())
-                                    })
-                                })
-                            {
-                                needs_build = true;
-                                break;
-                            }
-                        }
-                        if needs_build {
-                            break;
-                        }
-                        let matched = filtered_glob_members(
-                            workspace,
-                            &glob.package,
-                            &glob.pattern,
-                            overlay,
-                            deleted_overlay,
-                            visibility,
-                            spec.instance.phase,
-                            BuilderKind::Normal,
-                            lazy_specs,
-                        )?;
-                        let glob_key = format!("{}|{}", glob.package, glob.pattern);
-                        let old = lazy
-                            .filtered_state()
-                            .and_then(|filtered| filtered.previous.stock_glob_members.get(&key))
-                            .and_then(|globs| globs.get(&glob_key))
-                            .ok_or_else(|| {
-                                io::Error::other("per-action stock glob evidence is unavailable")
-                            })?;
-                        if old != &matched {
-                            needs_build = true;
-                            break;
-                        }
-                    }
-                }
-                if !needs_build {
-                    // Stock evaluates resolver graphs after inputs and globs.
-                    // Evaluate children before parents and accumulate changes
-                    // across the full previously resolved acyclic graph.
-                    for entrypoint in &previous.resolver_entrypoints {
-                        let mut seen = BTreeSet::new();
-                        let mut stack = vec![(entrypoint.clone(), false)];
-                        let mut changed = false;
-                        while let Some((dependency, expanded)) = stack.pop() {
-                            if !expanded {
-                                if !seen.insert(dependency.clone()) {
-                                    continue;
-                                }
-                                stack.push((dependency.clone(), true));
-                                if let Some(edges) = lazy.filtered_state().and_then(|filtered| {
-                                    filtered.previous.resolver_dep_graph.get(&dependency)
-                                }) {
-                                    stack.extend(
-                                        edges.iter().rev().map(|asset| (asset.clone(), false)),
-                                    );
-                                }
-                                continue;
-                            }
-                            self.ensure_optional_output(
-                                workspace,
-                                &dependency,
-                                overlay,
-                                deleted_overlay,
-                                visibility,
-                                spec.instance.phase,
-                                BuilderKind::Normal,
-                                lazy_specs,
-                                lazy,
-                            )?;
-                            changed |= lazy.asset_changed(&dependency);
-                        }
-                        if changed {
-                            needs_build = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            if !needs_build {
-                // A reused producer still determines which declared siblings
-                // exist. A stray on-disk file cannot turn an omitted output
-                // into a readable generated input for its consumers.
-                if let Some(previous) = &previous {
-                    for output in &spec.outputs {
-                        if !previous.outputs.contains(output) {
-                            deleted_overlay.insert(output.clone());
-                            overlay.remove(output);
-                        }
-                    }
-                    lazy.update_outputs(&spec, overlay, deleted_overlay);
-                }
-                lazy.built_keys.insert(key);
+            if self.check_filtered_reuse(
+                workspace,
+                &spec,
+                &key,
+                overlay,
+                deleted_overlay,
+                visibility,
+                lazy_specs,
+                lazy,
+            )? {
                 return Ok(());
             }
-        }
-
-        // Ordinary optional chains have the same missing-primary rule as
-        // filtered demand: run the producer first, then skip an absent input.
-        if !lazy.is_filtered() && lazy_specs.contains_key(&spec.input) {
+        } else if lazy_specs.contains_key(&spec.input) {
+            // Ordinary optional chains have the same missing-primary rule as
+            // filtered demand: run the producer first, then skip an absent input.
             self.ensure_optional_output(
                 workspace,
                 &spec.input,
@@ -865,22 +718,16 @@ impl FilteredExecution<'_> {
                 lazy_specs,
                 lazy,
             )?;
-            if deleted_overlay.contains(&spec.input)
-                || (!overlay.contains_key(&spec.input)
-                    && !workspace.asset_exists_at(
-                        &spec.input,
-                        visibility
-                            .location(&spec.input)
-                            .unwrap_or(spec.instance.builder.build_to),
-                    )?)
-            {
-                let result = crate::build::empty_filtered_result(&spec);
-                for output in &spec.outputs {
-                    deleted_overlay.insert(output.clone());
-                    overlay.remove(output);
-                }
-                lazy.built_keys.insert(key);
-                lazy.results.push(LazyBuildResult { spec, result });
+            if skip_missing_primary(
+                workspace,
+                &spec,
+                &key,
+                overlay,
+                deleted_overlay,
+                visibility,
+                lazy_specs,
+                lazy,
+            )? {
                 return Ok(());
             }
         }
@@ -890,6 +737,241 @@ impl FilteredExecution<'_> {
             return Ok(());
         }
 
+        self.run_and_validate_lazy_action(
+            workspace,
+            spec,
+            key,
+            overlay,
+            deleted_overlay,
+            visibility,
+            lazy_specs,
+            lazy,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Filtered reuse checks share the same visibility and transaction state"
+    )]
+    fn check_filtered_reuse(
+        &mut self,
+        workspace: &Workspace,
+        spec: &BuildSpec,
+        key: &str,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
+        deleted_overlay: &mut BTreeSet<String>,
+        visibility: &AssetVisibility,
+        lazy_specs: &BTreeMap<String, BuildSpec>,
+        lazy: &mut LazyBuildState,
+    ) -> io::Result<bool> {
+        let (previous, mut needs_build, keep_modified_outputs) = {
+            let filtered = lazy
+                .filtered_state()
+                .expect("filtered reuse check requires filtered LazyBuildState");
+            let previous = filtered.previous.actions.get(key).cloned();
+            let mut needs_build = !filtered.compatible
+                || previous.as_ref().is_none_or(|action| {
+                    matches!(
+                        action.status.as_str(),
+                        "skipped_missing_input" | "undemanded"
+                    )
+                });
+            if let Some(producer) = lazy_specs.get(&spec.input) {
+                let previously_output = filtered
+                    .previous
+                    .actions
+                    .get(&producer.action_key())
+                    .is_some_and(|action| action.outputs.contains(&spec.input));
+                let primary_exists = filtered
+                    .snapshot_delta
+                    .get(&spec.input)
+                    .or_else(|| filtered.snapshot.get(&spec.input))
+                    .is_some_and(|snapshot| snapshot.exists);
+                if !previously_output && primary_exists {
+                    needs_build = true;
+                }
+            }
+            (previous, needs_build, filtered.keep_modified_outputs)
+        };
+        if let Some(previous) = &previous {
+            for output in &previous.outputs {
+                let current = crate::plan::output_digest(&crate::plan::output_path(
+                    workspace,
+                    &spec.instance.builder,
+                    output,
+                )?)?;
+                if current.is_none()
+                    || (!keep_modified_outputs
+                        && previous.output_digests.get(output) != current.as_ref())
+                {
+                    needs_build = true;
+                }
+            }
+            if !needs_build {
+                // Like stock _computeStepAction, inspect old dependencies only
+                // until a change requires running the step. New reads are then
+                // demanded by the actual BuildStep, never by an old closure.
+                let dependencies = lazy
+                    .filtered_state()
+                    .and_then(|filtered| filtered.previous.stock_input_order.get(key))
+                    .ok_or_else(|| io::Error::other("ordered stock inputs are unavailable"))?
+                    .clone();
+                for dependency in dependencies {
+                    self.ensure_optional_output(
+                        workspace,
+                        &dependency,
+                        overlay,
+                        deleted_overlay,
+                        visibility,
+                        spec.instance.phase,
+                        BuilderKind::Normal,
+                        lazy_specs,
+                        lazy,
+                    )?;
+                    if lazy.asset_changed(&dependency) {
+                        needs_build = true;
+                        break;
+                    }
+                }
+            }
+            if !needs_build {
+                for glob in &previous.glob_reads {
+                    let candidates: Vec<String> = lazy_specs
+                        .keys()
+                        .filter(|asset| asset_matches_glob(asset, &glob.package, &glob.pattern))
+                        .cloned()
+                        .collect();
+                    for asset in candidates {
+                        self.ensure_optional_output(
+                            workspace,
+                            &asset,
+                            overlay,
+                            deleted_overlay,
+                            visibility,
+                            spec.instance.phase,
+                            BuilderKind::Normal,
+                            lazy_specs,
+                            lazy,
+                        )?;
+                        // A producer reached only to classify glob
+                        // membership may itself need to run. The probe
+                        // cannot seed this consumer as reused until that
+                        // producer's actual output set is known.
+                        if matches!(self, FilteredExecution::Probe)
+                            && lazy_specs.get(&asset).is_some_and(|producer| {
+                                lazy.filtered_state().is_some_and(|filtered| {
+                                    filtered.dirty_keys.contains(&producer.action_key())
+                                })
+                            })
+                        {
+                            needs_build = true;
+                            break;
+                        }
+                    }
+                    if needs_build {
+                        break;
+                    }
+                    let matched = filtered_glob_members(
+                        workspace,
+                        &glob.package,
+                        &glob.pattern,
+                        overlay,
+                        deleted_overlay,
+                        visibility,
+                        spec.instance.phase,
+                        BuilderKind::Normal,
+                        lazy_specs,
+                    )?;
+                    let glob_key = format!("{}|{}", glob.package, glob.pattern);
+                    let old = lazy
+                        .filtered_state()
+                        .and_then(|filtered| filtered.previous.stock_glob_members.get(key))
+                        .and_then(|globs| globs.get(&glob_key))
+                        .ok_or_else(|| {
+                            io::Error::other("per-action stock glob evidence is unavailable")
+                        })?;
+                    if old != &matched {
+                        needs_build = true;
+                        break;
+                    }
+                }
+            }
+            if !needs_build {
+                // Stock evaluates resolver graphs after inputs and globs.
+                // Evaluate children before parents and accumulate changes
+                // across the full previously resolved acyclic graph.
+                for entrypoint in &previous.resolver_entrypoints {
+                    let mut seen = BTreeSet::new();
+                    let mut stack = vec![(entrypoint.clone(), false)];
+                    let mut changed = false;
+                    while let Some((dependency, expanded)) = stack.pop() {
+                        if !expanded {
+                            if !seen.insert(dependency.clone()) {
+                                continue;
+                            }
+                            stack.push((dependency.clone(), true));
+                            if let Some(edges) = lazy.filtered_state().and_then(|filtered| {
+                                filtered.previous.resolver_dep_graph.get(&dependency)
+                            }) {
+                                stack
+                                    .extend(edges.iter().rev().map(|asset| (asset.clone(), false)));
+                            }
+                            continue;
+                        }
+                        self.ensure_optional_output(
+                            workspace,
+                            &dependency,
+                            overlay,
+                            deleted_overlay,
+                            visibility,
+                            spec.instance.phase,
+                            BuilderKind::Normal,
+                            lazy_specs,
+                            lazy,
+                        )?;
+                        changed |= lazy.asset_changed(&dependency);
+                    }
+                    if changed {
+                        needs_build = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !needs_build {
+            // A reused producer still determines which declared siblings
+            // exist. A stray on-disk file cannot turn an omitted output
+            // into a readable generated input for its consumers.
+            if let Some(previous) = &previous {
+                for output in &spec.outputs {
+                    if !previous.outputs.contains(output) {
+                        deleted_overlay.insert(output.clone());
+                        overlay.remove(output);
+                    }
+                }
+                lazy.update_outputs(spec, overlay, deleted_overlay);
+            }
+            lazy.built_keys.insert(key.to_owned());
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Demand execution passes its shared transaction context explicitly"
+    )]
+    fn run_and_validate_lazy_action(
+        &mut self,
+        workspace: &Workspace,
+        spec: BuildSpec,
+        key: String,
+        overlay: &mut BTreeMap<String, Arc<[u8]>>,
+        deleted_overlay: &mut BTreeSet<String>,
+        visibility: &AssetVisibility,
+        lazy_specs: &BTreeMap<String, BuildSpec>,
+        lazy: &mut LazyBuildState,
+    ) -> io::Result<()> {
         for output in &spec.outputs {
             deleted_overlay.insert(output.clone());
             overlay.remove(output);
@@ -915,8 +997,7 @@ impl FilteredExecution<'_> {
             visibility,
             lazy_specs,
             lazy,
-        );
-        let result = result?;
+        )?;
         if result.status != "success" && result.status != "not_triggered" {
             return Err(io::Error::other(
                 result
