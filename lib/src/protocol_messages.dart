@@ -413,9 +413,9 @@ class WorkerBuildRequest {
   final String? traceparent;
   final int? otelReportId;
 
-  /// Whether the builder opted into API-signature early cutoff
-  /// (ADR 0056). Carried for the result assembly; recording and
-  /// classification do not depend on it yet.
+  /// Whether the builder opted into API-signature early cutoff (ADR 0056).
+  /// Enables per-unit API fingerprint learning during the action's
+  /// dependency walks.
   final bool apiCutoff;
 
   bool get isPostProcess => kind == 'post_process';
