@@ -14,7 +14,8 @@ class FrameReader {
   FrameReader(Stream<List<int>> input) : _iterator = StreamIterator(input);
 
   static final _emptyBuffer = Uint8List(0);
-  static const _maxRetainedCapacity = 8 * 1024;
+  static final _jsonDecoder = utf8.decoder.fuse(json.decoder);
+  static const _maxRetainedCapacity = 64 * 1024;
   static const _headerLength = 4;
   final StreamIterator<List<int>> _iterator;
   Uint8List _buffer = _emptyBuffer;
@@ -24,10 +25,23 @@ class FrameReader {
   int get _available => _end - _start;
 
   Future<JsonMap?> next() async {
+    if (_available == 0) {
+      if (!await _iterator.moveNext()) return null;
+      final chunk = _iterator.current;
+      if (chunk is Uint8List && chunk.length >= _headerLength) {
+        final length = _readUint32(chunk, 0);
+        if (length <= _maxFrameLength &&
+            chunk.length == _headerLength + length) {
+          // Decode synchronously while the input chunk belongs to this read.
+          return _decodePayload(chunk, _headerLength, chunk.length);
+        }
+      }
+      _append(chunk, _headerLength);
+    }
     if (_available < _headerLength) await _fill(_headerLength);
     if (_available == 0) return null;
 
-    final length = ByteData.sublistView(_buffer).getUint32(_start, Endian.big);
+    final length = _readUint32(_buffer, _start);
     if (length > _maxFrameLength) {
       throw const FormatException('IPC frame exceeds the 256 MiB safety limit');
     }
@@ -41,20 +55,34 @@ class FrameReader {
       if (buffer.length > _maxRetainedCapacity) _buffer = _emptyBuffer;
       _start = _end = 0;
     }
-    if (_hasBinaryAssetResponseMagic(buffer, payloadStart, payloadEnd)) {
-      // Binary bytes outlive the receive buffer and need an owned snapshot.
-      return _decodeBinaryAssetResponse(
-        buffer.sublist(payloadStart, payloadEnd),
-      );
+    return _decodePayload(buffer, payloadStart, payloadEnd);
+  }
+
+  JsonMap _decodePayload(Uint8List buffer, int start, int end) {
+    if (_hasBinaryAssetResponseMagic(buffer, start, end)) {
+      return _decodeBinaryAssetResponse(buffer, start, end);
     }
-    final decoded = jsonDecode(
-      utf8.decoder.convert(buffer, payloadStart, payloadEnd),
-    );
-    if (decoded is! Map) {
+    final decoded = _decodeJson(buffer, start, end);
+    if (decoded is! JsonMap) {
       throw FormatException('IPC payload must be a JSON object');
     }
-    return decoded.cast<String, dynamic>();
+    return decoded;
   }
+
+  Object? _decodeJson(Uint8List buffer, int start, int end) {
+    try {
+      return _jsonDecoder.convert(Uint8List.sublistView(buffer, start, end));
+    } on FormatException {
+      // Preserve the decoder's diagnostics without exposing the input buffer.
+      return jsonDecode(utf8.decode(buffer.sublist(start, end)));
+    }
+  }
+
+  static int _readUint32(Uint8List buffer, int offset) =>
+      (buffer[offset] << 24) |
+      (buffer[offset + 1] << 16) |
+      (buffer[offset + 2] << 8) |
+      buffer[offset + 3];
 
   bool _hasBinaryAssetResponseMagic(Uint8List buffer, int start, int end) {
     if (end - start < _binaryAssetResponseMagic.length) return false;
@@ -65,39 +93,35 @@ class FrameReader {
     return true;
   }
 
-  JsonMap _decodeBinaryAssetResponse(Uint8List payload) {
+  JsonMap _decodeBinaryAssetResponse(Uint8List buffer, int start, int end) {
     const envelopeHeaderLength = 8;
-    if (payload.length < envelopeHeaderLength) {
+    if (end - start < envelopeHeaderLength) {
       throw const FormatException('Binary IPC envelope is truncated');
     }
-    final metadataLength = ByteData.sublistView(
-      payload,
-      _binaryAssetResponseMagic.length,
-      envelopeHeaderLength,
-    ).getUint32(0, Endian.big);
-    final bytesStart = envelopeHeaderLength + metadataLength;
-    if (bytesStart > payload.length) {
+    final metadataLength = _readUint32(
+      buffer,
+      start + _binaryAssetResponseMagic.length,
+    );
+    final metadataStart = start + envelopeHeaderLength;
+    final bytesStart = metadataStart + metadataLength;
+    if (bytesStart > end) {
       throw const FormatException('Binary IPC metadata is truncated');
     }
 
-    final decoded = jsonDecode(
-      utf8.decoder.convert(payload, envelopeHeaderLength, bytesStart),
-    );
-    if (decoded is! Map) {
+    final message = _decodeJson(buffer, metadataStart, bytesStart);
+    if (message is! JsonMap) {
       throw const FormatException('Binary IPC metadata must be a JSON object');
     }
-    final message = <String, dynamic>{...decoded.cast<String, dynamic>()};
     if (message['type'] != 'asset_response' || message['encoding'] != 'raw') {
       throw const FormatException('Unsupported binary IPC envelope');
     }
     final expectedLength = message['length'];
-    final actualLength = payload.length - bytesStart;
+    final actualLength = end - bytesStart;
     if (expectedLength is! int || expectedLength != actualLength) {
       throw const FormatException('Binary IPC payload length mismatch');
     }
-    // Keep the frame buffer alive through the view and defer the defensive
-    // copy until a builder receives the bytes from the shared read cache.
-    message['bytes'] = Uint8List.sublistView(payload, bytesStart);
+    // Asset bytes can outlive the receive buffer.
+    message['bytes'] = buffer.sublist(bytesStart, end);
     return message;
   }
 
@@ -107,29 +131,35 @@ class FrameReader {
         if (_available == 0) return;
         throw const FormatException('Unexpected EOF in IPC frame');
       }
-      final chunk = _iterator.current;
-      final chunkLength = chunk.length;
-      if (_end + chunkLength > _buffer.length) {
-        final available = _available;
-        final required = available + chunkLength;
-        // Grow only for bytes that arrived. Compact only when a read needs
-        // more input and the free space at the end cannot fit the new chunk.
-        final buffer = required <= _buffer.length
-            ? _buffer
-            : Uint8List(
-                max(
-                  required,
-                  min(_buffer.length * 2, _maxFrameLength + _headerLength),
-                ),
-              );
-        buffer.setRange(0, available, _buffer, _start);
-        _buffer = buffer;
-        _start = 0;
-        _end = available;
-      }
-      _buffer.setRange(_end, _end + chunkLength, chunk);
-      _end += chunkLength;
+      _append(_iterator.current, length);
     }
+  }
+
+  void _append(List<int> chunk, int frameLength) {
+    final chunkLength = chunk.length;
+    if (chunkLength == 0) return;
+    if (_end + chunkLength > _buffer.length) {
+      final available = _available;
+      final required = available + chunkLength;
+      var buffer = _buffer;
+      if (required > buffer.length) {
+        // Reserve the rest of a known frame only once enough bytes arrived
+        // to bound capacity by twice the bytes actually received.
+        final capacity = required <= frameLength && frameLength <= required * 2
+            ? frameLength
+            : max(
+                required,
+                min(buffer.length * 2, _maxFrameLength + _headerLength),
+              );
+        buffer = Uint8List(capacity);
+      }
+      if (available > 0) buffer.setRange(0, available, _buffer, _start);
+      _buffer = buffer;
+      _start = 0;
+      _end = available;
+    }
+    _buffer.setRange(_end, _end + chunkLength, chunk);
+    _end += chunkLength;
   }
 }
 
