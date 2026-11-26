@@ -1,5 +1,7 @@
 use super::super::WorkerClient;
-use super::super::asset_rpc::{FilteredAssetEvidence, validate_asset_request_context};
+use super::super::asset_rpc::{
+    FilteredAssetEvidence, collect_glob_members, validate_asset_request_context,
+};
 use super::super::client::protocol_error;
 use super::super::request::{BuildRequest, build_request_kind};
 use super::coordinator::DemandClaim;
@@ -30,43 +32,17 @@ fn filtered_glob_members(
     kind: BuilderKind,
     specs: &BTreeMap<String, BuildSpec>,
 ) -> io::Result<Vec<String>> {
-    let mut candidates: BTreeSet<String> = workspace
-        .find_assets(package, pattern)?
-        .into_iter()
-        .collect();
-    candidates.extend(visibility.generated_assets(package, pattern).cloned());
-    candidates.extend(
-        glob_candidates(overlay, package, pattern)
-            .filter(|asset| asset_matches_glob(asset, package, pattern))
-            .cloned(),
-    );
-    let mut sources = Vec::new();
-    let mut generated = Vec::new();
-    for asset in candidates {
-        if visibility.is_blocked(&asset, phase, kind, deleted) {
-            continue;
-        }
-        if !overlay.contains_key(&asset)
-            && !workspace.asset_exists_at(
-                &asset,
-                visibility
-                    .location(&asset)
-                    .unwrap_or(crate::builder::BuildTo::Source),
-            )?
-        {
-            continue;
-        }
-        if specs.contains_key(&asset) {
-            generated.push(asset);
-        } else {
-            sources.push(asset);
-        }
-    }
-    // AssetId.compareTo uses Dart String ordering (UTF-16 code units).
-    sources.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
-    generated.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
-    sources.extend(generated);
-    Ok(sources)
+    collect_glob_members(
+        workspace,
+        package,
+        pattern,
+        overlay,
+        deleted,
+        visibility,
+        phase,
+        kind,
+        |asset| specs.contains_key(asset),
+    )
 }
 
 enum FilteredExecution<'a> {
