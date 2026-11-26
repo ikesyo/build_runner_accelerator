@@ -1,15 +1,10 @@
 use super::WorkerClient;
-use super::asset_rpc::{
-    FilteredAssetEvidence, batch_asset_request_context, validate_asset_request_context,
-};
+use super::asset_rpc::{FilteredAssetEvidence, validate_asset_request_context};
 use super::client::protocol_error;
 use super::request::{BuildRequest, build_request_kind};
 use crate::builder::BuilderKind;
 use crate::plan::BuildSpec;
-use crate::protocol::{
-    BuildBatchResultCollector, BuildResult, IncomingFrame, decode_build_batch_result_frame,
-    decode_build_result_frame,
-};
+use crate::protocol::{BuildResult, IncomingFrame, decode_build_result_frame};
 use crate::visibility::AssetVisibility;
 use crate::workspace::{Workspace, asset_matches_glob, glob_candidates};
 use serde_json::{Value, json};
@@ -785,7 +780,7 @@ impl WorkerClient {
         };
         let blocked_assets =
             visibility.blocked_assets(request.phase, build_request_kind(request), deleted);
-        self.send_serialized(&super::client::build_wire(id, request, &blocked_assets))?;
+        self.send_serialized(&super::wire::build_wire(id, request, &blocked_assets))?;
 
         loop {
             match self.receive()? {
@@ -868,95 +863,25 @@ impl WorkerClient {
         lazy_specs: &BTreeMap<String, BuildSpec>,
         lazy: &mut LazyBuildState,
     ) -> io::Result<Vec<BuildResult>> {
-        let result = self.build_batch_lazy_inner(
-            workspace,
+        self.run_batch_rpc(
+            "worker_batch_lazy",
             requests,
-            overlay,
-            deleted_overlay,
             visibility,
-            lazy_specs,
-            lazy,
-        );
-        // A worker can reject a batch before accepting its visibility hint.
-        // Forget on every error so a retry cannot reuse an unaccepted list.
-        if result.is_err() {
-            self.blocked_assets_cache.forget_last();
-        }
-        result
-    }
-
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "IPC operations pass workspace, visibility, and transaction state explicitly"
-    )]
-    fn build_batch_lazy_inner(
-        &mut self,
-        workspace: &Workspace,
-        requests: &[BuildRequest],
-        overlay: &mut BTreeMap<String, Arc<[u8]>>,
-        deleted_overlay: &mut BTreeSet<String>,
-        visibility: &AssetVisibility,
-        lazy_specs: &BTreeMap<String, BuildSpec>,
-        lazy: &mut LazyBuildState,
-    ) -> io::Result<Vec<BuildResult>> {
-        let started = Instant::now();
-        let id = self.next_id();
-        let _wall = self.wall_span("worker_batch_lazy", Some(id));
-        let metrics_before = self.metrics;
-        // Lazy batches have the same visibility context as ordinary batches;
-        // the nested build path still carries its own single-action hint.
-        let (blocked_assets, blocked_assets_reuse) =
-            self.blocked_assets_cache
-                .prepare(requests, visibility, deleted_overlay)?;
-        self.send_batch(id, requests, &blocked_assets, blocked_assets_reuse)?;
-
-        let mut batch_results = BuildBatchResultCollector::new(id, requests.len());
-        loop {
-            match self.receive()? {
-                IncomingFrame::Json(response) => match response.get("type").and_then(Value::as_str)
-                {
-                    Some("asset_request") => {
-                        let (build_id, active_request) =
-                            batch_asset_request_context(&response, requests)?;
-                        self.handle_lazy_asset_request(
-                            workspace,
-                            &response,
-                            overlay,
-                            deleted_overlay,
-                            visibility,
-                            active_request,
-                            build_id,
-                            lazy_specs,
-                            lazy,
-                        )?
-                    }
-                    Some("build_batch_result" | "build_batch_chunk") => {
-                        return Err(io::Error::other(
-                            "worker sent JSON build batch result; binary capability is required",
-                        ));
-                    }
-                    Some("error") => return Err(protocol_error("worker error", &response)),
-                    _ => return Err(protocol_error("unexpected worker message", &response)),
-                },
-                IncomingFrame::Binary(frame) => {
-                    let _decode = self.wall_span("result_decode_validate", Some(id));
-                    let decoded = decode_build_batch_result_frame(frame)?;
-                    self.record_json_build_batch_result_size(decoded.id, &decoded.results)?;
-                    let Some(decoded) = batch_results.accept(decoded)? else {
-                        continue;
-                    };
-                    self.dep_graph.extend(decoded.dep_graph);
-                    crate::protocol::merge_fingerprint_reports(
-                        &mut self.api_fingerprints,
-                        decoded.api_fingerprints,
-                    );
-                    let results = decoded.results;
-                    self.metrics.build_us += started.elapsed().as_micros() as u64;
-                    self.trace_metrics(&_wall, metrics_before);
-                    return Ok(results);
-                }
-            }
-        }
+            deleted_overlay,
+            |client, deleted_overlay, response, active_request, build_id| {
+                client.handle_lazy_asset_request(
+                    workspace,
+                    response,
+                    overlay,
+                    deleted_overlay,
+                    visibility,
+                    active_request,
+                    build_id,
+                    lazy_specs,
+                    lazy,
+                )
+            },
+        )
     }
 
     #[expect(

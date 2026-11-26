@@ -1,7 +1,11 @@
 use super::asset_rpc::batch_asset_request_context;
 use super::request::{
-    BuildRequest, batch_blocked_assets, batch_context, json_build_batch_result_frame_size,
-    json_build_result_frame_size,
+    BuildRequest, json_build_batch_result_frame_size, json_build_result_frame_size,
+};
+use super::wire::{
+    ApiUnitEvidence, AssetInterner, BlockedAssetsCache, PlainAssetIds, batch_shared_fields,
+    compute_asset_digest_delta, decode_api_unit_evidence, intern_asset_list, intern_overlay_blob,
+    rollback_asset_dictionary, write_batch_frame,
 };
 use crate::protocol::{
     BINARY_BUILD_RESULT_MAGIC, BuildBatchResultCollector, BuildResult, IncomingFrame,
@@ -13,7 +17,6 @@ use crate::worker_kernel::WorkerArtifact;
 use crate::workspace::Workspace;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::env;
 use std::io::{self, BufReader, BufWriter};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -39,51 +42,6 @@ pub(super) fn is_worker_script(worker_executable: &str) -> bool {
 
 /// Owns one child process and its framed stdin/stdout streams. The protocol
 /// reserves stdout for IPC; worker diagnostics are inherited from stderr.
-/// One unit's answer to an ADR 0056 preflight query. Either field is
-/// `None` when the worker could not produce it for the unit's current
-/// content; the frontend treats missing evidence as content-keyed.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ApiUnitEvidence {
-    pub fingerprint: Option<String>,
-    pub deps: Option<Vec<String>>,
-}
-
-/// Decodes one unit's preflight answer. The wire shape is `null`
-/// (unavailable) or an object whose `fingerprint` is a string or
-/// null and whose `deps` is an array of strings or null. Anything
-/// else is malformed, and malformed evidence is discarded whole:
-/// a silently truncated dependency list could otherwise pass as an
-/// unchanged one and waive an action on fabricated evidence.
-fn decode_api_unit_evidence(value: &Value) -> ApiUnitEvidence {
-    let malformed = ApiUnitEvidence::default();
-    if value.is_null() {
-        return malformed;
-    }
-    let Some(object) = value.as_object() else {
-        return malformed;
-    };
-    let fingerprint = match object.get("fingerprint") {
-        Some(Value::Null) | None => None,
-        Some(Value::String(fingerprint)) => Some(fingerprint.clone()),
-        Some(_) => return malformed,
-    };
-    let deps = match object.get("deps") {
-        Some(Value::Null) | None => None,
-        Some(Value::Array(items)) => {
-            let mut deps = Vec::with_capacity(items.len());
-            for item in items {
-                let Some(dep) = item.as_str() else {
-                    return malformed;
-                };
-                deps.push(dep.to_owned());
-            }
-            Some(deps)
-        }
-        Some(_) => return malformed,
-    };
-    ApiUnitEvidence { fingerprint, deps }
-}
-
 pub struct WorkerClient {
     pub(super) shared_parts_capable: bool,
     pub(super) batch_shared_fields_capable: bool,
@@ -119,596 +77,31 @@ pub struct WorkerClient {
     pub(super) api_fingerprints: BTreeMap<String, Option<crate::protocol::ApiFingerprintRecord>>,
 }
 
-/// Transport state belongs to one worker connection. Resets and single builds
-/// do not replace the last batch list; initialization starts a fresh context.
-#[derive(Default)]
-pub(super) struct BlockedAssetsCache {
-    pub(super) capable: bool,
-    last: Option<Vec<String>>,
-}
-
-impl BlockedAssetsCache {
-    pub(super) fn new(capable: bool) -> Self {
-        Self {
-            capable,
-            last: None,
-        }
-    }
-
-    pub(super) fn forget_last(&mut self) {
-        self.last = None;
-    }
-
-    /// Decides the visibility hint for one batch. When the candidate equals
-    /// the list last sent on this connection, the equality is verified
-    /// against the cached list without rebuilding the candidate
-    /// ([`AssetVisibility::blocked_assets_eq`]) and the reuse form is sent.
-    pub(super) fn prepare(
-        &mut self,
-        requests: &[BuildRequest],
-        visibility: &AssetVisibility,
-        deleted_overlay: &BTreeSet<String>,
-    ) -> io::Result<(Vec<String>, bool)> {
-        let Some((phase, kind)) = batch_context(requests)? else {
-            return Ok(self.prepare_list(Vec::new()));
-        };
-        let reuse = self.capable
-            && self.last.as_ref().is_some_and(|last| {
-                visibility.blocked_assets_eq(phase, kind, deleted_overlay, last)
-            });
-        if reuse {
-            return Ok((Vec::new(), true));
-        }
-        let assets = batch_blocked_assets(requests, visibility, deleted_overlay)?;
-        Ok(self.prepare_list(assets))
-    }
-
-    pub(super) fn prepare_list(&mut self, assets: Vec<String>) -> (Vec<String>, bool) {
-        if !self.capable {
-            return (assets, false);
-        }
-        if self.last.as_ref() == Some(&assets) {
-            return (Vec::new(), true);
-        }
-        self.last = Some(assets.clone());
-        (assets, false)
-    }
-}
-
-/// Serde skip predicate for fields that are only sent when set: an
-/// absent `api_cutoff` decodes as false on the worker.
-fn is_false(value: &bool) -> bool {
-    !*value
-}
-
-/// One build request in a batch, serialized directly from the borrowed
-/// [`BuildRequest`] fields instead of an intermediate JSON value tree.
-/// Field order matches the JSON shape the worker has always received;
-/// telemetry fields appear only while a telemetry context is active,
-/// exactly as the generic send path used to inject them.
-#[derive(serde::Serialize)]
-pub(super) struct BatchRequestWire<'a> {
-    id: u64,
-    builder: &'a str,
-    input: &'a str,
-    kind: &'a str,
-    allowed_outputs: &'a [String],
-    options: &'a serde_json::Map<String, Value>,
-    phase: u32,
-    part_phase_index: Option<u32>,
-    instance_key: &'a str,
-    is_root: bool,
-    #[serde(skip_serializing_if = "is_false")]
-    api_cutoff: bool,
-    triggers: &'a [crate::builder::BuilderTrigger],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    traceparent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    otel_report_id: Option<u64>,
-}
-
-/// Batch-level fields shared by every request in a batch, sent once under
-/// `shared` when the worker advertises `batch-shared-fields-v1` and the
-/// batch is uniform in them. The worker merges them into each child
-/// request before decoding it; see ADR 0052.
-#[derive(serde::Serialize)]
-pub(super) struct BatchSharedWire<'a> {
-    builder: &'a str,
-    phase: u32,
-    kind: &'a str,
-    part_phase_index: Option<u32>,
-    instance_key: &'a str,
-    is_root: bool,
-    #[serde(skip_serializing_if = "is_false")]
-    api_cutoff: bool,
-}
-
-/// A batch request in shared-fields form: the fields that
-/// [`BatchSharedWire`] does not carry. See [`BatchRequestWire`].
-#[derive(serde::Serialize)]
-pub(super) struct BatchSharedRequestWire<'a> {
-    id: u64,
-    input: &'a str,
-    allowed_outputs: &'a [String],
-    options: &'a serde_json::Map<String, Value>,
-    triggers: &'a [crate::builder::BuilderTrigger],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    traceparent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    otel_report_id: Option<u64>,
-}
-
-/// The `build_batch` envelope. See [`BatchRequestWire`].
-#[derive(serde::Serialize)]
-pub(super) struct BatchWire<'a, R> {
-    pub(super) v: u32,
-    #[serde(rename = "type")]
-    pub(super) message_type: &'a str,
-    pub(super) id: u64,
-    pub(super) blocked_assets: &'a [String],
-    pub(super) blocked_assets_reuse: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) shared: Option<BatchSharedWire<'a>>,
-    /// `asset-digests-v1` delta keyed by asset id; a null value removes the
-    /// id from the worker's digest map. See ADR 0054.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) asset_digests: Option<BTreeMap<String, Option<String>>>,
-    pub(super) requests: &'a [R],
-}
-
-/// The single `build` envelope used by the lazy/nested path, carrying its
-/// own visibility hint. See [`BatchRequestWire`].
-#[derive(serde::Serialize)]
-pub(super) struct BuildWire<'a> {
-    pub(super) v: u32,
-    #[serde(rename = "type")]
-    pub(super) message_type: &'a str,
-    pub(super) id: u64,
-    pub(super) builder: &'a str,
-    pub(super) input: &'a str,
-    pub(super) kind: &'a str,
-    pub(super) allowed_outputs: &'a [String],
-    pub(super) options: &'a serde_json::Map<String, Value>,
-    pub(super) phase: u32,
-    pub(super) part_phase_index: Option<u32>,
-    pub(super) instance_key: &'a str,
-    pub(super) is_root: bool,
-    #[serde(skip_serializing_if = "is_false")]
-    pub(super) api_cutoff: bool,
-    pub(super) blocked_assets: &'a [String],
-    pub(super) triggers: &'a [crate::builder::BuilderTrigger],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) traceparent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) otel_report_id: Option<u64>,
-}
-
-/// Assigns dictionary indexes for one outgoing message, recording the ids
-/// the message introduces so they can be sent as its `asset_dict_add` list.
-/// The client dictionary grows as messages are encoded. If the send itself
-/// fails, the caller rolls the dictionary back to its pre-message length
-/// with [`rollback_asset_dictionary`], because the worker never received
-/// the additions; once the frame is written, the worker applies the same
-/// additions while decoding and they are never rolled back. See ADR 0053.
-pub(super) struct AssetInterner<'a> {
-    dictionary: &'a mut Vec<String>,
-    index: &'a mut HashMap<String, u32>,
-    pub(super) additions: Vec<String>,
-}
-
-impl AssetInterner<'_> {
-    pub(super) fn new<'a>(
-        dictionary: &'a mut Vec<String>,
-        index: &'a mut HashMap<String, u32>,
-    ) -> AssetInterner<'a> {
-        AssetInterner {
-            dictionary,
-            index,
-            additions: Vec::new(),
-        }
-    }
-
-    pub(super) fn intern(&mut self, asset: &str) -> u32 {
-        if let Some(&existing) = self.index.get(asset) {
-            return existing;
-        }
-        let fresh = self.dictionary.len() as u32;
-        self.dictionary.push(asset.to_owned());
-        self.index.insert(asset.to_owned(), fresh);
-        self.additions.push(asset.to_owned());
-        fresh
-    }
-
-    pub(super) fn intern_list(&mut self, assets: &[String]) -> Vec<u32> {
-        assets.iter().map(|asset| self.intern(asset)).collect()
-    }
-}
-
-/// A batch request with its asset ids replaced by dictionary indexes.
-/// See [`BatchRequestWire`] and ADR 0053.
-#[derive(serde::Serialize)]
-pub(super) struct InternedBatchRequestWire<'a> {
-    id: u64,
-    builder: &'a str,
-    input: u32,
-    kind: &'a str,
-    allowed_outputs: Vec<u32>,
-    options: &'a serde_json::Map<String, Value>,
-    phase: u32,
-    part_phase_index: Option<u32>,
-    instance_key: &'a str,
-    is_root: bool,
-    #[serde(skip_serializing_if = "is_false")]
-    api_cutoff: bool,
-    triggers: &'a [crate::builder::BuilderTrigger],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    traceparent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    otel_report_id: Option<u64>,
-}
-
-/// A batch request in shared-fields form with interned asset ids.
-/// See [`BatchSharedRequestWire`] and ADR 0053.
-#[derive(serde::Serialize)]
-pub(super) struct InternedBatchSharedRequestWire<'a> {
-    id: u64,
-    input: u32,
-    allowed_outputs: Vec<u32>,
-    options: &'a serde_json::Map<String, Value>,
-    triggers: &'a [crate::builder::BuilderTrigger],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    traceparent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    otel_report_id: Option<u64>,
-}
-
-/// The interned `build_batch` envelope: `asset_dict_add` lists the ids this
-/// message appends to the connection dictionary, in order, and every id
-/// position carries a dictionary index. See ADR 0053.
-#[derive(serde::Serialize)]
-pub(super) struct InternedBatchWire<'a, R> {
-    pub(super) v: u32,
-    #[serde(rename = "type")]
-    pub(super) message_type: &'a str,
-    pub(super) id: u64,
-    pub(super) asset_dict_add: Vec<String>,
-    pub(super) blocked_assets: Vec<u32>,
-    pub(super) blocked_assets_reuse: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) shared: Option<BatchSharedWire<'a>>,
-    /// `asset-digests-v1` delta keyed by dictionary index in decimal string
-    /// form, as with the overlay blob index; a null value removes the id
-    /// from the worker's digest map. See ADR 0054.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) asset_digests: Option<BTreeMap<String, Option<String>>>,
-    pub(super) requests: &'a [R],
-}
-
-/// The `asset-digests-v1` delta between the digests a connection has
-/// already sent and the current build's staged map: updates and removals
-/// (as `None`) keyed by asset id. Empty when the capability is off,
-/// nothing is staged, or the worker is already current. See ADR 0054.
-pub(super) fn compute_asset_digest_delta(
-    capable: bool,
-    sent: &HashMap<String, String>,
-    staged: Option<&BTreeMap<String, String>>,
-) -> Vec<(String, Option<String>)> {
-    if !capable {
-        return Vec::new();
-    }
-    let Some(staged) = staged else {
-        return Vec::new();
-    };
-    let mut delta = Vec::new();
-    for (asset, digest) in staged {
-        if sent.get(asset) != Some(digest) {
-            delta.push((asset.clone(), Some(digest.clone())));
-        }
-    }
-    for asset in sent.keys() {
-        if !staged.contains_key(asset) {
-            delta.push((asset.clone(), None));
-        }
-    }
-    delta
-}
-
-/// Undoes every dictionary addition at or after `checkpoint`, the
-/// dictionary length before a message whose send failed. Additions are
-/// always a suffix of the dictionary, so truncating and dropping their
-/// index entries restores the exact pre-message state.
-pub(super) fn rollback_asset_dictionary(
-    dictionary: &mut Vec<String>,
-    index: &mut HashMap<String, u32>,
-    checkpoint: usize,
-) {
-    for asset in &dictionary[checkpoint..] {
-        index.remove(asset);
-    }
-    dictionary.truncate(checkpoint);
-}
-
-/// Rewrites a JSON array of asset ids as dictionary indexes. Elements that
-/// are not strings pass through unchanged; the worker rejects them when it
-/// decodes the interned message, as it would any malformed list.
-pub(super) fn intern_asset_list(value: &Value, interner: &mut AssetInterner<'_>) -> Value {
-    match value {
-        Value::Array(items) => Value::Array(
-            items
-                .iter()
-                .map(|item| match item {
-                    Value::String(asset) => Value::from(interner.intern(asset)),
-                    other => other.clone(),
-                })
-                .collect(),
-        ),
-        other => other.clone(),
-    }
-}
-
-/// Rewrites the overlay blob descriptor's `index` keys as decimal
-/// dictionary indexes; JSON object keys cannot be integers. The descriptor
-/// itself and its offsets/lengths are unchanged.
-pub(super) fn intern_overlay_blob(value: &Value, interner: &mut AssetInterner<'_>) -> Value {
-    let Some(map) = value.as_object() else {
-        return value.clone();
-    };
-    let mut map = map.clone();
-    if let Some(index) = map.get("index").and_then(Value::as_object) {
-        let interned = index
-            .iter()
-            .map(|(asset, entry)| (interner.intern(asset).to_string(), entry.clone()))
-            .collect::<serde_json::Map<String, Value>>();
-        map.insert("index".to_owned(), Value::Object(interned));
-    }
-    Value::Object(map)
-}
-
-pub(super) fn interned_batch_request_wires<'a>(
-    requests: &'a [BuildRequest],
-    interner: &mut AssetInterner<'_>,
-) -> Vec<InternedBatchRequestWire<'a>> {
-    interned_batch_request_wires_with(requests, interner, crate::telemetry::request_context)
-}
-
-pub(super) fn interned_batch_request_wires_with<'a>(
-    requests: &'a [BuildRequest],
-    interner: &mut AssetInterner<'_>,
-    provider: impl FnMut() -> Option<(String, u64)>,
-) -> Vec<InternedBatchRequestWire<'a>> {
-    let contexts = telemetry_contexts_with(requests.len(), provider);
-    requests
-        .iter()
-        .enumerate()
-        .zip(contexts)
-        .map(
-            |((index, request), (traceparent, otel_report_id))| InternedBatchRequestWire {
-                id: index as u64,
-                builder: &request.builder,
-                input: interner.intern(&request.input),
-                kind: if request.post_process {
-                    "post_process"
-                } else {
-                    "normal"
-                },
-                allowed_outputs: interner.intern_list(&request.outputs),
-                options: &request.options,
-                phase: request.phase,
-                part_phase_index: request.part_phase_index,
-                instance_key: &request.instance_key,
-                is_root: request.is_root,
-                api_cutoff: request.api_cutoff,
-                triggers: &request.triggers,
-                traceparent,
-                otel_report_id,
-            },
-        )
-        .collect()
-}
-
-pub(super) fn interned_batch_shared_request_wires<'a>(
-    requests: &'a [BuildRequest],
-    interner: &mut AssetInterner<'_>,
-) -> Vec<InternedBatchSharedRequestWire<'a>> {
-    let contexts = telemetry_contexts(requests.len());
-    requests
-        .iter()
-        .enumerate()
-        .zip(contexts)
-        .map(
-            |((index, request), (traceparent, otel_report_id))| InternedBatchSharedRequestWire {
-                id: index as u64,
-                input: interner.intern(&request.input),
-                allowed_outputs: interner.intern_list(&request.outputs),
-                options: &request.options,
-                triggers: &request.triggers,
-                traceparent,
-                otel_report_id,
-            },
-        )
-        .collect()
-}
-
-/// Per-request telemetry fields, mirroring the generic send path: one
-/// message-level context, consumed by the first request; later requests
-/// draw fresh contexts. All `None` when no session is active.
-fn telemetry_contexts(count: usize) -> Vec<(Option<String>, Option<u64>)> {
-    telemetry_contexts_with(count, crate::telemetry::request_context)
-}
-
-/// The provider-taking core of [`telemetry_contexts`], split out so tests
-/// can script the contexts without a live telemetry session.
-fn telemetry_contexts_with(
-    count: usize,
-    mut provider: impl FnMut() -> Option<(String, u64)>,
-) -> Vec<(Option<String>, Option<u64>)> {
-    let mut first_context = provider();
-    let inject = first_context.is_some();
-    (0..count)
-        .map(|_| {
-            if inject {
-                match first_context.take().or_else(&mut provider) {
-                    Some((parent, report_id)) => (Some(parent), Some(report_id)),
-                    None => (None, None),
-                }
-            } else {
-                (None, None)
-            }
-        })
-        .collect()
-}
-
-pub(super) fn batch_request_wires(requests: &[BuildRequest]) -> Vec<BatchRequestWire<'_>> {
-    batch_request_wires_with(requests, crate::telemetry::request_context)
-}
-
-pub(super) fn batch_request_wires_with(
-    requests: &[BuildRequest],
-    provider: impl FnMut() -> Option<(String, u64)>,
-) -> Vec<BatchRequestWire<'_>> {
-    let contexts = telemetry_contexts_with(requests.len(), provider);
-    requests
-        .iter()
-        .enumerate()
-        .zip(contexts)
-        .map(
-            |((index, request), (traceparent, otel_report_id))| BatchRequestWire {
-                id: index as u64,
-                builder: &request.builder,
-                input: &request.input,
-                kind: if request.post_process {
-                    "post_process"
-                } else {
-                    "normal"
-                },
-                allowed_outputs: &request.outputs,
-                options: &request.options,
-                phase: request.phase,
-                part_phase_index: request.part_phase_index,
-                instance_key: &request.instance_key,
-                is_root: request.is_root,
-                api_cutoff: request.api_cutoff,
-                triggers: &request.triggers,
-                traceparent,
-                otel_report_id,
-            },
-        )
-        .collect()
-}
-
-pub(super) fn batch_shared_request_wires(
-    requests: &[BuildRequest],
-) -> Vec<BatchSharedRequestWire<'_>> {
-    let contexts = telemetry_contexts(requests.len());
-    requests
-        .iter()
-        .enumerate()
-        .zip(contexts)
-        .map(
-            |((index, request), (traceparent, otel_report_id))| BatchSharedRequestWire {
-                id: index as u64,
-                input: &request.input,
-                allowed_outputs: &request.outputs,
-                options: &request.options,
-                triggers: &request.triggers,
-                traceparent,
-                otel_report_id,
-            },
-        )
-        .collect()
-}
-
-/// The shared-fields form of a batch, when every request agrees on the
-/// fields it lifts. Single-request batches keep the full form: there is
-/// nothing to deduplicate.
-pub(super) fn batch_shared_fields(requests: &[BuildRequest]) -> Option<BatchSharedWire<'_>> {
-    let first = requests.first()?;
-    if requests.len() < 2 {
-        return None;
-    }
-    let uniform = requests.iter().all(|request| {
-        request.builder == first.builder
-            && request.phase == first.phase
-            && request.post_process == first.post_process
-            && request.part_phase_index == first.part_phase_index
-            && request.instance_key == first.instance_key
-            && request.is_root == first.is_root
-            && request.api_cutoff == first.api_cutoff
-    });
-    uniform.then(|| BatchSharedWire {
-        builder: &first.builder,
-        phase: first.phase,
-        kind: if first.post_process {
-            "post_process"
-        } else {
-            "normal"
-        },
-        part_phase_index: first.part_phase_index,
-        instance_key: &first.instance_key,
-        is_root: first.is_root,
-        api_cutoff: first.api_cutoff,
-    })
-}
-
-pub(super) fn build_wire<'a>(
-    id: u64,
-    request: &'a BuildRequest,
-    blocked_assets: &'a [String],
-) -> BuildWire<'a> {
-    let (traceparent, otel_report_id) = match crate::telemetry::request_context() {
-        Some((parent, report_id)) => (Some(parent), Some(report_id)),
-        None => (None, None),
-    };
-    BuildWire {
-        v: 1,
-        message_type: "build",
-        id,
-        builder: &request.builder,
-        input: &request.input,
-        kind: if request.post_process {
-            "post_process"
-        } else {
-            "normal"
-        },
-        allowed_outputs: &request.outputs,
-        options: &request.options,
-        phase: request.phase,
-        part_phase_index: request.part_phase_index,
-        instance_key: &request.instance_key,
-        is_root: request.is_root,
-        api_cutoff: request.api_cutoff,
-        blocked_assets,
-        triggers: &request.triggers,
-        traceparent,
-        otel_report_id,
-    }
-}
-
 #[derive(Clone, Copy, Default)]
-pub(super) struct WorkerClientMetrics {
-    pub(super) worker_start_us: u64,
-    pub(super) worker_initialize_us: u64,
-    pub(super) worker_reset_us: u64,
-    pub(super) resolver_reset_us: u64,
-    pub(super) build_us: u64,
-    pub(super) asset_rpc_us: u64,
-    pub(super) ipc_frames_sent: u64,
-    pub(super) ipc_frames_received: u64,
-    pub(super) ipc_bytes_sent: u64,
-    pub(super) ipc_bytes_received: u64,
-    pub(super) build_result_frames: u64,
-    pub(super) build_result_bytes: u64,
-    pub(super) build_result_json_bytes: u64,
-    pub(super) asset_requests: u64,
-    pub(super) read_requests: u64,
-    pub(super) read_bytes: u64,
-    pub(super) binary_read_responses: u64,
-    pub(super) path_read_responses: u64,
-    pub(super) can_read_requests: u64,
-    pub(super) find_assets_requests: u64,
-    pub(super) find_assets_results: u64,
-    pub(super) resolve_assets_requests: u64,
-    pub(super) resolve_assets_results: u64,
+pub(crate) struct WorkerClientMetrics {
+    pub(crate) worker_start_us: u64,
+    pub(crate) worker_initialize_us: u64,
+    pub(crate) worker_reset_us: u64,
+    pub(crate) resolver_reset_us: u64,
+    pub(crate) build_us: u64,
+    pub(crate) asset_rpc_us: u64,
+    pub(crate) ipc_frames_sent: u64,
+    pub(crate) ipc_frames_received: u64,
+    pub(crate) ipc_bytes_sent: u64,
+    pub(crate) ipc_bytes_received: u64,
+    pub(crate) build_result_frames: u64,
+    pub(crate) build_result_bytes: u64,
+    pub(crate) build_result_json_bytes: u64,
+    pub(crate) asset_requests: u64,
+    pub(crate) read_requests: u64,
+    pub(crate) read_bytes: u64,
+    pub(crate) binary_read_responses: u64,
+    pub(crate) path_read_responses: u64,
+    pub(crate) can_read_requests: u64,
+    pub(crate) find_assets_requests: u64,
+    pub(crate) find_assets_results: u64,
+    pub(crate) resolve_assets_requests: u64,
+    pub(crate) resolve_assets_results: u64,
 }
 
 impl WorkerClientMetrics {
@@ -1089,8 +482,45 @@ impl WorkerClient {
         deleted_overlay: &BTreeSet<String>,
         visibility: &AssetVisibility,
     ) -> io::Result<Vec<BuildResult>> {
-        let result =
-            self.build_batch_inner(workspace, requests, overlay, deleted_overlay, visibility);
+        self.run_batch_rpc(
+            "worker_batch",
+            requests,
+            visibility,
+            deleted_overlay,
+            |client, deleted_overlay, response, active_request, build_id| {
+                client.handle_asset_request(
+                    workspace,
+                    response,
+                    overlay,
+                    deleted_overlay,
+                    visibility,
+                    active_request,
+                    build_id,
+                    None,
+                )
+            },
+        )
+    }
+
+    pub(super) fn run_batch_rpc<D, F>(
+        &mut self,
+        wall_stage: &'static str,
+        requests: &[BuildRequest],
+        visibility: &AssetVisibility,
+        deleted_overlay: D,
+        on_asset_request: F,
+    ) -> io::Result<Vec<BuildResult>>
+    where
+        D: std::ops::Deref<Target = BTreeSet<String>>,
+        F: FnMut(&mut Self, &mut D, &Value, &BuildRequest, u64) -> io::Result<()>,
+    {
+        let result = self.run_batch_rpc_inner(
+            wall_stage,
+            requests,
+            visibility,
+            deleted_overlay,
+            on_asset_request,
+        );
         // A worker can reject a batch before accepting its visibility hint.
         // Forget on every error so a retry cannot reuse an unaccepted list.
         if result.is_err() {
@@ -1099,17 +529,21 @@ impl WorkerClient {
         result
     }
 
-    fn build_batch_inner(
+    fn run_batch_rpc_inner<D, F>(
         &mut self,
-        workspace: &Workspace,
+        wall_stage: &'static str,
         requests: &[BuildRequest],
-        overlay: &BTreeMap<String, Arc<[u8]>>,
-        deleted_overlay: &BTreeSet<String>,
         visibility: &AssetVisibility,
-    ) -> io::Result<Vec<BuildResult>> {
+        mut deleted_overlay: D,
+        mut on_asset_request: F,
+    ) -> io::Result<Vec<BuildResult>>
+    where
+        D: std::ops::Deref<Target = BTreeSet<String>>,
+        F: FnMut(&mut Self, &mut D, &Value, &BuildRequest, u64) -> io::Result<()>,
+    {
         let started = Instant::now();
         let id = self.next_id();
-        let _wall = self.wall_span("worker_batch", Some(id));
+        let _wall = self.wall_span(wall_stage, Some(id));
         let metrics_before = self.metrics;
         let encoding = self.wall_span("request_encode_send", Some(id));
         // Every request in this batch has the same phase and kind. Keep the
@@ -1117,10 +551,10 @@ impl WorkerClient {
         // blocked-asset list into every request.
         let (blocked_assets, blocked_assets_reuse) =
             self.blocked_assets_cache
-                .prepare(requests, visibility, deleted_overlay)?;
+                .prepare(requests, visibility, &deleted_overlay)?;
         self.send_batch(id, requests, &blocked_assets, blocked_assets_reuse)?;
-
         drop(encoding);
+
         let mut batch_results = BuildBatchResultCollector::new(id, requests.len());
         loop {
             match self.receive()? {
@@ -1129,16 +563,13 @@ impl WorkerClient {
                     Some("asset_request") => {
                         let (build_id, active_request) =
                             batch_asset_request_context(&response, requests)?;
-                        self.handle_asset_request(
-                            workspace,
+                        on_asset_request(
+                            self,
+                            &mut deleted_overlay,
                             &response,
-                            overlay,
-                            deleted_overlay,
-                            visibility,
                             active_request,
                             build_id,
-                            None,
-                        )?
+                        )?;
                     }
                     Some("build_batch_result" | "build_batch_chunk") => {
                         return Err(io::Error::other(
@@ -1212,34 +643,13 @@ impl WorkerClient {
     }
 
     pub(super) fn send(&mut self, message: &Value) -> io::Result<()> {
-        let mut traced;
-        let message = if matches!(
-            message.get("type").and_then(Value::as_str),
-            Some("build" | "build_batch")
-        ) {
-            if let Some((parent, report_id)) = crate::telemetry::request_context() {
-                traced = message.clone();
-                if let Some(requests) = traced.get_mut("requests").and_then(Value::as_array_mut) {
-                    let mut first = Some((parent, report_id));
-                    for request in requests {
-                        if let Some((parent, report_id)) =
-                            first.take().or_else(crate::telemetry::request_context)
-                        {
-                            request["traceparent"] = Value::String(parent);
-                            request["otel_report_id"] = Value::from(report_id);
-                        }
-                    }
-                } else {
-                    traced["traceparent"] = Value::String(parent);
-                    traced["otel_report_id"] = Value::from(report_id);
-                }
-                &traced
-            } else {
-                message
-            }
-        } else {
-            message
-        };
+        debug_assert!(
+            !matches!(
+                message.get("type").and_then(Value::as_str),
+                Some("build" | "build_batch")
+            ),
+            "build messages must use typed wire serialization"
+        );
         let frame_size = write_frame(&mut self.input, message)?;
         self.metrics.ipc_frames_sent += 1;
         self.metrics.ipc_bytes_sent += frame_size as u64;
@@ -1248,8 +658,7 @@ impl WorkerClient {
 
     /// Sends a typed build message, serializing it once into the reusable
     /// buffer instead of building an intermediate JSON value tree. Telemetry
-    /// context fields are populated by the wire constructors, so unlike
-    /// [`Self::send`] this path never clones the message.
+    /// context fields are populated by the wire constructors.
     pub(super) fn send_serialized<T: serde::Serialize>(&mut self, message: &T) -> io::Result<()> {
         let frame_size = write_frame_buffered(&mut self.input, message, &mut self.send_buffer)?;
         self.metrics.ipc_frames_sent += 1;
@@ -1308,102 +717,51 @@ impl WorkerClient {
         blocked_assets_reuse: bool,
     ) -> io::Result<()> {
         let digest_delta = self.asset_digest_delta();
-        if self.asset_interning_capable {
+        let shared = self
+            .batch_shared_fields_capable
+            .then(|| batch_shared_fields(requests))
+            .flatten();
+        let result = if self.asset_interning_capable {
             let checkpoint = self.asset_dictionary.len();
-            let shared = if self.batch_shared_fields_capable {
-                batch_shared_fields(requests)
-            } else {
-                None
-            };
             let mut interner =
                 AssetInterner::new(&mut self.asset_dictionary, &mut self.asset_dictionary_index);
-            let blocked = interner.intern_list(blocked_assets);
-            let asset_digests = if digest_delta.is_empty() {
-                None
-            } else {
-                Some(
-                    digest_delta
-                        .iter()
-                        .map(|(asset, digest)| (interner.intern(asset).to_string(), digest.clone()))
-                        .collect::<BTreeMap<_, _>>(),
-                )
-            };
-            let result = if let Some(shared) = shared {
-                let wires = interned_batch_shared_request_wires(requests, &mut interner);
-                let wire = InternedBatchWire {
-                    v: 1,
-                    message_type: "build_batch",
-                    id,
-                    asset_dict_add: interner.additions,
-                    blocked_assets: blocked,
-                    blocked_assets_reuse,
-                    shared: Some(shared),
-                    asset_digests,
-                    requests: &wires,
-                };
-                self.send_serialized(&wire)
-            } else {
-                let wires = interned_batch_request_wires(requests, &mut interner);
-                let wire = InternedBatchWire {
-                    v: 1,
-                    message_type: "build_batch",
-                    id,
-                    asset_dict_add: interner.additions,
-                    blocked_assets: blocked,
-                    blocked_assets_reuse,
-                    shared: None,
-                    asset_digests,
-                    requests: &wires,
-                };
-                self.send_serialized(&wire)
-            };
+            let result = write_batch_frame(
+                &mut self.input,
+                &mut self.send_buffer,
+                id,
+                requests,
+                blocked_assets,
+                blocked_assets_reuse,
+                &digest_delta,
+                shared,
+                &mut interner,
+            );
             if result.is_err() {
                 rollback_asset_dictionary(
                     &mut self.asset_dictionary,
                     &mut self.asset_dictionary_index,
                     checkpoint,
                 );
-            } else {
-                self.apply_asset_digest_delta(&digest_delta);
             }
-            return result;
-        }
-        let asset_digests = if digest_delta.is_empty() {
-            None
+            result
         } else {
-            Some(digest_delta.iter().cloned().collect::<BTreeMap<_, _>>())
-        };
-        let result = if self.batch_shared_fields_capable
-            && let Some(shared) = batch_shared_fields(requests)
-        {
-            let wires = batch_shared_request_wires(requests);
-            self.send_serialized(&BatchWire {
-                v: 1,
-                message_type: "build_batch",
+            write_batch_frame(
+                &mut self.input,
+                &mut self.send_buffer,
                 id,
+                requests,
                 blocked_assets,
                 blocked_assets_reuse,
-                shared: Some(shared),
-                asset_digests,
-                requests: &wires,
-            })
-        } else {
-            let wires = batch_request_wires(requests);
-            self.send_serialized(&BatchWire {
-                v: 1,
-                message_type: "build_batch",
-                id,
-                blocked_assets,
-                blocked_assets_reuse,
-                shared: None,
-                asset_digests,
-                requests: &wires,
-            })
+                &digest_delta,
+                shared,
+                &mut PlainAssetIds,
+            )
         };
-        if result.is_ok() {
-            self.apply_asset_digest_delta(&digest_delta);
-        }
-        result
+        let frame_size = result?;
+        self.metrics.ipc_frames_sent += 1;
+        self.metrics.ipc_bytes_sent += frame_size as u64;
+        self.apply_asset_digest_delta(&digest_delta);
+        Ok(())
     }
 
     pub(super) fn send_binary(&mut self, metadata: &Value, bytes: &[u8]) -> io::Result<()> {
@@ -1462,7 +820,7 @@ impl WorkerClient {
     }
 
     pub(super) fn record_json_build_result_size(&mut self, result: &BuildResult) -> io::Result<()> {
-        if metrics_enabled() {
+        if crate::metrics::runtime_metrics_enabled() {
             let _wall = self.wall_span("diagnostic_json_size", None);
             self.metrics.build_result_json_bytes += json_build_result_frame_size(result)?;
         }
@@ -1474,7 +832,7 @@ impl WorkerClient {
         id: u64,
         results: &[BuildResult],
     ) -> io::Result<()> {
-        if metrics_enabled() {
+        if crate::metrics::runtime_metrics_enabled() {
             let _wall = self.wall_span("diagnostic_json_size", None);
             self.metrics.build_result_json_bytes +=
                 json_build_batch_result_frame_size(id, results)?;
@@ -1494,12 +852,6 @@ impl Drop for WorkerClient {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn metrics_enabled() -> bool {
-    env::var("BUILD_RUNNER_ACCELERATOR_METRICS")
-        .map(|value| value == "1")
-        .unwrap_or(false)
 }
 
 /// Converts a worker error frame into an I/O error while retaining its detail
@@ -1564,38 +916,6 @@ fn validate_initialized(response: &Value, id: u64) -> io::Result<()> {
 #[cfg(test)]
 mod version_tests {
     use super::*;
-    #[test]
-    fn api_unit_evidence_discards_malformed_replies() {
-        assert_eq!(
-            decode_api_unit_evidence(&json!({"fingerprint": "fp", "deps": ["a", "b"]})),
-            ApiUnitEvidence {
-                fingerprint: Some("fp".into()),
-                deps: Some(vec!["a".into(), "b".into()]),
-            }
-        );
-        assert_eq!(
-            decode_api_unit_evidence(&json!({"fingerprint": null, "deps": null})),
-            ApiUnitEvidence::default()
-        );
-        assert_eq!(
-            decode_api_unit_evidence(&json!(null)),
-            ApiUnitEvidence::default()
-        );
-        // A non-string dep must not be dropped silently: the whole
-        // answer is discarded, so it cannot pass as complete.
-        assert_eq!(
-            decode_api_unit_evidence(&json!({"fingerprint": "fp", "deps": ["a", 1]})),
-            ApiUnitEvidence::default()
-        );
-        assert_eq!(
-            decode_api_unit_evidence(&json!({"fingerprint": 1, "deps": []})),
-            ApiUnitEvidence::default()
-        );
-        assert_eq!(
-            decode_api_unit_evidence(&json!({"fingerprint": "fp", "deps": "a"})),
-            ApiUnitEvidence::default()
-        );
-    }
 
     #[test]
     fn initialization_requires_matching_version_and_id() {
