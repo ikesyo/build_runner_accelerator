@@ -7,7 +7,9 @@ use crate::protocol::{BINARY_ASSET_RESPONSE_MAGIC, MAX_FRAME_LENGTH};
 use crate::visibility::AssetVisibility;
 use crate::worker::LazyBuildState;
 use crate::workspace::{Workspace, asset_matches_glob, glob_candidates};
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
@@ -17,6 +19,119 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+
+const ASSET_RESPONSE_TYPE: &str = "asset_response";
+const OVERSIZED_RESOLVE_ASSETS_ERROR: &str = "resolve_assets response exceeds frame limit";
+
+#[derive(Serialize)]
+struct BinaryReadResponse {
+    v: u32,
+    #[serde(rename = "type")]
+    message_type: &'static str,
+    id: u64,
+    ok: bool,
+    encoding: &'static str,
+    length: usize,
+}
+
+#[derive(Serialize)]
+struct PathReadResponse<'a> {
+    v: u32,
+    #[serde(rename = "type")]
+    message_type: &'static str,
+    id: u64,
+    ok: bool,
+    path: Cow<'a, str>,
+}
+
+#[derive(Serialize)]
+struct CanReadResponse {
+    v: u32,
+    #[serde(rename = "type")]
+    message_type: &'static str,
+    id: u64,
+    ok: bool,
+    value: bool,
+}
+
+#[derive(Serialize)]
+struct FindAssetsResponse<'a> {
+    v: u32,
+    #[serde(rename = "type")]
+    message_type: &'static str,
+    id: u64,
+    ok: bool,
+    assets: &'a [String],
+}
+
+#[derive(Serialize)]
+struct AssetErrorResponse<'a> {
+    v: u32,
+    #[serde(rename = "type")]
+    message_type: &'static str,
+    id: u64,
+    ok: bool,
+    error: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum ResolvedAssetEntry {
+    Path { path: String },
+    Bytes { offset: usize, length: usize },
+    NotFound,
+}
+
+#[derive(Serialize)]
+struct ResolveAssetsResponse<'a> {
+    v: u32,
+    #[serde(rename = "type")]
+    message_type: &'static str,
+    id: u64,
+    ok: bool,
+    assets: &'a [ResolvedAssetEntry],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    encoding: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    length: Option<usize>,
+}
+
+fn binary_read_response(id: u64, length: usize) -> BinaryReadResponse {
+    BinaryReadResponse {
+        v: 1,
+        message_type: ASSET_RESPONSE_TYPE,
+        id,
+        ok: true,
+        encoding: "raw",
+        length,
+    }
+}
+
+fn asset_error_response(id: u64, error: &str) -> AssetErrorResponse<'_> {
+    AssetErrorResponse {
+        v: 1,
+        message_type: ASSET_RESPONSE_TYPE,
+        id,
+        ok: false,
+        error,
+    }
+}
+
+fn resolve_assets_response(
+    id: u64,
+    assets: &[ResolvedAssetEntry],
+    payload_length: usize,
+) -> ResolveAssetsResponse<'_> {
+    ResolveAssetsResponse {
+        v: 1,
+        message_type: ASSET_RESPONSE_TYPE,
+        id,
+        ok: true,
+        assets,
+        encoding: (payload_length > 0).then_some("raw"),
+        length: (payload_length > 0).then_some(payload_length),
+    }
+}
 
 pub(super) struct FilteredAssetEvidence<'a> {
     pub(super) lazy: &'a mut LazyBuildState,
@@ -53,7 +168,7 @@ impl WorkerClient {
         let phase = active_request.phase;
         let kind = build_request_kind(active_request);
         self.metrics.asset_requests += 1;
-        let response = match operation {
+        let result = match operation {
             "read" => {
                 self.metrics.read_requests += 1;
                 let asset = request
@@ -69,60 +184,49 @@ impl WorkerClient {
                         io::ErrorKind::NotFound,
                         format!("asset not found: {asset}"),
                     ))
-                } else {
-                    if let Some(bytes) = overlay.get(asset) {
-                        Ok(ReadResult::Bytes(Arc::clone(bytes)))
-                    } else if let Some(evidence) = filtered_evidence.as_mut()
-                        && evidence
-                            .lazy
-                            .is_untracked_filtered_source(asset, evidence.lazy_specs)
+                } else if let Some(bytes) = overlay.get(asset) {
+                    Ok(ReadResult::Bytes(Arc::clone(bytes)))
+                } else if let Some(evidence) = filtered_evidence.as_mut()
+                    && evidence
+                        .lazy
+                        .is_untracked_filtered_source(asset, evidence.lazy_specs)
+                {
+                    match observe_filtered_source(workspace, asset, visibility, evidence.lazy)?
+                        .content
                     {
-                        match observe_filtered_source(workspace, asset, visibility, evidence.lazy)?
-                            .content
-                        {
-                            FilteredSourceContent::Bytes(bytes) => Ok(ReadResult::Bytes(bytes)),
-                            FilteredSourceContent::Spool(spool) => {
-                                Ok(ReadResult::Path(spool.path().to_path_buf()))
-                            }
-                            FilteredSourceContent::Missing => Err(io::Error::new(
-                                io::ErrorKind::NotFound,
-                                format!("asset not found: {asset}"),
-                            )),
+                        FilteredSourceContent::Bytes(bytes) => Ok(ReadResult::Bytes(bytes)),
+                        FilteredSourceContent::Spool(spool) => {
+                            Ok(ReadResult::Path(spool.path().to_path_buf()))
                         }
-                    } else {
-                        asset_disk_path(workspace, asset, visibility).map(ReadResult::Path)
+                        FilteredSourceContent::Missing => Err(io::Error::new(
+                            io::ErrorKind::NotFound,
+                            format!("asset not found: {asset}"),
+                        )),
                     }
+                } else {
+                    asset_disk_path(workspace, asset, visibility).map(ReadResult::Path)
                 };
                 match read_result {
                     Ok(ReadResult::Bytes(bytes)) => {
                         self.metrics.read_bytes += bytes.len() as u64;
                         self.metrics.binary_read_responses += 1;
-                        let result = self.send_binary(
-                            &json!({
-                                "v": 1,
-                                "type": "asset_response",
-                                "id": id,
-                                "ok": true,
-                                "encoding": "raw",
-                                "length": bytes.len(),
-                            }),
-                            bytes.as_ref(),
-                        );
-                        self.metrics.asset_rpc_us += started.elapsed().as_micros() as u64;
-                        return result;
+                        let metadata = binary_read_response(id, bytes.len());
+                        self.send_binary(&metadata, bytes.as_ref())
                     }
                     Ok(ReadResult::Path(path)) => {
                         self.metrics.path_read_responses += 1;
-                        json!({
-                            "v": 1,
-                            "type": "asset_response",
-                            "id": id,
-                            "ok": true,
-                            "path": path.to_string_lossy(),
-                        })
+                        let response = PathReadResponse {
+                            v: 1,
+                            message_type: ASSET_RESPONSE_TYPE,
+                            id,
+                            ok: true,
+                            path: path.to_string_lossy(),
+                        };
+                        self.send_serialized(&response)
                     }
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                        missing_asset_response(id, asset)
+                        let message = format!("asset not found: {asset}");
+                        self.send_serialized(&asset_error_response(id, &message))
                     }
                     Err(error) => return Err(error),
                 }
@@ -140,61 +244,54 @@ impl WorkerClient {
                 // letting the worker warm its read caches in one round-trip.
                 let mut resolved = Vec::with_capacity(assets.len());
                 let mut payload = Vec::new();
+                let mut oversized = false;
                 for raw in assets {
                     let asset = raw.as_str().unwrap_or_default();
                     if asset.is_empty()
                         || visibility.is_blocked(asset, phase, kind, deleted_overlay)
                     {
-                        resolved.push(json!({"status": "not_found"}));
+                        resolved.push(ResolvedAssetEntry::NotFound);
                         continue;
                     }
                     if let Some(bytes) = overlay.get(asset) {
                         let offset = payload.len();
                         if !append_overlay_bytes(&mut payload, bytes, MAX_FRAME_LENGTH) {
-                            let result = self.send(&oversized_resolve_assets_response(json!(id)));
-                            self.metrics.asset_rpc_us += started.elapsed().as_micros() as u64;
-                            return result;
+                            oversized = true;
+                            break;
                         }
                         self.metrics.read_bytes += bytes.len() as u64;
-                        resolved.push(json!({
-                            "status": "bytes",
-                            "offset": offset,
-                            "length": bytes.len(),
-                        }));
+                        resolved.push(ResolvedAssetEntry::Bytes {
+                            offset,
+                            length: bytes.len(),
+                        });
                         continue;
                     }
                     match asset_disk_path(workspace, asset, visibility) {
-                        Ok(path) => resolved.push(json!({
-                            "status": "path",
-                            "path": path.to_string_lossy(),
-                        })),
+                        Ok(path) => resolved.push(ResolvedAssetEntry::Path {
+                            path: path.to_string_lossy().into_owned(),
+                        }),
                         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                            resolved.push(json!({"status": "not_found"}));
+                            resolved.push(ResolvedAssetEntry::NotFound);
                         }
                         Err(error) => return Err(error),
                     }
                 }
-                self.metrics.resolve_assets_results += resolved.len() as u64;
-                let mut response = json!({
-                    "v": 1,
-                    "type": "asset_response",
-                    "id": id,
-                    "ok": true,
-                    "assets": resolved,
-                });
-                if !payload.is_empty() {
-                    response["encoding"] = json!("raw");
-                    response["length"] = json!(payload.len());
-                }
-                let response =
-                    bounded_resolve_assets_response(response, payload.len(), MAX_FRAME_LENGTH)?;
-                if payload.is_empty() || response["ok"] == false {
-                    response
+                if oversized {
+                    self.send_serialized(&asset_error_response(id, OVERSIZED_RESOLVE_ASSETS_ERROR))
                 } else {
-                    self.metrics.binary_read_responses += 1;
-                    let result = self.send_binary(&response, &payload);
-                    self.metrics.asset_rpc_us += started.elapsed().as_micros() as u64;
-                    return result;
+                    self.metrics.resolve_assets_results += resolved.len() as u64;
+                    let response = resolve_assets_response(id, &resolved, payload.len());
+                    if !resolve_assets_response_fits(&response, payload.len(), MAX_FRAME_LENGTH)? {
+                        self.send_serialized(&asset_error_response(
+                            id,
+                            OVERSIZED_RESOLVE_ASSETS_ERROR,
+                        ))
+                    } else if payload.is_empty() {
+                        self.send_serialized(&response)
+                    } else {
+                        self.metrics.binary_read_responses += 1;
+                        self.send_binary(&response, &payload)
+                    }
                 }
             }
             "can_read" => {
@@ -221,7 +318,13 @@ impl WorkerClient {
                 } else {
                     asset_exists(workspace, asset, overlay, visibility)?
                 };
-                json!({ "v": 1, "type": "asset_response", "id": id, "ok": true, "value": value })
+                self.send_serialized(&CanReadResponse {
+                    v: 1,
+                    message_type: ASSET_RESPONSE_TYPE,
+                    id,
+                    ok: true,
+                    value,
+                })
             }
             "find_assets" => {
                 self.metrics.find_assets_requests += 1;
@@ -248,13 +351,19 @@ impl WorkerClient {
                     |asset| asset_exists(workspace, asset, overlay, visibility),
                 )?;
                 self.metrics.find_assets_results += assets.len() as u64;
-                json!({ "v": 1, "type": "asset_response", "id": id, "ok": true, "assets": assets })
+                self.send_serialized(&FindAssetsResponse {
+                    v: 1,
+                    message_type: ASSET_RESPONSE_TYPE,
+                    id,
+                    ok: true,
+                    assets: &assets,
+                })
             }
             _ => {
-                json!({ "v": 1, "type": "asset_response", "id": id, "ok": false, "error": format!("unsupported asset operation: {operation}") })
+                let message = format!("unsupported asset operation: {operation}");
+                self.send_serialized(&asset_error_response(id, &message))
             }
         };
-        let result = self.send(&response);
         self.metrics.asset_rpc_us += started.elapsed().as_micros() as u64;
         result
     }
@@ -311,21 +420,30 @@ fn missing_source_observation() -> FilteredSourceObservation {
     }
 }
 
+struct CountingWriter(usize);
+
+impl Write for CountingWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serialized_json_len<T: Serialize>(value: &T) -> io::Result<usize> {
+    let mut counter = CountingWriter(0);
+    serde_json::to_writer(&mut counter, value).map_err(io::Error::other)?;
+    Ok(counter.0)
+}
+
 fn asset_response_fits(byte_length: usize) -> io::Result<bool> {
-    let metadata = json!({
-        "v": 1,
-        "type": "asset_response",
-        // The first observation is shared across workers and RPC ids. Budget
-        // for the largest serialized id so its transport remains valid for
-        // every request using this publication.
-        "id": u64::MAX,
-        "ok": true,
-        "encoding": "raw",
-        "length": byte_length,
-    });
-    let metadata_length = serde_json::to_vec(&metadata)
-        .map_err(io::Error::other)?
-        .len();
+    // The first observation is shared across workers and RPC ids. Budget
+    // for the largest serialized id so its transport remains valid for
+    // every request using this publication.
+    let metadata_length = serialized_json_len(&binary_read_response(u64::MAX, byte_length))?;
     Ok(BINARY_ASSET_RESPONSE_MAGIC
         .len()
         .checked_add(4)
@@ -370,14 +488,12 @@ fn spool_source_bytes(bytes: &[u8]) -> io::Result<Arc<FilteredSourceSpool>> {
 // Reject an oversized optional prefetch before writing any frame bytes. Dart
 // can then fall back to individual reads instead of losing its RPC session.
 // Metadata-only responses need the same guard as overlay byte responses.
-fn bounded_resolve_assets_response(
-    response: Value,
+fn resolve_assets_response_fits<T: Serialize>(
+    response: &T,
     payload_length: usize,
     frame_limit: usize,
-) -> io::Result<Value> {
-    let metadata_length = serde_json::to_vec(&response)
-        .map_err(io::Error::other)?
-        .len();
+) -> io::Result<bool> {
+    let metadata_length = serialized_json_len(response)?;
     let overhead = if payload_length == 0 {
         0
     } else {
@@ -386,21 +502,7 @@ fn bounded_resolve_assets_response(
     let length = metadata_length
         .checked_add(overhead)
         .and_then(|n| n.checked_add(payload_length));
-    if length.is_none_or(|n| n > frame_limit) {
-        Ok(oversized_resolve_assets_response(response["id"].clone()))
-    } else {
-        Ok(response)
-    }
-}
-
-fn oversized_resolve_assets_response(id: Value) -> Value {
-    json!({
-        "v": 1,
-        "type": "asset_response",
-        "id": id,
-        "ok": false,
-        "error": "resolve_assets response exceeds frame limit",
-    })
+    Ok(length.is_some_and(|n| n <= frame_limit))
 }
 
 // Check before copying or growing the allocation. The final response check
@@ -610,19 +712,16 @@ fn asset_disk_path(
     }
 }
 
+#[cfg(test)]
 pub(super) fn missing_asset_response(id: u64, asset: &str) -> Value {
-    json!({
-        "v": 1,
-        "type": "asset_response",
-        "id": id,
-        "ok": false,
-        "error": format!("asset not found: {asset}"),
-    })
+    let message = format!("asset not found: {asset}");
+    serde_json::to_value(asset_error_response(id, &message)).expect("serialize missing response")
 }
 
 #[cfg(test)]
 mod batch_response_tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn overlay_batch_stops_before_allocating_or_copying_past_the_limit() {
@@ -643,35 +742,150 @@ mod batch_response_tests {
 
     #[test]
     fn resolve_assets_checks_metadata_and_binary_overhead_at_the_limit() {
-        let response = json!({"v": 1, "type": "asset_response", "id": 7, "ok": true,
-            "assets": [{"status": "path", "path": "/app/lib/a.dart"}]});
-        let metadata_length = serde_json::to_vec(&response).unwrap().len();
+        let entries = [ResolvedAssetEntry::Path {
+            path: "/app/lib/a.dart".to_string(),
+        }];
         for payload_length in [0, 32] {
+            let response = resolve_assets_response(7, &entries, payload_length);
+            let metadata_length = serde_json::to_vec(&response).unwrap().len();
             let length = metadata_length + payload_length + if payload_length == 0 { 0 } else { 8 };
-            assert_eq!(
-                bounded_resolve_assets_response(response.clone(), payload_length, length).unwrap(),
-                response
-            );
-            let declined =
-                bounded_resolve_assets_response(response.clone(), payload_length, length - 1)
-                    .unwrap();
-            assert_eq!(declined["ok"], false);
-            assert_eq!(declined["id"], 7);
-            assert_eq!(declined["type"], "asset_response");
-            assert!(declined.get("assets").is_none());
+            assert!(resolve_assets_response_fits(&response, payload_length, length).unwrap());
+            assert!(!resolve_assets_response_fits(&response, payload_length, length - 1).unwrap());
         }
+        let declined =
+            serde_json::to_value(asset_error_response(7, OVERSIZED_RESOLVE_ASSETS_ERROR)).unwrap();
+        assert_eq!(declined["ok"], false);
+        assert_eq!(declined["id"], 7);
+        assert_eq!(declined["type"], "asset_response");
+        assert!(declined.get("assets").is_none());
     }
 
     #[test]
     fn resolve_assets_declines_oversized_overlay_without_allocating_it() {
-        let response = json!({"id": 9, "ok": true, "encoding": "raw"});
+        let entries = [ResolvedAssetEntry::Bytes {
+            offset: 0,
+            length: MAX_FRAME_LENGTH,
+        }];
         for payload_length in [MAX_FRAME_LENGTH, usize::MAX] {
-            let declined =
-                bounded_resolve_assets_response(response.clone(), payload_length, MAX_FRAME_LENGTH)
-                    .unwrap();
-            assert_eq!(declined["ok"], false);
-            assert_eq!(declined["id"], 9);
+            let response = resolve_assets_response(9, &entries, payload_length);
+            assert!(
+                !resolve_assets_response_fits(&response, payload_length, MAX_FRAME_LENGTH).unwrap()
+            );
         }
+    }
+
+    #[test]
+    fn typed_asset_responses_match_protocol_wire_schema() {
+        assert_eq!(
+            serde_json::to_value(binary_read_response(10, 123)).unwrap(),
+            json!({
+                "v": 1,
+                "type": "asset_response",
+                "id": 10,
+                "ok": true,
+                "encoding": "raw",
+                "length": 123,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(PathReadResponse {
+                v: 1,
+                message_type: ASSET_RESPONSE_TYPE,
+                id: 11,
+                ok: true,
+                path: Cow::Borrowed("/app/lib/a.dart"),
+            })
+            .unwrap(),
+            json!({
+                "v": 1,
+                "type": "asset_response",
+                "id": 11,
+                "ok": true,
+                "path": "/app/lib/a.dart",
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(CanReadResponse {
+                v: 1,
+                message_type: ASSET_RESPONSE_TYPE,
+                id: 12,
+                ok: true,
+                value: true,
+            })
+            .unwrap(),
+            json!({
+                "v": 1,
+                "type": "asset_response",
+                "id": 12,
+                "ok": true,
+                "value": true,
+            })
+        );
+        let found = vec!["app|lib/a.dart".to_string()];
+        assert_eq!(
+            serde_json::to_value(FindAssetsResponse {
+                v: 1,
+                message_type: ASSET_RESPONSE_TYPE,
+                id: 13,
+                ok: true,
+                assets: &found,
+            })
+            .unwrap(),
+            json!({
+                "v": 1,
+                "type": "asset_response",
+                "id": 13,
+                "ok": true,
+                "assets": ["app|lib/a.dart"],
+            })
+        );
+        let entries = [
+            ResolvedAssetEntry::Path {
+                path: "/app/lib/a.dart".to_string(),
+            },
+            ResolvedAssetEntry::Bytes {
+                offset: 0,
+                length: 4,
+            },
+            ResolvedAssetEntry::NotFound,
+        ];
+        assert_eq!(
+            serde_json::to_value(resolve_assets_response(14, &entries[..1], 0)).unwrap(),
+            json!({
+                "v": 1,
+                "type": "asset_response",
+                "id": 14,
+                "ok": true,
+                "assets": [{"status": "path", "path": "/app/lib/a.dart"}],
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(resolve_assets_response(15, &entries, 4)).unwrap(),
+            json!({
+                "v": 1,
+                "type": "asset_response",
+                "id": 15,
+                "ok": true,
+                "assets": [
+                    {"status": "path", "path": "/app/lib/a.dart"},
+                    {"status": "bytes", "offset": 0, "length": 4},
+                    {"status": "not_found"},
+                ],
+                "encoding": "raw",
+                "length": 4,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(asset_error_response(16, "asset not found: app|lib/x.dart"))
+                .unwrap(),
+            json!({
+                "v": 1,
+                "type": "asset_response",
+                "id": 16,
+                "ok": false,
+                "error": "asset not found: app|lib/x.dart",
+            })
+        );
     }
 
     #[test]
