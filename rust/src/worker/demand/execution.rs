@@ -443,6 +443,45 @@ impl WorkerClient {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Demand eligibility checks share the same visibility and transaction state"
+)]
+fn resolve_demand_target(
+    asset: &str,
+    overlay: &BTreeMap<String, Arc<[u8]>>,
+    deleted_overlay: &BTreeSet<String>,
+    visibility: &AssetVisibility,
+    phase: u32,
+    kind: BuilderKind,
+    lazy_specs: &BTreeMap<String, BuildSpec>,
+    lazy: &LazyBuildState,
+) -> Option<(BuildSpec, String)> {
+    if overlay.contains_key(asset) {
+        return None;
+    }
+    let spec = lazy_specs
+        .get(asset)
+        .filter(|spec| spec.instance.builder.kind == BuilderKind::Normal)?;
+    let key = spec.action_key();
+    if lazy.built_keys.contains(&key) || (!lazy.is_filtered() && !lazy.force_keys.contains(&key)) {
+        return None;
+    }
+    // An obsolete action's deletion must not block its replacement producer.
+    // Phase visibility still applies; completed missing outputs were already
+    // rejected above via `built_keys` and remain blocked by `deleted_overlay`.
+    let empty_deleted = BTreeSet::new();
+    let deleted = if lazy.is_filtered() {
+        &empty_deleted
+    } else {
+        deleted_overlay
+    };
+    if visibility.is_blocked(asset, phase, kind, deleted) {
+        return None;
+    }
+    Some((spec.clone(), key))
+}
+
 impl FilteredExecution<'_> {
     #[expect(
         clippy::too_many_arguments,
@@ -460,36 +499,23 @@ impl FilteredExecution<'_> {
         lazy_specs: &BTreeMap<String, BuildSpec>,
         lazy: &mut LazyBuildState,
     ) -> io::Result<()> {
+        let Some((spec, key)) = resolve_demand_target(
+            asset,
+            overlay,
+            deleted_overlay,
+            visibility,
+            phase,
+            kind,
+            lazy_specs,
+            lazy,
+        ) else {
+            return Ok(());
+        };
         let coordinator = match self {
             Self::Worker(_) => lazy.coordinator(),
             Self::Probe => None,
         };
         let Some(coordinator) = coordinator else {
-            let pending_producer = lazy.is_filtered()
-                && lazy_specs
-                    .get(asset)
-                    .is_some_and(|spec| !lazy.built_keys.contains(&spec.action_key()));
-            let blocked = if pending_producer {
-                visibility.is_blocked(asset, phase, kind, &BTreeSet::new())
-            } else {
-                visibility.is_blocked(asset, phase, kind, deleted_overlay)
-            };
-            if blocked || overlay.contains_key(asset) {
-                return Ok(());
-            }
-            let Some(spec) = lazy_specs
-                .get(asset)
-                .filter(|spec| spec.instance.builder.kind == BuilderKind::Normal)
-                .cloned()
-            else {
-                return Ok(());
-            };
-            let key = spec.action_key();
-            if lazy.built_keys.contains(&key)
-                || (!lazy.is_filtered() && !lazy.force_keys.contains(&key))
-            {
-                return Ok(());
-            }
             if !lazy.building_keys.insert(key.clone()) {
                 return Err(io::Error::other(format!(
                     "optional builder dependency cycle while reading {asset}"
@@ -499,12 +525,11 @@ impl FilteredExecution<'_> {
             lazy.building_stack.push(key.clone());
             let result = self.ensure_optional_output_body(
                 workspace,
-                asset,
+                spec,
+                key.clone(),
                 overlay,
                 deleted_overlay,
                 visibility,
-                phase,
-                kind,
                 lazy_specs,
                 lazy,
             );
@@ -513,32 +538,6 @@ impl FilteredExecution<'_> {
             return result;
         };
 
-        let pending_producer = lazy.is_filtered()
-            && lazy_specs
-                .get(asset)
-                .is_some_and(|spec| !lazy.built_keys.contains(&spec.action_key()));
-        let blocked = if pending_producer {
-            visibility.is_blocked(asset, phase, kind, &BTreeSet::new())
-        } else {
-            visibility.is_blocked(asset, phase, kind, deleted_overlay)
-        };
-        if blocked || overlay.contains_key(asset) {
-            return Ok(());
-        }
-        let Some(spec) = lazy_specs
-            .get(asset)
-            .filter(|spec| spec.instance.builder.kind == BuilderKind::Normal)
-            .cloned()
-        else {
-            return Ok(());
-        };
-        let key = spec.action_key();
-        if lazy.built_keys.contains(&key) {
-            return Ok(());
-        }
-        if !lazy.is_filtered() && !lazy.force_keys.contains(&key) {
-            return Ok(());
-        }
         if lazy.building_keys.contains(&key) {
             return Err(io::Error::other(format!(
                 "filtered dependency cycle while reading {asset}"
@@ -573,12 +572,11 @@ impl FilteredExecution<'_> {
         lazy.building_stack.push(key.clone());
         let result = self.ensure_optional_output_body(
             workspace,
-            asset,
+            spec.clone(),
+            key.clone(),
             overlay,
             deleted_overlay,
             visibility,
-            phase,
-            kind,
             lazy_specs,
             lazy,
         );
@@ -606,46 +604,14 @@ impl FilteredExecution<'_> {
     fn ensure_optional_output_body(
         &mut self,
         workspace: &Workspace,
-        asset: &str,
+        spec: BuildSpec,
+        key: String,
         overlay: &mut BTreeMap<String, Arc<[u8]>>,
         deleted_overlay: &mut BTreeSet<String>,
         visibility: &AssetVisibility,
-        phase: u32,
-        kind: BuilderKind,
         lazy_specs: &BTreeMap<String, BuildSpec>,
         lazy: &mut LazyBuildState,
     ) -> io::Result<()> {
-        let pending_producer = lazy.is_filtered()
-            && lazy_specs
-                .get(asset)
-                .is_some_and(|spec| !lazy.built_keys.contains(&spec.action_key()));
-        let blocked = if pending_producer {
-            // An obsolete action's deletion must not block its replacement
-            // producer. Phase visibility still applies; completed missing
-            // outputs remain blocked by the ordinary deleted overlay.
-            visibility.is_blocked(asset, phase, kind, &BTreeSet::new())
-        } else {
-            visibility.is_blocked(asset, phase, kind, deleted_overlay)
-        };
-        if blocked || overlay.contains_key(asset) {
-            return Ok(());
-        }
-        let Some(spec) = lazy_specs
-            .get(asset)
-            .filter(|spec| spec.instance.builder.kind == BuilderKind::Normal)
-            .cloned()
-        else {
-            return Ok(());
-        };
-        let key = spec.action_key();
-        if lazy.built_keys.contains(&key) {
-            return Ok(());
-        }
-        if !lazy.is_filtered() && !lazy.force_keys.contains(&key) {
-            return Ok(());
-        }
-        lazy.demanded_keys.insert(key.clone());
-
         if lazy.is_filtered() {
             // Stock computes a generated primary input before checking reuse.
             self.ensure_optional_output(
@@ -1019,5 +985,298 @@ impl FilteredExecution<'_> {
             ),
             Self::Probe => Err(io::Error::other("filtered probe cannot execute a builder")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builder::{
+        BuildTo, BuilderDefinition, BuilderExtension, BuilderKind, RustBuildConfig,
+    };
+    use crate::graph::GraphState;
+    use crate::plan::{BuildAction, BuilderInstance};
+
+    fn test_spec(id: &str, kind: BuilderKind, phase: u32, output: &str) -> BuildSpec {
+        Arc::new(BuildAction {
+            instance: Arc::new(BuilderInstance {
+                builder: Arc::new(BuilderDefinition {
+                    adds_to_library: false,
+                    id: id.to_owned(),
+                    kind,
+                    extensions: vec![BuilderExtension {
+                        input_suffix: ".txt".to_owned(),
+                        input_is_exact: false,
+                        input_is_capture: false,
+                        input_is_all: false,
+                        input_is_anchored: false,
+                        output_suffixes: vec![".out".to_owned()],
+                    }],
+                    post_process_input_extensions: Vec::new(),
+                    build_to: BuildTo::Cache,
+                    phase,
+                    is_optional: true,
+                    output_is_optional: false,
+                    required_input_suffixes: Vec::new(),
+                    excluded_input_suffixes: Vec::new(),
+                    applies_builder: None,
+                    triggers: Vec::new(),
+                }),
+                target: "app:app".to_owned(),
+                package: "app".to_owned(),
+                is_root: true,
+                phase,
+                instance_key: id.to_owned(),
+                options: serde_json::Map::new(),
+                part_directive_suffix: None,
+                api_cutoff: false,
+            }),
+            input: "app|lib/input.txt".to_owned(),
+            outputs: vec![output.to_owned()],
+        })
+    }
+
+    fn empty_config() -> RustBuildConfig {
+        RustBuildConfig {
+            asset_sources: None,
+            builders: Vec::new(),
+            worker_entrypoint: None,
+            manifest_signature: None,
+            trigger_digest: None,
+            definitions: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn resolve_demand_target_returns_none_on_overlay_hit() {
+        let asset = "app|lib/input.out";
+        let spec = test_spec("app:gen", BuilderKind::Normal, 0, asset);
+        let key = spec.action_key();
+        let specs = BTreeMap::from([(asset.to_owned(), spec.clone())]);
+        let visibility =
+            AssetVisibility::from_specs(&[spec], &GraphState::default(), &empty_config());
+        let deleted = BTreeSet::new();
+        let lazy = LazyBuildState::new(BTreeSet::from([key.clone()]));
+
+        let mut overlay = BTreeMap::new();
+        let resolved = resolve_demand_target(
+            asset,
+            &overlay,
+            &deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+            &specs,
+            &lazy,
+        );
+        assert_eq!(
+            resolved.as_ref().map(|(_, k)| k.as_str()),
+            Some(key.as_str())
+        );
+
+        overlay.insert(asset.to_owned(), Arc::from(&b"cached"[..]));
+        assert!(
+            resolve_demand_target(
+                asset,
+                &overlay,
+                &deleted,
+                &visibility,
+                1,
+                BuilderKind::Normal,
+                &specs,
+                &lazy,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn resolve_demand_target_ignores_non_normal_builder() {
+        let asset = "app|lib/input.post";
+        let spec = test_spec("app:post", BuilderKind::PostProcess, 0, asset);
+        let key = spec.action_key();
+        let specs = BTreeMap::from([(asset.to_owned(), spec)]);
+        let visibility = AssetVisibility::default();
+        let overlay = BTreeMap::new();
+        let deleted = BTreeSet::new();
+
+        let ordinary = LazyBuildState::new(BTreeSet::from([key]));
+        assert!(
+            resolve_demand_target(
+                asset,
+                &overlay,
+                &deleted,
+                &visibility,
+                1,
+                BuilderKind::Normal,
+                &specs,
+                &ordinary,
+            )
+            .is_none()
+        );
+
+        let filtered =
+            LazyBuildState::filtered(GraphState::default(), BTreeMap::new(), true, false);
+        assert!(
+            resolve_demand_target(
+                asset,
+                &overlay,
+                &deleted,
+                &visibility,
+                1,
+                BuilderKind::Normal,
+                &specs,
+                &filtered,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn resolve_demand_target_skips_built_keys() {
+        let asset = "app|lib/input.out";
+        let spec = test_spec("app:gen", BuilderKind::Normal, 0, asset);
+        let key = spec.action_key();
+        let specs = BTreeMap::from([(asset.to_owned(), spec.clone())]);
+        let visibility =
+            AssetVisibility::from_specs(&[spec], &GraphState::default(), &empty_config());
+        let overlay = BTreeMap::new();
+        let deleted = BTreeSet::new();
+
+        let mut ordinary = LazyBuildState::new(BTreeSet::from([key.clone()]));
+        ordinary.built_keys.insert(key.clone());
+        assert!(
+            resolve_demand_target(
+                asset,
+                &overlay,
+                &deleted,
+                &visibility,
+                1,
+                BuilderKind::Normal,
+                &specs,
+                &ordinary,
+            )
+            .is_none()
+        );
+
+        let mut filtered =
+            LazyBuildState::filtered(GraphState::default(), BTreeMap::new(), true, false);
+        filtered.built_keys.insert(key);
+        assert!(
+            resolve_demand_target(
+                asset,
+                &overlay,
+                &deleted,
+                &visibility,
+                1,
+                BuilderKind::Normal,
+                &specs,
+                &filtered,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn resolve_demand_target_gates_non_filtered_on_force_keys_and_deleted_overlay() {
+        let asset = "app|lib/input.out";
+        let spec = test_spec("app:gen", BuilderKind::Normal, 0, asset);
+        let key = spec.action_key();
+        let specs = BTreeMap::from([(asset.to_owned(), spec.clone())]);
+        let visibility =
+            AssetVisibility::from_specs(&[spec], &GraphState::default(), &empty_config());
+        let overlay = BTreeMap::new();
+        let empty_deleted = BTreeSet::new();
+
+        let unforced = LazyBuildState::new(BTreeSet::new());
+        assert!(
+            resolve_demand_target(
+                asset,
+                &overlay,
+                &empty_deleted,
+                &visibility,
+                1,
+                BuilderKind::Normal,
+                &specs,
+                &unforced,
+            )
+            .is_none()
+        );
+
+        let forced = LazyBuildState::new(BTreeSet::from([key.clone()]));
+        let resolved = resolve_demand_target(
+            asset,
+            &overlay,
+            &empty_deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+            &specs,
+            &forced,
+        );
+        assert_eq!(
+            resolved.as_ref().map(|(_, k)| k.as_str()),
+            Some(key.as_str())
+        );
+
+        let deleted = BTreeSet::from([asset.to_owned()]);
+        assert!(
+            resolve_demand_target(
+                asset,
+                &overlay,
+                &deleted,
+                &visibility,
+                1,
+                BuilderKind::Normal,
+                &specs,
+                &forced,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn resolve_demand_target_filtered_pending_producer_bypasses_deleted_but_honors_phase() {
+        let asset = "app|lib/input.out";
+        let spec = test_spec("app:gen", BuilderKind::Normal, 0, asset);
+        let key = spec.action_key();
+        let specs = BTreeMap::from([(asset.to_owned(), spec.clone())]);
+        let visibility =
+            AssetVisibility::from_specs(&[spec], &GraphState::default(), &empty_config());
+        let overlay = BTreeMap::new();
+        let deleted = BTreeSet::from([asset.to_owned()]);
+        let filtered =
+            LazyBuildState::filtered(GraphState::default(), BTreeMap::new(), true, false);
+
+        // Later phase sees the pending producer even when deleted_overlay contains the stale output.
+        let resolved = resolve_demand_target(
+            asset,
+            &overlay,
+            &deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+            &specs,
+            &filtered,
+        );
+        assert_eq!(
+            resolved.as_ref().map(|(_, k)| k.as_str()),
+            Some(key.as_str())
+        );
+
+        // Same phase remains blocked by phase visibility.
+        assert!(
+            resolve_demand_target(
+                asset,
+                &overlay,
+                &deleted,
+                &visibility,
+                0,
+                BuilderKind::Normal,
+                &specs,
+                &filtered,
+            )
+            .is_none()
+        );
     }
 }
