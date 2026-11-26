@@ -281,7 +281,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
         final path = entry['path'];
         if (path is! String) continue;
         try {
-          _state.readCache[id] = File(path).readAsBytesSync();
+          _state.readCache.putOwned(id, File(path).readAsBytesSync());
           _state.readableCache.add(id);
           resolverActionMetrics.depPrefetchAssets += 1;
         } on Object {
@@ -300,10 +300,11 @@ class RemoteAssetReaderWriter extends ReaderWriter {
             offset + length > payloadBytes.length) {
           continue;
         }
-        _state.readCache[id] = Uint8List.sublistView(
-          payloadBytes,
-          offset,
-          offset + length,
+        // Copy only this asset's slice so cached entries do not pin the whole
+        // resolve_assets response buffer.
+        _state.readCache.putOwned(
+          id,
+          payloadBytes.sublist(offset, offset + length),
         );
         _state.readableCache.add(id);
         resolverActionMetrics.depPrefetchAssets += 1;
@@ -400,8 +401,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
       final path = response['path'];
       if (path is String) {
         final bytes = await File(path).readAsBytes();
-        _state.readCache[id] = bytes;
-        return _state.readCache.contentFor(id)!;
+        return _state.readCache.putOwned(id, bytes);
       }
       final rawBytes = response['bytes'];
       if (rawBytes is! List) {
@@ -411,8 +411,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
           ? rawBytes
           : Uint8List.fromList(List<int>.from(rawBytes));
       resolverActionMetrics.ipcReadBytes += bytes.length;
-      _state.readCache[id] = bytes;
-      return _state.readCache.contentFor(id)!;
+      return _state.readCache.putOwned(id, bytes);
     } on StateError catch (error) {
       if (error.message.toString().contains('asset not found')) {
         throw AssetNotFoundException(id);

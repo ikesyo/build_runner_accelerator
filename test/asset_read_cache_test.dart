@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:build/build.dart';
 import 'package:build_runner_accelerator/src/asset_read_cache.dart';
@@ -60,5 +61,32 @@ void main() {
     cache[id] = utf8.encode('first');
     expect(cache.contentFor(id)!.cachedContentDigest, isNull);
     expect(cache.contentFor(id)!.contentDigest, firstDigest);
+  });
+
+  test('putOwned wraps an owned Uint8List as an unmodifiable view', () {
+    final id = AssetId('app', 'lib/owned.dart');
+    final owned = Uint8List.fromList(utf8.encode('owned-content'));
+    final expectedDigest = blake3Hex(owned);
+    final cache = AssetReadCache();
+    final content = cache.putOwned(id, owned);
+
+    expect(cache.contentFor(id), same(content));
+    expect(content.bytes, owned);
+    expect(() => content.bytes[0] = 0, throwsUnsupportedError);
+    expect(
+      () => content.bytes.buffer.asByteData().setUint8(0, 0),
+      throwsUnsupportedError,
+    );
+    expect(content.cachedContentDigest, isNull);
+    expect(content.contentDigest, expectedDigest);
+    expect(
+      content.digestFor(id),
+      md5.convert(<int>[...owned, ...id.toString().codeUnits]),
+    );
+
+    final replacement = Uint8List.fromList(utf8.encode('updated-content'));
+    final updated = cache.putOwned(id, replacement);
+    expect(updated.cachedContentDigest, isNull);
+    expect(updated.contentDigest, blake3Hex(replacement));
   });
 }
