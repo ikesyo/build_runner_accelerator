@@ -233,34 +233,20 @@ impl WorkerClient {
                     .get("pattern")
                     .and_then(Value::as_str)
                     .unwrap_or("**");
-                let mut candidates: BTreeSet<_> = workspace
-                    .find_assets(package, pattern)?
-                    .into_iter()
-                    .chain(visibility.generated_assets(package, pattern).cloned())
-                    .collect();
-                candidates.extend(
-                    glob_candidates(overlay, package, pattern)
-                        .filter(|asset| asset_matches_glob(asset, package, pattern))
-                        .cloned(),
-                );
-                let mut assets = Vec::new();
-                for asset in candidates {
-                    if visibility.is_blocked(asset.as_str(), phase, kind, deleted_overlay)
-                        || !asset_exists(workspace, &asset, overlay, visibility)?
-                    {
-                        continue;
-                    }
-                    assets.push(asset);
-                }
                 // Preserve stock glob membership order in ordinary results as
                 // well, so an unfiltered -> filtered build can reuse them.
-                assets.sort_by(|a, b| {
-                    visibility
-                        .location(a)
-                        .is_some()
-                        .cmp(&visibility.location(b).is_some())
-                        .then_with(|| a.encode_utf16().cmp(b.encode_utf16()))
-                });
+                let assets = collect_glob_members(
+                    workspace,
+                    package,
+                    pattern,
+                    overlay,
+                    deleted_overlay,
+                    visibility,
+                    phase,
+                    kind,
+                    |asset| visibility.location(asset).is_some(),
+                    |asset| asset_exists(workspace, asset, overlay, visibility),
+                )?;
                 self.metrics.find_assets_results += assets.len() as u64;
                 json!({ "v": 1, "type": "asset_response", "id": id, "ok": true, "assets": assets })
             }
@@ -429,6 +415,51 @@ fn append_overlay_bytes(payload: &mut Vec<u8>, bytes: &[u8], limit: usize) -> bo
     }
     payload.extend_from_slice(bytes);
     true
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Glob results use the same phase-aware transaction view as asset RPC"
+)]
+pub(super) fn collect_glob_members(
+    workspace: &Workspace,
+    package: &str,
+    pattern: &str,
+    overlay: &BTreeMap<String, Arc<[u8]>>,
+    deleted: &BTreeSet<String>,
+    visibility: &AssetVisibility,
+    phase: u32,
+    kind: BuilderKind,
+    is_generated: impl Fn(&str) -> bool,
+    exists: impl Fn(&str) -> io::Result<bool>,
+) -> io::Result<Vec<String>> {
+    let mut candidates: BTreeSet<String> = workspace
+        .find_assets(package, pattern)?
+        .into_iter()
+        .chain(visibility.generated_assets(package, pattern).cloned())
+        .collect();
+    candidates.extend(
+        glob_candidates(overlay, package, pattern)
+            .filter(|asset| asset_matches_glob(asset, package, pattern))
+            .cloned(),
+    );
+    let mut sources = Vec::new();
+    let mut generated = Vec::new();
+    for asset in candidates {
+        if visibility.is_blocked(&asset, phase, kind, deleted) || !exists(&asset)? {
+            continue;
+        }
+        if is_generated(&asset) {
+            generated.push(asset);
+        } else {
+            sources.push(asset);
+        }
+    }
+    // AssetId.compareTo uses Dart String ordering (UTF-16 code units).
+    sources.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+    generated.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+    sources.extend(generated);
+    Ok(sources)
 }
 
 fn asset_exists(
@@ -680,5 +711,232 @@ mod batch_response_tests {
         let spool = spool_source_bytes(b"private source bytes").unwrap();
         let mode = fs::metadata(spool.path()).unwrap().permissions().mode();
         assert_eq!(mode & 0o077, 0);
+    }
+
+    struct TempWorkspace {
+        root: PathBuf,
+        workspace: Workspace,
+    }
+
+    impl TempWorkspace {
+        fn new(name: &str) -> Self {
+            static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
+            // Claim the root with create_dir so a stale directory left by an
+            // earlier process with a recycled ID is never reused or removed.
+            let root = loop {
+                let candidate = std::env::temp_dir().join(format!(
+                    "build-runner-accelerator-asset-rpc-{name}-{}-{}",
+                    std::process::id(),
+                    NEXT_DIR.fetch_add(1, Ordering::Relaxed),
+                ));
+                match fs::create_dir(&candidate) {
+                    Ok(()) => break candidate,
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("failed to create {}: {error}", candidate.display()),
+                }
+            };
+            fs::create_dir_all(root.join(".dart_tool")).unwrap();
+            fs::create_dir_all(root.join("lib")).unwrap();
+            fs::write(root.join("pubspec.yaml"), "name: app\n").unwrap();
+            fs::write(
+                root.join(".dart_tool/package_config.json"),
+                r#"{"configVersion":2,"packages":[{"name":"app","rootUri":"../"}]}"#,
+            )
+            .unwrap();
+            let workspace = Workspace::load(root.clone()).unwrap();
+            Self { root, workspace }
+        }
+    }
+
+    impl Drop for TempWorkspace {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn test_builder_definition(
+        id: &str,
+        build_to: BuildTo,
+        phase: u32,
+    ) -> crate::builder::BuilderDefinition {
+        crate::builder::BuilderDefinition {
+            adds_to_library: false,
+            id: id.to_owned(),
+            kind: BuilderKind::Normal,
+            extensions: vec![crate::builder::BuilderExtension {
+                input_suffix: ".in".to_owned(),
+                input_is_exact: false,
+                input_is_capture: false,
+                input_is_all: false,
+                input_is_anchored: false,
+                output_suffixes: vec![".txt".to_owned()],
+            }],
+            post_process_input_extensions: Vec::new(),
+            build_to,
+            phase,
+            is_optional: false,
+            output_is_optional: false,
+            required_input_suffixes: Vec::new(),
+            excluded_input_suffixes: Vec::new(),
+            applies_builder: None,
+            triggers: Vec::new(),
+        }
+    }
+
+    fn test_build_spec(id: &str, build_to: BuildTo, phase: u32, output: &str) -> BuildSpec {
+        Arc::new(crate::plan::BuildAction {
+            instance: Arc::new(crate::plan::BuilderInstance {
+                builder: Arc::new(test_builder_definition(id, build_to, phase)),
+                target: "app:app".to_owned(),
+                package: "app".to_owned(),
+                is_root: true,
+                phase,
+                instance_key: id.to_owned(),
+                options: serde_json::Map::new(),
+                part_directive_suffix: None,
+                api_cutoff: false,
+            }),
+            input: "app|lib/input.in".to_owned(),
+            outputs: vec![output.to_owned()],
+        })
+    }
+
+    #[test]
+    fn collect_glob_members_orders_sources_before_generated_in_utf16_order() {
+        let temp = TempWorkspace::new("utf16");
+        fs::write(temp.root.join("lib/z_source.txt"), b"disk source").unwrap();
+
+        let src_supp = "app|lib/\u{10000}_src.txt";
+        let src_pua = "app|lib/\u{E000}_src.txt";
+        let src_ascii = "app|lib/z_source.txt";
+        let gen_ascii = "app|lib/a_gen.txt";
+        let gen_supp = "app|lib/\u{10000}_gen.txt";
+        let gen_pua = "app|lib/\u{E000}_gen.txt";
+
+        // Confirm our chosen characters disagree between UTF-8 and UTF-16 order.
+        assert!(src_pua < src_supp);
+        assert!(src_supp.encode_utf16().cmp(src_pua.encode_utf16()).is_lt());
+
+        let mut overlay = BTreeMap::new();
+        for asset in [src_supp, src_pua, gen_ascii, gen_supp, gen_pua] {
+            overlay.insert(asset.to_owned(), Arc::from(&b"data"[..]));
+        }
+        let generated_set = BTreeSet::from([gen_ascii, gen_supp, gen_pua]);
+        let deleted = BTreeSet::new();
+        let visibility = AssetVisibility::default();
+
+        let members = collect_glob_members(
+            &temp.workspace,
+            "app",
+            "lib/*.txt",
+            &overlay,
+            &deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+            |asset| generated_set.contains(asset),
+            |asset| asset_exists(&temp.workspace, asset, &overlay, &visibility),
+        )
+        .unwrap();
+
+        assert_eq!(
+            members,
+            vec![
+                src_ascii.to_owned(),
+                src_supp.to_owned(),
+                src_pua.to_owned(),
+                gen_ascii.to_owned(),
+                gen_supp.to_owned(),
+                gen_pua.to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn collect_glob_members_distinguishes_location_vs_specs_predicates() {
+        let temp = TempWorkspace::new("predicate");
+        let prev_output = "app|lib/a_prev.txt";
+        let curr_output = "app|lib/b_curr.txt";
+        let plain_source = "app|lib/m_source.txt";
+
+        fs::write(temp.root.join("lib/a_prev.txt"), b"previous output").unwrap();
+        fs::write(temp.root.join("lib/m_source.txt"), b"plain source").unwrap();
+
+        let curr_spec = test_build_spec("app:curr", BuildTo::Source, 0, curr_output);
+        let specs = BTreeMap::from([(curr_output.to_owned(), curr_spec.clone())]);
+
+        let mut prev_state = crate::graph::GraphState::default();
+        prev_state.actions.insert(
+            "app:app|app:prev|app|lib/old.in".to_owned(),
+            crate::graph::ActionState {
+                builder: "app:prev".to_owned(),
+                outputs: vec![prev_output.to_owned()],
+                ..crate::graph::ActionState::default()
+            },
+        );
+        let mut definitions = BTreeMap::new();
+        definitions.insert(
+            "app:prev".to_owned(),
+            Arc::new(test_builder_definition("app:prev", BuildTo::Source, 0)),
+        );
+        let config = crate::builder::RustBuildConfig {
+            asset_sources: None,
+            builders: Vec::new(),
+            worker_entrypoint: None,
+            manifest_signature: None,
+            trigger_digest: None,
+            definitions,
+        };
+        let visibility = AssetVisibility::from_specs(&[curr_spec], &prev_state, &config);
+        assert_eq!(visibility.location(prev_output), Some(BuildTo::Source));
+        assert_eq!(visibility.location(curr_output), Some(BuildTo::Source));
+        assert_eq!(visibility.location(plain_source), None);
+
+        let overlay = BTreeMap::from([(curr_output.to_owned(), Arc::from(&b"current"[..]))]);
+        let deleted = BTreeSet::new();
+
+        let by_location = collect_glob_members(
+            &temp.workspace,
+            "app",
+            "lib/*.txt",
+            &overlay,
+            &deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+            |asset| visibility.location(asset).is_some(),
+            |asset| asset_exists(&temp.workspace, asset, &overlay, &visibility),
+        )
+        .unwrap();
+        assert_eq!(
+            by_location,
+            vec![
+                plain_source.to_owned(),
+                prev_output.to_owned(),
+                curr_output.to_owned(),
+            ]
+        );
+
+        let by_specs = collect_glob_members(
+            &temp.workspace,
+            "app",
+            "lib/*.txt",
+            &overlay,
+            &deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+            |asset| specs.contains_key(asset),
+            |asset| asset_exists(&temp.workspace, asset, &overlay, &visibility),
+        )
+        .unwrap();
+        assert_eq!(
+            by_specs,
+            vec![
+                prev_output.to_owned(),
+                plain_source.to_owned(),
+                curr_output.to_owned(),
+            ]
+        );
     }
 }
