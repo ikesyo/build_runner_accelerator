@@ -721,11 +721,20 @@ mod batch_response_tests {
     impl TempWorkspace {
         fn new(name: &str) -> Self {
             static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
-            let root = std::env::temp_dir().join(format!(
-                "build-runner-accelerator-asset-rpc-{name}-{}-{}",
-                std::process::id(),
-                NEXT_DIR.fetch_add(1, Ordering::Relaxed),
-            ));
+            // Claim the root with create_dir so a stale directory left by an
+            // earlier process with a recycled ID is never reused or removed.
+            let root = loop {
+                let candidate = std::env::temp_dir().join(format!(
+                    "build-runner-accelerator-asset-rpc-{name}-{}-{}",
+                    std::process::id(),
+                    NEXT_DIR.fetch_add(1, Ordering::Relaxed),
+                ));
+                match fs::create_dir(&candidate) {
+                    Ok(()) => break candidate,
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("failed to create {}: {error}", candidate.display()),
+                }
+            };
             fs::create_dir_all(root.join(".dart_tool")).unwrap();
             fs::create_dir_all(root.join("lib")).unwrap();
             fs::write(root.join("pubspec.yaml"), "name: app\n").unwrap();
