@@ -245,6 +245,7 @@ impl WorkerClient {
                     phase,
                     kind,
                     |asset| visibility.location(asset).is_some(),
+                    |asset| asset_exists(workspace, asset, overlay, visibility),
                 )?;
                 self.metrics.find_assets_results += assets.len() as u64;
                 json!({ "v": 1, "type": "asset_response", "id": id, "ok": true, "assets": assets })
@@ -430,6 +431,7 @@ pub(super) fn collect_glob_members(
     phase: u32,
     kind: BuilderKind,
     is_generated: impl Fn(&str) -> bool,
+    exists: impl Fn(&str) -> io::Result<bool>,
 ) -> io::Result<Vec<String>> {
     let mut candidates: BTreeSet<String> = workspace
         .find_assets(package, pattern)?
@@ -444,9 +446,7 @@ pub(super) fn collect_glob_members(
     let mut sources = Vec::new();
     let mut generated = Vec::new();
     for asset in candidates {
-        if visibility.is_blocked(&asset, phase, kind, deleted)
-            || !asset_exists(workspace, &asset, overlay, visibility)?
-        {
+        if visibility.is_blocked(&asset, phase, kind, deleted) || !exists(&asset)? {
             continue;
         }
         if is_generated(&asset) {
@@ -835,6 +835,7 @@ mod batch_response_tests {
             1,
             BuilderKind::Normal,
             |asset| generated_set.contains(asset),
+            |asset| asset_exists(&temp.workspace, asset, &overlay, &visibility),
         )
         .unwrap();
 
@@ -904,6 +905,7 @@ mod batch_response_tests {
             1,
             BuilderKind::Normal,
             |asset| visibility.location(asset).is_some(),
+            |asset| asset_exists(&temp.workspace, asset, &overlay, &visibility),
         )
         .unwrap();
         assert_eq!(
@@ -925,6 +927,7 @@ mod batch_response_tests {
             1,
             BuilderKind::Normal,
             |asset| specs.contains_key(asset),
+            |asset| asset_exists(&temp.workspace, asset, &overlay, &visibility),
         )
         .unwrap();
         assert_eq!(

@@ -42,6 +42,20 @@ fn filtered_glob_members(
         phase,
         kind,
         |asset| specs.contains_key(asset),
+        // The filtered path keeps its original existence check: candidates
+        // from find_assets already passed source-policy filtering, so only
+        // the resolved path is checked here.
+        |asset| {
+            if overlay.contains_key(asset) {
+                return Ok(true);
+            }
+            workspace.asset_exists_at(
+                asset,
+                visibility
+                    .location(asset)
+                    .unwrap_or(crate::builder::BuildTo::Source),
+            )
+        },
     )
 }
 
