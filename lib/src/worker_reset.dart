@@ -73,6 +73,7 @@ Future<void> runResetResolver({
   };
   for (final id in changedAssets) {
     runtime.readCache.remove(id);
+    runtime.pathCache.remove(id);
     runtime.readableCache.remove(id);
   }
   runtime.resolver.invalidatePendingFingerprints(changedAssets);
@@ -96,6 +97,15 @@ Future<void> runResetResolver({
         // An absent index entry must not resurrect a previous overlay value.
         runtime.producedOutputs.remove(id);
       }
+    }
+  }
+  // Committed overlay outputs are already served from `producedOutputs`
+  // (`committedContents`) without a read RPC. Restore their positive
+  // readability here so downstream phases skip redundant `can_read` RPCs;
+  // `canRead` still checks blockedAssets and post-process primaryInput first.
+  for (final id in updatedSources.followedBy(updatedCache)) {
+    if (runtime.producedOutputs.containsKey(id)) {
+      runtime.readableCache.add(id);
     }
   }
   if (!incremental) {
