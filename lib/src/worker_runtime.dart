@@ -38,9 +38,12 @@ typedef SharedPartStepFactory =
 
 class WorkerTransportState {
   // Last accepted batch visibility hint, scoped to this worker context.
-  // Resolver/build resets and nested single builds leave transport state intact.
-  List<String>? batchBlockedAssets;
-  Set<AssetId>? batchBlockedAssetIds;
+  // Resolver/build resets and nested single builds leave transport state
+  // intact. The raw list and its parsed set live in one record so they can
+  // never be updated separately and drift apart.
+  ({List<String> assets, Set<AssetId> ids})? _batchBlocked;
+
+  List<String>? get batchBlockedAssets => _batchBlocked?.assets;
 
   // Asset-id dictionary for `asset-id-interning-v1`, scoped to this worker
   // context with the same lifetime as the batch visibility hint above.
@@ -54,8 +57,7 @@ class WorkerTransportState {
   final Map<String, String> assetDigests = <String, String>{};
 
   void resetOnInitialize() {
-    batchBlockedAssets = null;
-    batchBlockedAssetIds = null;
+    _batchBlocked = null;
     assetDictionary.clear();
     assetDigests.clear();
   }
@@ -72,14 +74,13 @@ class WorkerTransportState {
   }
 
   Set<AssetId> resolveBatchBlockedAssets(List<String> blockedAssets) {
-    if (!identical(batchBlockedAssets, blockedAssets)) {
-      final parsed = Set<AssetId>.unmodifiable(
-        blockedAssets.map(AssetId.parse),
-      );
-      batchBlockedAssets = blockedAssets;
-      batchBlockedAssetIds = parsed;
+    final current = _batchBlocked;
+    if (current != null && identical(current.assets, blockedAssets)) {
+      return current.ids;
     }
-    return batchBlockedAssetIds!;
+    final parsed = Set<AssetId>.unmodifiable(blockedAssets.map(AssetId.parse));
+    _batchBlocked = (assets: blockedAssets, ids: parsed);
+    return parsed;
   }
 }
 
