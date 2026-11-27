@@ -769,7 +769,11 @@ impl WorkerClient {
         Ok(())
     }
 
-    pub(super) fn send_binary(&mut self, metadata: &Value, bytes: &[u8]) -> io::Result<()> {
+    pub(super) fn send_binary<T: serde::Serialize>(
+        &mut self,
+        metadata: &T,
+        bytes: &[u8],
+    ) -> io::Result<()> {
         let frame_size =
             write_binary_frame_buffered(&mut self.input, metadata, bytes, &mut self.send_buffer)?;
         self.metrics.ipc_frames_sent += 1;

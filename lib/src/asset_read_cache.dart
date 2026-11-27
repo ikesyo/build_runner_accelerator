@@ -13,6 +13,12 @@ final class AssetReadContent {
   AssetReadContent(List<int> bytes)
     : bytes = Uint8List.fromList(bytes).asUnmodifiableView();
 
+  /// Wraps an already-owned, unshared [Uint8List] without copying it again.
+  ///
+  /// Callers must transfer exclusive ownership of [bytes] and its backing
+  /// buffer so neither callers nor future reads can mutate the cached snapshot.
+  AssetReadContent.owned(Uint8List bytes) : bytes = bytes.asUnmodifiableView();
+
   final Uint8List bytes;
   String? _digest;
 
@@ -52,6 +58,13 @@ final class AssetReadCache extends MapBase<AssetId, List<int>> {
   final _contents = <AssetId, AssetReadContent>{};
 
   AssetReadContent? contentFor(AssetId id) => _contents[id];
+
+  /// Stores an exclusively owned [Uint8List] without an extra defensive copy.
+  AssetReadContent putOwned(AssetId key, Uint8List value) {
+    final content = AssetReadContent.owned(value);
+    _contents[key] = content;
+    return content;
+  }
 
   @override
   List<int>? operator [](Object? key) => _contents[key]?.bytes;
