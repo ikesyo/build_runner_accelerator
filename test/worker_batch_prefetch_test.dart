@@ -23,11 +23,32 @@ Stream<List<int>> _resultMetadata(Stream<List<int>> input) async* {
         final metadataLength = ByteData.sublistView(
           Uint8List.fromList(payload.sublist(4, 8)),
         ).getUint32(0);
-        final header = ByteData(4)..setUint32(0, metadataLength);
-        yield [
-          ...header.buffer.asUint8List(),
-          ...payload.sublist(8, 8 + metadataLength),
-        ];
+        final metadata =
+            jsonDecode(utf8.decode(payload.sublist(8, 8 + metadataLength)))
+                as Map<String, dynamic>;
+        var rawOffset = 8 + metadataLength;
+        void attachOutputs(List<dynamic>? outputs) {
+          if (outputs == null) return;
+          for (final raw in outputs) {
+            final output = raw as Map<String, dynamic>;
+            final outputLength = output['length'] as int;
+            output['content'] = utf8.decode(
+              payload.sublist(rawOffset, rawOffset + outputLength),
+            );
+            rawOffset += outputLength;
+          }
+        }
+
+        if (metadata['results'] case final List<dynamic> results) {
+          for (final result in results) {
+            attachOutputs((result as Map<String, dynamic>)['outputs'] as List?);
+          }
+        } else {
+          attachOutputs(metadata['outputs'] as List?);
+        }
+        final encoded = utf8.encode(jsonEncode(metadata));
+        final header = ByteData(4)..setUint32(0, encoded.length);
+        yield [...header.buffer.asUint8List(), ...encoded];
       } else {
         final header = ByteData(4)..setUint32(0, payload.length);
         yield [...header.buffer.asUint8List(), ...payload];
@@ -45,14 +66,24 @@ void main() {
       final fileA = File('${dir.path}/a.txt')..writeAsStringSync('alpha');
       final fileB = File('${dir.path}/b.txt')..writeAsStringSync('beta');
       final fileC = File('${dir.path}/c.txt')..writeAsStringSync('gamma');
+      final filePhase1 = File('${dir.path}/phase1.txt')
+        ..writeAsStringSync('p1');
+      final filePhase2 = File('${dir.path}/phase2.txt')
+        ..writeAsStringSync('p2');
       final assetA = 'build_runner_accelerator|$relDir/a.txt';
       final assetB = 'build_runner_accelerator|$relDir/b.txt';
       final assetC = 'build_runner_accelerator|$relDir/c.txt';
+      final assetPhase1 = 'build_runner_accelerator|$relDir/phase1.txt';
+      final assetPhase2 = 'build_runner_accelerator|$relDir/phase2.txt';
       final committedAsset = 'build_runner_accelerator|$relDir/a.out';
+      final phase1Output = 'build_runner_accelerator|$relDir/phase1.out';
+      final phase2Output = 'build_runner_accelerator|$relDir/phase2.out';
       final diskFiles = <String, String>{
         assetA: fileA.absolute.path,
         assetB: fileB.absolute.path,
         assetC: fileC.absolute.path,
+        assetPhase1: filePhase1.absolute.path,
+        assetPhase2: filePhase2.absolute.path,
       };
 
       final child = await Process.start(Platform.resolvedExecutable, [
@@ -216,9 +247,10 @@ void main() {
       expect(postReply['type'], 'build_batch_result');
       expect(postRpcs, isEmpty);
 
-      // 4. Commit a.out via reset_resolver overlay_blob; reading it in phase 1
-      // must incur 0 can_read and 0 read RPCs.
-      final blobBytes = utf8.encode('alpha');
+      // 4. Commit a.out via reset_resolver overlay_blob; reading that
+      // earlier-phase output from a distinct phase 1 action must incur 0
+      // can_read and 0 read RPCs and observe the committed overlay bytes.
+      final blobBytes = utf8.encode('committed-alpha');
       final blobFile = File('${dir.path}/overlay.blob')
         ..writeAsBytesSync(blobBytes);
       final (resetReply, _) = await exchange({
@@ -240,12 +272,12 @@ void main() {
 
       final (phase1Reply, phase1Rpcs) = await exchange({
         'type': 'build_batch',
-        'blocked_assets': <String>[],
+        'blocked_assets': <String>[phase1Output],
         'requests': [
           request(
             id: 0,
-            input: assetA,
-            output: 'build_runner_accelerator|$relDir/a.out',
+            input: assetPhase1,
+            output: phase1Output,
             phase: 1,
             extraRead: committedAsset,
           ),
@@ -253,8 +285,15 @@ void main() {
       });
       expect(phase1Reply['type'], 'build_batch_result');
       expect(phase1Rpcs, isEmpty);
+      final phase1Results = (phase1Reply['results'] as List).cast<JsonMap>();
+      expect(phase1Results.single['stock_inputs'], [committedAsset]);
+      final phase1Outputs = (phase1Results.single['outputs'] as List)
+          .cast<JsonMap>();
+      expect(phase1Outputs.single['asset'], phase1Output);
+      expect(phase1Outputs.single['content'], 'committed-alpha');
 
-      // 5. Delete a.out via reset_resolver; phase 2 must query Rust via can_read.
+      // 5. Delete a.out via reset_resolver; a distinct phase 2 action must
+      // query Rust via can_read and observe that the deleted output is missing.
       final (deleteResetReply, _) = await exchange({
         'type': 'reset_resolver',
         'incremental': true,
@@ -268,12 +307,12 @@ void main() {
 
       final (phase2Reply, phase2Rpcs) = await exchange({
         'type': 'build_batch',
-        'blocked_assets': <String>[],
+        'blocked_assets': <String>[phase2Output],
         'requests': [
           request(
             id: 0,
-            input: assetA,
-            output: 'build_runner_accelerator|$relDir/a.out',
+            input: assetPhase2,
+            output: phase2Output,
             phase: 2,
             extraRead: committedAsset,
           ),
@@ -282,6 +321,12 @@ void main() {
       expect(phase2Reply['type'], 'build_batch_result');
       expect(phase2Rpcs.map((r) => r['op']).toList(), ['can_read']);
       expect(phase2Rpcs.single['asset'], committedAsset);
+      final phase2Results = (phase2Reply['results'] as List).cast<JsonMap>();
+      expect(phase2Results.single['stock_inputs'], [committedAsset]);
+      final phase2Outputs = (phase2Results.single['outputs'] as List)
+          .cast<JsonMap>();
+      expect(phase2Outputs.single['asset'], phase2Output);
+      expect(phase2Outputs.single['content'], '<missing>');
     },
     timeout: const Timeout(Duration(minutes: 3)),
   );
