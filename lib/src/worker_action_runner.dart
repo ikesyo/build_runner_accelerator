@@ -5,6 +5,8 @@ import 'package:build/build.dart';
 import 'package:build_runner/src/build/asset_content.dart' show AssetContent;
 import 'package:build_runner/src/build/build_step_impl.dart' show BuildStepImpl;
 import 'package:build_runner/src/build/input_tracker.dart' show InputTracker;
+import 'package:build_runner/src/build_plan/placeholders.dart'
+    show Placeholders;
 import 'package:build_runner/src/logging/build_log.dart' show buildLog;
 import 'package:build_runner/src/logging/build_log_logger.dart'
     show BuildLogLogger;
@@ -79,12 +81,66 @@ class WorkerActionRunner {
     return result;
   }
 
+  Future<void> _prefetchBatchInputs(
+    WorkerBuildBatchMessage message,
+    Set<AssetId> blockedAssets,
+  ) async {
+    if (!runtime.buildStarted ||
+        message.requests.length < 2 ||
+        message.requests.first.isPostProcess) {
+      return;
+    }
+    final candidates = <AssetId>[];
+    final seen = <AssetId>{};
+    for (final request in message.requests) {
+      final AssetId id;
+      try {
+        id = AssetId.parse(request.input);
+      } on Object {
+        continue;
+      }
+      if (!seen.add(id) ||
+          Placeholders.isPlaceholderPath(id.path) ||
+          blockedAssets.contains(id) ||
+          runtime.buildState.committedContentOf(id) != null ||
+          runtime.readCache.containsKey(id) ||
+          runtime.pathCache.containsKey(id) ||
+          runtime.readableCache.contains(id)) {
+        continue;
+      }
+      candidates.add(id);
+    }
+    // A single uncached input already resolves in one `can_read` RPC carrying
+    // its filesystem path, and avoids any RPC when the action does not read it.
+    if (candidates.length < 2) return;
+    final first = message.requests.first;
+    final prefetchRpc = RpcSession(
+      reader,
+      writer,
+      buildId: first.id,
+      phase: first.phase,
+      postProcess: false,
+    );
+    runtime.io.beginAction(
+      rpc: prefetchRpc,
+      package: candidates.first.package,
+      primaryInput: null,
+      blockedAssets: blockedAssets,
+    );
+    try {
+      await runtime.io.prefetchAssets(candidates);
+    } finally {
+      runtime.io.endAction();
+    }
+  }
+
   Future<void> handleBuildBatch(WorkerBuildBatchMessage message) async {
     final results = <JsonMap>[];
     final blockedAssets = runtime.transport.resolveBatchBlockedAssets(
       message.blockedAssets,
     );
     runtime.batchResolverEntrypoints.clear();
+    await _prefetchBatchInputs(message, blockedAssets);
     for (final request in message.requests) {
       results.add(
         await _runBuild(request, inheritedBlockedAssets: blockedAssets),

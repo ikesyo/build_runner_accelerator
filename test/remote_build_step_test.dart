@@ -444,6 +444,186 @@ void main() {
     io.endAction();
     expect(io.outputs, isEmpty);
   });
+
+  test(
+    'can_read with path satisfies subsequent read without a read RPC',
+    () async {
+      final id = AssetId('app', 'lib/model.dart');
+      final cache = AssetReadCache(<AssetId, List<int>>{});
+      final pathCache = <AssetId, String>{};
+      final readable = <AssetId>{};
+      final temporary = await Directory.systemTemp.createTemp('can-read-path-');
+      addTearDown(() => temporary.delete(recursive: true));
+      final file = File('${temporary.path}/model.dart');
+      await file.writeAsBytes([10, 20, 30]);
+
+      final payload = utf8.encode(
+        jsonEncode({
+          'v': 1,
+          'type': 'asset_response',
+          'id': 1000,
+          'ok': true,
+          'value': true,
+          'path': file.path,
+        }),
+      );
+      final header = ByteData(4)..setUint32(0, payload.length, Endian.big);
+      final sink = IOSink(_DiscardingConsumer());
+      addTearDown(sink.close);
+      final io = RemoteAssetReaderWriter(
+        readCache: cache,
+        readableCache: readable,
+        pathCache: pathCache,
+      );
+      io.beginAction(
+        rpc: RpcSession(
+          FrameReader(
+            Stream.fromIterable([header.buffer.asUint8List(), payload]),
+          ),
+          FrameWriter(sink),
+          buildId: 1,
+          phase: 0,
+          postProcess: false,
+        ),
+        package: 'app',
+        primaryInput: null,
+        blockedAssets: {},
+      );
+      // Only one response frame is supplied; readAsBytes must not issue a read RPC.
+      expect(await io.canRead(id), isTrue);
+      expect(readable, {id});
+      expect(pathCache[id], file.path);
+      expect(cache, isEmpty);
+
+      expect(await io.readAsBytes(id), [10, 20, 30]);
+      expect(pathCache, isEmpty);
+      expect(cache[id], [10, 20, 30]);
+      expect(io.observedReads, {id});
+      io.endAction();
+    },
+  );
+
+  test(
+    'missing file at cached path evicts pathCache and readableCache',
+    () async {
+      final id = AssetId('app', 'lib/vanished.dart');
+      final cache = AssetReadCache(<AssetId, List<int>>{});
+      final pathCache = <AssetId, String>{};
+      final readable = <AssetId>{};
+      final temporary = await Directory.systemTemp.createTemp('vanished-path-');
+      addTearDown(() => temporary.delete(recursive: true));
+      final file = File('${temporary.path}/vanished.dart');
+      await file.writeAsBytes([1]);
+
+      final payload = utf8.encode(
+        jsonEncode({
+          'v': 1,
+          'type': 'asset_response',
+          'id': 1000,
+          'ok': true,
+          'value': true,
+          'path': file.path,
+        }),
+      );
+      final header = ByteData(4)..setUint32(0, payload.length, Endian.big);
+      final sink = IOSink(_DiscardingConsumer());
+      addTearDown(sink.close);
+      final io = RemoteAssetReaderWriter(
+        readCache: cache,
+        readableCache: readable,
+        pathCache: pathCache,
+      );
+      io.beginAction(
+        rpc: RpcSession(
+          FrameReader(
+            Stream.fromIterable([header.buffer.asUint8List(), payload]),
+          ),
+          FrameWriter(sink),
+          buildId: 1,
+          phase: 0,
+          postProcess: false,
+        ),
+        package: 'app',
+        primaryInput: null,
+        blockedAssets: {},
+      );
+      expect(await io.canRead(id), isTrue);
+      await file.delete();
+      await expectLater(
+        io.readAsBytes(id),
+        throwsA(isA<AssetNotFoundException>()),
+      );
+      expect(pathCache, isEmpty);
+      expect(readable, isEmpty);
+      expect(cache, isEmpty);
+      io.endAction();
+    },
+  );
+
+  test(
+    'prefetchAssets caches paths lazily without touching observedReads',
+    () async {
+      final readId = AssetId('app', 'lib/a.dart');
+      final unreadId = AssetId('app', 'lib/b.dart');
+      final cache = AssetReadCache(<AssetId, List<int>>{});
+      final pathCache = <AssetId, String>{};
+      final readable = <AssetId>{};
+      final temporary = await Directory.systemTemp.createTemp('lazy-prefetch-');
+      addTearDown(() => temporary.delete(recursive: true));
+      final fileA = File('${temporary.path}/a.dart')..writeAsBytesSync([7, 8]);
+      final missingB = '${temporary.path}/b_never_read.dart';
+
+      final payload = utf8.encode(
+        jsonEncode({
+          'v': 1,
+          'type': 'asset_response',
+          'id': 1000,
+          'ok': true,
+          'assets': [
+            {'status': 'path', 'path': fileA.path},
+            {'status': 'path', 'path': missingB},
+          ],
+        }),
+      );
+      final header = ByteData(4)..setUint32(0, payload.length, Endian.big);
+      final sink = IOSink(_DiscardingConsumer());
+      addTearDown(sink.close);
+      final io = RemoteAssetReaderWriter(
+        readCache: cache,
+        readableCache: readable,
+        pathCache: pathCache,
+      );
+      io.beginAction(
+        rpc: RpcSession(
+          FrameReader(
+            Stream.fromIterable([header.buffer.asUint8List(), payload]),
+          ),
+          FrameWriter(sink),
+          buildId: 0,
+          phase: 0,
+          postProcess: false,
+        ),
+        package: 'app',
+        primaryInput: null,
+        blockedAssets: {},
+      );
+      await io.prefetchAssets([readId, unreadId]);
+      // Neither file is read eagerly and observedReads remains untouched.
+      expect(cache, isEmpty);
+      expect(pathCache, {readId: fileA.path, unreadId: missingB});
+      expect(readable, {readId, unreadId});
+      expect(io.observedReads, isEmpty);
+
+      // Reading readId uses the cached path with zero additional RPCs.
+      expect(await io.canRead(readId), isTrue);
+      expect(await io.readAsBytes(readId), [7, 8]);
+      expect(io.observedReads, {readId});
+      expect(cache[readId], [7, 8]);
+      expect(pathCache.containsKey(readId), isFalse);
+      expect(pathCache[unreadId], missingB);
+      io.endAction();
+    },
+  );
 }
 
 RpcSession _rpc() => RpcSession(

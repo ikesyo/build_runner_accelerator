@@ -108,6 +108,7 @@ class WorkerRuntime {
   WorkerResolversImpl resolver;
   final ResourceManager resourceManager = ResourceManager();
   final readCache = AssetReadCache();
+  final Map<AssetId, String> pathCache = <AssetId, String>{};
   final Set<AssetId> readableCache = <AssetId>{};
   final ResolverDependencyCache resolverDependencyCache =
       ResolverDependencyCache();
@@ -195,6 +196,7 @@ class WorkerRuntime {
     // still matches disk. Restore both caches afterwards so the
     // query leaves no content behind.
     final savedReadCache = Map<AssetId, List<int>>.of(readCache);
+    final savedPathCache = Map<AssetId, String>.of(pathCache);
     final savedReadableCache = Set<AssetId>.of(readableCache);
     // The query is itself the API-cutoff operation: the frontend sends
     // it only for opted-in builds, and the dep walks it triggers must
@@ -214,6 +216,9 @@ class WorkerRuntime {
           readCache[id] = bytes;
         }
       });
+      pathCache
+        ..clear()
+        ..addAll(savedPathCache);
       readableCache
         ..removeWhere((id) => !savedReadableCache.contains(id))
         ..addAll(savedReadableCache);
@@ -431,6 +436,7 @@ class WorkerRuntime {
 
   void _clearPerBuildState() {
     readCache.clear();
+    pathCache.clear();
     readableCache.clear();
     resolverDependencyCache.clear();
     producedOutputs.clear();
@@ -455,6 +461,7 @@ class WorkerRuntime {
   }) async {
     if (clearReadCaches) {
       readCache.clear();
+      pathCache.clear();
       readableCache.clear();
     }
     if (clearBuilders) {
@@ -469,6 +476,7 @@ class WorkerRuntime {
     io = RemoteAssetReaderWriter(
       readCache: readCache,
       readableCache: readableCache,
+      pathCache: pathCache,
     );
     buildState = RemoteBuildState(
       buildPackages.packages.keys.toSet(),

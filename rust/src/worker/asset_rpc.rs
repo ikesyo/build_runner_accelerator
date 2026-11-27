@@ -45,13 +45,15 @@ struct PathReadResponse<'a> {
 }
 
 #[derive(Serialize)]
-struct CanReadResponse {
+struct CanReadResponse<'a> {
     v: u32,
     #[serde(rename = "type")]
     message_type: &'static str,
     id: u64,
     ok: bool,
     value: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<Cow<'a, str>>,
 }
 
 #[derive(Serialize)]
@@ -300,31 +302,18 @@ impl WorkerClient {
                     .get("asset")
                     .and_then(Value::as_str)
                     .ok_or_else(|| io::Error::other("can_read request has no asset"))?;
-                let blocked = visibility.is_blocked(asset, phase, kind, deleted_overlay);
-                let value = if blocked {
-                    false
-                } else if overlay.contains_key(asset) {
-                    true
-                } else if let Some(evidence) = filtered_evidence.as_mut()
-                    && evidence
-                        .lazy
-                        .is_untracked_filtered_source(asset, evidence.lazy_specs)
-                {
-                    !matches!(
-                        observe_filtered_source(workspace, asset, visibility, evidence.lazy)?
-                            .content,
-                        FilteredSourceContent::Missing
-                    )
-                } else {
-                    asset_exists(workspace, asset, overlay, visibility)?
-                };
-                self.send_serialized(&CanReadResponse {
-                    v: 1,
-                    message_type: ASSET_RESPONSE_TYPE,
-                    id,
-                    ok: true,
-                    value,
-                })
+                let resolved = resolve_can_read(
+                    workspace,
+                    asset,
+                    overlay,
+                    deleted_overlay,
+                    visibility,
+                    phase,
+                    kind,
+                    filtered_evidence,
+                )?;
+                let response = can_read_response(id, &resolved);
+                self.send_serialized(&response)
             }
             "find_assets" => {
                 self.metrics.find_assets_requests += 1;
@@ -691,6 +680,90 @@ enum ReadResult {
     Path(PathBuf),
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum CanReadResult {
+    Missing,
+    /// Readable, but current bytes are held only in memory (overlay or
+    /// filtered snapshot bytes), so the worker must use `read` to fetch them.
+    MemoryOnly,
+    /// Readable and backed by this absolute filesystem path (source, cache, or
+    /// spooled filtered snapshot); the worker may read it directly.
+    Path(PathBuf),
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "can_read checks the same phase-aware visibility and transaction state as read"
+)]
+fn resolve_can_read(
+    workspace: &Workspace,
+    asset: &str,
+    overlay: &BTreeMap<String, Arc<[u8]>>,
+    deleted_overlay: &BTreeSet<String>,
+    visibility: &AssetVisibility,
+    phase: u32,
+    kind: BuilderKind,
+    mut filtered_evidence: Option<FilteredAssetEvidence<'_>>,
+) -> io::Result<CanReadResult> {
+    if visibility.is_blocked(asset, phase, kind, deleted_overlay) {
+        return Ok(CanReadResult::Missing);
+    }
+    if overlay.contains_key(asset) {
+        return Ok(CanReadResult::MemoryOnly);
+    }
+    if let Some(evidence) = filtered_evidence.as_mut()
+        && evidence
+            .lazy
+            .is_untracked_filtered_source(asset, evidence.lazy_specs)
+    {
+        return Ok(
+            match observe_filtered_source(workspace, asset, visibility, evidence.lazy)?.content {
+                FilteredSourceContent::Missing => CanReadResult::Missing,
+                // Keep in-memory filtered snapshots on the binary read path so
+                // the worker cannot bypass the frozen bytes via a live disk path.
+                FilteredSourceContent::Bytes(_) => CanReadResult::MemoryOnly,
+                FilteredSourceContent::Spool(spool) => {
+                    CanReadResult::Path(spool.path().to_path_buf())
+                }
+            },
+        );
+    }
+    match asset_disk_path(workspace, asset, visibility) {
+        Ok(path) => Ok(CanReadResult::Path(path)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(CanReadResult::Missing),
+        Err(error) => Err(error),
+    }
+}
+
+fn can_read_response(id: u64, result: &CanReadResult) -> CanReadResponse<'_> {
+    match result {
+        CanReadResult::Missing => CanReadResponse {
+            v: 1,
+            message_type: ASSET_RESPONSE_TYPE,
+            id,
+            ok: true,
+            value: false,
+            path: None,
+        },
+        CanReadResult::MemoryOnly => CanReadResponse {
+            v: 1,
+            message_type: ASSET_RESPONSE_TYPE,
+            id,
+            ok: true,
+            value: true,
+            path: None,
+        },
+        CanReadResult::Path(path) => CanReadResponse {
+            v: 1,
+            message_type: ASSET_RESPONSE_TYPE,
+            id,
+            ok: true,
+            value: true,
+            path: Some(path.to_string_lossy()),
+        },
+    }
+}
+
 /// Resolve a declared generated asset or an eligible package source.
 fn asset_disk_path(
     workspace: &Workspace,
@@ -811,6 +884,7 @@ mod batch_response_tests {
                 id: 12,
                 ok: true,
                 value: true,
+                path: None,
             })
             .unwrap(),
             json!({
@@ -819,6 +893,25 @@ mod batch_response_tests {
                 "id": 12,
                 "ok": true,
                 "value": true,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(CanReadResponse {
+                v: 1,
+                message_type: ASSET_RESPONSE_TYPE,
+                id: 120,
+                ok: true,
+                value: true,
+                path: Some(Cow::Borrowed("/app/lib/a.dart")),
+            })
+            .unwrap(),
+            json!({
+                "v": 1,
+                "type": "asset_response",
+                "id": 120,
+                "ok": true,
+                "value": true,
+                "path": "/app/lib/a.dart",
             })
         );
         let found = vec!["app|lib/a.dart".to_string()];
@@ -1152,5 +1245,139 @@ mod batch_response_tests {
                 curr_output.to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn resolve_can_read_returns_disk_path_and_omits_path_for_memory_or_missing() {
+        let temp = TempWorkspace::new("can-read-path");
+        let source_path = temp.root.join("lib/model.dart");
+        fs::write(&source_path, b"class Model {}").unwrap();
+        let cache_asset = "app|lib/cached.g.part";
+        let cache_path = temp.workspace.cache_path_for_asset(cache_asset).unwrap();
+        fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+        fs::write(&cache_path, b"// cached").unwrap();
+
+        let cache_spec = test_build_spec("app:cache", BuildTo::Cache, 0, cache_asset);
+        let config = crate::builder::RustBuildConfig {
+            asset_sources: None,
+            builders: Vec::new(),
+            worker_entrypoint: None,
+            manifest_signature: None,
+            trigger_digest: None,
+            definitions: BTreeMap::new(),
+        };
+        let visibility = AssetVisibility::from_specs(
+            &[cache_spec],
+            &crate::graph::GraphState::default(),
+            &config,
+        );
+        let overlay = BTreeMap::from([(
+            "app|lib/overlay.g.part".to_owned(),
+            Arc::from(&b"// overlay"[..]),
+        )]);
+        let deleted = BTreeSet::from(["app|lib/deleted.dart".to_owned()]);
+        fs::write(temp.root.join("lib/deleted.dart"), b"// deleted").unwrap();
+
+        let disk = resolve_can_read(
+            &temp.workspace,
+            "app|lib/model.dart",
+            &overlay,
+            &deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+            None,
+        )
+        .unwrap();
+        assert_eq!(disk, CanReadResult::Path(source_path.clone()));
+        let disk_json = serde_json::to_value(can_read_response(1, &disk)).unwrap();
+        assert_eq!(disk_json["value"], true);
+        assert_eq!(disk_json["path"], source_path.to_string_lossy().as_ref());
+
+        let cached = resolve_can_read(
+            &temp.workspace,
+            cache_asset,
+            &overlay,
+            &deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+            None,
+        )
+        .unwrap();
+        assert_eq!(cached, CanReadResult::Path(cache_path));
+
+        // Same-phase generated output is blocked even though its cache file exists.
+        let blocked = resolve_can_read(
+            &temp.workspace,
+            cache_asset,
+            &overlay,
+            &deleted,
+            &visibility,
+            0,
+            BuilderKind::Normal,
+            None,
+        )
+        .unwrap();
+        assert_eq!(blocked, CanReadResult::Missing);
+        let blocked_json = serde_json::to_value(can_read_response(2, &blocked)).unwrap();
+        assert_eq!(blocked_json["value"], false);
+        assert!(blocked_json.get("path").is_none());
+
+        // Deleted overlay hides an existing disk file.
+        let hidden = resolve_can_read(
+            &temp.workspace,
+            "app|lib/deleted.dart",
+            &overlay,
+            &deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+            None,
+        )
+        .unwrap();
+        assert_eq!(hidden, CanReadResult::Missing);
+
+        // In-memory overlay returns true without a filesystem path.
+        let mem = resolve_can_read(
+            &temp.workspace,
+            "app|lib/overlay.g.part",
+            &overlay,
+            &deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+            None,
+        )
+        .unwrap();
+        assert_eq!(mem, CanReadResult::MemoryOnly);
+        let mem_json = serde_json::to_value(can_read_response(3, &mem)).unwrap();
+        assert_eq!(mem_json["value"], true);
+        assert!(mem_json.get("path").is_none());
+
+        // Untracked filtered source pinned in memory omits path so reads fetch
+        // the frozen bytes rather than live disk.
+        let mut lazy = LazyBuildState::filtered(
+            crate::graph::GraphState::default(),
+            BTreeMap::new(),
+            true,
+            false,
+        );
+        let specs = BTreeMap::new();
+        let filtered = resolve_can_read(
+            &temp.workspace,
+            "app|lib/model.dart",
+            &overlay,
+            &deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+            Some(FilteredAssetEvidence {
+                lazy: &mut lazy,
+                lazy_specs: &specs,
+            }),
+        )
+        .unwrap();
+        assert_eq!(filtered, CanReadResult::MemoryOnly);
     }
 }

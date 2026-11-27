@@ -50,9 +50,14 @@ class _RemoteActionState {
 }
 
 class _RemoteIoState {
-  _RemoteIoState({required this.readCache, required this.readableCache});
+  _RemoteIoState({
+    required this.readCache,
+    required this.readableCache,
+    required this.pathCache,
+  });
 
   final AssetReadCache readCache;
+  final Map<AssetId, String> pathCache;
   final Set<AssetId> readableCache;
   final List<_RemoteActionState> _actions = <_RemoteActionState>[];
   final Map<AssetId, Uint8List> _idleOutputs = <AssetId, Uint8List>{};
@@ -148,10 +153,12 @@ class RemoteAssetReaderWriter extends ReaderWriter {
   factory RemoteAssetReaderWriter({
     required AssetReadCache readCache,
     required Set<AssetId> readableCache,
+    Map<AssetId, String>? pathCache,
   }) {
     final state = _RemoteIoState(
       readCache: readCache,
       readableCache: readableCache,
+      pathCache: pathCache ?? <AssetId, String>{},
     );
     return RemoteAssetReaderWriter._(state);
   }
@@ -245,6 +252,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
           _state.outputs.containsKey(id) ||
           _isBlocked(id) ||
           _state.readCache.containsKey(id) ||
+          _state.pathCache.containsKey(id) ||
           _state.readableCache.contains(id)) {
         continue;
       }
@@ -279,15 +287,12 @@ class RemoteAssetReaderWriter extends ReaderWriter {
       final status = entry['status'];
       if (status == 'path') {
         final path = entry['path'];
-        if (path is! String) continue;
-        try {
-          _state.readCache.putOwned(id, File(path).readAsBytesSync());
-          _state.readableCache.add(id);
-          resolverActionMetrics.depPrefetchAssets += 1;
-        } on Object {
-          // Unreadable: leave uncached so the sequential path reproduces the
-          // same FileSystemException -> AssetNotFoundException mapping.
-        }
+        if (path is! String || path.isEmpty) continue;
+        // Defer disk I/O until readContent actually needs the bytes so
+        // unread batch inputs pay neither file reads nor extra memory.
+        _state.pathCache[id] = path;
+        _state.readableCache.add(id);
+        resolverActionMetrics.depPrefetchAssets += 1;
       } else if (status == 'bytes') {
         final offset = entry['offset'];
         final length = entry['length'];
@@ -306,6 +311,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
           id,
           payloadBytes.sublist(offset, offset + length),
         );
+        _state.pathCache.remove(id);
         _state.readableCache.add(id);
         resolverActionMetrics.depPrefetchAssets += 1;
       }
@@ -326,7 +332,9 @@ class RemoteAssetReaderWriter extends ReaderWriter {
     if (primaryInput != null && id != primaryInput) return false;
     if (_state.outputs.containsKey(id)) return true;
     if (_isBlocked(id)) return false;
-    if (_state.readCache.containsKey(id) || _state.readableCache.contains(id)) {
+    if (_state.readCache.containsKey(id) ||
+        _state.pathCache.containsKey(id) ||
+        _state.readableCache.contains(id)) {
       resolverActionMetrics.ipcCanReadCacheHits++;
       return true;
     }
@@ -343,7 +351,13 @@ class RemoteAssetReaderWriter extends ReaderWriter {
         ..ipcCanReadUs += timer.elapsedMicroseconds;
     }
     final value = response['value'] == true;
-    if (value) _state.readableCache.add(id);
+    if (value) {
+      _state.readableCache.add(id);
+      final path = response['path'];
+      if (path is String && path.isNotEmpty) {
+        _state.pathCache[id] = path;
+      }
+    }
     return value;
   }
 
@@ -383,6 +397,19 @@ class RemoteAssetReaderWriter extends ReaderWriter {
       resolverActionMetrics.ipcReadCacheHits++;
       return cached;
     }
+    final cachedPath = _state.pathCache[id];
+    if (cachedPath != null) {
+      try {
+        final bytes = File(cachedPath).readAsBytesSync();
+        _state.pathCache.remove(id);
+        resolverActionMetrics.ipcReadCacheHits++;
+        return _state.readCache.putOwned(id, bytes);
+      } on FileSystemException {
+        _state.pathCache.remove(id);
+        _state.readableCache.remove(id);
+        throw AssetNotFoundException(id);
+      }
+    }
     try {
       final timer = resolverActionMetrics.enabled
           ? (Stopwatch()..start())
@@ -400,7 +427,8 @@ class RemoteAssetReaderWriter extends ReaderWriter {
       // as binary payloads.
       final path = response['path'];
       if (path is String) {
-        final bytes = await File(path).readAsBytes();
+        final bytes = File(path).readAsBytesSync();
+        _state.pathCache.remove(id);
         return _state.readCache.putOwned(id, bytes);
       }
       final rawBytes = response['bytes'];
@@ -411,6 +439,7 @@ class RemoteAssetReaderWriter extends ReaderWriter {
           ? rawBytes
           : Uint8List.fromList(List<int>.from(rawBytes));
       resolverActionMetrics.ipcReadBytes += bytes.length;
+      _state.pathCache.remove(id);
       return _state.readCache.putOwned(id, bytes);
     } on StateError catch (error) {
       if (error.message.toString().contains('asset not found')) {
