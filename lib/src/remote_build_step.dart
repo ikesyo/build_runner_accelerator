@@ -11,6 +11,7 @@ import 'package:build_runner/src/io/filesystem.dart' show IoFilesystem;
 import 'package:build_runner/src/io/reader_writer.dart' show ReaderWriter;
 import 'package:crypto/crypto.dart';
 import 'package:glob/glob.dart';
+import 'package:path/path.dart' as p;
 
 import 'asset_read_cache.dart';
 import 'protocol.dart';
@@ -25,6 +26,94 @@ import 'resolver_metrics.dart';
 /// from inside a resolver call starts unattributed.
 final Object _resolverReadZoneKey = Object();
 
+typedef VisibleAssetsCacheKey = ({String package, int phase, bool postProcess});
+
+typedef VisiblePackageAssetsSnapshot = ({
+  Map<VisibleAssetsCacheKey, VisiblePackageAssetsEntry> entries,
+  Set<VisibleAssetsCacheKey> declined,
+  Map<VisibleAssetsCacheKey, int> findCalls,
+});
+
+/// Phase-visible package-relative paths returned by `list_visible_assets`.
+/// Both lists are sorted in UTF-16 (`String.compareTo`) order so local glob
+/// evaluation can binary-search literal prefixes and preserve stock
+/// `[sources..., generated...]` order.
+class VisiblePackageAssetsEntry {
+  const VisiblePackageAssetsEntry({
+    required this.blockedAssets,
+    required this.sources,
+    required this.generated,
+  });
+
+  final Set<AssetId> blockedAssets;
+  final List<String> sources;
+  final List<String> generated;
+}
+
+/// Worker-local cache of phase-visible package asset listings.
+///
+/// Entries are valid only for the same `(package, phase, postProcess)` and the
+/// same `blockedAssets` set instance, and are cleared on every
+/// `reset_resolver`, `reset`, and build start.
+class VisiblePackageAssetsCache {
+  final Map<VisibleAssetsCacheKey, VisiblePackageAssetsEntry> _entries =
+      <VisibleAssetsCacheKey, VisiblePackageAssetsEntry>{};
+  final Set<VisibleAssetsCacheKey> _declined = <VisibleAssetsCacheKey>{};
+  final Map<VisibleAssetsCacheKey, int> _findCalls =
+      <VisibleAssetsCacheKey, int>{};
+
+  VisiblePackageAssetsEntry? lookup(
+    VisibleAssetsCacheKey key,
+    Set<AssetId> blockedAssets,
+  ) {
+    final entry = _entries[key];
+    if (entry == null || !identical(entry.blockedAssets, blockedAssets)) {
+      return null;
+    }
+    return entry;
+  }
+
+  bool isDeclined(VisibleAssetsCacheKey key) => _declined.contains(key);
+
+  int recordFindCall(VisibleAssetsCacheKey key) {
+    final next = (_findCalls[key] ?? 0) + 1;
+    _findCalls[key] = next;
+    return next;
+  }
+
+  void put(VisibleAssetsCacheKey key, VisiblePackageAssetsEntry entry) {
+    _entries[key] = entry;
+  }
+
+  void markDeclined(VisibleAssetsCacheKey key) {
+    _declined.add(key);
+  }
+
+  void clear() {
+    _entries.clear();
+    _declined.clear();
+    _findCalls.clear();
+  }
+
+  VisiblePackageAssetsSnapshot snapshot() => (
+    entries: Map<VisibleAssetsCacheKey, VisiblePackageAssetsEntry>.of(_entries),
+    declined: Set<VisibleAssetsCacheKey>.of(_declined),
+    findCalls: Map<VisibleAssetsCacheKey, int>.of(_findCalls),
+  );
+
+  void restore(VisiblePackageAssetsSnapshot saved) {
+    _entries
+      ..clear()
+      ..addAll(saved.entries);
+    _declined
+      ..clear()
+      ..addAll(saved.declined);
+    _findCalls
+      ..clear()
+      ..addAll(saved.findCalls);
+  }
+}
+
 /// Mutable per-action state behind the long-lived current build_runner
 /// [ReaderWriter]. The Rust side processes a worker's batch sequentially, so
 /// changing the action view between requests is safe and lets the same
@@ -35,12 +124,14 @@ class _RemoteActionState {
     required this.package,
     required this.primaryInput,
     required this.blockedAssets,
+    required this.preferGlobCache,
   });
 
   final RpcSession rpc;
   final String package;
   final AssetId? primaryInput;
   final Set<AssetId> blockedAssets;
+  final bool preferGlobCache;
   final Map<AssetId, Uint8List> outputs = <AssetId, Uint8List>{};
   final Set<AssetId> observedReads = <AssetId>{};
   final Set<AssetId> resolverObservedReads = <AssetId>{};
@@ -54,11 +145,13 @@ class _RemoteIoState {
     required this.readCache,
     required this.readableCache,
     required this.pathCache,
+    required this.visibleAssetsCache,
   });
 
   final AssetReadCache readCache;
   final Map<AssetId, String> pathCache;
   final Set<AssetId> readableCache;
+  final VisiblePackageAssetsCache visibleAssetsCache;
   final List<_RemoteActionState> _actions = <_RemoteActionState>[];
   final Map<AssetId, Uint8List> _idleOutputs = <AssetId, Uint8List>{};
   final Set<AssetId> _idleObservedReads = <AssetId>{};
@@ -74,6 +167,7 @@ class _RemoteIoState {
     required String package,
     required AssetId? primaryInput,
     required Set<AssetId> blockedAssets,
+    bool preferGlobCache = false,
   }) {
     _actions.add(
       _RemoteActionState(
@@ -81,6 +175,7 @@ class _RemoteIoState {
         package: package,
         primaryInput: primaryInput,
         blockedAssets: blockedAssets,
+        preferGlobCache: preferGlobCache,
       ),
     );
   }
@@ -100,6 +195,7 @@ class _RemoteIoState {
   RpcSession get activeRpc => _active.rpc;
   String get package => _actions.isEmpty ? '' : _active.package;
   AssetId? get primaryInput => _actions.isEmpty ? null : _active.primaryInput;
+  bool get preferGlobCache => _actions.isNotEmpty && _active.preferGlobCache;
   Set<AssetId> get blockedAssets =>
       _actions.isEmpty ? _idleBlockedAssets : _active.blockedAssets;
   Map<AssetId, Uint8List> get outputs =>
@@ -147,6 +243,11 @@ class _RemoteIoState {
 final bool _depPrefetchEnabled =
     Platform.environment['BUILD_RUNNER_ACCELERATOR_DEP_PREFETCH'] != '0';
 
+/// Phase-visible package listing cache over `list_visible_assets`. Disable with
+/// `BUILD_RUNNER_ACCELERATOR_GLOB_CACHE=0`.
+final bool _globCacheEnabled =
+    Platform.environment['BUILD_RUNNER_ACCELERATOR_GLOB_CACHE'] != '0';
+
 /// A current build_runner [ReaderWriter] whose file operations are served by
 /// the Rust frontend through the existing asset RPC protocol.
 class RemoteAssetReaderWriter extends ReaderWriter {
@@ -154,11 +255,13 @@ class RemoteAssetReaderWriter extends ReaderWriter {
     required AssetReadCache readCache,
     required Set<AssetId> readableCache,
     Map<AssetId, String>? pathCache,
+    VisiblePackageAssetsCache? visibleAssetsCache,
   }) {
     final state = _RemoteIoState(
       readCache: readCache,
       readableCache: readableCache,
       pathCache: pathCache ?? <AssetId, String>{},
+      visibleAssetsCache: visibleAssetsCache ?? VisiblePackageAssetsCache(),
     );
     return RemoteAssetReaderWriter._(state);
   }
@@ -214,11 +317,13 @@ class RemoteAssetReaderWriter extends ReaderWriter {
     required String package,
     required AssetId? primaryInput,
     required Set<AssetId> blockedAssets,
+    bool preferGlobCache = false,
   }) => _state.beginAction(
     rpc: rpc,
     package: package,
     primaryInput: primaryInput,
     blockedAssets: blockedAssets,
+    preferGlobCache: preferGlobCache,
   );
 
   void endAction() => _state.endAction();
@@ -496,23 +601,9 @@ class _RemoteAssetFinder implements AssetFinder {
     _state.observedGlobs.add(
       ObservedGlob(package: requestedPackage, pattern: glob.pattern),
     );
-    final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
-    final response = await _state.activeRpc.call(
-      'find_assets',
-      <String, dynamic>{'package': requestedPackage, 'pattern': glob.pattern},
-    );
-    if (timer != null) {
-      resolverActionMetrics
-        ..ipcFindAssetsCalls += 1
-        ..ipcFindAssetsUs += timer.elapsedMicroseconds;
-    }
-    final assets = response['assets'];
-    if (assets is! List) {
-      throw const FormatException('Asset find response assets must be a list');
-    }
-    final members = [
-      for (final rawAsset in assets) AssetId.parse(rawAsset as String),
-    ]..removeWhere(_isBlocked);
+    final members =
+        await _tryFindLocally(glob, requestedPackage) ??
+        await _findViaRpc(glob, requestedPackage);
     _state.observedGlobMembers[ObservedGlob(
           package: requestedPackage,
           pattern: glob.pattern,
@@ -529,7 +620,177 @@ class _RemoteAssetFinder implements AssetFinder {
     }
   }
 
+  Future<List<AssetId>?> _tryFindLocally(Glob glob, String package) async {
+    if (!_globCacheEnabled ||
+        _state.primaryInput != null ||
+        _state.activeRpc.postProcess ||
+        !_isSimplePosixGlob(glob.pattern)) {
+      return null;
+    }
+    final key = (
+      package: package,
+      phase: _state.activeRpc.phase,
+      postProcess: false,
+    );
+    final cache = _state.visibleAssetsCache;
+    final blockedAssets = _state.blockedAssets;
+    var entry = cache.lookup(key, blockedAssets);
+    if (entry != null) {
+      resolverActionMetrics.ipcFindAssetsCacheHits++;
+      return _matchVisiblePackagePaths(entry, package, glob);
+    }
+    if (cache.isDeclined(key)) return null;
+    final calls = cache.recordFindCall(key);
+    if (!_state.preferGlobCache && calls < 2) return null;
+
+    final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
+    JsonMap response;
+    try {
+      response = await _state.activeRpc.call(
+        'list_visible_assets',
+        <String, dynamic>{'package': package},
+      );
+    } on Object {
+      // Lazy/filtered builds and oversized responses decline package-wide
+      // listing; remember the decline for this phase so subsequent globs go
+      // directly to `find_assets` without retrying.
+      cache.markDeclined(key);
+      return null;
+    }
+    if (timer != null) {
+      resolverActionMetrics
+        ..ipcListVisibleAssetsCalls += 1
+        ..ipcListVisibleAssetsUs += timer.elapsedMicroseconds;
+    }
+    final rawSources = response['sources'];
+    final rawGenerated = response['generated'];
+    if (rawSources is! List || rawGenerated is! List) {
+      cache.markDeclined(key);
+      return null;
+    }
+    final sources = <String>[];
+    for (final item in rawSources) {
+      if (item is! String) {
+        cache.markDeclined(key);
+        return null;
+      }
+      sources.add(item);
+    }
+    final generated = <String>[];
+    for (final item in rawGenerated) {
+      if (item is! String) {
+        cache.markDeclined(key);
+        return null;
+      }
+      generated.add(item);
+    }
+    entry = VisiblePackageAssetsEntry(
+      blockedAssets: blockedAssets,
+      sources: sources,
+      generated: generated,
+    );
+    cache.put(key, entry);
+    return _matchVisiblePackagePaths(entry, package, glob);
+  }
+
+  Future<List<AssetId>> _findViaRpc(Glob glob, String package) async {
+    final timer = resolverActionMetrics.enabled ? (Stopwatch()..start()) : null;
+    final response = await _state.activeRpc.call(
+      'find_assets',
+      <String, dynamic>{'package': package, 'pattern': glob.pattern},
+    );
+    if (timer != null) {
+      resolverActionMetrics
+        ..ipcFindAssetsCalls += 1
+        ..ipcFindAssetsUs += timer.elapsedMicroseconds;
+    }
+    final assets = response['assets'];
+    if (assets is! List) {
+      throw const FormatException('Asset find response assets must be a list');
+    }
+    return [for (final rawAsset in assets) AssetId.parse(rawAsset as String)]
+      ..removeWhere(_isBlocked);
+  }
+
+  List<AssetId> _matchVisiblePackagePaths(
+    VisiblePackageAssetsEntry entry,
+    String package,
+    Glob glob,
+  ) {
+    final matcher = glob.caseSensitive && glob.context.style == p.Style.posix
+        ? glob
+        : Glob(glob.pattern, context: p.posix, caseSensitive: true);
+    final prefix = _simpleGlobLiteralPrefix(glob.pattern);
+    final members = <AssetId>[];
+    void collect(List<String> sortedPaths) {
+      if (prefix.isEmpty) {
+        for (final path in sortedPaths) {
+          if (!matcher.matches(path)) continue;
+          final id = AssetId(package, path);
+          if (!_isBlocked(id)) members.add(id);
+        }
+        return;
+      }
+      for (
+        var index = _lowerBound(sortedPaths, prefix);
+        index < sortedPaths.length && sortedPaths[index].startsWith(prefix);
+        index++
+      ) {
+        final path = sortedPaths[index];
+        if (!matcher.matches(path)) continue;
+        final id = AssetId(package, path);
+        if (!_isBlocked(id)) members.add(id);
+      }
+    }
+
+    collect(entry.sources);
+    collect(entry.generated);
+    return members;
+  }
+
   bool _isBlocked(AssetId id) => _state.blockedAssets.contains(id);
+}
+
+bool _isSimplePosixGlob(String pattern) {
+  if (pattern.isEmpty || pattern.startsWith('/')) return false;
+  for (var i = 0; i < pattern.length; i++) {
+    final unit = pattern.codeUnitAt(i);
+    if (unit == 0x5B /* [ */ ||
+        unit == 0x5D /* ] */ ||
+        unit == 0x7B /* { */ ||
+        unit == 0x7D /* } */ ||
+        unit == 0x5C /* \ */ ) {
+      return false;
+    }
+  }
+  for (final segment in pattern.split('/')) {
+    if (segment.isEmpty || segment == '.' || segment == '..') return false;
+  }
+  return true;
+}
+
+String _simpleGlobLiteralPrefix(String pattern) {
+  for (var i = 0; i < pattern.length; i++) {
+    final unit = pattern.codeUnitAt(i);
+    if (unit == 0x2A /* * */ || unit == 0x3F /* ? */ ) {
+      return pattern.substring(0, i);
+    }
+  }
+  return pattern;
+}
+
+int _lowerBound(List<String> sortedPaths, String prefix) {
+  var low = 0;
+  var high = sortedPaths.length;
+  while (low < high) {
+    final mid = low + ((high - low) >> 1);
+    if (sortedPaths[mid].compareTo(prefix) < 0) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
 }
 
 class _RemoteAssetPathProvider implements AssetPathProvider {

@@ -65,6 +65,7 @@ Future<void> runResetResolver({
       ? null
       : readOverlayBlob(overlayBlob, {...updatedSources, ...updatedCache});
   runtime.resolverDependencyCache.clear();
+  runtime.visibleAssetsCache.clear();
   final changedAssets = <AssetId>{
     ...updatedSources,
     ...deletedSources,

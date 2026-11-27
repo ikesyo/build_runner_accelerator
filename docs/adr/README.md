@@ -68,6 +68,7 @@ Benchmarks and mechanical refactors do not need one.
 | [0054](0054-frontend-asset-digests.md) | Frontend asset digests for worker cache keying |
 | [0055](0055-rust-workspace-discovery.md) | Workspace discovery in the frontend |
 | [0056](0056-api-signature-early-cutoff.md) | API-signature early cutoff for resolver reads |
+| [0057](0057-phase-visible-asset-listing-glob-cache.md) | Phase-visible package asset listing and worker-local glob cache |
 
 The worker wire contract is in [protocol v1](../../protocol/v1.md). Release
 artifacts and launcher behavior are in

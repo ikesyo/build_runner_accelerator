@@ -110,6 +110,8 @@ class WorkerRuntime {
   final readCache = AssetReadCache();
   final Map<AssetId, String> pathCache = <AssetId, String>{};
   final Set<AssetId> readableCache = <AssetId>{};
+  final VisiblePackageAssetsCache visibleAssetsCache =
+      VisiblePackageAssetsCache();
   final ResolverDependencyCache resolverDependencyCache =
       ResolverDependencyCache();
 
@@ -198,6 +200,7 @@ class WorkerRuntime {
     final savedReadCache = Map<AssetId, List<int>>.of(readCache);
     final savedPathCache = Map<AssetId, String>.of(pathCache);
     final savedReadableCache = Set<AssetId>.of(readableCache);
+    final savedVisibleAssets = visibleAssetsCache.snapshot();
     // The query is itself the API-cutoff operation: the frontend sends
     // it only for opted-in builds, and the dep walks it triggers must
     // learn the fingerprints it answers with. Learning is otherwise
@@ -222,6 +225,7 @@ class WorkerRuntime {
       readableCache
         ..removeWhere((id) => !savedReadableCache.contains(id))
         ..addAll(savedReadableCache);
+      visibleAssetsCache.restore(savedVisibleAssets);
     }
   }
 
@@ -438,6 +442,7 @@ class WorkerRuntime {
     readCache.clear();
     pathCache.clear();
     readableCache.clear();
+    visibleAssetsCache.clear();
     resolverDependencyCache.clear();
     producedOutputs.clear();
     resetState.clearForNewBuild();
@@ -459,6 +464,7 @@ class WorkerRuntime {
     bool clearReadCaches = false,
     bool clearBuilders = false,
   }) async {
+    visibleAssetsCache.clear();
     if (clearReadCaches) {
       readCache.clear();
       pathCache.clear();
@@ -477,6 +483,7 @@ class WorkerRuntime {
       readCache: readCache,
       readableCache: readableCache,
       pathCache: pathCache,
+      visibleAssetsCache: visibleAssetsCache,
     );
     buildState = RemoteBuildState(
       buildPackages.packages.keys.toSet(),
