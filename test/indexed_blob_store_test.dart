@@ -90,6 +90,49 @@ void main() {
     expect(store.entryCount, 2);
   });
 
+  test('put writes the golden data record and journal entry bytes', () {
+    final path = '${dir.path}/golden';
+    final blobStore = IndexedBlobStore(path);
+    addTearDown(blobStore.close);
+    // UTF-8 for kéy-1.
+    const keyBytes = [0x6b, 0xc3, 0xa9, 0x79, 0x2d, 0x31];
+    const valueBytes = [0x00, 0x7f, 0x80, 0xfe];
+    const valueFletcher16 = [0xfe, 0x7e];
+    const entryCrc32 = [0x71, 0x0e, 0x41, 0x07];
+    final value = Uint8List.sublistView(
+      Uint8List.fromList([0x55, ...valueBytes, 0xaa]),
+      1,
+      1 + valueBytes.length,
+    );
+    expect(blobStore.put('kéy-1', value), isTrue);
+
+    final generation = Directory(
+      '$path.generations',
+    ).listSync().whereType<Directory>().single;
+    final lengths = ByteData(8)
+      ..setUint32(0, keyBytes.length, Endian.little)
+      ..setUint32(4, valueBytes.length, Endian.little);
+    expect(File('${generation.path}/data').readAsBytesSync(), [
+      ...lengths.buffer.asUint8List(),
+      ...keyBytes,
+      ...valueBytes,
+      ...valueFletcher16,
+    ]);
+
+    const journalHeaderLength = 16;
+    final journal = File('${generation.path}/data.index').readAsBytesSync();
+    expect(
+      ByteData.sublistView(journal).getUint32(0, Endian.little),
+      0x32494253,
+    );
+    expect(journal.sublist(journalHeaderLength), [
+      ...lengths.buffer.asUint8List(),
+      ...List.filled(8, 0), // The first record's 64-bit offset.
+      ...keyBytes,
+      ...entryCrc32,
+    ]);
+  });
+
   test('empty value is a hit', () {
     store.put('empty', Uint8List(0));
     final bytes = store.get('empty');

@@ -543,7 +543,8 @@ final class IndexedBlobPack {
         }
         final recordLength =
             _headerLength + keyBytes.length + value.length + _trailerLength;
-        final entryLength = _indexHeaderLength + keyBytes.length + 4;
+        final entryCrcOffset = _indexHeaderLength + keyBytes.length;
+        final entryLength = entryCrcOffset + 4;
         if (_records >= maxRecords ||
             offset + recordLength > maxDataBytes ||
             _indexedEnd + entryLength > maxJournalBytes) {
@@ -553,36 +554,34 @@ final class IndexedBlobPack {
         // Re-seek to the live end: reads or a truncation since the last write
         // may have moved the handle's position.
         raf.setPositionSync(offset);
-        final recordBytes =
-            (BytesBuilder()
-                  ..add(_u32(keyBytes.length))
-                  ..add(_u32(value.length))
-                  ..add(keyBytes)
-                  ..add(value)
-                  ..add(_u16(_fletcher16(value))))
-                .toBytes();
-        raf.writeFromSync(recordBytes);
+        final record = Uint8List(recordLength);
+        final recordData = ByteData.sublistView(record)
+          ..setUint32(0, keyBytes.length, Endian.little)
+          ..setUint32(4, value.length, Endian.little);
+        final valueStart = _headerLength + keyBytes.length;
+        final valueEnd = valueStart + value.length;
+        record.setRange(_headerLength, valueStart, keyBytes);
+        record.setRange(valueStart, valueEnd, value);
+        recordData.setUint16(valueEnd, _fletcher16(value), Endian.little);
+        raf.writeFromSync(record);
         // The journal is the publication boundary. No fsync is needed for
         // disposable cache bytes; synchronous writes publish to other workers.
-        final metadata = ByteData(_indexHeaderLength)
+        final entry = Uint8List(entryLength);
+        final entryData = ByteData.sublistView(entry)
           ..setUint32(0, keyBytes.length, Endian.little)
           ..setUint32(4, value.length, Endian.little)
           ..setUint64(8, offset, Endian.little);
-        final entry =
-            (BytesBuilder()
-                  ..add(metadata.buffer.asUint8List())
-                  ..add(keyBytes))
-                .toBytes();
+        entry.setRange(_indexHeaderLength, entryCrcOffset, keyBytes);
         journal.setPositionSync(_indexedEnd);
-        journal.writeFromSync(
-          (BytesBuilder()
-                ..add(entry)
-                ..add(_u32(_crc32(entry))))
-              .toBytes(),
+        entryData.setUint32(
+          entryCrcOffset,
+          _crc32(Uint8List.sublistView(entry, 0, entryCrcOffset)),
+          Endian.little,
         );
+        journal.writeFromSync(entry);
         index[key] = (offset + _headerLength + keyBytes.length, value.length);
-        _indexedEnd += entry.length + 4;
-        _dataEnd = offset + recordBytes.length;
+        _indexedEnd += entryLength;
+        _dataEnd = offset + recordLength;
         _records++;
         return true;
       } finally {
@@ -822,11 +821,6 @@ final class IndexedBlobPack {
       if (left[i] != right[i]) return false;
     }
     return true;
-  }
-
-  static Uint8List _u16(int value) {
-    final data = ByteData(2)..setUint16(0, value, Endian.little);
-    return data.buffer.asUint8List();
   }
 
   /// Fletcher-16 over `[start, end)`. The mod-255 reduction is deferred to
