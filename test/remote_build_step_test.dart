@@ -624,6 +624,311 @@ void main() {
       io.endAction();
     },
   );
+
+  test(
+    'preferGlobCache uses one list_visible_assets RPC for repeated globs and preserves source-before-generated order',
+    () async {
+      final cache = AssetReadCache(<AssetId, List<int>>{});
+      final readable = <AssetId>{};
+      final visibleCache = VisiblePackageAssetsCache();
+      final sent = _RecordingConsumer();
+      final sink = IOSink(sent);
+      addTearDown(sink.close);
+
+      final responseFrame = _encodeJsonFrame({
+        'v': 1,
+        'type': 'asset_response',
+        'id': 1000,
+        'ok': true,
+        'sources': ['lib/a.dart', 'lib/b.dart', 'lib/m_001.dart'],
+        'generated': [
+          'lib/a.json.g.part',
+          'lib/m_001.blocked.g.part',
+          'lib/m_001.json.g.part',
+        ],
+      });
+      final blocked = <AssetId>{AssetId('app', 'lib/m_001.blocked.g.part')};
+      final io = RemoteAssetReaderWriter(
+        readCache: cache,
+        readableCache: readable,
+        visibleAssetsCache: visibleCache,
+      );
+      io.beginAction(
+        rpc: RpcSession(
+          FrameReader(Stream.fromIterable([responseFrame])),
+          FrameWriter(sink),
+          buildId: 0,
+          phase: 1,
+          postProcess: false,
+        ),
+        package: 'app',
+        primaryInput: null,
+        blockedAssets: blocked,
+        preferGlobCache: true,
+      );
+
+      final m1 = await io.findAssets(Glob('lib/m_001.*.g.part')).toList();
+      expect(m1, [AssetId('app', 'lib/m_001.json.g.part')]);
+      // Only matched members are added to readableCache / observedGlobResults.
+      expect(readable, {AssetId('app', 'lib/m_001.json.g.part')});
+
+      // Second glob in the same phase hits cache with zero extra RPCs and keeps
+      // sources before generated in UTF-16 order.
+      final allLib = await io.findAssets(Glob('lib/a*')).toList();
+      expect(allLib, [
+        AssetId('app', 'lib/a.dart'),
+        AssetId('app', 'lib/a.json.g.part'),
+      ]);
+      expect(io.observedGlobs, {
+        const ObservedGlob(package: 'app', pattern: 'lib/m_001.*.g.part'),
+        const ObservedGlob(package: 'app', pattern: 'lib/a*'),
+      });
+      expect(
+        io.observedGlobMembers[const ObservedGlob(
+          package: 'app',
+          pattern: 'lib/a*',
+        )],
+        allLib,
+      );
+      io.endAction();
+      await sink.flush();
+
+      final requests = sent.decodedFrames();
+      expect(requests.map((r) => r['op']).toList(), ['list_visible_assets']);
+      expect(requests.single['package'], 'app');
+    },
+  );
+
+  test(
+    'single-action globs stay on find_assets for the first call and upgrade on the second',
+    () async {
+      final visibleCache = VisiblePackageAssetsCache();
+      final sent = _RecordingConsumer();
+      final sink = IOSink(sent);
+      addTearDown(sink.close);
+
+      final frames = [
+        _encodeJsonFrame({
+          'v': 1,
+          'type': 'asset_response',
+          'id': 1000,
+          'ok': true,
+          'assets': ['app|lib/a.g.part'],
+        }),
+        _encodeJsonFrame({
+          'v': 1,
+          'type': 'asset_response',
+          'id': 1001,
+          'ok': true,
+          'sources': ['lib/a.dart', 'lib/b.dart'],
+          'generated': ['lib/a.g.part', 'lib/b.g.part'],
+        }),
+      ];
+      final io = RemoteAssetReaderWriter(
+        readCache: AssetReadCache(<AssetId, List<int>>{}),
+        readableCache: <AssetId>{},
+        visibleAssetsCache: visibleCache,
+      );
+      io.beginAction(
+        rpc: RpcSession(
+          FrameReader(Stream.fromIterable(frames)),
+          FrameWriter(sink),
+          buildId: 0,
+          phase: 1,
+          postProcess: false,
+        ),
+        package: 'app',
+        primaryInput: null,
+        blockedAssets: const <AssetId>{},
+        preferGlobCache: false,
+      );
+
+      expect(await io.findAssets(Glob('lib/a.*.part')).toList(), [
+        AssetId('app', 'lib/a.g.part'),
+      ]);
+      expect(await io.findAssets(Glob('lib/b.*.part')).toList(), [
+        AssetId('app', 'lib/b.g.part'),
+      ]);
+      // Third call hits the cached listing with zero additional RPCs.
+      expect(await io.findAssets(Glob('lib/*.dart')).toList(), [
+        AssetId('app', 'lib/a.dart'),
+        AssetId('app', 'lib/b.dart'),
+      ]);
+      io.endAction();
+      await sink.flush();
+
+      expect(sent.decodedFrames().map((r) => r['op']).toList(), [
+        'find_assets',
+        'list_visible_assets',
+      ]);
+    },
+  );
+
+  test(
+    'declined list_visible_assets falls back to find_assets without retrying in the same phase',
+    () async {
+      final visibleCache = VisiblePackageAssetsCache();
+      final sent = _RecordingConsumer();
+      final sink = IOSink(sent);
+      addTearDown(sink.close);
+
+      final frames = [
+        _encodeJsonFrame({
+          'v': 1,
+          'type': 'asset_response',
+          'id': 1000,
+          'ok': false,
+          'error': 'visible asset listing disabled during lazy builds',
+        }),
+        _encodeJsonFrame({
+          'v': 1,
+          'type': 'asset_response',
+          'id': 1001,
+          'ok': true,
+          'assets': ['app|lib/a.g.part'],
+        }),
+        _encodeJsonFrame({
+          'v': 1,
+          'type': 'asset_response',
+          'id': 1002,
+          'ok': true,
+          'assets': ['app|lib/b.g.part'],
+        }),
+      ];
+      final io = RemoteAssetReaderWriter(
+        readCache: AssetReadCache(<AssetId, List<int>>{}),
+        readableCache: <AssetId>{},
+        visibleAssetsCache: visibleCache,
+      );
+      io.beginAction(
+        rpc: RpcSession(
+          FrameReader(Stream.fromIterable(frames)),
+          FrameWriter(sink),
+          buildId: 0,
+          phase: 1,
+          postProcess: false,
+        ),
+        package: 'app',
+        primaryInput: null,
+        blockedAssets: const <AssetId>{},
+        preferGlobCache: true,
+      );
+
+      expect(await io.findAssets(Glob('lib/a.*.part')).toList(), [
+        AssetId('app', 'lib/a.g.part'),
+      ]);
+      expect(await io.findAssets(Glob('lib/b.*.part')).toList(), [
+        AssetId('app', 'lib/b.g.part'),
+      ]);
+      io.endAction();
+      await sink.flush();
+
+      expect(sent.decodedFrames().map((r) => r['op']).toList(), [
+        'list_visible_assets',
+        'find_assets',
+        'find_assets',
+      ]);
+    },
+  );
+
+  test(
+    'complex glob syntax bypasses list_visible_assets and phase changes isolate cached listings',
+    () async {
+      final visibleCache = VisiblePackageAssetsCache();
+      final sent = _RecordingConsumer();
+      final sink = IOSink(sent);
+      addTearDown(sink.close);
+
+      final frames = [
+        _encodeJsonFrame({
+          'v': 1,
+          'type': 'asset_response',
+          'id': 1000,
+          'ok': true,
+          'assets': ['app|lib/a.dart'],
+        }),
+        _encodeJsonFrame({
+          'v': 1,
+          'type': 'asset_response',
+          'id': 1001,
+          'ok': true,
+          'sources': ['lib/a.dart'],
+          'generated': <String>[],
+        }),
+        _encodeJsonFrame({
+          'v': 1,
+          'type': 'asset_response',
+          'id': 1000,
+          'ok': true,
+          'sources': ['lib/a.dart'],
+          'generated': ['lib/a.g.part'],
+        }),
+      ];
+      final reader = FrameReader(Stream.fromIterable(frames));
+      final writer = FrameWriter(sink);
+      final io = RemoteAssetReaderWriter(
+        readCache: AssetReadCache(<AssetId, List<int>>{}),
+        readableCache: <AssetId>{},
+        visibleAssetsCache: visibleCache,
+      );
+
+      io.beginAction(
+        rpc: RpcSession(
+          reader,
+          writer,
+          buildId: 0,
+          phase: 0,
+          postProcess: false,
+        ),
+        package: 'app',
+        primaryInput: null,
+        blockedAssets: const <AssetId>{},
+        preferGlobCache: true,
+      );
+      // Brace alternation bypasses list_visible_assets.
+      expect(await io.findAssets(Glob('lib/{a,b}.dart')).toList(), [
+        AssetId('app', 'lib/a.dart'),
+      ]);
+      // Simple glob in phase 0 populates phase 0 cache.
+      expect(await io.findAssets(Glob('lib/*.g.part')).toList(), isEmpty);
+      io.endAction();
+
+      // Phase 1 must not reuse phase 0's cached listing.
+      io.beginAction(
+        rpc: RpcSession(
+          reader,
+          writer,
+          buildId: 0,
+          phase: 1,
+          postProcess: false,
+        ),
+        package: 'app',
+        primaryInput: null,
+        blockedAssets: const <AssetId>{},
+        preferGlobCache: true,
+      );
+      expect(await io.findAssets(Glob('lib/*.g.part')).toList(), [
+        AssetId('app', 'lib/a.g.part'),
+      ]);
+      io.endAction();
+      await sink.flush();
+
+      final requests = sent.decodedFrames();
+      expect(requests.map((r) => r['op']).toList(), [
+        'find_assets',
+        'list_visible_assets',
+        'list_visible_assets',
+      ]);
+      expect(requests[1]['phase'], 0);
+      expect(requests[2]['phase'], 1);
+    },
+  );
+}
+
+List<int> _encodeJsonFrame(JsonMap message) {
+  final payload = utf8.encode(jsonEncode(message));
+  final header = ByteData(4)..setUint32(0, payload.length, Endian.big);
+  return [...header.buffer.asUint8List(), ...payload];
 }
 
 RpcSession _rpc() => RpcSession(
@@ -633,6 +938,38 @@ RpcSession _rpc() => RpcSession(
   phase: 0,
   postProcess: false,
 );
+
+class _RecordingConsumer implements StreamConsumer<List<int>> {
+  final List<int> _bytes = <int>[];
+
+  @override
+  Future<void> addStream(Stream<List<int>> stream) async {
+    await for (final chunk in stream) {
+      _bytes.addAll(chunk);
+    }
+  }
+
+  @override
+  Future<void> close() async {}
+
+  List<JsonMap> decodedFrames() {
+    final frames = <JsonMap>[];
+    final data = Uint8List.fromList(_bytes);
+    var offset = 0;
+    while (offset + 4 <= data.length) {
+      final length = ByteData.sublistView(
+        data,
+        offset,
+        offset + 4,
+      ).getUint32(0, Endian.big);
+      offset += 4;
+      final payload = data.sublist(offset, offset + length);
+      offset += length;
+      frames.add(jsonDecode(utf8.decode(payload)) as JsonMap);
+    }
+    return frames;
+  }
+}
 
 class _DiscardingConsumer implements StreamConsumer<List<int>> {
   @override

@@ -22,6 +22,8 @@ use std::time::Instant;
 
 const ASSET_RESPONSE_TYPE: &str = "asset_response";
 const OVERSIZED_RESOLVE_ASSETS_ERROR: &str = "resolve_assets response exceeds frame limit";
+const OVERSIZED_LIST_VISIBLE_ASSETS_ERROR: &str =
+    "list_visible_assets response exceeds frame limit";
 
 #[derive(Serialize)]
 struct BinaryReadResponse {
@@ -64,6 +66,17 @@ struct FindAssetsResponse<'a> {
     id: u64,
     ok: bool,
     assets: &'a [String],
+}
+
+#[derive(Serialize)]
+struct ListVisibleAssetsResponse<'a> {
+    v: u32,
+    #[serde(rename = "type")]
+    message_type: &'static str,
+    id: u64,
+    ok: bool,
+    sources: &'a [String],
+    generated: &'a [String],
 }
 
 #[derive(Serialize)]
@@ -348,6 +361,40 @@ impl WorkerClient {
                     assets: &assets,
                 })
             }
+            "list_visible_assets" => {
+                self.metrics.list_visible_assets_requests += 1;
+                let package = request
+                    .get("package")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&workspace.root_package);
+                let (sources, generated) = collect_visible_package_paths(
+                    workspace,
+                    package,
+                    overlay,
+                    deleted_overlay,
+                    visibility,
+                    phase,
+                    kind,
+                )?;
+                let response = ListVisibleAssetsResponse {
+                    v: 1,
+                    message_type: ASSET_RESPONSE_TYPE,
+                    id,
+                    ok: true,
+                    sources: &sources,
+                    generated: &generated,
+                };
+                if !list_visible_assets_response_fits(&response, MAX_FRAME_LENGTH)? {
+                    self.send_serialized(&asset_error_response(
+                        id,
+                        OVERSIZED_LIST_VISIBLE_ASSETS_ERROR,
+                    ))
+                } else {
+                    self.metrics.list_visible_assets_results +=
+                        (sources.len() + generated.len()) as u64;
+                    self.send_serialized(&response)
+                }
+            }
             _ => {
                 let message = format!("unsupported asset operation: {operation}");
                 self.send_serialized(&asset_error_response(id, &message))
@@ -508,11 +555,18 @@ fn append_overlay_bytes(payload: &mut Vec<u8>, bytes: &[u8], limit: usize) -> bo
     true
 }
 
+fn list_visible_assets_response_fits<T: Serialize>(
+    response: &T,
+    frame_limit: usize,
+) -> io::Result<bool> {
+    Ok(serialized_json_len(response)? <= frame_limit)
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Glob results use the same phase-aware transaction view as asset RPC"
 )]
-pub(super) fn collect_glob_members(
+fn collect_glob_member_parts(
     workspace: &Workspace,
     package: &str,
     pattern: &str,
@@ -523,7 +577,7 @@ pub(super) fn collect_glob_members(
     kind: BuilderKind,
     is_generated: impl Fn(&str) -> bool,
     exists: impl Fn(&str) -> io::Result<bool>,
-) -> io::Result<Vec<String>> {
+) -> io::Result<(Vec<String>, Vec<String>)> {
     let mut candidates: BTreeSet<String> = workspace
         .find_assets(package, pattern)?
         .into_iter()
@@ -549,8 +603,70 @@ pub(super) fn collect_glob_members(
     // AssetId.compareTo uses Dart String ordering (UTF-16 code units).
     sources.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
     generated.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+    Ok((sources, generated))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Glob results use the same phase-aware transaction view as asset RPC"
+)]
+pub(super) fn collect_glob_members(
+    workspace: &Workspace,
+    package: &str,
+    pattern: &str,
+    overlay: &BTreeMap<String, Arc<[u8]>>,
+    deleted: &BTreeSet<String>,
+    visibility: &AssetVisibility,
+    phase: u32,
+    kind: BuilderKind,
+    is_generated: impl Fn(&str) -> bool,
+    exists: impl Fn(&str) -> io::Result<bool>,
+) -> io::Result<Vec<String>> {
+    let (mut sources, generated) = collect_glob_member_parts(
+        workspace,
+        package,
+        pattern,
+        overlay,
+        deleted,
+        visibility,
+        phase,
+        kind,
+        is_generated,
+        exists,
+    )?;
     sources.extend(generated);
     Ok(sources)
+}
+
+fn collect_visible_package_paths(
+    workspace: &Workspace,
+    package: &str,
+    overlay: &BTreeMap<String, Arc<[u8]>>,
+    deleted: &BTreeSet<String>,
+    visibility: &AssetVisibility,
+    phase: u32,
+    kind: BuilderKind,
+) -> io::Result<(Vec<String>, Vec<String>)> {
+    let (sources, generated) = collect_glob_member_parts(
+        workspace,
+        package,
+        "**",
+        overlay,
+        deleted,
+        visibility,
+        phase,
+        kind,
+        |asset| visibility.location(asset).is_some(),
+        |asset| asset_exists(workspace, asset, overlay, visibility),
+    )?;
+    let prefix = format!("{package}|");
+    let strip = |assets: Vec<String>| -> Vec<String> {
+        assets
+            .into_iter()
+            .filter_map(|asset| asset.strip_prefix(&prefix).map(str::to_owned))
+            .collect()
+    };
+    Ok((strip(sources), strip(generated)))
 }
 
 fn asset_exists(
@@ -1379,5 +1495,150 @@ mod batch_response_tests {
         )
         .unwrap();
         assert_eq!(filtered, CanReadResult::MemoryOnly);
+    }
+
+    #[test]
+    fn list_visible_assets_response_schema_and_frame_limit_guard() {
+        let sources = vec!["lib/a.dart".to_string()];
+        let generated = vec!["lib/a.g.part".to_string()];
+        let response = ListVisibleAssetsResponse {
+            v: 1,
+            message_type: ASSET_RESPONSE_TYPE,
+            id: 16,
+            ok: true,
+            sources: &sources,
+            generated: &generated,
+        };
+        assert_eq!(
+            serde_json::to_value(&response).unwrap(),
+            json!({
+                "v": 1,
+                "type": "asset_response",
+                "id": 16,
+                "ok": true,
+                "sources": ["lib/a.dart"],
+                "generated": ["lib/a.g.part"],
+            })
+        );
+        let exact_length = serde_json::to_vec(&response).unwrap().len();
+        assert!(list_visible_assets_response_fits(&response, exact_length).unwrap());
+        assert!(!list_visible_assets_response_fits(&response, exact_length - 1).unwrap());
+    }
+
+    #[test]
+    fn collect_visible_package_paths_partitions_and_orders_with_phase_visibility() {
+        let temp = TempWorkspace::new("list-visible-assets");
+        fs::write(temp.root.join("lib/z.dart"), b"class Z {}").unwrap();
+        fs::write(temp.root.join("lib/a.dart"), b"class A {}").unwrap();
+        fs::write(temp.root.join("lib/deleted.dart"), b"class Deleted {}").unwrap();
+
+        let phase0_cache = "app|lib/a.g.part";
+        let phase0_cache_path = temp.workspace.cache_path_for_asset(phase0_cache).unwrap();
+        fs::create_dir_all(phase0_cache_path.parent().unwrap()).unwrap();
+        fs::write(&phase0_cache_path, b"// part").unwrap();
+
+        let phase0_overlay = "app|lib/b.freezed.dart";
+        let phase1_future = "app|lib/a.g.dart";
+        fs::write(temp.root.join("lib/a.g.dart"), b"// stale future output").unwrap();
+
+        let specs = [
+            test_build_spec("app:p0_cache", BuildTo::Cache, 0, phase0_cache),
+            test_build_spec("app:p0_source", BuildTo::Source, 0, phase0_overlay),
+            test_build_spec("app:p1_source", BuildTo::Source, 1, phase1_future),
+        ];
+        let config = crate::builder::RustBuildConfig {
+            asset_sources: None,
+            builders: Vec::new(),
+            worker_entrypoint: None,
+            manifest_signature: None,
+            trigger_digest: None,
+            definitions: BTreeMap::new(),
+        };
+        let visibility =
+            AssetVisibility::from_specs(&specs, &crate::graph::GraphState::default(), &config);
+        let overlay = BTreeMap::from([(phase0_overlay.to_owned(), Arc::from(&b"// freezed"[..]))]);
+        let deleted = BTreeSet::from(["app|lib/deleted.dart".to_owned()]);
+
+        // Phase 0 hides phase 0 and phase 1 generated outputs and deleted files.
+        let (p0_sources, p0_generated) = collect_visible_package_paths(
+            &temp.workspace,
+            "app",
+            &overlay,
+            &deleted,
+            &visibility,
+            0,
+            BuilderKind::Normal,
+        )
+        .unwrap();
+        let p0_lib_sources: Vec<&str> = p0_sources
+            .iter()
+            .map(String::as_str)
+            .filter(|path| !path.starts_with(".dart_tool/"))
+            .collect();
+        assert_eq!(
+            p0_lib_sources,
+            vec!["lib/a.dart", "lib/z.dart", "pubspec.yaml"]
+        );
+        assert!(p0_generated.is_empty());
+
+        // Phase 1 exposes phase 0 outputs (cache + overlay) in UTF-16 order while
+        // still hiding phase 1's own output (lib/a.g.dart).
+        let (p1_sources, p1_generated) = collect_visible_package_paths(
+            &temp.workspace,
+            "app",
+            &overlay,
+            &deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+        )
+        .unwrap();
+        let p1_lib_sources: Vec<&str> = p1_sources
+            .iter()
+            .map(String::as_str)
+            .filter(|path| !path.starts_with(".dart_tool/"))
+            .collect();
+        assert_eq!(
+            p1_lib_sources,
+            vec!["lib/a.dart", "lib/z.dart", "pubspec.yaml"]
+        );
+        assert_eq!(p1_generated, vec!["lib/a.g.part", "lib/b.freezed.dart"]);
+
+        // Combined sources + generated match collect_glob_members("**") exactly.
+        let p1_expected = collect_glob_members(
+            &temp.workspace,
+            "app",
+            "**",
+            &overlay,
+            &deleted,
+            &visibility,
+            1,
+            BuilderKind::Normal,
+            |asset| visibility.location(asset).is_some(),
+            |asset| asset_exists(&temp.workspace, asset, &overlay, &visibility),
+        )
+        .unwrap();
+        let p1_combined: Vec<String> = p1_sources
+            .iter()
+            .chain(p1_generated.iter())
+            .map(|path| format!("app|{path}"))
+            .collect();
+        assert_eq!(p1_combined, p1_expected);
+
+        // Phase 2 exposes phase 1's output as well.
+        let (_, p2_generated) = collect_visible_package_paths(
+            &temp.workspace,
+            "app",
+            &overlay,
+            &deleted,
+            &visibility,
+            2,
+            BuilderKind::Normal,
+        )
+        .unwrap();
+        assert_eq!(
+            p2_generated,
+            vec!["lib/a.g.dart", "lib/a.g.part", "lib/b.freezed.dart"]
+        );
     }
 }

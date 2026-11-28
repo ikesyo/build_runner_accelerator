@@ -102,6 +102,8 @@ pub(crate) struct WorkerClientMetrics {
     pub(crate) can_read_requests: u64,
     pub(crate) find_assets_requests: u64,
     pub(crate) find_assets_results: u64,
+    pub(crate) list_visible_assets_requests: u64,
+    pub(crate) list_visible_assets_results: u64,
     pub(crate) resolve_assets_requests: u64,
     pub(crate) resolve_assets_results: u64,
 }
@@ -129,6 +131,8 @@ impl WorkerClientMetrics {
         self.can_read_requests += other.can_read_requests;
         self.find_assets_requests += other.find_assets_requests;
         self.find_assets_results += other.find_assets_results;
+        self.list_visible_assets_requests += other.list_visible_assets_requests;
+        self.list_visible_assets_results += other.list_visible_assets_results;
         self.resolve_assets_requests += other.resolve_assets_requests;
         self.resolve_assets_results += other.resolve_assets_results;
     }

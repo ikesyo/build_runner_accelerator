@@ -291,6 +291,16 @@ impl WorkerClient {
                     &io::Error::other("dependency prefetch disabled during lazy builds"),
                 );
             }
+            "list_visible_assets" => {
+                // Demand-driven globs must trigger optional builders only for
+                // matching patterns and see newly materialized outputs mid-phase.
+                // Decline package-wide listing so the worker falls back to
+                // per-glob `find_assets`.
+                return self.send_asset_error(
+                    request,
+                    &io::Error::other("visible asset listing disabled during lazy builds"),
+                );
+            }
             "read" | "can_read" => {
                 if let Some(asset) = request.get("asset").and_then(Value::as_str)
                     && let Err(error) = self.ensure_optional_output(

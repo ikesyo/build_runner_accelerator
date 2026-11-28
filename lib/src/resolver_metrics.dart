@@ -84,9 +84,14 @@ final class ResolverActionMetrics {
   int ipcCanReadUs = 0;
   int ipcCanReadCacheHits = 0;
 
-  /// `find_assets` RPCs.
+  /// `find_assets` RPCs and worker-cached local glob evaluations.
   int ipcFindAssetsCalls = 0;
   int ipcFindAssetsUs = 0;
+  int ipcFindAssetsCacheHits = 0;
+
+  /// `list_visible_assets` RPCs populating the per-phase glob cache.
+  int ipcListVisibleAssetsCalls = 0;
+  int ipcListVisibleAssetsUs = 0;
 
   /// Batched `resolve_assets` RPCs issued by dep-read prefetching.
   int ipcResolveAssetsCalls = 0;
@@ -175,6 +180,9 @@ final class ResolverActionMetrics {
     ipcCanReadCacheHits = 0;
     ipcFindAssetsCalls = 0;
     ipcFindAssetsUs = 0;
+    ipcFindAssetsCacheHits = 0;
+    ipcListVisibleAssetsCalls = 0;
+    ipcListVisibleAssetsUs = 0;
     ipcResolveAssetsCalls = 0;
     ipcResolveAssetsUs = 0;
     depPrefetchAssets = 0;
@@ -249,6 +257,9 @@ final class ResolverActionMetrics {
     'ipc_can_read_cache_hits': ipcCanReadCacheHits,
     'ipc_find_assets_calls': ipcFindAssetsCalls,
     'ipc_find_assets_us': ipcFindAssetsUs,
+    'ipc_find_assets_cache_hits': ipcFindAssetsCacheHits,
+    'ipc_list_visible_assets_calls': ipcListVisibleAssetsCalls,
+    'ipc_list_visible_assets_us': ipcListVisibleAssetsUs,
     'ipc_resolve_assets_calls': ipcResolveAssetsCalls,
     'ipc_resolve_assets_us': ipcResolveAssetsUs,
     'dep_prefetch_assets': depPrefetchAssets,

@@ -139,11 +139,16 @@ class WorkerActionRunner {
     final blockedAssets = runtime.transport.resolveBatchBlockedAssets(
       message.blockedAssets,
     );
+    final preferGlobCache = message.requests.length >= 2;
     runtime.batchResolverEntrypoints.clear();
     await _prefetchBatchInputs(message, blockedAssets);
     for (final request in message.requests) {
       results.add(
-        await _runBuild(request, inheritedBlockedAssets: blockedAssets),
+        await _runBuild(
+          request,
+          inheritedBlockedAssets: blockedAssets,
+          preferGlobCache: preferGlobCache,
+        ),
       );
     }
     await writer.sendBuildResult(<String, dynamic>{
@@ -161,6 +166,7 @@ class WorkerActionRunner {
   Future<JsonMap> _runBuild(
     WorkerBuildRequest request, {
     Set<AssetId>? inheritedBlockedAssets,
+    bool preferGlobCache = false,
   }) async {
     // API fingerprint learning follows this action's opt-in (ADR 0056):
     // dep walks during the action record fingerprints only for
@@ -173,6 +179,7 @@ class WorkerActionRunner {
       return await _runBuildAction(
         request,
         inheritedBlockedAssets: inheritedBlockedAssets,
+        preferGlobCache: preferGlobCache,
       );
     } finally {
       runtime.resolver.setFingerprintLearningEnabled(previousLearning);
@@ -182,6 +189,7 @@ class WorkerActionRunner {
   Future<JsonMap> _runBuildAction(
     WorkerBuildRequest request, {
     Set<AssetId>? inheritedBlockedAssets,
+    bool preferGlobCache = false,
   }) async {
     final traceStart =
         request.traceparent == null || request.otelReportId == null
@@ -230,6 +238,7 @@ class WorkerActionRunner {
         package: input.package,
         primaryInput: isPostProcess ? input : null,
         blockedAssets: blockedAssets,
+        preferGlobCache: preferGlobCache,
       );
       actionStarted = true;
       resolverActionMetrics.beginAction();
