@@ -66,4 +66,22 @@ void main() {
     final view = Uint8List.sublistView(backing, 2, 5);
     expect(blake3Hex(view), blake3Hex(utf8.encode('abc')));
   });
+
+  test('hashes long views at nonzero offsets on both block-loading paths', () {
+    // The 1025-byte reference input spans full blocks plus a one-byte
+    // final chunk. A view at offset 4 is 4-byte aligned, so on a
+    // little-endian host it exercises the aligned word-loading path with
+    // a nonzero offsetInBytes; a view at offset 2 is unaligned and
+    // exercises the byte loader. Both must hash to the reference digest.
+    const digest1025 =
+        'd00278ae47eb27b34faecf67b4fe263f82d5412916c1ffd97c8cb7fb814b8444';
+    for (final offset in [4, 2]) {
+      final backing = Uint8List(1025 + offset);
+      for (var i = 0; i < 1025; i++) {
+        backing[offset + i] = i % 251;
+      }
+      final view = Uint8List.sublistView(backing, offset, offset + 1025);
+      expect(blake3Hex(view), digest1025, reason: 'offset $offset');
+    }
+  });
 }
