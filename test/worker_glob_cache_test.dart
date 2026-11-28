@@ -249,8 +249,22 @@ void main() {
         ],
       });
 
-      // 2. reset_resolver clears visibleAssetsCache so phase 1 refreshes the
-      // package listing and observes newly generated parts.
+      // 1b. A second batch in the same phase with reused blocked_assets hits
+      // the cached listing with zero additional RPCs.
+      final (phase0ReuseReply, phase0ReuseRpcs) = await exchange({
+        'type': 'build_batch',
+        'blocked_assets_reuse': true,
+        'blocked_assets': <String>[],
+        'requests': [
+          request(id: 0, input: assetA, output: outA, phase: 0),
+          request(id: 1, input: assetB, output: outB, phase: 0),
+        ],
+      });
+      expect(phase0ReuseReply['type'], 'build_batch_result');
+      expect(phase0ReuseRpcs, isEmpty);
+
+      // 2. reset_resolver invalidates the cached listing even when phase and
+      // reused blocked_assets stay identical, so newly generated parts appear.
       final (resetReply, _) = await exchange({
         'type': 'reset_resolver',
         'incremental': true,
@@ -262,27 +276,33 @@ void main() {
       });
       expect(resetReply['type'], 'reset_resolver');
 
-      final (phase1Reply, phase1Rpcs) = await exchange(
+      final (afterResetReply, afterResetRpcs) = await exchange(
         {
           'type': 'build_batch',
-          'blocked_assets': <String>[outA, outB],
+          'blocked_assets_reuse': true,
+          'blocked_assets': <String>[],
           'requests': [
-            request(id: 0, input: assetA, output: outA, phase: 1),
-            request(id: 1, input: assetB, output: outB, phase: 1),
+            request(id: 0, input: assetA, output: outA, phase: 0),
+            request(id: 1, input: assetB, output: outB, phase: 0),
           ],
         },
         visibleSources: const <String>[],
         visibleGenerated: ['$relDir/a.v2.part', '$relDir/b.v2.part'],
       );
-      expect(phase1Reply['type'], 'build_batch_result');
-      expect(phase1Rpcs.map((r) => r['op']).toList(), ['list_visible_assets']);
-      final phase1Results = (phase1Reply['results'] as List).cast<JsonMap>();
+      expect(afterResetReply['type'], 'build_batch_result');
+      expect(afterResetRpcs.map((r) => r['op']).toList(), [
+        'list_visible_assets',
+      ]);
+      final afterResetResults = (afterResetReply['results'] as List)
+          .cast<JsonMap>();
       expect(
-        ((phase1Results[0]['outputs'] as List).single as JsonMap)['content'],
+        ((afterResetResults[0]['outputs'] as List).single
+            as JsonMap)['content'],
         'build_runner_accelerator|$relDir/a.v2.part',
       );
       expect(
-        ((phase1Results[1]['outputs'] as List).single as JsonMap)['content'],
+        ((afterResetResults[1]['outputs'] as List).single
+            as JsonMap)['content'],
         'build_runner_accelerator|$relDir/b.v2.part',
       );
 
