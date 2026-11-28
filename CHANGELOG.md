@@ -1,5 +1,34 @@
 # Changelog
 
+## [v0.20.1](https://github.com/ikesyo/build_runner_accelerator/compare/v0.20.0...v0.20.1) - 2026-11-28
+
+### Performance
+- perf: share forward closures and borrow keys in cutoff assess and evaluate by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/235
+- perf: avoid shifting buffered IPC frames by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/210
+- perf: coalesce IPC frame writes and reuse Rust framing buffers by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/243
+- perf: avoid copying owned asset reads and serialize asset responses directly by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/245
+- perf: reduce asset_request RPC round trips with batch prefetch and can_read paths by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/247
+- perf: cache phase-visible package assets for local glob evaluation by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/248
+- perf: zero-allocation pure Dart BLAKE3 by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/249
+- perf: parallelize scan_packages with scoped threads by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/250
+- perf: encode blob-store records into single pre-sized buffers by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/251
+### Dependency Updates
+- chore(deps): update rust crate blake3 to v1.8.8 by @renovate[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/244
+- chore(deps): update rust crate yaml-rust2 to v0.13.2 by @renovate[bot] in https://github.com/ikesyo/build_runner_accelerator/pull/219
+### Other Changes
+- refactor: split worker_kernel and share glob/digest helpers by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/230
+- refactor: split graph.rs into graph/ modules and add FingerprintTracker by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/232
+- refactor: make graph recovery explicit and dissolve assets.rs by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/233
+- refactor: split build/cutoff.rs into cutoff/ modules by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/234
+- refactor: share reverse deps, encapsulate resolver changes, and unify pool startup by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/236
+- refactor: decompose run_with_config_session and commit_inner by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/237
+- refactor: extract worker wire encoding and unify batch RPC loops by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/238
+- refactor: split worker/lazy into worker/demand and group filtered state by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/239
+- refactor: deduplicate demand guard, decompose ensure_optional_output_body, share glob collection by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/240
+- refactor: split protocol.dart into messages, framing, and rpc libraries by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/241
+- refactor: move API fingerprint learning state to instance-owned ApiFingerprintLedger by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/242
+- refactor: split worker.dart into runtime, reset, and action runner libraries by @ikesyo in https://github.com/ikesyo/build_runner_accelerator/pull/246
+
 ## [v0.20.0](https://github.com/ikesyo/build_runner_accelerator/compare/v0.19.5...v0.20.0) - 2026-11-24
 
 ### Features
